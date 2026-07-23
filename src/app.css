@@ -1,0 +1,362 @@
+:root {
+  --bg-primary: #0f0f11;
+  --bg-surface: #18181b;
+  --bg-panel: #202023;
+  --border-raw: #3f3f46;
+  --border-focus: #71717a;
+  --text-primary: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  --accent-industrial: #ff5500;
+  --error-color: #ff3333;
+  --success-color: #00e676;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border-radius: 0px !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+body {
+  font-family: var(--font-mono);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-primary);
+  position: relative;
+}
+
+/* Telemetry Header Seal / System Banner */
+.telemetry-header {
+  height: 40px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-raw);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  z-index: 20;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+.telemetry-seal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+}
+
+.system-tag {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-raw);
+  color: var(--accent-industrial);
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.file-title-raw {
+  color: var(--text-primary);
+  font-weight: 600;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Utilitarian Dock / HUD (Bottom Fixed Control Panel) */
+.hud-dock {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-raw);
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 90;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  max-width: calc(100vw - 16px);
+  overflow-x: auto;
+}
+
+.hud-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-right: 1px solid var(--border-raw);
+  padding-right: 8px;
+}
+
+.hud-group:last-child {
+  border-right: none;
+  padding-right: 0;
+}
+
+.hud-btn {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-raw);
+  color: var(--text-primary);
+  height: 28px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: border-color 0.1s ease, color 0.1s ease;
+  white-space: nowrap;
+}
+
+.hud-btn:hover:not(:disabled) {
+  border-color: var(--accent-industrial);
+  color: var(--accent-industrial);
+  background: var(--bg-surface);
+}
+
+.hud-btn.active {
+  border-color: var(--accent-industrial);
+  background: var(--accent-industrial);
+  color: #000000;
+  font-weight: 700;
+}
+
+.hud-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--border-raw);
+}
+
+.hud-telemetry-badge {
+  background: #000000;
+  border: 1px solid var(--border-raw);
+  color: var(--accent-industrial);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-page-input {
+  width: 34px;
+  background: transparent;
+  border: none;
+  color: var(--accent-industrial);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+}
+
+/* Workspace & Canvas Viewport */
+.workspace-body {
+  flex: 1;
+  display: flex;
+  height: calc(100vh - 40px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.viewer-area {
+  flex: 1;
+  min-width: 0;
+  background: #0d0d0f;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 32px;
+  position: relative;
+}
+
+.canvas-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.canvas-container.book-mode {
+  flex-direction: row;
+  gap: 1px; /* industrial divider gap */
+}
+
+.book-divider {
+  width: 1px;
+  background-color: #333338;
+  align-self: stretch;
+}
+
+.page-wrapper {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+/* Canvas Styling - Sharp Raw Framing */
+canvas {
+  background: #ffffff;
+  border: 1px solid #333338;
+  cursor: crosshair;
+}
+
+canvas.pointer-mode {
+  cursor: default;
+}
+
+/* Popover Settings Panel */
+.settings-popover {
+  position: absolute;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-raw);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 95;
+}
+
+.color-swatch {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-raw);
+  cursor: pointer;
+}
+
+.color-swatch.active {
+  border-color: var(--accent-industrial);
+  outline: 1px solid var(--accent-industrial);
+}
+
+.stroke-slider {
+  width: 70px;
+  accent-color: var(--accent-industrial);
+  cursor: pointer;
+}
+
+/* Toast Notifications */
+.toast-notification {
+  position: fixed;
+  top: 48px;
+  right: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-industrial);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 15, 17, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  z-index: 10;
+  font-family: var(--font-mono);
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border-raw);
+  border-top-color: var(--accent-industrial);
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-card {
+  max-width: 400px;
+  background: var(--bg-surface);
+  border: 1px solid var(--error-color);
+  color: var(--error-color);
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* PDF Text Layer Styles */
+.textLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.textLayer span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Endüstriyel Vurgu Rengiyle Seçim Stili */
+.textLayer ::selection {
+  background: rgba(255, 85, 0, 0.35); /* #ff5500 %35 opaklık */
+  color: transparent;
+}

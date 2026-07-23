@@ -1,0 +1,24 @@
+[package]
+name = "preview-alternative"
+version = "0.1.0"
+description = "Fast macOS Preview alternative built with Tauri v2, Rust & Svelte"
+edition = "2021"
+
+[lib]
+name = "preview_alternative_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-dialog = "2.0.0"
+pdfium-render = "0.8"
+lopdf = "0.34"
+image = { version = "0.25", features = ["png", "jpeg", "webp", "bmp"] }
+memmap2 = "0.9"
+miniz_oxide = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ureq = { version = "2.9", features = ["json"] }
