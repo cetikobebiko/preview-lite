@@ -1,0 +1,104 @@
+name: Atomic document I/O
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  filesystem:
+    name: Filesystem atomicity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Enforce strict Rust lint gate
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        working-directory: src-tauri
+
+      - name: Run PDFium-independent atomic filesystem tests
+        run: cargo test --locked --test document_io_fs
+        working-directory: src-tauri
+
+      - name: Run bounded worker protocol tests
+        run: cargo test --locked --lib worker::ipc::tests
+        working-directory: src-tauri
+
+      - name: Run worker resource and Unicode normalization invariants
+        run: cargo test --locked --lib worker::pdfium::tests
+        working-directory: src-tauri
+
+      - name: Run cancellation-safe admission, authority, epoch, and quarantine tests
+        run: cargo test --locked --lib pdf_engine::subprocess_manager::tests
+        working-directory: src-tauri
+
+      - name: Run fake worker shutdown, ACK-reap, reservation, and lifecycle tests
+        run: cargo test --locked --test worker_broker_process
+        working-directory: src-tauri
+
+      - name: Run document-session ownership, recovery, and ACL tests
+        run: cargo test --locked --lib document_session::tests
+        working-directory: src-tauri
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run worker architecture and typed-error regression tests
+        run: npm run test -- --run src/services/backend/architecture.test.js src/services/backend/client.test.js
+
+  pdfium:
+    name: PDFium mutation invariants (macOS arm64)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify the required arm64 PDFium runtime
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          test "$(uname -m)" = "arm64"
+          test -f lib/libpdfium.dylib
+          file lib/libpdfium.dylib | grep -q arm64
+
+      - name: Run PDFium mutation integration tests
+        run: cargo test --locked --test document_io_pdfium
+        working-directory: src-tauri
+
+      - name: Run real PDFium worker parity integration tests
+        run: cargo test --locked --test worker_pdfium_integration
+        working-directory: src-tauri
+
+      - name: Run production session-to-worker integration tests
+        run: cargo test --locked --test session_worker_integration
+        working-directory: src-tauri
+
+      - name: Run worker crash/restart regression tests
+        run: cargo test --locked --test crash_tests
+        working-directory: src-tauri

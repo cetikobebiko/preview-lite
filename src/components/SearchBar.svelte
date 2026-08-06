@@ -1,43 +1,83 @@
 <script>
-  import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import { createEventDispatcher, tick } from "svelte";
 
-  export let isOpen = false;
-  export let totalMatches = 0;
-  export let currentMatchIndex = 0;
-  export let isSearching = false;
+  let {
+    isOpen = false,
+    query = "",
+    totalMatches = 0,
+    currentMatchIndex = 0,
+    isSearching = false,
+    error = "",
+    onsearch,
+    onsemanticSearch,
+    onnext,
+    onprev,
+    onclose,
+  } = $props();
 
   const dispatch = createEventDispatcher();
-  let query = "";
-  let inputRef;
+  let inputRef = $state(null);
+  let isSemanticMode = $state(false);
+  let semanticResults = $state([]);
 
-  $: if (isOpen) {
-    tick().then(() => {
-      if (inputRef) inputRef.focus();
-    });
+  $effect(() => {
+    if (isOpen) {
+      tick().then(() => {
+        if (inputRef) inputRef.focus();
+      });
+    }
+  });
+
+  function handleSearchInput(event) {
+    const detail = {
+      query: event.currentTarget.value,
+      isSemanticMode,
+    };
+    if (typeof onsearch === "function") {
+      onsearch({ detail });
+    }
+    dispatch("search", detail);
   }
 
-  function handleSearch() {
-    dispatch("search", query);
+  function handleSemanticSearch() {
+    if (!query.trim()) return;
+    if (typeof onsemanticSearch === "function") {
+      onsemanticSearch({ detail: query });
+    }
+    dispatch("semanticSearch", query);
   }
 
   function handleNext() {
+    if (typeof onnext === "function") {
+      onnext();
+    }
     dispatch("next");
   }
 
   function handlePrev() {
+    if (typeof onprev === "function") {
+      onprev();
+    }
     dispatch("prev");
   }
 
   function handleClose() {
+    if (typeof onclose === "function") {
+      onclose();
+    }
     dispatch("close");
   }
 
   function handleKeyDown(e) {
     if (e.key === "Enter") {
-      if (e.shiftKey) {
-        handlePrev();
+      if (isSemanticMode) {
+        handleSemanticSearch();
       } else {
-        handleNext();
+        if (e.shiftKey) {
+          handlePrev();
+        } else {
+          handleNext();
+        }
       }
     } else if (e.key === "Escape") {
       handleClose();
@@ -47,34 +87,42 @@
 
 {#if isOpen}
   <div class="search-bar">
-    <span class="search-tag">[SEARCH]</span>
+    <button
+      class="mode-toggle {isSemanticMode ? 'semantic' : 'exact'}"
+      onclick={() => (isSemanticMode = !isSemanticMode)}
+      title="Arama Modunu Değiştir"
+    >
+      [{isSemanticMode ? 'SEMANTİK' : 'EXACT'}]
+    </button>
     <div class="search-input-wrapper">
       <input
         bind:this={inputRef}
         type="text"
-        placeholder="BELGE İÇİNDE ARA..."
-        bind:value={query}
-        on:input={handleSearch}
-        on:keydown={handleKeyDown}
+        placeholder={isSemanticMode ? "Yapay zeka ile anlamsal arama..." : "BELGE İÇİNDE ARA..."}
+        value={query}
+        oninput={handleSearchInput}
+        onkeydown={handleKeyDown}
       />
     </div>
 
     {#if isSearching}
       <div class="search-spinner"></div>
-    {:else if query && totalMatches > 0}
+    {:else if error}
+      <span class="search-count empty">SEARCH ERROR</span>
+    {:else if query.trim() && totalMatches > 0}
       <span class="search-count">MATCH: {String(currentMatchIndex + 1).padStart(2, '0')}/{String(totalMatches).padStart(2, '0')}</span>
-    {:else if query}
+    {:else if query.trim()}
       <span class="search-count empty">NO MATCH</span>
     {/if}
 
     <div class="search-actions">
-      <button class="search-btn" on:click={handlePrev} disabled={totalMatches === 0} title="Önceki Eşleşme (Shift + Enter)">
+      <button class="search-btn" onclick={handlePrev} disabled={totalMatches === 0} title="Önceki Eşleşme (Shift + Enter)">
         [PREV]
       </button>
-      <button class="search-btn" on:click={handleNext} disabled={totalMatches === 0} title="Sonraki Eşleşme (Enter)">
+      <button class="search-btn" onclick={handleNext} disabled={totalMatches === 0} title="Sonraki Eşleşme (Enter)">
         [NEXT]
       </button>
-      <button class="search-btn close-btn" on:click={handleClose} title="Aramayı Kapat (Esc)">
+      <button class="search-btn close-btn" onclick={handleClose} title="Aramayı Kapat (Esc)">
         [ESC]
       </button>
     </div>
@@ -94,12 +142,6 @@
     gap: 8px;
     z-index: 80;
     font-family: var(--font-mono);
-  }
-
-  .search-tag {
-    color: var(--accent-industrial);
-    font-size: 10px;
-    font-weight: 700;
   }
 
   .search-input-wrapper input {

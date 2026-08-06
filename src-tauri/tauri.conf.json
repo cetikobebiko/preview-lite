@@ -20,12 +20,15 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:11434 http://localhost:11434 asset:; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "lib/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,0 +1,365 @@
+{
+  "version": 1,
+  "description": "Deterministik PDF Redaksiyon Fixture Corpus ve Kanonik Manifest",
+  "fixtures": [
+    {
+      "id": "simple-text",
+      "filename": "simple-text.pdf",
+      "purpose": "Basit metin iceren 1 sayfalik PDF 1.4 belge",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "has_text_objects",
+        "standard_origin"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "2adc560d26fc60706a38061fc486d0e926dce9fa904476e991912d6ea3052af6",
+      "byte_size": 634,
+      "semantic_assertions": [
+        "pdfium_open_succeeds",
+        "page_count_equals_1",
+        "extracted_text_contains_confidential_marker",
+        "has_text_page_object"
+      ]
+    },
+    {
+      "id": "rotations",
+      "filename": "rotations.pdf",
+      "purpose": "Farkli sayfa acilarina (0, 90, 180, 270 derece) sahip 4 sayfalik PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 4,
+      "expected_text": null,
+      "expected_properties": [
+        "rotations_0_90_180_270"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "6665e102d1ad54f8e37bed0149da640930624098794980a10ecf3846fd511628",
+      "byte_size": 1095,
+      "semantic_assertions": [
+        "pdfium_open_succeeds",
+        "page_count_equals_4",
+        "page_rotations_match_0_90_180_270",
+        "render_smoke_test_succeeds_all_pages"
+      ]
+    },
+    {
+      "id": "cropbox-mediabox-diff",
+      "filename": "cropbox-mediabox-diff.pdf",
+      "purpose": "CropBox ve MediaBox sinirlari birbirinden farkli olan PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "cropbox_mediabox_mismatch"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "496ec852744fdacb2235cb3da7b4234de5777e945f9561108b13b8630071b031",
+      "byte_size": 624,
+      "semantic_assertions": [
+        "mediabox_not_equal_cropbox",
+        "cropbox_left_equals_50",
+        "effective_dimensions_derived_correctly"
+      ]
+    },
+    {
+      "id": "nonzero-origin",
+      "filename": "nonzero-origin.pdf",
+      "purpose": "MediaBox orijin noktasi (0,0) haricinde (50, 50) olan PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "nonzero_origin_50_50"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "11bb134408b14960adf5f1d6cce1629ea1e5880cd1cb81f0fdbfd985b1003c0d",
+      "byte_size": 604,
+      "semantic_assertions": [
+        "mediabox_origin_left_50_bottom_50",
+        "page_dimensions_correctly_offset"
+      ]
+    },
+    {
+      "id": "negative-origin",
+      "filename": "negative-origin.pdf",
+      "purpose": "MediaBox orijin noktasi negatif (-100, -100) olan PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "negative_origin_neg100_neg100"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "c689d40fc2b5436a3267ede469682a59f7a869e98837908057b879d9ac8c98cb",
+      "byte_size": 609,
+      "semantic_assertions": [
+        "mediabox_origin_left_neg100_bottom_neg100",
+        "lopdf_pdfium_geometry_match"
+      ]
+    },
+    {
+      "id": "image-only",
+      "filename": "image-only.pdf",
+      "purpose": "Sayfada hic metin bulunmayan, yalnizca resim nesnesi barindiran PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "image_object_only",
+        "zero_text_objects"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "90cfc9ea441c48fe8ada88a6d22f41b17a1e782a8d354bcdbe348c9686a1ac95",
+      "byte_size": 666,
+      "semantic_assertions": [
+        "image_object_count_greater_than_0",
+        "text_object_count_equals_0",
+        "extracted_text_is_empty",
+        "render_smoke_test_succeeds"
+      ]
+    },
+    {
+      "id": "text-image",
+      "filename": "text-image.pdf",
+      "purpose": "Ayni sayfada hem metin hem resim nesneleri iceren karma PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "text_and_image_objects"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "cdda8a688e533c8e48d7052cb61d26f6dc48f5a50e87a0e2f36f59d7ba47f710",
+      "byte_size": 828,
+      "semantic_assertions": [
+        "has_text_object",
+        "has_image_object",
+        "extracted_text_contains_marker",
+        "render_smoke_test_succeeds"
+      ]
+    },
+    {
+      "id": "annotations-fixture",
+      "filename": "annotations-fixture.pdf",
+      "purpose": "Sayfada /Annot sözlüğü ve açıklamalar barındıran PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "has_annotations"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "a3c8403190628cba410df6a97cdf3aa81153eb2b0feb7339b91d0a9f39b3f14d",
+      "byte_size": 743,
+      "semantic_assertions": [
+        "annotation_count_greater_than_0",
+        "annotation_subtype_equals_text",
+        "annotation_associated_with_page_0"
+      ]
+    },
+    {
+      "id": "acroform-widget",
+      "filename": "acroform-widget.pdf",
+      "purpose": "AcroForm form alanları ve Widget açıklamaları içeren PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "has_acroform",
+        "has_widgets"
+      ],
+      "expected_planning_outcome": "warning",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "42cadc768e70985c198104b348b854c5b26c49cb23856a3b76d441f0a0faed51",
+      "byte_size": 804,
+      "semantic_assertions": [
+        "catalog_has_acroform",
+        "fields_array_non_empty",
+        "field_type_equals_tx",
+        "widget_annotation_present",
+        "field_and_widget_relationship_resolved"
+      ]
+    },
+    {
+      "id": "xfa-fixture",
+      "filename": "xfa-fixture.pdf",
+      "purpose": "AcroForm içinde dinamik /XFA stream barındıran PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "has_xfa_form"
+      ],
+      "expected_planning_outcome": "blocked",
+      "expected_blocker": "REDACTION_XFA_INPUT_UNSUPPORTED",
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "blocked_unsupported",
+      "sha256": "504b7e6630e15a663d5933e938237222c33823b06ef4a03c9d85c395ca28fdb3",
+      "byte_size": 751,
+      "semantic_assertions": [
+        "catalog_has_acroform",
+        "acroform_has_xfa_entry",
+        "planner_detects_xfa_blocker",
+        "distinct_from_standard_acroform"
+      ]
+    },
+    {
+      "id": "encrypted-redaction",
+      "filename": "encrypted-redaction.pdf",
+      "purpose": "Gerçek parola korumalı ve içerik seviyesinde şifreli PDF belge",
+      "encrypted": true,
+      "test_credential": "fixture-password",
+      "expected_page_count": 1,
+      "expected_text": "ENCRYPTED REDACTION FIXTURE SECRET",
+      "expected_properties": [
+        "encrypted_standard_security_handler"
+      ],
+      "expected_planning_outcome": "blocked",
+      "expected_blocker": "REDACTION_ENCRYPTED_INPUT_UNSUPPORTED",
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "blocked_unsupported",
+      "sha256": "2d922b2bdad284ee55bf8b96dded1fe4173cc7da7c368635218a371fbe62d791",
+      "byte_size": 933,
+      "semantic_assertions": [
+        "open_without_password_fails",
+        "open_with_wrong_password_fails",
+        "open_with_correct_password_succeeds",
+        "correct_password_extracts_expected_text",
+        "plaintext_marker_not_present_in_raw_pdf",
+        "security_handler_not_unprotected",
+        "encrypted_stream_length_is_valid"
+      ]
+    },
+    {
+      "id": "signature-marked-byterange",
+      "filename": "signature-marked-byterange.pdf",
+      "purpose": "Imza işaretleyici sözlüğü ve /ByteRange barındıran PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "has_signature_dict",
+        "has_byterange"
+      ],
+      "expected_planning_outcome": "blocked",
+      "expected_blocker": "REDACTION_SIGNED_INPUT_UNSUPPORTED",
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "blocked_unsupported",
+      "sha256": "074ae3a0d82c50097fed6d578c31bb5cef7065129a07bf9ae0b229f192eb6b35",
+      "byte_size": 921,
+      "semantic_assertions": [
+        "signature_dict_present",
+        "byterange_array_present",
+        "planner_detects_signature_blocker",
+        "no_cryptographic_validity_claimed"
+      ]
+    },
+    {
+      "id": "incremental-revision",
+      "filename": "incremental-revision.pdf",
+      "purpose": "Birden fazla xref ve /Prev revizyon zinciri iceren PDF",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "incremental_updates",
+        "has_prev_pointer"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "635f8520ebe3f0617da3634eff066f2dfcfa50a8fc5ccf1861c28c6f8474861f",
+      "byte_size": 1270,
+      "semantic_assertions": [
+        "multiple_xref_sections_present",
+        "trailer_has_prev_pointer",
+        "contains_revision_one_reachable_marker",
+        "contains_revision_two_reachable_marker",
+        "contains_unreachable_old_object_marker",
+        "unreachable_object_pruning_testable"
+      ]
+    },
+    {
+      "id": "object-stream",
+      "filename": "object-stream.pdf",
+      "purpose": "Gercek Object stream (/ObjStm) ve XRef stream kullanan PDF 1.5 belge",
+      "encrypted": false,
+      "test_credential": null,
+      "expected_page_count": 1,
+      "expected_text": null,
+      "expected_properties": [
+        "objstm_compressed_objects",
+        "xref_stream"
+      ],
+      "expected_planning_outcome": "ready",
+      "expected_blocker": null,
+      "expected_profile": "secure_rasterized_pages_v1",
+      "expected_strategy": "rasterized_pages",
+      "expected_verification_outcome": "verified_clean",
+      "sha256": "68fb1e93556b01fd26376cd0af0955258ce1364f0d7c8bd26b0e56f7107036bb",
+      "byte_size": 686,
+      "semantic_assertions": [
+        "pdf_version_is_1_5",
+        "objstm_dictionary_present",
+        "xref_stream_present",
+        "type_2_xref_entries_present",
+        "compressed_object_not_top_level",
+        "lopdf_resolves_compressed_object",
+        "pdfium_opens_and_renders"
+      ]
+    }
+  ]
+}

@@ -17,7 +17,7 @@
   }
 
   function handleSave() {
-    dispatch("save", metadata);
+    // Disabled / unsupported in PDFium
     close();
   }
 </script>
@@ -29,43 +29,49 @@
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 20px;">🏷️</span>
           <div>
-            <h3 class="meta-title">PDF Meta Veri Düzenleyici</h3>
-            <p class="meta-subtitle">Belge başlık, yazar ve anahtar kelime bilgilerini güncelleyin</p>
+            <h3 class="meta-title">PDF Meta Verileri (Salt Okunur)</h3>
+            <p class="meta-subtitle">PDFium motoru metadata yazma C API'si sunmamaktadır</p>
           </div>
         </div>
         <button class="close-btn" on:click={close}>✕</button>
       </div>
 
       <div class="meta-body">
+        <div class="unsupported-banner">
+          ⚠️ PDFium C API metin/alt-text yazma desteği sunmamaktadır; metadata düzenleme desteklenmiyor.
+        </div>
+
         <div class="form-group">
           <label for="meta-title">📌 Belge Başlığı (Title):</label>
-          <input id="meta-title" type="text" class="meta-input" bind:value={metadata.title} placeholder="Örn: Yıllık Faaliyet Raporu" />
+          <input id="meta-title" type="text" class="meta-input" bind:value={metadata.title} readonly disabled />
         </div>
 
         <div class="form-group">
           <label for="meta-author">✍️ Yazar (Author):</label>
-          <input id="meta-author" type="text" class="meta-input" bind:value={metadata.author} placeholder="Örn: Ahmet Yılmaz" />
+          <input id="meta-author" type="text" class="meta-input" bind:value={metadata.author} readonly disabled />
         </div>
 
         <div class="form-group">
           <label for="meta-subject">🏷️ Konu (Subject):</label>
-          <input id="meta-subject" type="text" class="meta-input" bind:value={metadata.subject} placeholder="Örn: Finansal Sunum" />
+          <input id="meta-subject" type="text" class="meta-input" bind:value={metadata.subject} readonly disabled />
         </div>
 
         <div class="form-group">
           <label for="meta-keywords">🔑 Anahtar Kelimeler (Keywords):</label>
-          <input id="meta-keywords" type="text" class="meta-input" bind:value={metadata.keywords} placeholder="Örn: rapor, pdf, finans, 2026" />
+          <input id="meta-keywords" type="text" class="meta-input" bind:value={metadata.keywords} readonly disabled />
         </div>
 
         <div class="form-group">
           <label for="meta-creator">⚙️ Oluşturan Uygulama (Creator):</label>
-          <input id="meta-creator" type="text" class="meta-input" bind:value={metadata.creator} placeholder="Örn: Preview Lite macOS" />
+          <input id="meta-creator" type="text" class="meta-input" bind:value={metadata.creator} readonly disabled />
         </div>
       </div>
 
       <div class="meta-footer">
-        <button class="cancel-btn" on:click={close}>İptal</button>
-        <button class="save-btn" on:click={handleSave}>Kaydet & Güncelle</button>
+        <button class="cancel-btn" on:click={close}>Kapat</button>
+        <button class="save-btn" disabled title="PDFium C API metin/alt-text yazma desteği sunmamaktadır">
+          Kaydet (Desteklenmiyor)
+        </button>
       </div>
     </div>
   </div>
@@ -131,6 +137,16 @@
     gap: 14px;
   }
 
+  .unsupported-banner {
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    color: #eab308;
+    padding: 10px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
   .form-group {
     display: flex;
     flex-direction: column;
@@ -150,11 +166,8 @@
     color: var(--text-primary);
     font-size: 13px;
     outline: none;
-  }
-
-  .meta-input:focus {
-    border-color: var(--accent-industrial);
-    outline: 1px solid var(--accent-industrial);
+    opacity: 0.7;
+    cursor: not-allowed;
   }
 
   .meta-footer {
@@ -177,12 +190,13 @@
   }
 
   .save-btn {
-    background: var(--accent-industrial);
+    background: var(--border-raw);
     border: none;
-    color: white;
+    color: var(--text-muted);
     padding: 6px 16px;
-    cursor: pointer;
+    cursor: not-allowed;
     font-size: 13px;
     font-weight: 500;
+    opacity: 0.6;
   }
 </style>

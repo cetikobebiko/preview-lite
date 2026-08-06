@@ -7,6 +7,11 @@
     "core:default",
     "dialog:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "shell:allow-open",
+    "fs:allow-appdata-read",
+    "fs:allow-appdata-write",
+    "fs:allow-read",
+    "fs:allow-write"
   ]
 }

@@ -1,37 +1,86 @@
 <script>
-  import { onMount, onDestroy } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { pdfState, renderPdfThumbnail, cleanupCanvasMemory } from "../pdfState.js";
+  import { getContext, onMount, onDestroy } from "svelte";
+  import {
+    cancelRenderRequest,
+    renderThumbnail,
+  } from "../services/backend/viewer.js";
+  import {
+    RENDER_SESSION_CONTEXT,
+    requireActiveRenderSession,
+  } from "../services/renderSession.js";
+  import {
+    createRenderRequestCoordinator,
+    isExpectedRenderCancellation,
+    validateRenderResponse,
+  } from "../utils/renderRequestCoordinator.js";
+  import { paintBufferToCanvas } from "../utils/canvasUtils.js";
 
-  export let filePath = "";
-  export let pageIndex = 0;
-  export let displayIndex = 0;
-  export let isActive = false;
-  export let onSelect = () => {};
-  export let onDelete = () => {};
-  export let onDragStart = () => {};
-  export let onDragOver = () => {};
-  export let onDrop = () => {};
+  let {
+    sessionId = "",
+    contentGeneration = 0,
+    pageIndex = 0,
+    displayIndex = 0,
+    isActive = false,
+    onSelect = () => {},
+    onDelete = () => {},
+    onDragStart = () => {},
+    onDragOver = () => {},
+    onDrop = () => {},
+  } = $props();
 
-  let containerRef;
-  let canvasRef;
-  let isLoaded = false;
-  let isLoading = false;
-  let isDragOver = false;
-  let observer;
-  let isMounted = false;
-  let thumbnailRequest = 0;
-  let sourceKey = "";
+  let containerRef = $state();
+  let canvasRef = $state();
+  let isLoaded = $state(false);
+  let isLoading = $state(false);
+  let isDragOver = $state(false);
+  let observer = $state();
+  let isMounted = $state(false);
+  let isIntersecting = $state(false);
+  let usesIntersectionObserver = $state(false);
+  let thumbnailRequest = $state(0);
+  let sourceKey = $state("");
+  const renderSession = getContext(RENDER_SESSION_CONTEXT);
+  const renderCoordinator = createRenderRequestCoordinator({
+    scope: "organizer_thumbnail",
+    cancel: (request) => cancelRenderRequest({
+      sessionId: request.sessionId,
+      pageIndex: request.pageIndex,
+      contentGeneration: request.contentGeneration,
+      requestId: request.requestId,
+      scope: request.scope,
+    }),
+  });
+
+  function releaseCanvasBackingStore(canvas = canvasRef) {
+    if (!canvas) return;
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+
+  function invalidateThumbnail() {
+    renderCoordinator.cancelActive();
+    thumbnailRequest += 1;
+    isLoaded = false;
+    isLoading = false;
+    releaseCanvasBackingStore();
+  }
 
   onMount(() => {
     isMounted = true;
-    sourceKey = `${filePath}:${pageIndex}`;
+    sourceKey = `${sessionId}:${contentGeneration}:${pageIndex}`;
     if (typeof IntersectionObserver !== "undefined") {
+      usesIntersectionObserver = true;
       observer = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
-            if (entry.isIntersecting && !isLoaded && !isLoading) {
+            isIntersecting = entry.isIntersecting;
+            if (isIntersecting && !isLoaded && !isLoading) {
               void loadThumbnail();
+            } else if (
+              !isIntersecting &&
+              (isLoaded || isLoading || canvasRef?.width || canvasRef?.height)
+            ) {
+              invalidateThumbnail();
             }
           });
         },
@@ -47,93 +96,84 @@
 
   onDestroy(() => {
     isMounted = false;
-    thumbnailRequest += 1;
+    isIntersecting = false;
+    invalidateThumbnail();
+    renderCoordinator.destroy();
     if (observer) {
       if (containerRef) observer.unobserve(containerRef);
       observer.disconnect();
     }
-    if (canvasRef) {
-      cleanupCanvasMemory(canvasRef);
-    }
   });
 
   async function loadThumbnail() {
-    if (!filePath || !canvasRef) return;
+    if (!sessionId || !canvasRef) return;
     const request = ++thumbnailRequest;
-    const sourceFilePath = filePath;
+    const sourceSessionId = sessionId;
+    const sourceContentGeneration = contentGeneration;
     const sourcePageIndex = pageIndex;
     const canvas = canvasRef;
+    let requestSnapshot;
     const isCurrentRequest = () =>
       isMounted &&
       request === thumbnailRequest &&
       canvasRef === canvas &&
-      filePath === sourceFilePath &&
-      pageIndex === sourcePageIndex;
+      sessionId === sourceSessionId &&
+      contentGeneration === sourceContentGeneration &&
+      pageIndex === sourcePageIndex &&
+      (!usesIntersectionObserver || isIntersecting);
 
     isLoading = true;
     try {
-      const documentProxy = pdfState.pdfDocProxy;
-      if (documentProxy) {
-        const success = await renderPdfThumbnail(sourcePageIndex, canvas, 140);
-        if (!isCurrentRequest() || pdfState.pdfDocProxy !== documentProxy) return;
-        if (success) {
-          isLoaded = true;
-          return;
-        }
-      }
-
-      const rendered = await invoke("render_thumbnail", {
-        path: sourceFilePath,
+      const session = requireActiveRenderSession(
+        renderSession,
+        sourceSessionId,
+        sourceContentGeneration,
+      );
+      const requestHandle = renderCoordinator.begin({
+        sessionId: session.sessionId,
         pageIndex: sourcePageIndex,
         targetWidth: 150,
+        contentGeneration: session.contentGeneration,
       });
-      if (!isCurrentRequest()) return;
+      requestSnapshot = requestHandle.snapshot;
+      const rendered = validateRenderResponse(
+        await requestHandle.wait(renderThumbnail(requestSnapshot)),
+        requestSnapshot,
+      );
+      if (!isCurrentRequest() || !renderCoordinator.isCurrent(requestSnapshot)) return;
 
-      const { width, height, data } = rendered;
-      if (!Number.isFinite(width) || !Number.isFinite(height) || !data) {
-        throw new Error("Geçersiz küçük resim verisi.");
-      }
-
-      const safeWidth = Math.max(1, Math.floor(width));
-      const safeHeight = Math.max(1, Math.floor(height));
-      if (safeWidth * safeHeight * 4 > data.length) {
-        throw new Error("Eksik küçük resim piksel verisi.");
-      }
-      canvas.width = safeWidth;
-      canvas.height = safeHeight;
-
-      const ctx = canvas.getContext("2d", { alpha: false });
-      if (!ctx) throw new Error("Canvas 2D bağlamı oluşturulamadı.");
-      const clampedData = new Uint8ClampedArray(data);
-      const imageData = new ImageData(clampedData, safeWidth, safeHeight);
-      ctx.putImageData(imageData, 0, 0);
-
+      paintBufferToCanvas(canvas, rendered);
       isLoaded = true;
     } catch (err) {
-      if (isCurrentRequest() && err?.name !== "RenderingCancelledException" && err?.name !== "AbortException") {
+      if (isCurrentRequest() && !isExpectedRenderCancellation(err)) {
         console.error(`Thumbnail ${sourcePageIndex} render error:`, err);
       }
     } finally {
-      if (isCurrentRequest()) isLoading = false;
+      if (requestSnapshot) renderCoordinator.settle(requestSnapshot);
+      if (isCurrentRequest()) {
+        isLoading = false;
+      }
     }
   }
 
-  $: if (isMounted && sourceKey !== `${filePath}:${pageIndex}`) {
-    sourceKey = `${filePath}:${pageIndex}`;
-    thumbnailRequest += 1;
-    isLoaded = false;
-    isLoading = false;
-    if (canvasRef) cleanupCanvasMemory(canvasRef);
-    void loadThumbnail();
-  }
+  let wasActive = $state(false);
+  $effect(() => {
+    const nextSourceKey = `${sessionId}:${contentGeneration}:${pageIndex}`;
+    if (isMounted && sourceKey !== nextSourceKey) {
+      sourceKey = nextSourceKey;
+      invalidateThumbnail();
+      if (!usesIntersectionObserver || isIntersecting) {
+        void loadThumbnail();
+      }
+    }
 
-  let wasActive = false;
-  $: if (isActive && !wasActive && containerRef) {
-    containerRef.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    wasActive = true;
-  } else if (!isActive && wasActive) {
-    wasActive = false;
-  }
+    if (isActive && !wasActive && containerRef) {
+      containerRef.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      wasActive = true;
+    } else if (!isActive && wasActive) {
+      wasActive = false;
+    }
+  });
 
   function handleDragOver(e) {
     e.preventDefault();
@@ -156,19 +196,22 @@
   bind:this={containerRef}
   class="thumb-item {isActive ? 'active' : ''} {isDragOver ? 'drag-over' : ''}"
   draggable="true"
-  on:dragstart={(e) => onDragStart(e, displayIndex)}
-  on:dragover={handleDragOver}
-  on:dragleave={handleDragLeave}
-  on:drop={handleDrop}
-  on:click={() => onSelect(displayIndex)}
+  ondragstart={(e) => onDragStart(e, displayIndex)}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+  onclick={() => onSelect(displayIndex)}
   role="button"
   tabindex="0"
-  on:keydown={(e) => e.key === 'Enter' && onSelect(displayIndex)}
+  onkeydown={(e) => e.key === 'Enter' && onSelect(displayIndex)}
 >
   <div class="thumb-canvas-wrapper">
     <button
       class="delete-btn"
-      on:click|stopPropagation={() => onDelete(displayIndex)}
+      onclick={(event) => {
+        event.stopPropagation();
+        onDelete(displayIndex);
+      }}
       title="Bu sayfayı sil"
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -186,7 +229,11 @@
         {/if}
       </div>
     {/if}
-    <canvas bind:this={canvasRef} class={isLoaded ? 'loaded' : 'hidden'}></canvas>
+    <canvas
+      bind:this={canvasRef}
+      class={isLoaded ? 'loaded' : 'hidden'}
+      aria-label="Sayfa {pageIndex + 1} önizleme"
+    ></canvas>
   </div>
   <div class="thumb-label">
     <span>[PG: {String(displayIndex + 1).padStart(3, '0')}]</span>

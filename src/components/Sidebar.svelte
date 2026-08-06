@@ -1,268 +1,163 @@
 <script>
-  import ThumbnailItem from "./ThumbnailItem.svelte";
-  import OutlineItem from "./OutlineItem.svelte";
+  import { getSessionPdfOutline } from '../services/backend/session.js';
+  import OutlineItem from './OutlineItem.svelte';
+  import Thumbnail from './Thumbnail.svelte';
 
-  export let filePath = "";
-  export let pageOrder = [];
-  export let currentPageIndex = 0;
-  export let outlineList = [];
-  export let onSelectPage = (index) => {};
-  export let onReorderPages = (newOrder) => {};
-  export let onDeletePage = (index) => {};
-  export let onMergePdf = () => {};
-  export let onSplitPdf = () => {};
+  let {
+    sessionId = "",
+    contentGeneration = 0,
+    pageCount = 0,
+    currentPageIndex = 0,
+    onJump = () => {},
+  } = $props();
 
-  let activeTab = "pages"; // 'pages' | 'outline'
-  let draggedIndex = null;
+  let activeTab = $state('thumbnails');
+  let outlineNodes = $state([]);
+  let loadingOutline = $state(false);
+  let loadingOutlineKey = $state("");
+  let loadedOutlineKey = $state("");
+  let outlineRequestSequence = 0;
 
-  // Virtual List States
-  let sidebarContentRef;
-  let scrollTop = 0;
-  let containerHeight = 800;
-  const ITEM_HEIGHT = 218;
+  $effect(() => {
+    const key = `${sessionId}:${contentGeneration}`;
+    if (
+      !sessionId ||
+      activeTab !== "outline" ||
+      loadingOutlineKey === key ||
+      loadedOutlineKey === key
+    ) return;
+    void loadOutline(sessionId, contentGeneration, key);
+  });
 
-  $: totalHeight = pageOrder.length * ITEM_HEIGHT;
-  $: startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 3);
-  $: endIndex = Math.min(pageOrder.length - 1, Math.floor((scrollTop + containerHeight) / ITEM_HEIGHT) + 3);
-
-  $: visiblePages = pageOrder
-      .map((originalPageIndex, displayIndex) => ({ originalPageIndex, displayIndex }))
-      .slice(startIndex, endIndex + 1);
-
-  let prevCurrentPageIndex = currentPageIndex;
-  $: if (currentPageIndex !== prevCurrentPageIndex) {
-    prevCurrentPageIndex = currentPageIndex;
-    if (sidebarContentRef) {
-      const topOffset = currentPageIndex * ITEM_HEIGHT;
-      const bottomOffset = topOffset + ITEM_HEIGHT;
-      if (topOffset < scrollTop || bottomOffset > scrollTop + containerHeight) {
-        sidebarContentRef.scrollTo({
-          top: Math.max(0, topOffset - (containerHeight / 2) + (ITEM_HEIGHT / 2)),
-          behavior: 'smooth'
-        });
+  async function loadOutline(requestSessionId, requestGeneration, key) {
+    const requestSequence = ++outlineRequestSequence;
+    loadingOutline = true;
+    loadingOutlineKey = key;
+    try {
+      const result = await getSessionPdfOutline(
+        requestSessionId,
+        requestGeneration,
+      );
+      if (
+        requestSequence !== outlineRequestSequence ||
+        requestSessionId !== sessionId ||
+        requestGeneration !== contentGeneration
+      ) return;
+      outlineNodes = result;
+      loadedOutlineKey = key;
+    } catch (e) {
+      if (requestSequence === outlineRequestSequence) {
+        console.error("Outline yüklenemedi:", e);
       }
-    }
-  }
-
-  function handleScroll(e) {
-    scrollTop = e.target.scrollTop;
-  }
-
-  function handleDragStart(e, index) {
-    draggedIndex = index;
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", index);
-  }
-
-  function handleDragOver(e, index) {
-    e.preventDefault();
-  }
-
-  function handleDrop(e, dropIndex) {
-    e.preventDefault();
-    if (draggedIndex !== null && draggedIndex !== dropIndex) {
-      const updatedOrder = [...pageOrder];
-      const [movedItem] = updatedOrder.splice(draggedIndex, 1);
-      updatedOrder.splice(dropIndex, 0, movedItem);
-      
-      onReorderPages(updatedOrder);
-      draggedIndex = null;
+    } finally {
+      if (requestSequence === outlineRequestSequence) {
+        loadingOutline = false;
+        loadingOutlineKey = "";
+      }
     }
   }
 </script>
 
-<aside class="sidebar">
-  <!-- Raw Telemetry Tab Switcher Header -->
-  <div class="sidebar-tabs">
-    <button
-      class="tab-btn {activeTab === 'pages' ? 'active' : ''}"
-      on:click={() => (activeTab = "pages")}
-    >
-      [01. SAYFALAR ({pageOrder.length})]
+<div class="sidebar">
+  <div class="tabs">
+    <button class:active={activeTab === 'thumbnails'} onclick={() => activeTab = 'thumbnails'}>
+      Sayfalar
     </button>
-    <button
-      class="tab-btn {activeTab === 'outline' ? 'active' : ''}"
-      on:click={() => (activeTab = "outline")}
-    >
-      [02. İÇİNDEKİLER ({outlineList.length})]
+    <button class:active={activeTab === 'outline'} onclick={() => activeTab = 'outline'}>
+      İçindekiler
     </button>
   </div>
 
-  {#if activeTab === "pages"}
-    <div class="sidebar-header">
-      <div style="display: flex; gap: 4px; width: 100%;">
-        <button class="sidebar-action-btn" on:click={onMergePdf} title="Başka PDF ile Birleştir">
-          + BİRLEŞTİR
-        </button>
-        <button class="sidebar-action-btn" on:click={onSplitPdf} title="Seçili Sayfaları Yeni PDF Olarak Böl">
-          / BÖL
-        </button>
+  <div class="content">
+    {#if activeTab === 'outline'}
+      <div class="outline-container">
+        {#if loadingOutline}
+          <div class="loading">Yükleniyor...</div>
+        {:else if outlineNodes.length === 0}
+          <div class="empty">Bu belgede içindekiler tablosu bulunamadı.</div>
+        {:else}
+          {#each outlineNodes as node, index (`${index}:${node.page_index}:${node.title}`)}
+            <OutlineItem {node} {onJump} />
+          {/each}
+        {/if}
       </div>
-    </div>
-    
-    <div class="sidebar-content" bind:this={sidebarContentRef} on:scroll={handleScroll} bind:clientHeight={containerHeight}>
-      <div style="height: {totalHeight}px; position: relative; width: 100%;">
-        {#each visiblePages as { originalPageIndex, displayIndex } (displayIndex)}
-          <div style="position: absolute; top: {displayIndex * ITEM_HEIGHT}px; left: 0; width: 100%; padding-bottom: 8px;">
-            <ThumbnailItem
-              {filePath}
-              pageIndex={originalPageIndex}
-              {displayIndex}
-              isActive={displayIndex === currentPageIndex}
-              onSelect={onSelectPage}
-              onDelete={onDeletePage}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-            />
-          </div>
+    {:else if activeTab === 'thumbnails'}
+      <div class="thumbnails-container">
+        {#each Array(pageCount) as _, i (i)}
+          <Thumbnail
+            {sessionId}
+            {contentGeneration}
+            pageIndex={i}
+            isActive={currentPageIndex === i}
+            onSelect={() => onJump(i)}
+          />
         {/each}
       </div>
-    </div>
-  {:else}
-    <!-- Outline / Table of Contents Tree View -->
-    <div class="outline-content">
-      {#if outlineList.length === 0}
-        <div class="outline-empty">
-          <span>// YER İMİ BULUNAMADI</span>
-        </div>
-      {:else}
-        {#each outlineList as item}
-          <OutlineItem {item} {currentPageIndex} {onSelectPage} />
-        {/each}
-      {/if}
-    </div>
-  {/if}
-</aside>
+    {/if}
+  </div>
+</div>
 
 <style>
   .sidebar {
-    width: 220px;
-    height: 100%;
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border-raw);
+    width: 280px;
+    height: 100vh;
+    background: var(--bg-surface, #18181b);
+    border-right: 1px solid var(--border-raw, #3f3f46);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    user-select: none;
+    overflow: hidden;
     font-family: var(--font-mono);
   }
-
-  .sidebar-tabs {
+  .tabs {
     display: flex;
-    background: var(--bg-primary);
-    border-bottom: 1px solid var(--border-raw);
+    border-bottom: 1px solid var(--border-raw, #3f3f46);
+    flex-shrink: 0;
+    background: var(--bg-panel, #202023);
   }
-
-  .tab-btn {
+  .tabs button {
     flex: 1;
     background: transparent;
     border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 700;
-    padding: 8px 4px;
+    color: var(--text-muted, #a1a1aa);
+    padding: 12px;
     cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    text-align: center;
+    font-size: 13px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    transition: all 0.2s ease;
   }
-
-  .tab-btn.active {
-    border-bottom-color: var(--accent-industrial);
-    color: var(--accent-industrial);
-    background: var(--bg-surface);
+  .tabs button:hover {
+    color: var(--text-primary, #f4f4f5);
+    background: rgba(255, 255, 255, 0.05);
   }
-
-  .sidebar-header {
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--border-raw);
-    background: var(--bg-panel);
+  .tabs button.active {
+    color: var(--accent-industrial, #ff5500);
+    border-bottom: 2px solid var(--accent-industrial, #ff5500);
+    background: var(--bg-surface, #18181b);
   }
-
-  .sidebar-action-btn {
+  .content {
     flex: 1;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    border: 1px solid var(--border-raw);
-    padding: 4px 6px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 700;
-    cursor: pointer;
+    overflow-y: auto;
+    padding: 16px;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
+    flex-direction: column;
   }
-
-  .sidebar-action-btn:hover {
-    border-color: var(--accent-industrial);
-    color: var(--accent-industrial);
-  }
-
-  .sidebar-content {
-    flex: 1;
-    overflow-y: auto !important;
-    height: 100%;
-    padding: 8px 6px;
+  .outline-container {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    scrollbar-width: thin;
-    scrollbar-color: #333333 #141414;
   }
-
-  .outline-content {
-    flex: 1;
-    overflow-y: auto !important;
-    height: 100%;
-    padding: 6px 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    scrollbar-width: thin;
-    scrollbar-color: #333333 #141414;
+  .thumbnails-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 16px;
+    align-items: start;
   }
-
-  /* WebKit / Tauri (macOS/Linux/Windows) Zorlaması */
-  :global(.sidebar-content::-webkit-scrollbar),
-  :global(.outline-content::-webkit-scrollbar) {
-    width: 8px !important;
-    height: 8px !important;
-    display: block !important;
-  }
-
-  :global(.sidebar-content::-webkit-scrollbar-track),
-  :global(.outline-content::-webkit-scrollbar-track) {
-    background: #141414 !important;
-    border-radius: 0px !important;
-  }
-
-  :global(.sidebar-content::-webkit-scrollbar-thumb),
-  :global(.outline-content::-webkit-scrollbar-thumb) {
-    background: #333333 !important;
-    border-radius: 0px !important;
-  }
-
-  :global(.sidebar-content::-webkit-scrollbar-thumb:hover),
-  :global(.outline-content::-webkit-scrollbar-thumb:hover) {
-    background: #ff5500 !important;
-  }
-
-  :global(.sidebar-content::-webkit-scrollbar-thumb:active),
-  :global(.outline-content::-webkit-scrollbar-thumb:active) {
-    background: #ff7722 !important;
-  }
-
-  .outline-empty {
-    padding: 40px 16px;
+  .loading, .empty {
+    color: var(--text-muted, #a1a1aa);
     text-align: center;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-family: var(--font-mono);
+    margin-top: 24px;
+    font-size: 13px;
   }
 </style>

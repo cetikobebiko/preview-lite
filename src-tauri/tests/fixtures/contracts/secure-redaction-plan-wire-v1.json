@@ -1,0 +1,217 @@
+{
+  "schema_version": "1.0.0",
+  "plan_version": "secure_redaction_plan_v1",
+  "input_digest": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+  "content_generation": 0,
+  "plan_digest": "dffeeb396eda5448bc37a9901e02a42cd6c74eeb9f7db559d7b67642dbbd2cd3",
+  "policy": {
+    "schema_version": "1.0.0",
+    "profile": "secure_rasterized_pages_v1",
+    "strategy": "rasterized_pages",
+    "raster_dpi": 300,
+    "appearance": {
+      "kind": "solid",
+      "color": "black",
+      "opacity": 1.0
+    },
+    "safety_margin_points": 2.0,
+    "interactive_content_policy": "block",
+    "signature_policy": "block",
+    "encryption_policy": "block"
+  },
+  "acknowledgements": {
+    "schema_version": "1.0.0",
+    "rasterized_pages_accepted": true,
+    "text_search_loss_accepted": true,
+    "accessibility_loss_accepted": true,
+    "annotation_loss_accepted": true,
+    "form_loss_accepted": true,
+    "signature_invalidation_accepted": true,
+    "encryption_change_accepted": true
+  },
+  "acknowledgement_requirements": {
+    "schema_version": "1.0.0",
+    "rasterized_pages_required": true,
+    "text_search_loss_required": true,
+    "accessibility_loss_required": false,
+    "annotation_loss_required": false,
+    "form_loss_required": false,
+    "signature_invalidation_required": false,
+    "encryption_change_required": false
+  },
+  "page_plans": [
+    {
+      "schema_version": "1.0.0",
+      "page_index": 0,
+      "strategy": "rasterize_page",
+      "geometry": {
+        "page_index": 0,
+        "media_box": {
+          "left": 0.0,
+          "bottom": 0.0,
+          "width": 612.0,
+          "height": 792.0
+        },
+        "crop_box": null,
+        "effective_box": {
+          "left": 0.0,
+          "bottom": 0.0,
+          "width": 612.0,
+          "height": 792.0
+        },
+        "rotation": 0
+      },
+      "geometry_digest": "f69551ae8e69502f7ba24758c0790270ccfb798fcf4fbffa886ebd67a4ce4225",
+      "canonical_regions": [
+        {
+          "region_id": "canon_r1",
+          "source_region_ids": [
+            "s1"
+          ],
+          "page_index": 0,
+          "original_normalized_rect": {
+            "x": 0.1,
+            "y": 0.1,
+            "width": 0.3,
+            "height": 0.2
+          },
+          "base_pdf_point_rect": {
+            "left": 61.2,
+            "bottom": 554.4,
+            "width": 183.6,
+            "height": 158.4
+          },
+          "requested_safety_margin_points": 2.0,
+          "applied_pdf_point_rect": {
+            "left": 59.2,
+            "bottom": 552.4,
+            "width": 187.6,
+            "height": 162.4
+          },
+          "applied_margins": {
+            "left": 2.0,
+            "right": 2.0,
+            "top": 2.0,
+            "bottom": 2.0
+          },
+          "boundary_adjusted": false,
+          "device_pixel_rect": null
+        }
+      ],
+      "facts": {
+        "schema_version": "1.0.0",
+        "page_index": 0,
+        "text": "present",
+        "images": "absent",
+        "vector_paths": "absent",
+        "form_xobjects": "absent",
+        "annotations": "absent",
+        "link_annotations": "absent",
+        "widgets": "absent",
+        "transparency": "absent",
+        "optional_content": "absent",
+        "complex_resources": "absent",
+        "structure_association": "absent",
+        "page_actions": "absent",
+        "spot_colors": "absent",
+        "complex_color_spaces": "absent",
+        "geometry_profile": "standard_effective_box_v1",
+        "rotation": 0
+      },
+      "feature_losses": {
+        "schema_version": "1.0.0",
+        "text_selection_lost": true,
+        "searchability_lost": true,
+        "accessibility_tags_lost": false,
+        "links_lost": false,
+        "annotations_lost": false,
+        "forms_lost": false,
+        "vector_quality_lost": false,
+        "color_space_fidelity_risk": false,
+        "spot_colors_lost": false,
+        "layers_lost": false,
+        "structure_association_lost": false,
+        "page_actions_lost": false
+      },
+      "blockers": [],
+      "warnings": [],
+      "executable": true
+    }
+  ],
+  "canonical_regions": [
+    {
+      "region_id": "canon_r1",
+      "source_region_ids": [
+        "s1"
+      ],
+      "page_index": 0,
+      "original_normalized_rect": {
+        "x": 0.1,
+        "y": 0.1,
+        "width": 0.3,
+        "height": 0.2
+      },
+      "base_pdf_point_rect": {
+        "left": 61.2,
+        "bottom": 554.4,
+        "width": 183.6,
+        "height": 158.4
+      },
+      "requested_safety_margin_points": 2.0,
+      "applied_pdf_point_rect": {
+        "left": 59.2,
+        "bottom": 552.4,
+        "width": 187.6,
+        "height": 162.4
+      },
+      "applied_margins": {
+        "left": 2.0,
+        "right": 2.0,
+        "top": 2.0,
+        "bottom": 2.0
+      },
+      "boundary_adjusted": false,
+      "device_pixel_rect": null
+    }
+  ],
+  "facts": {
+    "schema_version": "1.0.0",
+    "total_pages": 1,
+    "encryption": "absent",
+    "signature_dictionary": "absent",
+    "signature_field": "absent",
+    "byte_range": "absent",
+    "acro_form": "absent",
+    "xfa": "absent",
+    "annotations": "absent",
+    "optional_content": "absent",
+    "embedded_files": "absent",
+    "javascript": "absent",
+    "incremental_revisions": "absent",
+    "structure_tree": "absent",
+    "outlines": "absent",
+    "names_dictionary": "absent",
+    "document_actions": "absent",
+    "complex_document_resources": "absent"
+  },
+  "losses": {
+    "schema_version": "1.0.0",
+    "text_selection_lost": true,
+    "searchability_lost": true,
+    "accessibility_tags_lost": false,
+    "links_lost": false,
+    "annotations_lost": false,
+    "forms_lost": false,
+    "vector_quality_lost": false,
+    "color_space_fidelity_risk": false,
+    "spot_colors_lost": false,
+    "layers_lost": false,
+    "structure_association_lost": false,
+    "page_actions_lost": false
+  },
+  "blockers": [],
+  "warnings": [],
+  "executable": true,
+  "acknowledgements_satisfied": true,
+  "ready_for_execution": true
+}

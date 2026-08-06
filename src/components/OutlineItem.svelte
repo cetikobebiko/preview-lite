@@ -1,44 +1,25 @@
 <script>
-  export let item = {};
-  export let currentPageIndex = 0;
-  export let onSelectPage = () => {};
-
-  let isOpen = true;
-
-  function handleSelect(e) {
-    e.stopPropagation();
-    onSelectPage(item.page_index);
-  }
-
-  function toggleOpen(e) {
-    e.stopPropagation();
-    isOpen = !isOpen;
-  }
+  export let node;
+  export let onJump;
+  
+  let expanded = false;
 </script>
 
 <div class="outline-node">
-  <div
-    class="outline-item {item.page_index === currentPageIndex ? 'active' : ''}"
-    style="padding-left: {4 + (item.level || 0) * 10}px;"
-  >
-    {#if item.children && item.children.length > 0}
-      <button class="toggle-btn" on:click={toggleOpen} title={isOpen ? "Daralt" : "Genişlet"}>
-        <span class="toggle-icon">{isOpen ? "-" : "+"}</span>
-      </button>
-    {:else}
-      <span class="bullet">></span>
+  <div class="outline-header" on:click={() => { if(node.children.length === 0 || onJump) onJump(node.page_index); expanded = !expanded; }}>
+    {#if node.children.length > 0}
+      <span class="toggle" on:click|stopPropagation={() => expanded = !expanded}>
+        {expanded ? '▼' : '▶'}
+      </span>
     {/if}
-
-    <button class="title-btn" on:click={handleSelect} title="{item.title} (Sayfa {item.page_index + 1})">
-      <span class="title-text">{item.title}</span>
-      <span class="page-badge">[P.{String(item.page_index + 1).padStart(3, '0')}]</span>
-    </button>
+    <span class="title">{node.title}</span>
+    <span class="page-num">{node.page_index + 1}</span>
   </div>
-
-  {#if isOpen && item.children && item.children.length > 0}
-    <div class="children-container">
-      {#each item.children as child}
-        <svelte:self item={child} {currentPageIndex} {onSelectPage} />
+  
+  {#if expanded && node.children.length > 0}
+    <div class="children">
+      {#each node.children as child}
+        <svelte:self node={child} {onJump} />
       {/each}
     </div>
   {/if}
@@ -46,99 +27,43 @@
 
 <style>
   .outline-node {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text-main, #d1d5db);
+    user-select: none;
   }
-
-  .outline-item {
+  .outline-header {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 4px;
-    border-left: 2px solid transparent;
-    border-radius: 0px;
-    transition: none;
-  }
-
-  .outline-item:hover {
-    background: var(--bg-panel);
-  }
-
-  .outline-item.active {
-    border-left: 2px solid var(--accent-industrial);
-    background: var(--bg-panel);
-  }
-
-  .toggle-btn {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
+    padding: 6px 8px;
     cursor: pointer;
-    padding: 0 2px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: 11px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
   }
-
-  .toggle-btn:hover {
-    color: var(--accent-industrial);
+  .outline-header:hover {
+    background-color: rgba(255, 255, 255, 0.1);
   }
-
-  .toggle-icon {
-    font-family: var(--font-mono);
-  }
-
-  .bullet {
-    color: var(--border-focus);
+  .toggle {
+    display: inline-block;
+    width: 16px;
     font-size: 10px;
-    width: 12px;
+    color: #9ca3af;
     text-align: center;
-    font-family: var(--font-mono);
+    margin-right: 4px;
   }
-
-  .title-btn {
+  .title {
     flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 400;
-    text-align: left;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    overflow: hidden;
-    padding: 0;
-  }
-
-  .outline-item.active .title-btn {
-    color: var(--accent-industrial);
-    font-weight: 700;
-  }
-
-  .title-text {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
   }
-
-  .page-badge {
-    font-size: 10px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+  .page-num {
+    font-size: 12px;
+    color: #9ca3af;
+    margin-left: 8px;
   }
-
-  .children-container {
-    display: flex;
-    flex-direction: column;
+  .children {
+    padding-left: 16px;
+    border-left: 1px solid rgba(255,255,255,0.1);
+    margin-left: 8px;
   }
 </style>

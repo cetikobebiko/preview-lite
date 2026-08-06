@@ -1,63 +1,54 @@
 <script>
-  import { onDestroy, createEventDispatcher, tick } from "svelte";
+  import { tick } from "svelte";
+  import {
+    filterCommands,
+    moveCommandSelection,
+    selectCommand,
+  } from "../commandRegistry.js";
+  import { FeatureUnavailableError } from "../featureActionGuard.js";
+  import { getRuntimeFeatureContext } from "../featureRegistry.js";
 
-  export let isOpen = false;
-  const dispatch = createEventDispatcher();
+  let {
+    isOpen = $bindable(false),
+    context = null,
+    onselect = () => {},
+    onclose = () => {},
+  } = $props();
 
-  let searchQuery = "";
-  let selectedIndex = 0;
-  let inputRef;
+  const runtimeFeatureContext = getRuntimeFeatureContext();
 
-  const commands = [
-    { id: "open-metadata", title: "Belge Meta Verilerini Düzenle (Title, Author, Keywords)", icon: "🏷️", category: "Güvenlik & Meta" },
-    { id: "export-page-image", title: "Aktif Sayfayı Yüksek Çözünürlüklü SVG / Görsel Olarak Aktar", icon: "🎨", category: "Dışa Aktar" },
-    { id: "open-bionic", title: "Biyonik Okuma Katmanı (Bionic Reading)", icon: "🧠", category: "Okuma Modları" },
-    { id: "toggle-ruler", title: "Odak Cetvelini Aç / Gizle (Line Focus)", icon: "📏", category: "Okuma Modları" },
-    { id: "open-analytics", title: "Oturum ve Okuma İstatistikleri", icon: "📊", category: "İstatistik" },
-    { id: "camera-scan", title: "iPhone Süreklilik Kamerası ile Belge Tara & Ekle", icon: "📱", category: "Donanım" },
-    { id: "speak-page", title: "Sayfayı Sesli Oku (macOS TTS - Türkçe)", icon: "🔊", category: "Ses" },
-    { id: "stop-speak", title: "Sesli Okumayı Durdur", icon: "⏹️", category: "Ses" },
-    { id: "share-macos", title: "macOS Paylaşım Menüsü (Share Sheet)", icon: "📤", category: "Paylaşım" },
-    { id: "open-ai-assistant", title: "Yapay Zeka Asistanı / Belge Özetle (Local AI)", icon: "🤖", category: "Yapay Zeka" },
-    { id: "run-ocr-page", title: "Taranmış Sayfaya OCR Uygula (Apple Vision)", icon: "👁️", category: "Yerel OCR" },
-    { id: "toggle-dark-mode", title: "Akıllı Gece Modu (Smart Dark Mode)", icon: "🌙", category: "Görünüm" },
-    { id: "toggle-book-mode", title: "Kitap Modu (Çift Sayfa)", icon: "📖", category: "Görünüm" },
-    { id: "toggle-split-view", title: "Çift Görünüm / Split View", icon: "📑", category: "Görünüm" },
-    { id: "toggle-sidebar", title: "Sol Paneli Göster / Gizle", icon: "🖼️", category: "Arayüz" },
-    { id: "open-search", title: "Belge İçi Metin Arama (Cmd+F)", icon: "🔍", category: "Gezinti" },
-    { id: "export-notes-md", title: "Notları Markdown (.md) Olarak Dışa Aktar", icon: "📝", category: "Not Alma" },
-    { id: "split-pdf", title: "PDF Sayfalarını Böl / Seçili Sayfaları Dışa Aktar", icon: "✂️", category: "Düzenleme" },
-    { id: "merge-pdf", title: "Başka Bir PDF ile Birleştir", icon: "➕", category: "Düzenleme" },
-    { id: "reset-zoom", title: "Yakınlaştırmayı Sıfırla (%100)", icon: "🎯", category: "Görünüm" },
-    { id: "burn-in-pdf", title: "Çizimleri PDF Üzerine Kalıcı İşle & Kaydet (Flattening)", icon: "💾", category: "Dışa Aktar" },
-  ];
+  let searchQuery = $state("");
+  let selectedIndex = $state(0);
+  let inputRef = $state(null);
+  let unavailableMessage = $state("");
 
-  $: filteredCommands = commands.filter((cmd) =>
-    cmd.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    cmd.category.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  let featureContext = $derived(context || runtimeFeatureContext);
+  let filteredCommands = $derived(filterCommands(searchQuery, featureContext));
 
-  $: if (isOpen) {
-    searchQuery = "";
-    selectedIndex = 0;
-    tick().then(() => {
-      if (inputRef) inputRef.focus();
-    });
-  }
+  $effect(() => {
+    if (isOpen) {
+      searchQuery = "";
+      selectedIndex = 0;
+      unavailableMessage = "";
+      tick().then(() => {
+        if (inputRef) inputRef.focus();
+      });
+    }
+  });
 
   function handleKeyDown(e) {
     if (!isOpen) return;
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      selectedIndex = (selectedIndex + 1) % Math.max(1, filteredCommands.length);
+      selectedIndex = moveCommandSelection(selectedIndex, "down", filteredCommands);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      selectedIndex = (selectedIndex - 1 + filteredCommands.length) % Math.max(1, filteredCommands.length);
+      selectedIndex = moveCommandSelection(selectedIndex, "up", filteredCommands);
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (filteredCommands[selectedIndex]) {
-        executeCommand(filteredCommands[selectedIndex].id);
+        void executeCommand(filteredCommands[selectedIndex]);
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -65,29 +56,44 @@
     }
   }
 
-  function executeCommand(id) {
-    dispatch("select", id);
-    close();
+  async function executeCommand(command) {
+    unavailableMessage = "";
+    try {
+      await selectCommand(command, featureContext, (id) => {
+        if (typeof onselect === "function") {
+          onselect({ detail: id });
+        }
+      });
+      close();
+    } catch (error) {
+      if (error instanceof FeatureUnavailableError) {
+        unavailableMessage = command?.presentation?.warning || error.message;
+        return;
+      }
+      throw error;
+    }
   }
 
   function close() {
     isOpen = false;
-    dispatch("close");
+    if (typeof onclose === "function") {
+      onclose();
+    }
   }
 </script>
 
-<svelte:window on:keydown={handleKeyDown} />
+<svelte:window onkeydown={handleKeyDown} />
 
 {#if isOpen}
   <!-- Overlay Backdrop -->
   <div
     class="cmd-overlay"
-    on:click={close}
-    on:keydown={(e) => e.key === 'Escape' && close()}
+    onclick={close}
+    onkeydown={(e) => e.key === 'Escape' && close()}
     role="presentation"
     tabindex="-1"
   >
-    <div class="cmd-dialog" on:click|stopPropagation role="presentation">
+    <div class="cmd-dialog" onclick={(e) => e.stopPropagation()} role="presentation">
       <div class="cmd-header">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="11" cy="11" r="8"></circle>
@@ -107,19 +113,41 @@
         {#each filteredCommands as cmd, index}
           <button
             class="cmd-item {index === selectedIndex ? 'active' : ''}"
-            on:click={() => executeCommand(cmd.id)}
-            on:mouseenter={() => (selectedIndex = index)}
+            class:unavailable={!cmd.presentation.runnable}
+            onclick={() => executeCommand(cmd)}
+            onmouseenter={() => (selectedIndex = index)}
+            disabled={!cmd.presentation.runnable}
+            aria-describedby={cmd.presentation.warning ? `command-warning-${cmd.id}` : undefined}
           >
             <span class="cmd-icon">{cmd.icon}</span>
             <div class="cmd-text">
               <span class="cmd-title">{cmd.title}</span>
-              <span class="cmd-category">{cmd.category}</span>
+              <span class="cmd-category">
+                {cmd.category}
+                {#if cmd.presentation.badge}
+                  · {cmd.presentation.badge}
+                {/if}
+              </span>
+              {#if cmd.presentation.warning}
+                <span class="cmd-warning" id={`command-warning-${cmd.id}`}>
+                  {cmd.presentation.warning}
+                </span>
+              {/if}
             </div>
+            {#if cmd.shortcut}
+              <span class="cmd-shortcut">{cmd.shortcut}</span>
+            {/if}
           </button>
         {:else}
-          <div class="cmd-empty">Eşleşen komut bulunamadı</div>
+          <div class="cmd-empty">Komut bulunamadı</div>
         {/each}
       </div>
+
+      {#if unavailableMessage}
+        <div class="cmd-unavailable-message" role="status">
+          {unavailableMessage}
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -129,22 +157,24 @@
     position: fixed;
     top: 0;
     left: 0;
-    right: 0;
-    bottom: 0;
-    background: var(--bg-primary);
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
     display: flex;
-    align-items: flex-start;
     justify-content: center;
-    padding-top: 120px;
-    z-index: 200;
-    animation: fadeIn 0.15s ease-out;
+    align-items: flex-start;
+    padding-top: 15vh;
+    z-index: 9999;
   }
 
   .cmd-dialog {
+    background: var(--bg-surface-elevated, #1e1e2e);
+    border: 1px solid var(--border-raw, #313244);
+    border-radius: 12px;
     width: 540px;
     max-width: 90vw;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-raw);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -153,10 +183,10 @@
   .cmd-header {
     display: flex;
     align-items: center;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border-raw);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-raw, #313244);
     gap: 12px;
-    color: var(--text-muted);
+    color: var(--text-muted, #a6adc8);
   }
 
   .cmd-input {
@@ -164,18 +194,17 @@
     background: transparent;
     border: none;
     outline: none;
-    color: var(--text-primary);
+    color: var(--text-main, #cdd6f4);
     font-size: 15px;
-    font-weight: 500;
-    font-family: inherit;
   }
 
   .cmd-badge {
-    font-size: 10px;
-    font-weight: 700;
+    font-size: 11px;
+    background: var(--bg-surface, #181825);
     padding: 2px 6px;
-    background: var(--bg-panel);
-    color: var(--text-muted);
+    border-radius: 4px;
+    color: var(--text-muted, #a6adc8);
+    border: 1px solid var(--border-raw, #313244);
   }
 
   .cmd-list {
@@ -188,26 +217,36 @@
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
     background: transparent;
     border: none;
-    color: var(--text-primary);
-    text-align: left;
+    color: var(--text-main, #cdd6f4);
     cursor: pointer;
-    transition: background 0.1s ease;
+    text-align: left;
+    gap: 12px;
+    transition: background 0.15s ease;
   }
 
+  .cmd-item:hover,
   .cmd-item.active {
-    background: var(--bg-panel);
-    border-left: 2px solid var(--accent-industrial);
+    background: var(--bg-surface-hover, #313244);
+  }
+
+  .cmd-item.unavailable {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .cmd-icon {
-    font-size: 18px;
+    font-size: 16px;
+    width: 24px;
+    display: flex;
+    justify-content: center;
   }
 
   .cmd-text {
+    flex: 1;
     display: flex;
     flex-direction: column;
   }
@@ -218,8 +257,22 @@
   }
 
   .cmd-category {
+    font-size: 11px;
+    color: var(--text-muted, #a6adc8);
+  }
+
+  .cmd-warning,
+  .cmd-unavailable-message {
+    color: var(--accent-warning, #d97706);
     font-size: 10px;
-    color: var(--text-muted);
+    line-height: 1.35;
+    margin-top: 4px;
+  }
+
+  .cmd-unavailable-message {
+    margin: 0;
+    padding: 8px 14px 12px;
+    border-top: 1px solid var(--border-raw);
   }
 
   .cmd-empty {

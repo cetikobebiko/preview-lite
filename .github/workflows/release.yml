@@ -1,0 +1,59 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-test:
+    name: Build & Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-20.04, macos-latest, windows-latest]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          
+      - name: Install Frontend Dependencies
+        run: npm install
+        
+      - name: Run Frontend Tests (Vitest)
+        run: npm run test
+        
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Install Linux Dependencies (Tauri)
+        if: matrix.os == 'ubuntu-20.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          
+      - name: Run Rust Tests
+        run: cargo test
+        working-directory: ./src-tauri
+
+      - name: Enforce strict Rust lint gate
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        working-directory: ./src-tauri
+        
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'PreviewLite ${{ github.ref_name }}'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
