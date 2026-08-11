@@ -211,7 +211,7 @@ enum DirectoryDurability {
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-enum FileIdentity {
+pub(crate) enum FileIdentity {
     #[cfg(unix)]
     Unix { device: u64, inode: u64 },
     #[cfg(windows)]
@@ -953,6 +953,30 @@ where
             }
             return Err(error.with_replacement_digest(replacement_digest));
         }
+        let committed_digest = sha256_file(target).map_err(|error| {
+            let mut error = DocumentIoError::new(
+                operation,
+                DocumentIoStage::PostCommitVerify,
+                CommitState::Indeterminate,
+                format!("Commit sonrası target SHA-256 okunamadı: {error}"),
+            );
+            if let Some(path) = outcome.recovery_backup.take() {
+                error = error.with_recovery_path(path);
+            }
+            error.with_replacement_digest(replacement_digest.clone())
+        })?;
+        if committed_digest != replacement_digest {
+            let mut error = DocumentIoError::new(
+                operation,
+                DocumentIoStage::PostCommitVerify,
+                CommitState::Indeterminate,
+                "Commit sonrası target digest'i validated replacement ile eşleşmiyor",
+            );
+            if let Some(path) = outcome.recovery_backup.take() {
+                error = error.with_recovery_path(path);
+            }
+            return Err(error.with_replacement_digest(replacement_digest));
+        }
 
         match sync_parent_directory(parent) {
             Ok(DirectoryDurability::Confirmed) => {
@@ -1093,6 +1117,236 @@ pub(crate) fn atomic_commit_prevalidated_pdf(
 pub(crate) enum TargetExpectation {
     Missing,
     Digest(String),
+}
+
+/// Secure-redaction publication has a stricter target contract than Save/Save
+/// As. A digest alone cannot distinguish a same-content replacement from the
+/// file the user originally selected, so bind the expectation to the canonical
+/// namespace and filesystem identity captured at preflight.
+#[derive(Clone, Debug)]
+pub(crate) enum SecurePublicationTargetExpectation {
+    Missing {
+        namespace: PathBuf,
+    },
+    Existing {
+        namespace: PathBuf,
+        identity: FileIdentity,
+        digest: String,
+    },
+}
+
+/// Captures the canonical, hardened persistence identity used by a later
+/// publication.  Callers must retain both return values: the resolved path is
+/// the authoritative target and the expectation prevents a time-of-check to
+/// time-of-use overwrite.
+#[allow(dead_code)]
+pub(crate) fn capture_target_expectation(
+    target: &Path,
+) -> Result<(PathBuf, TargetExpectation), String> {
+    let resolved = resolve_target(target)?;
+    let expectation = match resolved.snapshot.kind {
+        SnapshotKind::Missing => TargetExpectation::Missing,
+        SnapshotKind::RegularFile => TargetExpectation::Digest(
+            sha256_file(&resolved.path)
+                .map_err(|error| format!("Target SHA-256 okunamadı: {error}"))?,
+        ),
+    };
+    Ok((resolved.path, expectation))
+}
+
+pub(crate) fn capture_secure_publication_target_expectation(
+    target: &Path,
+) -> Result<(PathBuf, SecurePublicationTargetExpectation), String> {
+    let resolved = resolve_target(target)?;
+    let expectation = match resolved.snapshot.kind {
+        SnapshotKind::Missing => SecurePublicationTargetExpectation::Missing {
+            namespace: resolved.namespace.clone(),
+        },
+        SnapshotKind::RegularFile => SecurePublicationTargetExpectation::Existing {
+            namespace: resolved.namespace.clone(),
+            identity: resolved.snapshot.identity.clone().ok_or_else(|| {
+                format!(
+                    "Secure publication target kimliği belirlenemedi: {}",
+                    resolved.path.display()
+                )
+            })?,
+            digest: sha256_file(&resolved.path)
+                .map_err(|error| format!("Target SHA-256 okunamadı: {error}"))?,
+        },
+    };
+    Ok((resolved.path, expectation))
+}
+
+/// Atomically publishes a worker artifact that was independently verified.
+///
+/// This deliberately does not open or parse the PDF. The worker/verifier own
+/// PDF semantics; this boundary owns filesystem identity, byte digests and
+/// durable replacement only.
+pub(crate) fn atomic_publish_prevalidated_pdf(
+    operation: &str,
+    source: &Path,
+    target: &Path,
+    verified_artifact: &Path,
+    expected_artifact_digest: &str,
+    expectation: SecurePublicationTargetExpectation,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    atomic_publish_prevalidated_pdf_impl(
+        operation,
+        source,
+        target,
+        verified_artifact,
+        expected_artifact_digest,
+        expectation,
+        false,
+    )
+}
+
+/// Internal deterministic failure point used only by the secure-redaction
+/// integration acceptance harness. Normal production callers always use the
+/// wrapper above with corruption disabled.
+#[cfg(feature = "secure-redaction-test-support")]
+pub(crate) fn atomic_publish_prevalidated_pdf_for_acceptance(
+    operation: &str,
+    source: &Path,
+    target: &Path,
+    verified_artifact: &Path,
+    expected_artifact_digest: &str,
+    expectation: SecurePublicationTargetExpectation,
+    corrupt_staged_temp: bool,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    atomic_publish_prevalidated_pdf_impl(
+        operation,
+        source,
+        target,
+        verified_artifact,
+        expected_artifact_digest,
+        expectation,
+        corrupt_staged_temp,
+    )
+}
+
+fn atomic_publish_prevalidated_pdf_impl(
+    operation: &str,
+    source: &Path,
+    target: &Path,
+    verified_artifact: &Path,
+    expected_artifact_digest: &str,
+    expectation: SecurePublicationTargetExpectation,
+    corrupt_staged_temp: bool,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    #[cfg(not(feature = "secure-redaction-test-support"))]
+    let _ = corrupt_staged_temp;
+    let source_path = source.to_path_buf();
+    let artifact_path = verified_artifact.to_path_buf();
+    let artifact_for_copy = artifact_path.clone();
+    let expected_digest = expected_artifact_digest.to_string();
+    let expected_artifact_digest_for_copy = expected_digest.clone();
+    let expected_target = expectation.clone();
+    atomic_write_with(
+        operation,
+        &[source_path, artifact_path],
+        target,
+        move |temp| {
+            // Hash the artifact immediately before copying: verifier success
+            // never grants a mutable path authority.
+            let artifact_digest = sha256_file(&artifact_for_copy).map_err(|error| {
+                DocumentIoFailure::invariant(format!(
+                    "Doğrulanmış artifact SHA-256 okunamadı: {error}"
+                ))
+            })?;
+            if artifact_digest != expected_artifact_digest_for_copy {
+                return Err(DocumentIoFailure::invariant(
+                    "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH: verifier sonrası artifact değişti",
+                ));
+            }
+            fs::copy(&artifact_for_copy, temp).map_err(|error| {
+                DocumentIoFailure::write(format!(
+                    "Doğrulanmış artifact atomic temp'e kopyalanamadı: {error}"
+                ))
+            })?;
+            #[cfg(feature = "secure-redaction-test-support")]
+            if corrupt_staged_temp {
+                use std::io::Write as _;
+                let mut staged =
+                    fs::OpenOptions::new()
+                        .append(true)
+                        .open(temp)
+                        .map_err(|error| {
+                            DocumentIoFailure::write(format!(
+                                "Controlled staged-temp corruption açılamadı: {error}"
+                            ))
+                        })?;
+                staged
+                    .write_all(b"acceptance-corruption")
+                    .map_err(|error| {
+                        DocumentIoFailure::write(format!(
+                            "Controlled staged-temp corruption yazılamadı: {error}"
+                        ))
+                    })?;
+            }
+            Ok(())
+        },
+        move |temp, _| {
+            validate_general_pdf(temp)?;
+            let temp_digest = sha256_file(temp).map_err(|error| {
+                DocumentIoFailure::invariant(format!("Atomic temp SHA-256 okunamadı: {error}"))
+            })?;
+            if temp_digest != expected_digest {
+                return Err(DocumentIoFailure::invariant(
+                    "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH: staged bytes verifier digest'iyle eşleşmiyor",
+                ));
+            }
+            Ok(())
+        },
+        move |resolved_target| {
+            let current = resolve_target(resolved_target).map_err(DocumentIoFailure::preflight)?;
+            match &expected_target {
+                SecurePublicationTargetExpectation::Missing { namespace } => {
+                    if current.namespace != *namespace
+                        || current.snapshot.kind != SnapshotKind::Missing
+                    {
+                        Err(DocumentIoFailure::preflight(
+                            "REDACTION_TARGET_CONFLICT: hedef preflight sonrasında oluşturuldu",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+                SecurePublicationTargetExpectation::Existing {
+                    namespace,
+                    identity,
+                    digest,
+                } => {
+                    if current.namespace != *namespace
+                        || current.snapshot.kind != SnapshotKind::RegularFile
+                    {
+                        return Err(DocumentIoFailure::preflight(
+                            "REDACTION_TARGET_CONFLICT: mevcut hedef publication öncesi silindi",
+                        ));
+                    }
+                    if current.snapshot.identity.as_ref() != Some(identity)
+                        || current.snapshot.links.unwrap_or(1) > 1
+                    {
+                        return Err(DocumentIoFailure::preflight(
+                        "REDACTION_TARGET_CONFLICT: hedef file identity preflight baseline'ından değişti",
+                    ));
+                    }
+                    let actual = sha256_file(&current.path).map_err(|error| {
+                        DocumentIoFailure::preflight(format!(
+                            "Publication hedef SHA-256 okunamadı: {error}"
+                        ))
+                    })?;
+                    if &actual == digest {
+                        Ok(())
+                    } else {
+                        Err(DocumentIoFailure::preflight(
+                            "REDACTION_TARGET_CONFLICT: hedef preflight baseline'ından değişti",
+                        ))
+                    }
+                }
+            }
+        },
+    )
 }
 
 pub(crate) fn atomic_copy_pdf(
@@ -1923,6 +2177,31 @@ mod tests {
         assert_eq!(fs::read(&real).unwrap(), b"original");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn document_io_rejects_dangling_symlink_output_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.pdf");
+        let target = dir.path().join("dangling-target.pdf");
+        symlink(&missing, &target).unwrap();
+
+        let error = atomic_write_with(
+            "test_dangling_symlink",
+            &[],
+            &target,
+            |_temp| Ok(()),
+            |_temp, _| Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.stage, DocumentIoStage::Preflight);
+        assert!(error.to_string().contains("Sembolik link"));
+        assert!(!missing.exists());
+    }
+
     #[cfg(windows)]
     #[test]
     fn document_io_rejects_windows_symlink_output_target() {
@@ -2074,4 +2353,93 @@ fn prevalidated_worker_output_digest_mismatch_preserves_original() {
     assert_eq!(error.stage, DocumentIoStage::ValidateInvariant);
     assert_eq!(error.state, CommitState::OriginalPreserved);
     assert_eq!(fs::read(&working).unwrap(), b"%PDF-original");
+}
+
+#[test]
+fn verified_publication_binds_missing_target_to_verified_digest() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    let artifact = directory.path().join("verified-artifact.pdf");
+    let target = directory.path().join("published.pdf");
+    fs::write(&snapshot, b"%PDF-snapshot").unwrap();
+    fs::write(&artifact, b"%PDF-verified-artifact").unwrap();
+    let digest = sha256_file(&artifact).unwrap();
+    let (canonical_target, expectation) =
+        capture_secure_publication_target_expectation(&target).unwrap();
+
+    let report = atomic_publish_prevalidated_pdf(
+        "secure_redaction_publish_test",
+        &snapshot,
+        &canonical_target,
+        &artifact,
+        &digest,
+        expectation,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        report.state,
+        CommitState::NewCommitted | CommitState::NewCommittedDurabilityUnconfirmed
+    ));
+    assert_eq!(report.committed_digest, digest);
+    assert_eq!(sha256_file(&target).unwrap(), digest);
+}
+
+#[test]
+fn verified_publication_rejects_target_baseline_race_without_overwrite() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    let artifact = directory.path().join("verified-artifact.pdf");
+    let target = directory.path().join("published.pdf");
+    fs::write(&snapshot, b"%PDF-snapshot").unwrap();
+    fs::write(&artifact, b"%PDF-verified-artifact").unwrap();
+    fs::write(&target, b"%PDF-original-target").unwrap();
+    let digest = sha256_file(&artifact).unwrap();
+    let (canonical_target, expectation) =
+        capture_secure_publication_target_expectation(&target).unwrap();
+    fs::write(&target, b"%PDF-racing-writer").unwrap();
+
+    let error = atomic_publish_prevalidated_pdf(
+        "secure_redaction_publish_test",
+        &snapshot,
+        &canonical_target,
+        &artifact,
+        &digest,
+        expectation,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.state, CommitState::OriginalPreserved);
+    assert_eq!(fs::read(&target).unwrap(), b"%PDF-racing-writer");
+}
+
+#[cfg(unix)]
+#[test]
+fn verified_publication_rejects_same_digest_identity_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    let artifact = directory.path().join("verified-artifact.pdf");
+    let target = directory.path().join("published.pdf");
+    let replacement = directory.path().join("replacement.pdf");
+    fs::write(&snapshot, b"%PDF-snapshot").unwrap();
+    fs::write(&artifact, b"%PDF-verified-artifact").unwrap();
+    fs::write(&target, b"%PDF-same-bytes").unwrap();
+    let digest = sha256_file(&artifact).unwrap();
+    let (canonical_target, expectation) =
+        capture_secure_publication_target_expectation(&target).unwrap();
+    fs::write(&replacement, b"%PDF-same-bytes").unwrap();
+    fs::rename(&replacement, &target).unwrap();
+
+    let error = atomic_publish_prevalidated_pdf(
+        "secure_redaction_publish_test",
+        &snapshot,
+        &canonical_target,
+        &artifact,
+        &digest,
+        expectation,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.state, CommitState::OriginalPreserved);
+    assert_eq!(fs::read(&target).unwrap(), b"%PDF-same-bytes");
 }

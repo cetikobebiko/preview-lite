@@ -2,6 +2,10 @@ use crate::document_session::{SessionJobOperationError, SessionJobOutcome};
 use pdfium_render::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 pub use crate::secure_redaction;
 pub use crate::secure_redaction::*;
@@ -785,6 +789,782 @@ pub async fn scan_sensitive_data(
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn plan_secure_redaction(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    policy: crate::secure_redaction::SecureRedactionPolicy,
+    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    store: tauri::State<'_, crate::document_session::DocumentSessionStore>,
+) -> Result<
+    SessionJobOutcome<crate::secure_redaction::SecureRedactionPlan>,
+    crate::document_session::DocumentSessionError,
+> {
+    let map_op_err = |err: SessionJobOperationError| match err {
+        SessionJobOperationError::Failed(f) => {
+            crate::document_session::DocumentSessionError::new(f.code, f.message)
+        }
+        SessionJobOperationError::Cancelled(c) => {
+            crate::document_session::DocumentSessionError::new(
+                "SESSION_JOB_CANCELLED",
+                format!("{c:?}"),
+            )
+        }
+    };
+
+    crate::secure_redaction::validate_secure_redaction_policy(&policy).map_err(map_op_err)?;
+    crate::secure_redaction::validate_redaction_acknowledgements(&acknowledgements)
+        .map_err(map_op_err)?;
+
+    crate::secure_redaction::validate_redaction_region_inputs(&regions).map_err(map_op_err)?;
+
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                let content_generation = context.captured_content_generation;
+                match crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::PlanSecureRedaction {
+                        content_generation,
+                        policy,
+                        acknowledgements,
+                        regions,
+                    },
+                    std::time::Duration::from_secs(180),
+                )? {
+                    crate::job_worker::JobResult::SecureRedactionPlan(plan) => Ok(plan),
+                    _ => Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Job worker beklenmeyen sonuç döndürdü",
+                    )),
+                }
+            },
+        )
+        .await
+}
+
+#[derive(Clone, Debug)]
+struct SecureRedactionPublicationTarget {
+    canonical_target: PathBuf,
+    expectation: crate::document_io::SecurePublicationTargetExpectation,
+}
+
+/// Deterministic acceptance boundaries for the secure-redaction orchestrator.
+///
+/// This support surface is never selected by the Tauri command or the normal
+/// core entry point. It exists so integration tests can stop the real worker
+/// chain at an exact boundary without environment variables or timing guesses.
+#[cfg(feature = "secure-redaction-test-support")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SecureRedactionExecutionTestPhase {
+    AfterSnapshotCreated,
+    BeforeTransform,
+    TransformWorkerStarted,
+    AfterTransformValidated,
+    BeforeVerifier,
+    VerifierWorkerStarted,
+    AfterVerifierValidated,
+    BeforePublication,
+    PublicationStarted,
+    AfterPublication,
+}
+
+#[cfg(not(feature = "secure-redaction-test-support"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SecureRedactionExecutionTestPhase {
+    AfterSnapshotCreated,
+    BeforeTransform,
+    TransformWorkerStarted,
+    AfterTransformValidated,
+    BeforeVerifier,
+    VerifierWorkerStarted,
+    AfterVerifierValidated,
+    BeforePublication,
+    PublicationStarted,
+    AfterPublication,
+}
+
+#[cfg(feature = "secure-redaction-test-support")]
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub enum SecureRedactionWorkerTestAction {
+    Real,
+    Fail { code: String, message: String },
+    Timeout,
+    HangUntilCancelled,
+}
+
+#[cfg(feature = "secure-redaction-test-support")]
+impl Default for SecureRedactionWorkerTestAction {
+    fn default() -> Self {
+        Self::Real
+    }
+}
+
+#[cfg(feature = "secure-redaction-test-support")]
+#[doc(hidden)]
+pub type SecureRedactionPhaseTestHook =
+    Arc<dyn Fn(SecureRedactionExecutionTestPhase, Option<&Path>) + Send + Sync + 'static>;
+
+#[cfg(feature = "secure-redaction-test-support")]
+#[doc(hidden)]
+pub type SecureRedactionResultTestHook = Arc<
+    dyn Fn(crate::job_worker::JobResult) -> crate::job_worker::JobResult + Send + Sync + 'static,
+>;
+
+#[cfg(feature = "secure-redaction-test-support")]
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct SecureRedactionExecutionTestSupport {
+    pub phase_hook: Option<SecureRedactionPhaseTestHook>,
+    pub transform_action: SecureRedactionWorkerTestAction,
+    pub verifier_action: SecureRedactionWorkerTestAction,
+    pub transform_result_hook: Option<SecureRedactionResultTestHook>,
+    pub verifier_result_hook: Option<SecureRedactionResultTestHook>,
+    pub corrupt_staged_temp: bool,
+}
+
+#[cfg(not(feature = "secure-redaction-test-support"))]
+#[derive(Clone, Default)]
+struct SecureRedactionExecutionTestSupport;
+
+#[cfg(feature = "secure-redaction-test-support")]
+fn notify_secure_redaction_test_phase(
+    support: Option<&SecureRedactionExecutionTestSupport>,
+    phase: SecureRedactionExecutionTestPhase,
+    artifact: Option<&Path>,
+) {
+    if let Some(hook) = support.and_then(|support| support.phase_hook.as_ref()) {
+        hook(phase, artifact);
+    }
+}
+
+#[cfg(not(feature = "secure-redaction-test-support"))]
+fn notify_secure_redaction_test_phase(
+    _support: Option<&SecureRedactionExecutionTestSupport>,
+    _phase: SecureRedactionExecutionTestPhase,
+    _artifact: Option<&Path>,
+) {
+}
+
+#[cfg(feature = "secure-redaction-test-support")]
+fn run_secure_redaction_worker_for_execution(
+    context: &crate::document_session::SessionJobContext,
+    command: crate::job_worker::JobCommand,
+    timeout: Duration,
+    action: &SecureRedactionWorkerTestAction,
+    test_support: Option<&SecureRedactionExecutionTestSupport>,
+    started_phase: SecureRedactionExecutionTestPhase,
+    artifact: Option<&Path>,
+) -> Result<crate::job_worker::JobResult, SessionJobOperationError> {
+    match action {
+        SecureRedactionWorkerTestAction::Real => {
+            crate::job_worker::run_job(context, command, timeout)
+        }
+        SecureRedactionWorkerTestAction::Fail { code, message } => {
+            let mut child = controlled_secure_redaction_test_child(false);
+            let status = context.child_processes.run_with_timeout(
+                &mut child,
+                Duration::from_secs(5),
+                &context.cancellation,
+            )?;
+            if status.success() {
+                return Err(SessionJobOperationError::failed_with_code(
+                    "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                    "Controlled failure child unexpectedly succeeded",
+                ));
+            }
+            Err(SessionJobOperationError::failed_with_code(
+                code.clone(),
+                message.clone(),
+            ))
+        }
+        SecureRedactionWorkerTestAction::Timeout => {
+            let mut child = controlled_secure_redaction_test_child(true);
+            match context.child_processes.run_with_timeout(
+                &mut child,
+                Duration::from_millis(1),
+                &context.cancellation,
+            ) {
+                Err(SessionJobOperationError::Cancelled(reason)) => {
+                    Err(SessionJobOperationError::Cancelled(reason))
+                }
+                Err(_) => Err(SessionJobOperationError::failed_with_code(
+                    "SESSION_JOB_WORKER_TIMEOUT",
+                    "Controlled secure-redaction worker deadline expired",
+                )),
+                Ok(_) => Err(SessionJobOperationError::failed_with_code(
+                    "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                    "Controlled timeout child unexpectedly exited before its deadline",
+                )),
+            }
+        }
+        SecureRedactionWorkerTestAction::HangUntilCancelled => {
+            let mut child = controlled_secure_redaction_test_child(true);
+            context.child_processes.run_with_timeout_after_spawn(
+                &mut child,
+                timeout,
+                &context.cancellation,
+                || notify_secure_redaction_test_phase(test_support, started_phase, artifact),
+            )?;
+            Err(SessionJobOperationError::failed_with_code(
+                "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                "Controlled cancellation child unexpectedly exited",
+            ))
+        }
+    }
+}
+
+#[cfg(not(feature = "secure-redaction-test-support"))]
+fn run_secure_redaction_worker_for_execution(
+    context: &crate::document_session::SessionJobContext,
+    command: crate::job_worker::JobCommand,
+    timeout: Duration,
+    _action: &(),
+    _test_support: Option<&SecureRedactionExecutionTestSupport>,
+    _started_phase: SecureRedactionExecutionTestPhase,
+    _artifact: Option<&Path>,
+) -> Result<crate::job_worker::JobResult, SessionJobOperationError> {
+    crate::job_worker::run_job(context, command, timeout)
+}
+
+#[cfg(feature = "secure-redaction-test-support")]
+#[cfg(unix)]
+fn controlled_secure_redaction_test_child(hang: bool) -> std::process::Command {
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(if hang { "exec sleep 60" } else { "exit 23" })
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    command
+}
+
+#[cfg(feature = "secure-redaction-test-support")]
+#[cfg(windows)]
+fn controlled_secure_redaction_test_child(hang: bool) -> std::process::Command {
+    let mut command = std::process::Command::new("cmd");
+    command
+        .arg("/C")
+        .arg(if hang {
+            "ping -n 60 127.0.0.1 >NUL"
+        } else {
+            "exit /B 23"
+        })
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    command
+}
+
+fn secure_redaction_target_preflight(
+    target_path: &str,
+    paths: &crate::document_session::SecureRedactionExportPaths,
+) -> Result<SecureRedactionPublicationTarget, crate::document_session::DocumentSessionError> {
+    if target_path.trim().is_empty() || target_path.as_bytes().len() > 4096 {
+        return Err(crate::document_session::DocumentSessionError::new(
+            "REDACTION_TARGET_INVALID",
+            "Secure redaction publication target geçerli bir yol olmalıdır",
+        ));
+    }
+    let (canonical_target, expectation) =
+        crate::document_io::capture_secure_publication_target_expectation(Path::new(target_path))
+            .map_err(|detail| {
+            crate::document_session::DocumentSessionError::new(
+                "REDACTION_TARGET_PREFLIGHT_FAILED",
+                detail,
+            )
+        })?;
+
+    for protected in [&paths.original_path, &paths.working_path] {
+        let same = crate::document_io::same_persistence_target(&canonical_target, protected)
+            .map_err(|detail| {
+                crate::document_session::DocumentSessionError::new(
+                    "REDACTION_TARGET_PREFLIGHT_FAILED",
+                    format!("Protected session path identity doğrulanamadı: {detail}"),
+                )
+            })?;
+        if same {
+            return Err(crate::document_session::DocumentSessionError::new(
+                "REDACTION_TARGET_PROTECTED_PATH",
+                "Secure redaction export original veya working PDF üzerine yazılamaz",
+            ));
+        }
+    }
+
+    for private_root in [&paths.session_dir, &paths.jobs_root] {
+        let canonical_root = private_root.canonicalize().map_err(|error| {
+            crate::document_session::DocumentSessionError::new(
+                "REDACTION_TARGET_PREFLIGHT_FAILED",
+                format!("Private session root çözümlenemedi: {error}"),
+            )
+        })?;
+        if canonical_target.starts_with(&canonical_root) {
+            return Err(crate::document_session::DocumentSessionError::new(
+                "REDACTION_TARGET_PRIVATE_PATH",
+                "Secure redaction export private session veya job dizinine yazılamaz",
+            ));
+        }
+    }
+
+    let parent = canonical_target.parent().ok_or_else(|| {
+        crate::document_session::DocumentSessionError::new(
+            "REDACTION_TARGET_PREFLIGHT_FAILED",
+            "Secure redaction target parent dizini belirlenemedi",
+        )
+    })?;
+    let parent_metadata = fs::metadata(parent).map_err(|error| {
+        crate::document_session::DocumentSessionError::new(
+            "REDACTION_TARGET_PREFLIGHT_FAILED",
+            format!("Secure redaction target parent metadata okunamadı: {error}"),
+        )
+    })?;
+    if !parent_metadata.is_dir() || parent_metadata.permissions().readonly() {
+        return Err(crate::document_session::DocumentSessionError::new(
+            "REDACTION_TARGET_PREFLIGHT_FAILED",
+            "Secure redaction target parent kullanılabilir bir yazma dizini değil",
+        ));
+    }
+
+    Ok(SecureRedactionPublicationTarget {
+        canonical_target,
+        expectation,
+    })
+}
+
+fn secure_redaction_operation_error(
+    code: &str,
+    message: impl Into<String>,
+) -> SessionJobOperationError {
+    SessionJobOperationError::failed_with_code(code, message)
+}
+
+/// Executes the authoritative secure-redaction export chain. The selected
+/// target is deliberately consumed only by the main-process filesystem layer;
+/// neither worker protocol variant contains it. The Tauri command below
+/// intentionally contains no orchestration semantics beyond state
+/// resolution and delegation, so acceptance tests can exercise this exact
+/// production chain without an IPC wrapper.
+pub async fn execute_secure_redaction_core(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    policy: crate::secure_redaction::SecureRedactionPolicy,
+    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    expected_plan_digest: String,
+    target_path: String,
+    store: &crate::document_session::DocumentSessionStore,
+) -> Result<
+    SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
+    crate::document_session::DocumentSessionError,
+> {
+    execute_secure_redaction_core_internal(
+        job_id,
+        session_id,
+        expected_content_generation,
+        policy,
+        acknowledgements,
+        regions,
+        expected_plan_digest,
+        target_path,
+        store,
+        None,
+    )
+    .await
+}
+
+#[cfg(feature = "secure-redaction-test-support")]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_secure_redaction_core_with_test_support(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    policy: crate::secure_redaction::SecureRedactionPolicy,
+    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    expected_plan_digest: String,
+    target_path: String,
+    store: &crate::document_session::DocumentSessionStore,
+    test_support: Option<Arc<SecureRedactionExecutionTestSupport>>,
+) -> Result<
+    SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
+    crate::document_session::DocumentSessionError,
+> {
+    execute_secure_redaction_core_internal(
+        job_id,
+        session_id,
+        expected_content_generation,
+        policy,
+        acknowledgements,
+        regions,
+        expected_plan_digest,
+        target_path,
+        store,
+        test_support,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_secure_redaction_core_internal(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    policy: crate::secure_redaction::SecureRedactionPolicy,
+    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    expected_plan_digest: String,
+    target_path: String,
+    store: &crate::document_session::DocumentSessionStore,
+    test_support: Option<Arc<SecureRedactionExecutionTestSupport>>,
+) -> Result<
+    SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
+    crate::document_session::DocumentSessionError,
+> {
+    let map_op_err = |err: SessionJobOperationError| match err {
+        SessionJobOperationError::Failed(f) => {
+            crate::document_session::DocumentSessionError::new(f.code, f.message)
+        }
+        SessionJobOperationError::Cancelled(c) => {
+            crate::document_session::DocumentSessionError::new(
+                "SESSION_JOB_CANCELLED",
+                format!("{c:?}"),
+            )
+        }
+    };
+    crate::secure_redaction::validate_secure_redaction_policy(&policy).map_err(map_op_err)?;
+    crate::secure_redaction::validate_redaction_acknowledgements(&acknowledgements)
+        .map_err(map_op_err)?;
+    crate::secure_redaction::validate_redaction_region_inputs(&regions).map_err(map_op_err)?;
+    crate::secure_redaction::validate_sha256_digest(&expected_plan_digest, "expected_plan_digest")
+        .map_err(map_op_err)?;
+
+    // This read lease is held through atomic publication. Save / Save As take
+    // the paired write lease, so the protected session persistence identities
+    // cannot change after this authoritative preflight.
+    let export_guard = store
+        .acquire_secure_redaction_export_guard(&session_id, expected_content_generation)
+        .await?;
+    let publication_target = secure_redaction_target_preflight(&target_path, &export_guard.paths)?;
+
+    let outcome = store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::AfterSnapshotCreated,
+                    None,
+                );
+                context.cancellation.check_cancelled()?;
+                let input_digest = crate::document_io::sha256_file(&context.snapshot_path).map_err(|error| {
+                    secure_redaction_operation_error(
+                        "REDACTION_SNAPSHOT_DIGEST_FAILED",
+                        format!("Immutable snapshot SHA-256 okunamadı: {error}"),
+                    )
+                })?;
+                context.cancellation.check_cancelled()?;
+
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::BeforeTransform,
+                    None,
+                );
+                context.cancellation.check_cancelled()?;
+
+                #[cfg(feature = "secure-redaction-test-support")]
+                let transform_action = test_support
+                    .as_ref()
+                    .map(|support| support.transform_action.clone())
+                    .unwrap_or_default();
+                #[cfg(not(feature = "secure-redaction-test-support"))]
+                let transform_action = ();
+                #[cfg_attr(
+                    not(feature = "secure-redaction-test-support"),
+                    allow(unused_mut)
+                )]
+                let mut transform_result = run_secure_redaction_worker_for_execution(
+                    &context,
+                    crate::job_worker::JobCommand::ApplySecureRedaction {
+                        content_generation: context.captured_content_generation,
+                        policy: policy.clone(),
+                        acknowledgements: acknowledgements.clone(),
+                        regions: regions.clone(),
+                        expected_input_digest: input_digest.clone(),
+                        expected_plan_digest: expected_plan_digest.clone(),
+                        output_name: crate::job_worker::SECURE_REDACTION_TRANSFORM_OUTPUT_NAME
+                            .to_string(),
+                    },
+                    Duration::from_secs(300),
+                    &transform_action,
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::TransformWorkerStarted,
+                    None,
+                )?;
+                #[cfg(feature = "secure-redaction-test-support")]
+                if let Some(hook) = test_support
+                    .as_ref()
+                    .and_then(|support| support.transform_result_hook.as_ref())
+                {
+                    transform_result = hook(transform_result);
+                }
+                let transform = match transform_result {
+                    crate::job_worker::JobResult::SecureRedactionTransform(report) => report,
+                    _ => return Err(secure_redaction_operation_error(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Secure redaction transform worker beklenmeyen sonuç döndürdü",
+                    )),
+                };
+                crate::secure_redaction::validate_transform_report(&transform)?;
+                if transform.job_id != context.job_id.to_string()
+                    || transform.session_id != context.owner_session_id
+                    || transform.input_digest != input_digest
+                    || transform.plan_digest != expected_plan_digest
+                {
+                    return Err(secure_redaction_operation_error(
+                        "REDACTION_TRANSFORM_REPORT_MISMATCH",
+                        "Transform report authoritative session, snapshot veya plan bağını karşılamıyor",
+                    ));
+                }
+                let artifact = crate::job_worker::validate_output_file(
+                    &context,
+                    &context.snapshot_path.parent().unwrap().join(&transform.output_relative_name),
+                )?;
+                let artifact_size = fs::metadata(&artifact).map_err(|error| {
+                    secure_redaction_operation_error(
+                        "REDACTION_TRANSFORM_ARTIFACT_INVALID",
+                        format!("Transform artifact metadata okunamadı: {error}"),
+                    )
+                })?.len();
+                if artifact_size != transform.output_size_bytes {
+                    return Err(secure_redaction_operation_error(
+                        "REDACTION_TRANSFORM_ARTIFACT_INVALID",
+                        "Transform artifact boyutu typed transform report ile eşleşmiyor",
+                    ));
+                }
+                let artifact_digest = crate::document_io::sha256_file(&artifact).map_err(|error| {
+                    secure_redaction_operation_error(
+                        "REDACTION_TRANSFORM_ARTIFACT_INVALID",
+                        format!("Transform artifact SHA-256 okunamadı: {error}"),
+                    )
+                })?;
+                if artifact_digest != transform.output_digest {
+                    return Err(secure_redaction_operation_error(
+                        "REDACTION_TRANSFORM_ARTIFACT_DIGEST_MISMATCH",
+                        "Transform artifact digest'i typed transform report ile eşleşmiyor",
+                    ));
+                }
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::AfterTransformValidated,
+                    Some(&artifact),
+                );
+                context.cancellation.check_cancelled()?;
+
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::BeforeVerifier,
+                    Some(&artifact),
+                );
+                context.cancellation.check_cancelled()?;
+
+                #[cfg(feature = "secure-redaction-test-support")]
+                let verifier_action = test_support
+                    .as_ref()
+                    .map(|support| support.verifier_action.clone())
+                    .unwrap_or_default();
+                #[cfg(not(feature = "secure-redaction-test-support"))]
+                let verifier_action = ();
+                #[cfg_attr(
+                    not(feature = "secure-redaction-test-support"),
+                    allow(unused_mut)
+                )]
+                let mut verifier_result = run_secure_redaction_worker_for_execution(
+                    &context,
+                    crate::job_worker::JobCommand::VerifySecureRedaction {
+                        content_generation: context.captured_content_generation,
+                        policy: policy.clone(),
+                        acknowledgements: acknowledgements.clone(),
+                        regions: regions.clone(),
+                        transform_report: transform.clone(),
+                    },
+                    Duration::from_secs(300),
+                    &verifier_action,
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::VerifierWorkerStarted,
+                    Some(&artifact),
+                )?;
+                #[cfg(feature = "secure-redaction-test-support")]
+                if let Some(hook) = test_support
+                    .as_ref()
+                    .and_then(|support| support.verifier_result_hook.as_ref())
+                {
+                    verifier_result = hook(verifier_result);
+                }
+                let verification = match verifier_result {
+                    crate::job_worker::JobResult::SecureRedactionVerification(report) => report,
+                    _ => return Err(secure_redaction_operation_error(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Secure redaction verification worker beklenmeyen sonuç döndürdü",
+                    )),
+                };
+                crate::secure_redaction::validate_verification_report(&verification)?;
+                if verification.job_id != context.job_id.to_string()
+                    || verification.session_id != context.owner_session_id
+                    || verification.plan_digest != transform.plan_digest
+                    || verification.transform_digest != transform.output_digest
+                    || !verification.is_verified
+                    || !verification.blockers.is_empty()
+                    || verification.verification_checks.iter().any(|check| {
+                        check.status != crate::secure_redaction::VerificationCheckStatus::Passed
+                    })
+                {
+                    return Err(secure_redaction_operation_error(
+                        "REDACTION_VERIFICATION_GATE_FAILED",
+                        "Independent verification publication için zorunlu koşulları karşılamıyor",
+                    ));
+                }
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::AfterVerifierValidated,
+                    Some(&artifact),
+                );
+                context.cancellation.check_cancelled()?;
+
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::BeforePublication,
+                    Some(&artifact),
+                );
+                context.cancellation.check_cancelled()?;
+
+                // Cancellation is intentionally checked before entering the
+                // atomic critical section. Once document_io starts replacement,
+                // we observe its disk-truth result instead of reporting a false
+                // cancellation.
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::PublicationStarted,
+                    Some(&artifact),
+                );
+                #[cfg(feature = "secure-redaction-test-support")]
+                let commit_result = if let Some(support) = test_support.as_ref() {
+                    crate::document_io::atomic_publish_prevalidated_pdf_for_acceptance(
+                        "secure_redaction_publish",
+                        &context.snapshot_path,
+                        &publication_target.canonical_target,
+                        &artifact,
+                        &verification.transform_digest,
+                        publication_target.expectation.clone(),
+                        support.corrupt_staged_temp,
+                    )
+                } else {
+                    crate::document_io::atomic_publish_prevalidated_pdf(
+                        "secure_redaction_publish",
+                        &context.snapshot_path,
+                        &publication_target.canonical_target,
+                        &artifact,
+                        &verification.transform_digest,
+                        publication_target.expectation.clone(),
+                    )
+                };
+                #[cfg(not(feature = "secure-redaction-test-support"))]
+                let commit_result = crate::document_io::atomic_publish_prevalidated_pdf(
+                    "secure_redaction_publish",
+                    &context.snapshot_path,
+                    &publication_target.canonical_target,
+                    &artifact,
+                    &verification.transform_digest,
+                    publication_target.expectation.clone(),
+                );
+                let commit = commit_result.map_err(|error| {
+                    let code = if error.detail.contains("REDACTION_TARGET_CONFLICT")
+                        || error.detail.contains("PRECONDITION_TARGET_CHANGED") {
+                        "REDACTION_TARGET_CONFLICT"
+                    } else if error.detail.contains("REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH") {
+                        "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH"
+                    } else {
+                        "REDACTION_PUBLICATION_FAILED"
+                    };
+                    SessionJobOperationError::Failed(
+                        crate::document_session::SessionJobFailure::publication_failure(code, error),
+                    )
+                })?;
+                notify_secure_redaction_test_phase(
+                    test_support.as_deref(),
+                    SecureRedactionExecutionTestPhase::AfterPublication,
+                    Some(&artifact),
+                );
+                if commit.committed_digest != verification.transform_digest {
+                    return Err(secure_redaction_operation_error(
+                        "REDACTION_PUBLICATION_DIGEST_MISMATCH",
+                        "Atomic publication committed digest verifier digest'iyle eşleşmiyor",
+                    ));
+                }
+                let report = crate::secure_redaction::SecureRedactionExecutionReport {
+                    schema_version: crate::secure_redaction::REDACTION_SCHEMA_VERSION.to_string(),
+                    job_id: context.job_id.to_string(),
+                    session_id: context.owner_session_id.clone(),
+                    transform_report: transform,
+                    verification_report: verification,
+                    published: true,
+                    publication_report: Some(crate::secure_redaction::SecureRedactionPublicationReport {
+                        schema_version: crate::secure_redaction::REDACTION_SCHEMA_VERSION.to_string(),
+                        publication_id: format!("secure-redaction-{}", context.job_id),
+                        published_path: publication_target.canonical_target.to_string_lossy().into_owned(),
+                        published_digest: commit.committed_digest,
+                        commit_state: crate::secure_redaction::SecureRedactionCommitState::from_document_io(commit.state),
+                    }),
+                };
+                crate::secure_redaction::validate_execution_report(&report)?;
+                Ok(report)
+            },
+        )
+        .await;
+    drop(export_guard);
+    outcome
+}
+
+#[tauri::command]
+pub async fn execute_secure_redaction(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    policy: crate::secure_redaction::SecureRedactionPolicy,
+    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    expected_plan_digest: String,
+    target_path: String,
+    store: tauri::State<'_, crate::document_session::DocumentSessionStore>,
+) -> Result<
+    SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
+    crate::document_session::DocumentSessionError,
+> {
+    execute_secure_redaction_core(
+        job_id,
+        session_id,
+        expected_content_generation,
+        policy,
+        acknowledgements,
+        regions,
+        expected_plan_digest,
+        target_path,
+        &store,
+    )
+    .await
 }
 
 #[cfg(test)]

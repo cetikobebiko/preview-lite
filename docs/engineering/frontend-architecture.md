@@ -140,6 +140,21 @@ Bu envanter 7R kapsamında toplu olarak migrate edilmez; App composition sınır
 
 Bu legacy facade tüketicileri bağımsız takip işidir. `App.svelte` doğrudan `pdfState` kullanmaz.
 
+## Sanitization inspection ve legacy sınırı (8C.2)
+
+`SanitizationDialog.svelte` içindeki geniş boolean seçenekler, featureRuntime/App modal
+wiring ve `documentTransformController` içindeki implicit `_sanitized.pdf` hedefi
+dormant migration debt'tir. Feature gate kapalıdır ve bu zincir future 8C workflow
+contract'ı değildir. 8C.2 versioned inspection modeli bu payload'dan bağımsız olarak
+`sanitizationSchemas.js` → backend `sanitization.js` →
+`sanitizationInspectionController.js` → `sanitizationState.svelte.js` → read-only
+`SanitizationInspectionPanel.svelte` hattında kurulmuştur. Controller session ID,
+content generation, job ID ve local revision ownership uygular; App yalnız composition
+ve context reconciliation taşır. Feature gate kapalı olduğu için panel production'da
+runnable değildir. Save/transform/verifier/publication migration'ı 8C.6 kapsamındadır.
+`remove_hidden_layers` production control olarak taşınamaz çünkü `/OCProperties`
+removal hidden-content removal değildir.
+
 ## Kabul kapıları
 
 - `App.svelte` hard limit: `<700` satır; script hedefi: `<200` satır.

@@ -29,6 +29,8 @@
   import { createPrepressState } from "./stores/prepressState.svelte.js";
   import { createSearchState } from "./stores/searchState.svelte.js";
   import { createSensitiveDataScanState } from "./stores/sensitiveDataScanState.svelte.js";
+  import { createSecureRedactionState } from "./stores/secureRedactionState.svelte.js";
+  import { createSanitizationState } from "./stores/sanitizationState.svelte.js";
   import { createUiState } from "./stores/uiState.svelte.js";
   import { createViewerState } from "./stores/viewerState.svelte.js";
 
@@ -44,6 +46,8 @@
   const annotation = createAnnotationState();
   const searchState = createSearchState();
   const sensitiveScanState = createSensitiveDataScanState();
+  const secureRedactionState = createSecureRedactionState();
+  const sanitizationState = createSanitizationState();
   const prepress = createPrepressState();
   const presentation = createPresentationController({ ui });
 
@@ -82,7 +86,7 @@
   });
   callbacks.savePosition = documentRuntime.savePosition;
   const featureRuntime = createFeatureRuntime({
-    viewer, annotation, documentSession, searchState, sensitiveScanState, ui, asyncPrompt, tick,
+    viewer, annotation, documentSession, searchState, sensitiveScanState, secureRedactionState, sanitizationState, ui, asyncPrompt, tick,
     viewerRuntime, documentRuntime, callbacks,
     onToast: presentation.showToast,
     onError: presentation.setError,
@@ -113,6 +117,24 @@
       : viewer.activeImageSourcePath;
     document.title = titlePath ? `${titlePath} - Antigravity` : "Antigravity PDF Reader";
     prepress.updateContext(getPrepressContext());
+  });
+
+  $effect(() => {
+    documentRuntime.isPdf;
+    documentSession.activeSessionId;
+    documentSession.contentGeneration;
+    untrack(() => featureRuntime.sanitizationInspection?.reconcileContext?.());
+  });
+
+  $effect(() => {
+    ui.panels.secureRedaction;
+    documentRuntime.isPdf;
+    documentSession.activeSessionId;
+    documentSession.contentGeneration;
+
+    untrack(() => {
+      featureRuntime.secureRedaction?.reconcileContext?.();
+    });
   });
 
   $effect(() => {
@@ -181,11 +203,13 @@
       {viewer}
       {documentSession}
       {sensitiveScanState}
+      {secureRedactionState}
       featureUi={featureRuntime.featureUi}
       physicalPageIndex={viewer.physicalPageIndex}
       isLoadedPdfDocument={documentRuntime.isLoadedPdfDocument}
       onJump={viewerRuntime.navigation.jumpToPage}
       onScanSensitiveData={featureRuntime.scanSensitiveData}
+      secureRedaction={featureRuntime.secureRedaction}
       onSessionSnapshot={documentRuntime.applyBackendSessionSnapshot}
       onSeparations={(event) => applyPrepress("applySeparations", event)}
       onHeatmap={(event) => applyPrepress("applyHeatmap", event)}
@@ -207,6 +231,8 @@
       errorMsg={ui.error}
       {getActivePrepressPayload}
       getSensitiveDataHighlights={featureRuntime.getSensitiveDataHighlightsForPage}
+      {secureRedactionState}
+      secureRedaction={featureRuntime.secureRedaction}
       onSelectFile={documentRuntime.selectFile}
       onPageIntersect={viewerRuntime.navigation.handlePageIntersect}
       onSearchHighlightReady={featureRuntime.handleSearchHighlight}

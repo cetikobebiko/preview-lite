@@ -110,8 +110,11 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `render_separation_channels` | `file_path: String; page_index: u32; scale: f32` | `src-tauri/src/prepress.rs:150`, pub async | evet | `src/components/PrepressPanel.svelte:165` |
 | `set_page_boxes` | `source_path: String; target_path: String; page_index: u32; boxes: PageBoxes` | `src-tauri/src/prepress.rs:222`, pub sync | **hayır** | — |
 | `export_pdf_x` | `source_path: String; target_path: String; standard: String; profile_name: String` | `src-tauri/src/prepress.rs:251`, pub sync | evet | `src/components/PdfXWizard.svelte:49` |
-| `apply_redactions` | `job_id: String; session_id: String; expected_content_generation: u64; output_path: String; redactions: Vec<RedactionArea>` | `src-tauri/src/redaction.rs`, session-job | **hayır** | — (FEATURE_UNAVAILABLE, Prompt 8B kapsamındadır) |
-| `sanitize_pdf_document` | `job_id: String; session_id: String; expected_content_generation: u64; output_path: String; options: SanitizationOptions` | `src-tauri/src/redaction.rs`, session-job | **hayır** | — (FEATURE_UNAVAILABLE, Prompt 8B kapsamındadır) |
+| `apply_redactions` | `job_id: String; session_id: String; expected_content_generation: u64; output_path: String; redactions: Vec<RedactionArea>` | `src-tauri/src/redaction.rs`, session-job | **hayır** | Legacy command parse/snapshot öncesi fail-closed `FEATURE_UNAVAILABLE`; secure pipeline'a alias değildir. |
+| `plan_secure_redaction` | `job_id; session_id; expected_content_generation; policy; acknowledgements; regions` | `src-tauri/src/redaction.rs`, session-job + isolated planner worker | `src/services/app/secureRedactionController.js` | Canonical 8B planning operation; feature disabled olduğu için production UI runnable değildir. |
+| `execute_secure_redaction` | `job_id; session_id; expected_content_generation; policy; acknowledgements; regions; expected_plan_digest; target_path` | `src-tauri/src/redaction.rs`, session-job + isolated transform/verifier workers | `src/services/app/secureRedactionController.js` | Canonical 8B secure export operation; feature disabled olduğu için production UI runnable değildir. |
+| `sanitize_pdf_document` | `job_id: String; session_id: String; expected_content_generation: u64; output_path: String; options: SanitizationOptions` | `src-tauri/src/redaction.rs`, dormant legacy contract | **hayır** | 8C.2 sonrasında da parse/snapshot/worker/I/O öncesi fail-closed `FEATURE_UNAVAILABLE`. Broad boolean options ve `output_path` versioned inspection/policy authority'si değildir. |
+| `inspect_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy_schema_version: String` | `src-tauri/src/sanitization.rs`, immutable session snapshot + ephemeral `InspectDocumentSanitization` worker | Feature-disabled inspection controller | Read-only typed `SessionJobOutcome<SanitizationInspectionReport>`; raw input/working/snapshot path, credential, output ve target kabul etmez. Transform/output/publication yapmaz. |
 | `scan_sensitive_data` | `job_id: String; session_id: String; expected_content_generation: u64; patterns: Vec<String>` | `src-tauri/src/redaction.rs`, session-job (Job-Worker Protocol v3) | evet | `src/services/backend/redaction.js` (`startSensitiveDataScanAction` → cancellable handle → job worker protocol v3) |
 | `list_system_certificates` | — | `src-tauri/src/signature.rs:48`, pub async | evet | `src/components/SignatureWizardModal.svelte:34` |
 | `sign_pdf_pades` | `input_path: String; output_path: String; cert_id: String; _pin: String; options: SignatureOptions` | `src-tauri/src/signature.rs:71`, pub async | evet | `src/components/SignatureWizardModal.svelte:79` |
@@ -246,8 +249,8 @@ bulunmadığı için üretebileceği command kümesi **unknown** kabul edildi.
 | `src/App.svelte:1810` `merge_pdfs` | `{ pdfPaths, targetPath }` | `{ filePaths, outputPath }` | Bu doğrudan UI yolu deserialize edilemez. `src/pdfState.js:43` wrapper payload'ı doğrudur. |
 
 Güncel durum:
+- `plan_secure_redaction` ve `execute_secure_redaction` production frontend'de yalnız canonical `secureRedactionController` üzerinden çağrılır; disabled feature gate nedeniyle kullanıcıya runnable kontrol sunulmaz.
 - `apply_redactions` ve `sanitize_pdf_document` için production UI callsite bulunmamaktadır.
-- Backend action wrapper session-job contract kullanmaktadır.
 - `apply_redactions` ve `sanitize_pdf_document` parse/snapshot öncesi fail-closed `FEATURE_UNAVAILABLE` döndürmektedir.
 - `scan_sensitive_data` iptal edilebilir session-job kontratı ve Job Worker Protocol v3 kullanmaktadır.
 

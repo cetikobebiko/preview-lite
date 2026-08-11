@@ -36,6 +36,8 @@ import { createOcrActionController } from "./ocrActionController.js";
 import { createReadingPresentationController } from "./readingPresentationController.js";
 import { createSearchController } from "./searchController.js";
 import { createSensitiveDataScanController } from "./sensitiveDataScanController.js";
+import { createSecureRedactionController } from "./secureRedactionController.js";
+import { createSanitizationInspectionController } from "./sanitizationInspectionController.js";
 import { createShareActionController } from "./shareActionController.js";
 import { createTtsActionController } from "./ttsActionController.js";
 
@@ -53,6 +55,8 @@ export function createFeatureRuntime({
   documentSession,
   searchState,
   sensitiveScanState,
+  secureRedactionState,
+  sanitizationState,
   ui,
   asyncPrompt,
   viewerRuntime,
@@ -65,6 +69,7 @@ export function createFeatureRuntime({
   createExportController = createDocumentExportController,
   createSearchController: createSearch = createSearchController,
   createSensitiveDataScanController: createSensitiveScan = createSensitiveDataScanController,
+  createSecureRedactionController: createSecureRedaction = createSecureRedactionController,
 }) {
   const featureContext = getRuntimeFeatureContext();
   const featureUi = (featureId) => getFeaturePresentation(featureId, featureContext);
@@ -120,14 +125,47 @@ export function createFeatureRuntime({
     }),
   });
 
+  const secureRedactionController = secureRedactionState
+    ? createSecureRedaction({
+        state: secureRedactionState,
+        getContext: () => ({
+          panelOpen: !!ui.panels.secureRedaction,
+          isPdf: documentRuntime.isPdf,
+          sessionId: documentSession.activeSessionId,
+          contentGeneration: documentSession.contentGeneration,
+          displayPath: documentRuntime.activeDisplayPath,
+          fileName: documentRuntime.fileName,
+        }),
+      })
+    : Object.freeze({
+        start() {}, destroy() {}, plan() {}, execute() {}, cancelPlanning() {}, cancelExecution() {},
+        reconcileContext() {}, addManualRegion() {}, promoteSensitiveScanItem() {}, removeRegion() {},
+        clearRegions() {}, updatePolicy() {}, setAcknowledgement() {}, setSelectionMode() {}, newRedaction() {},
+      });
+
+  const sanitizationInspectionController = sanitizationState
+    ? createSanitizationInspectionController({
+        state: sanitizationState,
+        getContext: () => ({
+          isPdf: documentRuntime.isPdf,
+          sessionId: documentSession.activeSessionId,
+          contentGeneration: documentSession.contentGeneration,
+        }),
+      })
+    : Object.freeze({ start() {}, destroy() {}, inspect() {}, cancel() {}, reconcileContext() {} });
+
   function start() {
     searchController.start();
     sensitiveScanController.start();
+    secureRedactionController.start();
+    sanitizationInspectionController.start();
   }
 
   function destroy() {
     searchController.destroy();
     sensitiveScanController.destroy();
+    secureRedactionController.destroy();
+    sanitizationInspectionController.destroy();
   }
 
   const featureRequestContext = () => ({
@@ -281,6 +319,28 @@ export function createFeatureRuntime({
     },
   });
 
+  const secureRedaction = Object.freeze({
+    plan: () => runUiAction("redaction", secureRedactionController.plan),
+    execute: () => runUiAction("redaction", secureRedactionController.execute),
+    cancelPlanning: secureRedactionController.cancelPlanning,
+    cancelExecution: secureRedactionController.cancelExecution,
+    addManualRegion: (detail) => runUiAction("redaction", () => secureRedactionController.addManualRegion(detail)),
+    promoteSensitiveScanItem: (item) => runUiAction("redaction", () => secureRedactionController.promoteSensitiveScanItem(item)),
+    removeRegion: (id) => runUiAction("redaction", () => secureRedactionController.removeRegion(id)),
+    clearRegions: () => runUiAction("redaction", secureRedactionController.clearRegions),
+    updatePolicy: (patch) => runUiAction("redaction", () => secureRedactionController.updatePolicy(patch)),
+    setAcknowledgement: (name, value) => runUiAction("redaction", () => secureRedactionController.setAcknowledgement(name, value)),
+    setSelectionMode: (value) => runUiAction("redaction", () => secureRedactionController.setSelectionMode(value)),
+    newRedaction: () => runUiAction("redaction", secureRedactionController.newRedaction),
+    reconcileContext: secureRedactionController.reconcileContext,
+  });
+
+  const sanitizationInspection = Object.freeze({
+    inspect: () => runUiAction("sanitization", sanitizationInspectionController.inspect),
+    cancel: () => runUiAction("sanitization", sanitizationInspectionController.cancel),
+    reconcileContext: sanitizationInspectionController.reconcileContext,
+  });
+
   return Object.freeze({
     featureUi,
     featureControlLabel,
@@ -291,6 +351,8 @@ export function createFeatureRuntime({
     destroy,
     scanSensitiveData: (patterns) => sensitiveScanController.scan(patterns),
     reconcileSensitiveDataContext: () => sensitiveScanController.reconcileContext(),
+    secureRedaction,
+    sanitizationInspection,
     getSensitiveDataHighlightsForPage: (pageIndex, viewerRotation) =>
       selectViewportHighlights(
         sensitiveScanState?.logicalHighlightsByPage,
@@ -317,4 +379,3 @@ export function createFeatureRuntime({
     burnInPdf: documentExportController.burnInPdf,
   });
 }
-

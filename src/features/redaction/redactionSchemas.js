@@ -3,10 +3,19 @@
  * Sürümlü Redaksiyon Region, Policy ve Sonuç Sözleşmeleri (Prompt 8B-2.3 Integrity & Numeric Parity)
  */
 
-import * as crypto from 'node:crypto';
-
 export const REDACTION_SCHEMA_VERSION = '1.0.0';
-export const SECURE_REDACTION_PLAN_VERSION = 'secure_redaction_plan_v1';
+// v2 includes Trim/Bleed/Art boxes in the signed canonical geometry. Keep v1
+// distinct rather than widening its wire contract in place.
+export const SECURE_REDACTION_PLAN_VERSION = 'secure_redaction_plan_v2';
+export const SECURE_REDACTION_VERIFICATION_VERSION = 'secure_redaction_verifier_v1';
+export const REQUIRED_SECURE_REDACTION_VERIFICATION_CHECKS = Object.freeze([
+  'SOURCE_PLAN_BINDING', 'TRANSFORM_REPORT_CONSISTENCY', 'ARTIFACT_PATH_INTEGRITY',
+  'ARTIFACT_DIGEST_AND_SIZE', 'DUAL_PARSER_REOPEN', 'FULL_REWRITE_STRUCTURE',
+  'FORBIDDEN_DOCUMENT_STRUCTURES_ABSENT', 'PAGE_COUNT_AND_STRATEGY', 'PAGE_GEOMETRY',
+  'AFFECTED_PAGE_IMAGE_ONLY', 'AFFECTED_PAGE_INTERACTIVE_CONTENT_ABSENT',
+  'AFFECTED_PAGE_REDACTION_PIXEL_COVERAGE', 'UNAFFECTED_PAGE_EQUIVALENCE',
+  'ARTIFACT_FINAL_DIGEST_STABILITY',
+]);
 
 export const U32_MIN = 0;
 export const U32_MAX = 4_294_967_295;
@@ -23,6 +32,11 @@ export const REDACTION_LIMITS = Object.freeze({
   MAX_PIXELS_PER_PAGE: 100_000_000,
   MAX_TOTAL_ESTIMATED_PIXELS: 1_000_000_000,
   MAX_REPORT_SIZE_BYTES: 10_485_760,
+  // Matches Rust's internal secure-redaction artifact resource policy. The
+  // Rust wire value remains u64, while this explicit cap stays exactly
+  // representable by JavaScript numbers.
+  MAX_SECURE_REDACTION_OUTPUT_BYTES: 1_073_741_824,
+  MAX_RASTER_DIMENSION: 16_384,
   ADJACENCY_TOLERANCE_POINTS: 0.0,
   MERGE_EDGE_TOUCHING: true,
   MERGE_CORNER_TOUCHING: false,
@@ -42,6 +56,21 @@ export const REDACTION_LIMITS = Object.freeze({
   MAX_RASTER_DPI: 600,
   MIN_SAFETY_MARGIN_POINTS: 0.0,
   MAX_SAFETY_MARGIN_POINTS: 36.0,
+});
+
+export const CANONICAL_REDACTION_LIMITS = Object.freeze({
+  maxPixelsPerAffectedPage: 100_000_000,
+  maxTotalEstimatedAffectedPixels: 1_000_000_000,
+  maxReportSizeBytes: 10_485_760,
+  maxSourceRegionIdsPerCanonicalRegion: 100,
+  maxCanonicalRegionsPerPage: 1000,
+});
+
+export const CANONICAL_MERGE_PROFILE = Object.freeze({
+  adjacencyTolerancePoints: 0.0,
+  mergeEdgeTouching: true,
+  mergeCornerTouching: false,
+  geometryComparisonEpsilon: 1e-6,
 });
 
 export const REDACTION_ERROR_CODES = Object.freeze({
@@ -75,6 +104,53 @@ export class RedactionError extends Error {
     this.details = details;
   }
 }
+
+/**
+ * Canonical UTF-8 unsigned-byte lexicographical ascending comparator
+ * @param {string} a
+ * @param {string} b
+ * @returns {number} -1 if a < b, 1 if a > b, 0 if equal
+ */
+export function compareCanonicalUtf8Strings(a, b) {
+  if (a === b) return 0;
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(a);
+  const bBytes = encoder.encode(b);
+  const minLen = Math.min(aBytes.length, bBytes.length);
+  for (let i = 0; i < minLen; i++) {
+    if (aBytes[i] !== bBytes[i]) {
+      return aBytes[i] < bBytes[i] ? -1 : 1;
+    }
+  }
+  if (aBytes.length !== bBytes.length) {
+    return aBytes.length < bBytes.length ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Canonical region comparator matching exact specification:
+ * 1. pageIndex exact integer
+ * 2. appliedPdfPointRect.bottom exact finite number (no epsilon)
+ * 3. appliedPdfPointRect.left exact finite number (no epsilon)
+ * 4. regionId canonical UTF-8 comparator
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number} -1, 0, or 1
+ */
+export function compareCanonicalRegions(a, b) {
+  if (a.pageIndex !== b.pageIndex) {
+    return a.pageIndex < b.pageIndex ? -1 : 1;
+  }
+  if (a.appliedPdfPointRect.bottom !== b.appliedPdfPointRect.bottom) {
+    return a.appliedPdfPointRect.bottom < b.appliedPdfPointRect.bottom ? -1 : 1;
+  }
+  if (a.appliedPdfPointRect.left !== b.appliedPdfPointRect.left) {
+    return a.appliedPdfPointRect.left < b.appliedPdfPointRect.left ? -1 : 1;
+  }
+  return compareCanonicalUtf8Strings(a.regionId, b.regionId);
+}
+
 
 /**
  * Strict unknown field rejection helper
@@ -180,11 +256,13 @@ export function validateSha256Digest(digest, fieldName) {
 
 export const GEOMETRY_EPSILON = 1e-6;
 
-export function sha256Hex(bytes) {
-  if (crypto && typeof crypto.createHash === 'function') {
-    return crypto.createHash('sha256').update(bytes).digest('hex');
+export async function sha256Hex(bytes) {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+    const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   }
-  throw new Error('sha256 engine unavailable');
+  throw new Error('sha256 engine unavailable (Web Crypto globalThis.crypto.subtle required)');
 }
 
 export class CanonicalSerializer {
@@ -289,13 +367,13 @@ export class CanonicalSerializer {
     return new Uint8Array(this.buffer);
   }
 
-  finalizeDigest() {
-    return sha256Hex(this.getBytes());
+  async finalizeDigest() {
+    return await sha256Hex(this.getBytes());
   }
 }
 
 export function writeCanonicalPageGeometryFields(s, geom) {
-  s.writeObjectStart(7);
+  s.writeObjectStart(10);
   s.writeField('schema_version', s => s.writeString(REDACTION_SCHEMA_VERSION));
   s.writeField('page_index', s => s.writeU32(geom.pageIndex));
   s.writeField('media_box', s => {
@@ -316,6 +394,19 @@ export function writeCanonicalPageGeometryFields(s, geom) {
       s.writeNull();
     }
   });
+  for (const [field, box] of [['trim_box', geom.trimBox], ['bleed_box', geom.bleedBox], ['art_box', geom.artBox]]) {
+    s.writeField(field, s => {
+      if (box) {
+        s.writeObjectStart(4);
+        s.writeField('left', b => b.writeF64(box.left));
+        s.writeField('bottom', b => b.writeF64(box.bottom));
+        s.writeField('width', b => b.writeF64(box.width));
+        s.writeField('height', b => b.writeF64(box.height));
+      } else {
+        s.writeNull();
+      }
+    });
+  }
   s.writeField('effective_box', s => {
     s.writeObjectStart(4);
     s.writeField('left', b => b.writeF64(geom.effectiveBox.left));
@@ -327,11 +418,11 @@ export function writeCanonicalPageGeometryFields(s, geom) {
   s.writeField('geometry_profile', s => s.writeString('standard_effective_box_v1'));
 }
 
-export function computeGeometryDigest(geom) {
+export async function computeGeometryDigest(geom) {
   const normGeom = normalizeCanonicalPageGeometry(geom);
   const serializer = new CanonicalSerializer();
   writeCanonicalPageGeometryFields(serializer, normGeom);
-  return serializer.finalizeDigest();
+  return await serializer.finalizeDigest();
 }
 
 function serializeCanonicalRegion(s, r) {
@@ -548,7 +639,7 @@ function serializePageRedactionPlan(s, p) {
   s.writeField('executable', s => s.writeBool(p.executable));
 }
 
-export function computePlanDigest(plan) {
+export async function computePlanDigest(plan) {
   const s = new CanonicalSerializer();
   s.writeObjectStart(13);
 
@@ -561,10 +652,11 @@ export function computePlanDigest(plan) {
   });
   s.writeField('policy', s => serializeSecureRedactionPolicy(s, plan.policy));
   s.writeField('merge_profile', s => {
-    s.writeObjectStart(3);
+    s.writeObjectStart(4);
     s.writeField('adjacency_tolerance_points', s => s.writeF64(REDACTION_LIMITS.ADJACENCY_TOLERANCE_POINTS));
     s.writeField('merge_edge_touching', s => s.writeBool(REDACTION_LIMITS.MERGE_EDGE_TOUCHING));
     s.writeField('merge_corner_touching', s => s.writeBool(REDACTION_LIMITS.MERGE_CORNER_TOUCHING));
+    s.writeField('geometry_comparison_epsilon', s => s.writeF64(GEOMETRY_EPSILON));
   });
   s.writeField('acknowledgements', s => serializeRedactionAcknowledgements(s, plan.acknowledgements));
   s.writeField('acknowledgement_requirements', s => serializeRedactionAcknowledgementRequirements(s, plan.acknowledgementRequirements));
@@ -601,7 +693,38 @@ export function computePlanDigest(plan) {
     }
   });
 
-  return s.finalizeDigest();
+  return await s.finalizeDigest();
+}
+
+export async function verifySecureRedactionPlanDigests(plan) {
+  for (const pagePlan of plan.pagePlans) {
+    const recomputedGeomDigest = await computeGeometryDigest(pagePlan.geometry);
+    if (pagePlan.geometryDigest !== recomputedGeomDigest) {
+      throw new RedactionError(
+        REDACTION_ERROR_CODES.REDACTION_PAGE_GEOMETRY_MISMATCH,
+        `geometryDigest (${pagePlan.geometryDigest}) does not match recomputed geometry digest (${recomputedGeomDigest})`
+      );
+    }
+  }
+
+  const recomputedPlanDigest = await computePlanDigest(plan);
+  if (plan.planDigest !== recomputedPlanDigest) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_PLAN_DIGEST_MISMATCH,
+      `planDigest (${plan.planDigest}) does not match recomputed plan digest (${recomputedPlanDigest})`
+    );
+  }
+
+  return true;
+}
+
+export async function normalizeAndVerifySecureRedactionPlan(raw) {
+  const plan = normalizeSecureRedactionPlanStructure(raw);
+  await verifySecureRedactionPlanDigests(plan);
+  return {
+    ...plan,
+    digestVerified: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -972,6 +1095,18 @@ export function validateCanonicalPageGeometry(geom) {
       );
     }
   }
+  for (const [label, box] of [['TrimBox', geom.trimBox], ['BleedBox', geom.bleedBox], ['ArtBox', geom.artBox]]) {
+    if (box) {
+      try {
+        normalizePdfPointRect(box);
+      } catch {
+        throw new RedactionError(
+          REDACTION_ERROR_CODES.REDACTION_PAGE_GEOMETRY_MISMATCH,
+          `${label} is not a valid finite PDF rectangle`
+        );
+      }
+    }
+  }
   normalizePdfPointRect(geom.effectiveBox);
 
   const expectedBox = geom.cropBox || geom.mediaBox;
@@ -994,7 +1129,7 @@ export function normalizeCanonicalPageGeometry(raw) {
   }
   assertNoUnknownFields(
     raw,
-    ['pageIndex', 'page_index', 'mediaBox', 'media_box', 'cropBox', 'crop_box', 'effectiveBox', 'effective_box', 'rotation'],
+    ['pageIndex', 'page_index', 'mediaBox', 'media_box', 'cropBox', 'crop_box', 'trimBox', 'trim_box', 'bleedBox', 'bleed_box', 'artBox', 'art_box', 'effectiveBox', 'effective_box', 'rotation'],
     'CanonicalPageGeometry'
   );
 
@@ -1007,6 +1142,13 @@ export function normalizeCanonicalPageGeometry(raw) {
   const cropBoxRaw = readExclusiveAlias(raw, 'cropBox', 'crop_box', false, 'cropBox', 'CanonicalPageGeometry');
   const cropBox = normalizeNullableObject(cropBoxRaw, normalizePdfPointRect, 'cropBox');
 
+  const trimBoxRaw = readExclusiveAlias(raw, 'trimBox', 'trim_box', false, 'trimBox', 'CanonicalPageGeometry');
+  const trimBox = normalizeNullableObject(trimBoxRaw, normalizePdfPointRect, 'trimBox');
+  const bleedBoxRaw = readExclusiveAlias(raw, 'bleedBox', 'bleed_box', false, 'bleedBox', 'CanonicalPageGeometry');
+  const bleedBox = normalizeNullableObject(bleedBoxRaw, normalizePdfPointRect, 'bleedBox');
+  const artBoxRaw = readExclusiveAlias(raw, 'artBox', 'art_box', false, 'artBox', 'CanonicalPageGeometry');
+  const artBox = normalizeNullableObject(artBoxRaw, normalizePdfPointRect, 'artBox');
+
   const effectiveBoxRaw = readExclusiveAlias(raw, 'effectiveBox', 'effective_box', true, 'effectiveBox', 'CanonicalPageGeometry');
   const effectiveBox = normalizePdfPointRect(effectiveBoxRaw);
 
@@ -1018,7 +1160,7 @@ export function normalizeCanonicalPageGeometry(raw) {
     );
   }
 
-  const geom = { pageIndex, mediaBox, cropBox, effectiveBox, rotation };
+  const geom = { pageIndex, mediaBox, cropBox, trimBox, bleedBox, artBox, effectiveBox, rotation };
   validateCanonicalPageGeometry(geom);
   return geom;
 }
@@ -1231,7 +1373,14 @@ export function normalizeCanonicalRedactionRegion(raw, pageGeometry, policySafet
         `Duplicate sourceRegionId '${idStr}' in canonical region`
       );
     }
+    if (prevSourceId !== null && compareCanonicalUtf8Strings(prevSourceId, idStr) >= 0) {
+      throw new RedactionError(
+        REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+        `sourceRegionIds must be in lexicographically sorted order ('${idStr}' came after '${prevSourceId}')`
+      );
+    }
     seenSources.add(idStr);
+    prevSourceId = idStr;
     return idStr;
   });
 
@@ -1574,6 +1723,7 @@ export function validateRedactionAcknowledgementRequirements(rawOrReq) {
  * @property {string} publicationId
  * @property {string} publishedPath
  * @property {string} publishedDigest
+ * @property {'new_committed'|'new_committed_durability_unconfirmed'} commitState
  */
 
 export function normalizeRedactionBlocker(raw) {
@@ -1651,6 +1801,7 @@ export function normalizeSecureRedactionPublicationReport(raw) {
       'publicationId', 'publication_id',
       'publishedPath', 'published_path',
       'publishedDigest', 'published_digest',
+      'commitState', 'commit_state',
     ],
     'SecureRedactionPublicationReport'
   );
@@ -1671,7 +1822,16 @@ export function normalizeSecureRedactionPublicationReport(raw) {
   const publishedDigest = assertStrictString(publishedDigestRaw, 'publishedDigest');
   validateSha256Digest(publishedDigest, 'publishedDigest');
 
-  return { schemaVersion, publicationId, publishedPath, publishedDigest };
+  const commitStateRaw = readExclusiveAlias(raw, 'commitState', 'commit_state', true, 'commitState', 'SecureRedactionPublicationReport');
+  const commitState = assertStrictString(commitStateRaw, 'commitState');
+  if (!['new_committed', 'new_committed_durability_unconfirmed'].includes(commitState)) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+      `Publication commitState must be a definitive committed state, got '${commitState}'`
+    );
+  }
+
+  return { schemaVersion, publicationId, publishedPath, publishedDigest, commitState };
 }
 
 export function validateUniqueBlockers(blockers) {
@@ -2027,15 +2187,324 @@ export function normalizeRedactionFeatureLosses(raw) {
   };
 }
 
+export function derivePageFeatureLosses(facts, strategy) {
+  if (strategy === 'import_unaffected_page') {
+    return {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      textSelectionLost: false,
+      searchabilityLost: false,
+      accessibilityTagsLost: false,
+      linksLost: false,
+      annotationsLost: false,
+      formsLost: false,
+      vectorQualityLost: false,
+      colorSpaceFidelityRisk: false,
+      spotColorsLost: false,
+      layersLost: false,
+      structureAssociationLost: false,
+      pageActionsLost: false,
+    };
+  }
+  return {
+    schemaVersion: REDACTION_SCHEMA_VERSION,
+    textSelectionLost: facts.text === 'present',
+    searchabilityLost: facts.text === 'present',
+    accessibilityTagsLost: facts.structureAssociation === 'present',
+    linksLost: facts.linkAnnotations === 'present',
+    annotationsLost: facts.annotations === 'present',
+    formsLost: facts.widgets === 'present',
+    vectorQualityLost: facts.vectorPaths === 'present' || facts.formXobjects === 'present',
+    colorSpaceFidelityRisk: facts.complexResources === 'present' || facts.transparency === 'present' || facts.complexColorSpaces === 'present',
+    spotColorsLost: facts.spotColors === 'present',
+    layersLost: facts.optionalContent === 'present',
+    structureAssociationLost: facts.structureAssociation === 'present',
+    pageActionsLost: facts.pageActions === 'present',
+  };
+}
+
+export function aggregateDocumentFeatureLosses(pagePlans) {
+  let textSelectionLost = false;
+  let searchabilityLost = false;
+  let accessibilityTagsLost = false;
+  let linksLost = false;
+  let annotationsLost = false;
+  let formsLost = false;
+  let vectorQualityLost = false;
+  let colorSpaceFidelityRisk = false;
+  let spotColorsLost = false;
+  let layersLost = false;
+  let structureAssociationLost = false;
+  let pageActionsLost = false;
+
+  for (const pagePlan of pagePlans) {
+    const l = pagePlan.featureLosses;
+    if (l.textSelectionLost) textSelectionLost = true;
+    if (l.searchabilityLost) searchabilityLost = true;
+    if (l.accessibilityTagsLost) accessibilityTagsLost = true;
+    if (l.linksLost) linksLost = true;
+    if (l.annotationsLost) annotationsLost = true;
+    if (l.formsLost) formsLost = true;
+    if (l.vectorQualityLost) vectorQualityLost = true;
+    if (l.colorSpaceFidelityRisk) colorSpaceFidelityRisk = true;
+    if (l.spotColorsLost) spotColorsLost = true;
+    if (l.layersLost) layersLost = true;
+    if (l.structureAssociationLost) structureAssociationLost = true;
+    if (l.pageActionsLost) pageActionsLost = true;
+  }
+
+  return {
+    schemaVersion: REDACTION_SCHEMA_VERSION,
+    textSelectionLost,
+    searchabilityLost,
+    accessibilityTagsLost,
+    linksLost,
+    annotationsLost,
+    formsLost,
+    vectorQualityLost,
+    colorSpaceFidelityRisk,
+    spotColorsLost,
+    layersLost,
+    structureAssociationLost,
+    pageActionsLost,
+  };
+}
+
+export function deriveAcknowledgementRequirements(pagePlans, documentLosses, documentFacts) {
+  const rasterizedPagesRequired = pagePlans.some(p => p.strategy === 'rasterize_page');
+  const textSearchLossRequired = documentLosses.searchabilityLost;
+  const accessibilityLossRequired = documentLosses.accessibilityTagsLost || documentLosses.structureAssociationLost;
+  const annotationLossRequired = documentLosses.annotationsLost || documentLosses.linksLost;
+  const formLossRequired = documentLosses.formsLost;
+  const signatureInvalidationRequired = documentFacts.signatureDictionary === 'present' || documentFacts.signatureField === 'present' || documentFacts.signatureDictionary === 'unknown' || documentFacts.signatureField === 'unknown';
+  const encryptionChangeRequired = documentFacts.encryption === 'present' || documentFacts.encryption === 'unknown';
+
+  return {
+    schemaVersion: REDACTION_SCHEMA_VERSION,
+    rasterizedPagesRequired,
+    textSearchLossRequired,
+    accessibilityLossRequired,
+    annotationLossRequired,
+    formLossRequired,
+    signatureInvalidationRequired,
+    encryptionChangeRequired,
+  };
+}
+
+export function evaluatePageBlockers(pageFacts) {
+  const pageBlockers = [];
+  if (
+    pageFacts.complexResources === 'unknown' ||
+    pageFacts.optionalContent === 'unknown' ||
+    pageFacts.structureAssociation === 'unknown' ||
+    pageFacts.pageActions === 'unknown' ||
+    pageFacts.complexColorSpaces === 'unknown' ||
+    pageFacts.spotColors === 'unknown' ||
+    pageFacts.transparency === 'unknown' ||
+    pageFacts.widgets === 'unknown' ||
+    pageFacts.linkAnnotations === 'unknown' ||
+    pageFacts.formXobjects === 'unknown' ||
+    pageFacts.vectorPaths === 'unknown'
+  ) {
+    pageBlockers.push({
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
+      message: `Page ${pageFacts.pageIndex} contains critical unknown inspection fact state`,
+      details: null,
+    });
+  }
+  return pageBlockers;
+}
+
+/**
+ * Truncate UTF-8 string to maximum byte limit without producing invalid surrogates
+ * @param {string} str
+ * @param {number} limitBytes
+ * @returns {string}
+ */
+export function truncateUtf8ToByteLimit(str, limitBytes) {
+  if (typeof str !== 'string') return '';
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(str);
+  if (bytes.length <= limitBytes) {
+    return str;
+  }
+  let end = limitBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
+    end--;
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, end));
+}
+
+function aggregateDetailsString(d1, d2) {
+  const parts = [];
+  if (d1) {
+    for (const part of d1.split('; ')) {
+      const trimmed = part.trim();
+      if (trimmed.length > 0 && !parts.includes(trimmed)) {
+        parts.push(trimmed);
+      }
+    }
+  }
+  if (d2) {
+    for (const part of d2.split('; ')) {
+      const trimmed = part.trim();
+      if (trimmed.length > 0 && !parts.includes(trimmed)) {
+        parts.push(trimmed);
+      }
+    }
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  parts.sort(compareCanonicalUtf8Strings);
+
+  let result = '';
+  for (const part of parts) {
+    if (result.length > 0) {
+      if (getUtf8ByteLength(result) + 2 > REDACTION_LIMITS.MAX_DETAILS_LEN) {
+        break;
+      }
+      result += '; ';
+    }
+    const currentLen = getUtf8ByteLength(result);
+    const partLen = getUtf8ByteLength(part);
+    if (currentLen + partLen <= REDACTION_LIMITS.MAX_DETAILS_LEN) {
+      result += part;
+    } else {
+      const remainingBudget = REDACTION_LIMITS.MAX_DETAILS_LEN - currentLen;
+      const truncatedPart = truncateUtf8ToByteLimit(part, remainingBudget);
+      const trimmed = truncatedPart.replace(/\s+$/g, '');
+      if (trimmed.length > 0) {
+        result += trimmed;
+      }
+      break;
+    }
+  }
+
+  while (result.endsWith(';') || result.endsWith(' ')) {
+    if (result.endsWith('; ')) {
+      result = result.slice(0, -2);
+    } else {
+      result = result.slice(0, -1);
+    }
+  }
+
+  return result.length === 0 ? null : result;
+}
+
+export function pushAggregatedBlocker(blockers, blocker) {
+  const existing = blockers.find(b => b.code === blocker.code);
+  if (existing) {
+    existing.details = aggregateDetailsString(existing.details, blocker.details);
+  } else {
+    const b = { ...blocker };
+    b.details = aggregateDetailsString(null, b.details);
+    blockers.push(b);
+  }
+}
+
+export function pushAggregatedWarning(warnings, warning) {
+  const existing = warnings.find(w => w.code === warning.code);
+  if (existing) {
+    existing.details = aggregateDetailsString(existing.details, warning.details);
+  } else {
+    const w = { ...warning };
+    w.details = aggregateDetailsString(null, w.details);
+    warnings.push(w);
+  }
+}
+
+export function hasMergedSourceIdOverflow(regions) {
+  const n = regions.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const r1 = regions[i].appliedPdfPointRect;
+      const r2 = regions[j].appliedPdfPointRect;
+
+      const r1Right = r1.left + r1.width;
+      const r1Top = r1.bottom + r1.height;
+      const r2Right = r2.left + r2.width;
+      const r2Top = r2.bottom + r2.height;
+
+      const xGap = r2.left > r1Right ? r2.left - r1Right : (r1.left > r2Right ? r1.left - r2Right : 0.0);
+      const yGap = r2.bottom > r1Top ? r2.bottom - r1Top : (r1.bottom > r2Top ? r1.bottom - r2Top : 0.0);
+
+      const hasXOverlap = r1.left < r2Right && r2.left < r1Right;
+      const hasYOverlap = r1.bottom < r2Top && r2.bottom < r1Top;
+
+      const isXTouch = Math.abs(r1.left - r2Right) <= GEOMETRY_EPSILON || Math.abs(r1Right - r2.left) <= GEOMETRY_EPSILON;
+      const isYTouch = Math.abs(r1.bottom - r2Top) <= GEOMETRY_EPSILON || Math.abs(r1Top - r2.bottom) <= GEOMETRY_EPSILON;
+
+      const isTrueOverlap = hasXOverlap && hasYOverlap;
+      const isEdgeTouch = (isXTouch && hasYOverlap) || (isYTouch && hasXOverlap);
+      const isCornerTouch = isXTouch && isYTouch;
+
+      let shouldMerge = false;
+      if (xGap > 0.0 || yGap > 0.0) {
+        shouldMerge = false;
+      } else if (isTrueOverlap) {
+        shouldMerge = true;
+      } else if (isEdgeTouch) {
+        shouldMerge = CANONICAL_MERGE_PROFILE.mergeEdgeTouching;
+      } else if (isCornerTouch) {
+        shouldMerge = CANONICAL_MERGE_PROFILE.mergeCornerTouching;
+      }
+
+      if (shouldMerge) {
+        const combined = Array.from(new Set([...regions[i].sourceRegionIds, ...regions[j].sourceRegionIds]));
+        if (combined.length > REDACTION_LIMITS.MAX_SOURCE_REGION_IDS) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // 7. Policy Helper for Document Feature Blockers
 // ---------------------------------------------------------------------------
 
-export function evaluateDocumentBlockers(facts, policy, _ack) {
+export function evaluateDocumentBlockers(facts, policy, _ack, pagePlans = null) {
   const blockers = [];
+  if (facts.totalPages > REDACTION_LIMITS.MAX_PAGE_PLANS) {
+    pushAggregatedBlocker(blockers, {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED,
+      message: `Total page count (${facts.totalPages}) exceeds maximum page plan limit of ${REDACTION_LIMITS.MAX_PAGE_PLANS}`,
+      details: null,
+    });
+  }
+  if (pagePlans && Array.isArray(pagePlans)) {
+    let totalEstimatedPixels = 0;
+    for (const pagePlan of pagePlans) {
+      if (pagePlan.strategy === 'rasterize_page') {
+        const widthPx = Math.ceil((pagePlan.geometry.effectiveBox.width / 72.0) * policy.rasterDpi);
+        const heightPx = Math.ceil((pagePlan.geometry.effectiveBox.height / 72.0) * policy.rasterDpi);
+        const pagePixels = widthPx * heightPx;
+        if (pagePixels > REDACTION_LIMITS.MAX_PIXELS_PER_PAGE) {
+          pushAggregatedBlocker(blockers, {
+            schemaVersion: REDACTION_SCHEMA_VERSION,
+            code: REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED,
+            message: `Page ${pagePlan.pageIndex} estimated pixel count (${pagePixels}) exceeds limit of ${REDACTION_LIMITS.MAX_PIXELS_PER_PAGE}`,
+            details: null,
+          });
+        }
+        totalEstimatedPixels += pagePixels;
+      }
+    }
+    if (totalEstimatedPixels > REDACTION_LIMITS.MAX_TOTAL_ESTIMATED_PIXELS) {
+      pushAggregatedBlocker(blockers, {
+        schemaVersion: REDACTION_SCHEMA_VERSION,
+        code: REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED,
+        message: `Total estimated pixels (${totalEstimatedPixels}) exceeds limit of ${REDACTION_LIMITS.MAX_TOTAL_ESTIMATED_PIXELS}`,
+        details: null,
+      });
+    }
+  }
   const isEncrypted = facts.encryption === 'present' || facts.encryption === 'unknown' || facts.isEncrypted === true || facts.is_encrypted === true;
   if (isEncrypted && policy.encryptionPolicy === 'block') {
-    blockers.push({
+    pushAggregatedBlocker(blockers, {
       schemaVersion: REDACTION_SCHEMA_VERSION,
       code: REDACTION_ERROR_CODES.REDACTION_ENCRYPTED_INPUT_UNSUPPORTED,
       message: 'Encrypted inputs are unsupported in current redaction profile',
@@ -2048,7 +2517,7 @@ export function evaluateDocumentBlockers(facts, policy, _ack) {
                    facts.isSigned === true || facts.is_signed === true ||
                    facts.signatureDictionaryPresent === true || facts.signatureFieldPresent === true || facts.byteRangePresent === true;
   if (isSigned && policy.signaturePolicy === 'block') {
-    blockers.push({
+    pushAggregatedBlocker(blockers, {
       schemaVersion: REDACTION_SCHEMA_VERSION,
       code: REDACTION_ERROR_CODES.REDACTION_SIGNED_INPUT_UNSUPPORTED,
       message: 'Signed inputs are unsupported in current redaction profile',
@@ -2057,7 +2526,7 @@ export function evaluateDocumentBlockers(facts, policy, _ack) {
   }
   const isXfa = facts.xfa === 'present' || facts.xfa === 'unknown' || facts.xfaPresent === true || facts.hasXfa === true || facts.has_xfa === true;
   if (isXfa) {
-    blockers.push({
+    pushAggregatedBlocker(blockers, {
       schemaVersion: REDACTION_SCHEMA_VERSION,
       code: REDACTION_ERROR_CODES.REDACTION_XFA_INPUT_UNSUPPORTED,
       message: 'XFA dynamic forms are unsupported in current redaction profile',
@@ -2066,10 +2535,50 @@ export function evaluateDocumentBlockers(facts, policy, _ack) {
   }
   const isAcroform = facts.acroForm === 'present' || facts.acroForm === 'unknown' || facts.acroformPresent === true || facts.hasAcroform === true || facts.has_acroform === true;
   if (isAcroform && policy.interactiveContentPolicy === 'block') {
-    blockers.push({
+    pushAggregatedBlocker(blockers, {
       schemaVersion: REDACTION_SCHEMA_VERSION,
       code: REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
       message: 'Interactive AcroForm features are blocked under conservative policy',
+      details: null,
+    });
+  }
+  if (facts.complexDocumentResources === 'present' || facts.complexDocumentResources === 'unknown') {
+    pushAggregatedBlocker(blockers, {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
+      message: 'Complex document resources present or unknown',
+      details: null,
+    });
+  }
+  if (facts.javascript === 'present' || facts.javascript === 'unknown') {
+    pushAggregatedBlocker(blockers, {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
+      message: 'Document JavaScript present or unknown',
+      details: null,
+    });
+  }
+  if (facts.documentActions === 'present' || facts.documentActions === 'unknown') {
+    pushAggregatedBlocker(blockers, {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
+      message: 'Document actions present or unknown',
+      details: null,
+    });
+  }
+  if (facts.embeddedFiles === 'present' || facts.embeddedFiles === 'unknown') {
+    pushAggregatedBlocker(blockers, {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
+      message: 'Embedded files present or unknown',
+      details: null,
+    });
+  }
+  if (facts.namesDictionary === 'present' || facts.namesDictionary === 'unknown') {
+    pushAggregatedBlocker(blockers, {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
+      message: 'Names dictionary present or unknown',
       details: null,
     });
   }
@@ -2146,20 +2655,12 @@ export function normalizePageRedactionPlan(raw) {
   const geometryDigest = assertStrictString(geomDigestRaw, 'geometryDigest');
   validateSha256Digest(geometryDigest, 'geometryDigest');
 
-  const recomputedGeomDigest = computeGeometryDigest(geometry);
-  if (geometryDigest !== recomputedGeomDigest) {
-    throw new RedactionError(
-      REDACTION_ERROR_CODES.REDACTION_PAGE_GEOMETRY_MISMATCH,
-      `geometryDigest (${geometryDigest}) does not match recomputed geometry digest (${recomputedGeomDigest})`
-    );
-  }
-
   const rawRegions = readRegionsAlias(raw);
   if (!Array.isArray(rawRegions)) {
     throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_REGION, 'PageRedactionPlan canonicalRegions must be an array');
   }
   if (rawRegions.length > REDACTION_LIMITS.MAX_CANONICAL_REGIONS_PER_PAGE) {
-    throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_REGION_LIMIT_EXCEEDED, 'Page canonicalRegions count exceeds limit');
+    throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED, 'Page canonicalRegions count exceeds limit');
   }
   const canonicalRegions = rawRegions.map(r => normalizeCanonicalRedactionRegion(r, geometry, undefined));
   let prevRegion = null;
@@ -2171,15 +2672,7 @@ export function normalizePageRedactionPlan(raw) {
       );
     }
     if (prevRegion !== null) {
-      const isUnsorted =
-        region.pageIndex < prevRegion.pageIndex ||
-        (region.pageIndex === prevRegion.pageIndex &&
-          (region.appliedPdfPointRect.bottom < prevRegion.appliedPdfPointRect.bottom - GEOMETRY_EPSILON ||
-            (Math.abs(region.appliedPdfPointRect.bottom - prevRegion.appliedPdfPointRect.bottom) <= GEOMETRY_EPSILON &&
-              (region.appliedPdfPointRect.left < prevRegion.appliedPdfPointRect.left - GEOMETRY_EPSILON ||
-                (Math.abs(region.appliedPdfPointRect.left - prevRegion.appliedPdfPointRect.left) <= GEOMETRY_EPSILON &&
-                  region.regionId < prevRegion.regionId)))));
-      if (isUnsorted) {
+      if (compareCanonicalRegions(prevRegion, region) > 0) {
         throw new RedactionError(
           REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
           'Canonical regions must be in canonical sort order (pageIndex, bottom, left, regionId)'
@@ -2219,8 +2712,37 @@ export function normalizePageRedactionPlan(raw) {
   const featureLossesRaw = readExclusiveAlias(raw, 'featureLosses', 'feature_losses', true, 'featureLosses', 'PageRedactionPlan');
   const featureLosses = normalizeRedactionFeatureLosses(featureLossesRaw);
 
+  const derivedPageLosses = derivePageFeatureLosses(facts, strategy);
+  for (const k of Object.keys(derivedPageLosses)) {
+    if (k !== 'schemaVersion' && featureLosses[k] !== derivedPageLosses[k]) {
+      throw new RedactionError(
+        REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+        `Page plan featureLosses.${k} (${featureLosses[k]}) does not match derived value (${derivedPageLosses[k]})`
+      );
+    }
+  }
+
   const rawBlockers = readExclusiveAlias(raw, 'blockers', 'blockers', true, 'blockers', 'PageRedactionPlan');
   const blockers = validateUniqueBlockers(rawBlockers);
+
+  const expectedPageBlockers = evaluatePageBlockers(facts);
+  const hasSourceIdOverflow = hasMergedSourceIdOverflow(canonicalRegions);
+  if (canonicalRegions.length > REDACTION_LIMITS.MAX_CANONICAL_REGIONS_PER_PAGE || hasSourceIdOverflow) {
+    pushAggregatedBlocker(expectedPageBlockers, {
+      schemaVersion: REDACTION_SCHEMA_VERSION,
+      code: REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED,
+      message: hasSourceIdOverflow
+        ? `Page ${pageIndex} merged canonical region source_region_ids count would exceed limit of ${REDACTION_LIMITS.MAX_SOURCE_REGION_IDS}`
+        : `Page ${pageIndex} merged canonical regions count (${canonicalRegions.length}) exceeds maximum limit of ${REDACTION_LIMITS.MAX_CANONICAL_REGIONS_PER_PAGE}`,
+      details: null,
+    });
+  }
+  if (JSON.stringify(blockers) !== JSON.stringify(expectedPageBlockers)) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+      `Page plan blockers mismatch derived page blockers`
+    );
+  }
 
   const rawWarnings = readExclusiveAlias(raw, 'warnings', 'warnings', true, 'warnings', 'PageRedactionPlan');
   const warnings = validateUniqueWarnings(rawWarnings);
@@ -2228,10 +2750,11 @@ export function normalizePageRedactionPlan(raw) {
   const execRaw = readExclusiveAlias(raw, 'executable', 'executable', true, 'executable', 'PageRedactionPlan');
   const executable = assertStrictBoolean(execRaw, 'executable');
 
-  if (executable === true && blockers.length > 0) {
+  const expectedPageExecutable = (blockers.length === 0);
+  if (executable !== expectedPageExecutable) {
     throw new RedactionError(
-      REDACTION_ERROR_CODES.REDACTION_BLOCKED_DOCUMENT_FEATURE,
-      'PageRedactionPlan executable cannot be true when page-level blockers exist'
+      REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+      `Page plan executable (${executable}) does not match expected (${expectedPageExecutable})`
     );
   }
 
@@ -2272,6 +2795,50 @@ function assertNormalizedSecureRedactionPlan(plan) {
     }
   }
 
+  const derivedDocLosses = aggregateDocumentFeatureLosses(plan.pagePlans);
+  for (const k of Object.keys(derivedDocLosses)) {
+    if (k !== 'schemaVersion' && plan.losses[k] !== derivedDocLosses[k]) {
+      throw new RedactionError(
+        REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+        `Document losses.${k} (${plan.losses[k]}) does not match aggregated page losses (${derivedDocLosses[k]})`
+      );
+    }
+  }
+
+  const derivedAckReqs = deriveAcknowledgementRequirements(plan.pagePlans, plan.losses, plan.facts);
+  for (const k of Object.keys(derivedAckReqs)) {
+    if (k !== 'schemaVersion' && plan.acknowledgementRequirements[k] !== derivedAckReqs[k]) {
+      throw new RedactionError(
+        REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+        `Document acknowledgementRequirements.${k} (${plan.acknowledgementRequirements[k]}) does not match derived value (${derivedAckReqs[k]})`
+      );
+    }
+  }
+
+  const expectedDocBlockers = evaluateDocumentBlockers(plan.facts, plan.policy, plan.acknowledgements, plan.pagePlans);
+  const expectedTopLevelBlockers = [...expectedDocBlockers];
+  const expectedTopLevelWarnings = [];
+  for (const pagePlan of plan.pagePlans) {
+    for (const b of pagePlan.blockers) {
+      pushAggregatedBlocker(expectedTopLevelBlockers, b);
+    }
+    for (const w of pagePlan.warnings) {
+      pushAggregatedWarning(expectedTopLevelWarnings, w);
+    }
+  }
+  if (JSON.stringify(plan.blockers) !== JSON.stringify(expectedTopLevelBlockers)) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+      'Top-level blockers mismatch expected aggregated blockers'
+    );
+  }
+  if (JSON.stringify(plan.warnings) !== JSON.stringify(expectedTopLevelWarnings)) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+      'Top-level warnings mismatch expected aggregated warnings'
+    );
+  }
+
   const flattenedRegions = plan.pagePlans.flatMap(p => p.canonicalRegions);
   if (plan.canonicalRegions.length !== flattenedRegions.length) {
     throw new RedactionError(
@@ -2286,6 +2853,17 @@ function assertNormalizedSecureRedactionPlan(plan) {
         `Top-level canonicalRegions item at index ${i} ('${plan.canonicalRegions[i].regionId}') does not match page plan canonicalRegion ('${flattenedRegions[i].regionId}')`
       );
     }
+  }
+
+  const seenCanonicalRegionIds = new Set();
+  for (const region of flattenedRegions) {
+    if (seenCanonicalRegionIds.has(region.regionId)) {
+      throw new RedactionError(
+        REDACTION_ERROR_CODES.REDACTION_DUPLICATE_REGION_ID,
+        `Duplicate global canonical region ID found: '${region.regionId}'`
+      );
+    }
+    seenCanonicalRegionIds.add(region.regionId);
   }
 
   const reqs = plan.acknowledgementRequirements;
@@ -2306,7 +2884,15 @@ function assertNormalizedSecureRedactionPlan(plan) {
     );
   }
 
-  const expectedReady = plan.executable && expectedAcksSatisfied;
+  const expectedExecutable = (plan.blockers.length === 0 && plan.pagePlans.every(p => p.executable));
+  if (plan.executable !== expectedExecutable) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+      `plan.executable (${plan.executable}) does not match expected (${expectedExecutable})`
+    );
+  }
+
+  const expectedReady = expectedExecutable && expectedAcksSatisfied;
   if (plan.readyForExecution !== expectedReady) {
     throw new RedactionError(
       REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
@@ -2352,7 +2938,7 @@ function assertNormalizedSecureRedactionPlan(plan) {
   }
 }
 
-export function normalizeSecureRedactionPlan(raw) {
+export function normalizeSecureRedactionPlanStructure(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'SecureRedactionPlan must be an object');
   }
@@ -2472,19 +3058,20 @@ export function normalizeSecureRedactionPlan(raw) {
 
   assertNormalizedSecureRedactionPlan(plan);
 
-  const recomputedPlanDigest = computePlanDigest(plan);
-  if (planDigest !== recomputedPlanDigest) {
-    throw new RedactionError(
-      REDACTION_ERROR_CODES.REDACTION_PLAN_DIGEST_MISMATCH,
-      `planDigest (${planDigest}) does not match recomputed plan digest (${recomputedPlanDigest})`
-    );
-  }
-
   return plan;
 }
 
-export function validateSecureRedactionPlan(rawOrPlan) {
-  normalizeSecureRedactionPlan(rawOrPlan);
+export function normalizeSecureRedactionPlan(raw) {
+  return normalizeSecureRedactionPlanStructure(raw);
+}
+
+export async function validateSecureRedactionPlan(rawOrPlan) {
+  const verified = await normalizeAndVerifySecureRedactionPlan(rawOrPlan);
+  return verified.digestVerified === true;
+}
+
+export function validateSecureRedactionPlanStructure(rawOrPlan) {
+  normalizeSecureRedactionPlanStructure(rawOrPlan);
   return true;
 }
 
@@ -2497,12 +3084,14 @@ export function validateSecureRedactionPlan(rawOrPlan) {
  * @property {string} schemaVersion
  * @property {string} jobId
  * @property {string} sessionId
+ * @property {string} inputDigest
  * @property {string} planDigest
- * @property {number} processedPages
- * @property {string} outputPath
+ * @property {string} outputRelativeName
  * @property {string} outputDigest
+ * @property {number} outputSizeBytes
+ * @property {number} pageCount
  * @property {RedactionWarning[]} warnings
- * @property {'transformed'|'transformed_unverified'} status
+ * @property {'transformed_unverified'} status
  */
 
 /**
@@ -2533,17 +3122,39 @@ export function normalizeSecureRedactionTransformReport(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Transform report must be an object');
   }
+  let serializedReport;
+  try {
+    serializedReport = JSON.stringify(raw);
+  } catch {
+    throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Transform report must be JSON-serializable');
+  }
+  if (getUtf8ByteLength(serializedReport) > REDACTION_LIMITS.MAX_REPORT_SIZE_BYTES) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED,
+      `Transform report size (${getUtf8ByteLength(serializedReport)} bytes) exceeds MAX_REPORT_SIZE_BYTES limit (${REDACTION_LIMITS.MAX_REPORT_SIZE_BYTES} bytes)`
+    );
+  }
   assertNoUnknownFields(
     raw,
     [
       'schemaVersion', 'schema_version',
       'jobId', 'job_id',
       'sessionId', 'session_id',
+      'inputDigest', 'input_digest',
       'planDigest', 'plan_digest',
-      'processedPages', 'processed_pages',
-      'outputPath', 'output_path',
+      'outputRelativeName', 'output_relative_name',
       'outputDigest', 'output_digest',
+      'outputSizeBytes', 'output_size_bytes',
+      'pageCount', 'page_count',
+      'affectedPages', 'affected_pages',
+      'unaffectedPages', 'unaffected_pages',
+      'rasterDpi', 'raster_dpi',
+      'appliedCanonicalRegions', 'applied_canonical_regions',
+      'affectedPageRasterGeometry', 'affected_page_raster_geometry',
+      'pageFeatureLosses', 'page_feature_losses',
+      'backgroundPolicy', 'background_policy',
       'warnings',
+      'transformEvidence', 'transform_evidence',
       'status',
     ],
     'SecureRedactionTransformReport'
@@ -2561,27 +3172,106 @@ export function normalizeSecureRedactionTransformReport(raw) {
   const sessionIdRaw = readExclusiveAlias(raw, 'sessionId', 'session_id', true, 'sessionId', 'SecureRedactionTransformReport');
   const sessionId = assertStrictString(sessionIdRaw, 'sessionId', { minLen: 1, maxLen: REDACTION_LIMITS.MAX_IDENTITY_LEN });
 
+  const inputDigestRaw = readExclusiveAlias(raw, 'inputDigest', 'input_digest', true, 'inputDigest', 'SecureRedactionTransformReport');
+  const inputDigest = assertStrictString(inputDigestRaw, 'inputDigest');
+  validateSha256Digest(inputDigest, 'inputDigest');
+
   const planDigestRaw = readExclusiveAlias(raw, 'planDigest', 'plan_digest', true, 'planDigest', 'SecureRedactionTransformReport');
   const planDigest = assertStrictString(planDigestRaw, 'planDigest');
   validateSha256Digest(planDigest, 'planDigest');
 
-  const processedPagesRaw = readExclusiveAlias(raw, 'processedPages', 'processed_pages', true, 'processedPages', 'SecureRedactionTransformReport');
-  const processedPages = assertU32(processedPagesRaw, 'processedPages');
-
-  const outputPathRaw = readExclusiveAlias(raw, 'outputPath', 'output_path', true, 'outputPath', 'SecureRedactionTransformReport');
-  const outputPath = assertStrictString(outputPathRaw, 'outputPath', { minLen: 1, maxLen: REDACTION_LIMITS.MAX_PATH_LEN });
+  const outputRelativeNameRaw = readExclusiveAlias(raw, 'outputRelativeName', 'output_relative_name', true, 'outputRelativeName', 'SecureRedactionTransformReport');
+  const outputRelativeName = assertStrictString(outputRelativeNameRaw, 'outputRelativeName', { minLen: 1, maxLen: REDACTION_LIMITS.MAX_PATH_LEN });
+  if (outputRelativeName !== 'secure-redaction-transform.pdf') throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'outputRelativeName must be the fixed internal artifact name');
 
   const outputDigestRaw = readExclusiveAlias(raw, 'outputDigest', 'output_digest', true, 'outputDigest', 'SecureRedactionTransformReport');
   const outputDigest = assertStrictString(outputDigestRaw, 'outputDigest');
   validateSha256Digest(outputDigest, 'outputDigest');
 
+  const outputSizeBytes = assertStrictNumber(
+    readExclusiveAlias(raw, 'outputSizeBytes', 'output_size_bytes', true, 'outputSizeBytes', 'SecureRedactionTransformReport'),
+    'outputSizeBytes',
+    { integer: true, min: 1, max: REDACTION_LIMITS.MAX_SECURE_REDACTION_OUTPUT_BYTES },
+    REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED
+  );
+  const pageCount = assertU32(readExclusiveAlias(raw, 'pageCount', 'page_count', true, 'pageCount', 'SecureRedactionTransformReport'), 'pageCount');
+  const affectedPages = readExclusiveAlias(raw, 'affectedPages', 'affected_pages', true, 'affectedPages', 'SecureRedactionTransformReport');
+  const unaffectedPages = readExclusiveAlias(raw, 'unaffectedPages', 'unaffected_pages', true, 'unaffectedPages', 'SecureRedactionTransformReport');
+  const rasterDpi = assertU32(readExclusiveAlias(raw, 'rasterDpi', 'raster_dpi', true, 'rasterDpi', 'SecureRedactionTransformReport'), 'rasterDpi');
+  const affectedPageSet = new Set();
+  const unaffectedPageSet = new Set();
+  for (const [name, pages, seen] of [['affectedPages', affectedPages, affectedPageSet], ['unaffectedPages', unaffectedPages, unaffectedPageSet]]) {
+    if (!Array.isArray(pages) || pages.length > REDACTION_LIMITS.MAX_PAGE_PLANS) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED, `${name} invalid`);
+    pages.forEach((page, index) => {
+      assertU32(page, `${name}[${index}]`);
+      if (page >= pageCount || seen.has(page)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, `${name} must contain unique in-range page indexes`);
+      seen.add(page);
+    });
+  }
+  if (affectedPages.length + unaffectedPages.length !== pageCount || [...affectedPageSet].some(page => unaffectedPageSet.has(page))) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Transform page collections must be a complete disjoint partition');
+  const appliedCanonicalRegions = readExclusiveAlias(raw, 'appliedCanonicalRegions', 'applied_canonical_regions', true, 'appliedCanonicalRegions', 'SecureRedactionTransformReport');
+  const affectedPageRasterGeometry = readExclusiveAlias(raw, 'affectedPageRasterGeometry', 'affected_page_raster_geometry', true, 'affectedPageRasterGeometry', 'SecureRedactionTransformReport');
+  const pageFeatureLosses = readExclusiveAlias(raw, 'pageFeatureLosses', 'page_feature_losses', true, 'pageFeatureLosses', 'SecureRedactionTransformReport');
+  if (!Array.isArray(appliedCanonicalRegions) || appliedCanonicalRegions.length > REDACTION_LIMITS.MAX_REGIONS_PER_INPUT || !Array.isArray(affectedPageRasterGeometry) || !Array.isArray(pageFeatureLosses) || affectedPageRasterGeometry.length !== affectedPages.length || pageFeatureLosses.length !== pageCount) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Transform evidence collections are inconsistent');
+  const normalizedRegions = appliedCanonicalRegions.map(region => normalizeCanonicalRedactionRegion(region, undefined, undefined));
+  const regionIds = new Set();
+  const sourceRegionIds = new Set();
+  for (const region of normalizedRegions) {
+    if (!affectedPageSet.has(region.pageIndex)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Applied canonical regions must belong to affected pages');
+    if (regionIds.has(region.regionId)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_DUPLICATE_REGION_ID, `Duplicate applied canonical region ID '${region.regionId}'`);
+    regionIds.add(region.regionId);
+    for (const sourceRegionId of region.sourceRegionIds) {
+      if (sourceRegionIds.has(sourceRegionId)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_DUPLICATE_REGION_ID, `Duplicate applied source region ID '${sourceRegionId}'`);
+      sourceRegionIds.add(sourceRegionId);
+    }
+  }
+  const rasterEvidencePages = new Set();
+  const normalizedRasterGeometry = affectedPageRasterGeometry.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, `affectedPageRasterGeometry[${index}] must be an object`);
+    assertNoUnknownFields(entry, ['pageIndex', 'page_index', 'width', 'height', 'dpi'], 'TransformRasterPageEvidence');
+    const pageIndex = assertU32(readExclusiveAlias(entry, 'pageIndex', 'page_index', true, 'pageIndex', 'TransformRasterPageEvidence'), 'pageIndex');
+    const width = assertPositiveU32(entry.width, 'width', REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED);
+    const height = assertPositiveU32(entry.height, 'height', REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED);
+    const dpi = assertStrictNumber(entry.dpi, 'dpi', { integer: true, min: REDACTION_LIMITS.MIN_RASTER_DPI, max: REDACTION_LIMITS.MAX_RASTER_DPI });
+    if (!affectedPageSet.has(pageIndex) || rasterEvidencePages.has(pageIndex) || dpi !== rasterDpi) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Raster evidence must uniquely cover affected pages at the report DPI');
+    if (width > REDACTION_LIMITS.MAX_RASTER_DIMENSION || height > REDACTION_LIMITS.MAX_RASTER_DIMENSION) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED, 'Raster evidence exceeds maximum raster dimension');
+    if (width * height > REDACTION_LIMITS.MAX_PIXELS_PER_PAGE) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_RESOURCE_LIMIT_EXCEEDED, 'Raster evidence exceeds maximum page pixel count');
+    rasterEvidencePages.add(pageIndex);
+    return { pageIndex, width, height, dpi };
+  });
+  const featureLossPages = new Set();
+  const normalizedFeatureLosses = pageFeatureLosses.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, `pageFeatureLosses[${index}] must be an object`);
+    assertNoUnknownFields(entry, ['pageIndex', 'page_index', 'featureLosses', 'feature_losses'], 'TransformPageFeatureLoss');
+    const pageIndex = assertU32(readExclusiveAlias(entry, 'pageIndex', 'page_index', true, 'pageIndex', 'TransformPageFeatureLoss'), 'pageIndex');
+    if (pageIndex >= pageCount || featureLossPages.has(pageIndex)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Feature-loss evidence must uniquely cover every page');
+    featureLossPages.add(pageIndex);
+    return { pageIndex, featureLosses: normalizeRedactionFeatureLosses(readExclusiveAlias(entry, 'featureLosses', 'feature_losses', true, 'featureLosses', 'TransformPageFeatureLoss')) };
+  });
+  const backgroundPolicy = assertStrictString(readExclusiveAlias(raw, 'backgroundPolicy', 'background_policy', true, 'backgroundPolicy', 'SecureRedactionTransformReport'), 'backgroundPolicy');
+  if (backgroundPolicy !== 'opaque_white_v1') throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Unsupported transform background policy');
+  const transformEvidence = readExclusiveAlias(raw, 'transformEvidence', 'transform_evidence', true, 'transformEvidence', 'SecureRedactionTransformReport');
+  if (!transformEvidence || typeof transformEvidence !== 'object' || Array.isArray(transformEvidence)) throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'transformEvidence must be an object');
+  const evidenceFields = [
+    ['newDocumentConstructed', 'new_document_constructed'], ['affectedPagesRasterized', 'affected_pages_rasterized'],
+    ['affectedPageOriginalObjectsNotImported', 'affected_page_original_objects_not_imported'], ['unaffectedPagesImported', 'unaffected_pages_imported'],
+    ['fullRewriteUsed', 'full_rewrite_used'], ['incrementalSaveNotUsed', 'incremental_save_not_used'],
+    ['opaqueWhiteBackgroundPolicy', 'opaque_white_background_policy'], ['losslessRasterPath', 'lossless_raster_path'], ['outputDigestCalculated', 'output_digest_calculated'],
+  ];
+  assertNoUnknownFields(transformEvidence, evidenceFields.flat(), 'SecureRedactionTransformEvidence');
+  const normalizedEvidence = {};
+  for (const [camel, snake] of evidenceFields) normalizedEvidence[camel] = assertStrictBoolean(readExclusiveAlias(transformEvidence, camel, snake, true, camel, 'SecureRedactionTransformEvidence'), camel);
+  if (!normalizedEvidence.newDocumentConstructed || !normalizedEvidence.fullRewriteUsed || !normalizedEvidence.incrementalSaveNotUsed || !normalizedEvidence.opaqueWhiteBackgroundPolicy || !normalizedEvidence.losslessRasterPath || !normalizedEvidence.outputDigestCalculated || (affectedPageSet.size > 0 && (!normalizedEvidence.affectedPagesRasterized || !normalizedEvidence.affectedPageOriginalObjectsNotImported)) || (unaffectedPageSet.size > 0 && !normalizedEvidence.unaffectedPagesImported)) {
+    throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Transform evidence contradicts the report collections or required transform path');
+  }
+
   const warnings = validateUniqueWarnings(raw.warnings);
   const status = assertStrictString(raw.status, 'status');
 
-  if (status !== 'transformed' && status !== 'transformed_unverified') {
+  if (status !== 'transformed_unverified') {
     throw new RedactionError(
       REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
-      'Transform report status must be "transformed" or "transformed_unverified"'
+      'Transform report status must be "transformed_unverified"'
     );
   }
 
@@ -2589,11 +3279,21 @@ export function normalizeSecureRedactionTransformReport(raw) {
     schemaVersion,
     jobId,
     sessionId,
+    inputDigest,
     planDigest,
-    processedPages,
-    outputPath,
+    outputRelativeName,
     outputDigest,
+    outputSizeBytes,
+    pageCount,
+    affectedPages,
+    unaffectedPages,
+    rasterDpi,
+    appliedCanonicalRegions: normalizedRegions,
+    affectedPageRasterGeometry: normalizedRasterGeometry,
+    pageFeatureLosses: normalizedFeatureLosses,
+    backgroundPolicy,
     warnings,
+    transformEvidence: normalizedEvidence,
     status,
   };
 }
@@ -2611,6 +3311,7 @@ export function normalizeSecureRedactionVerificationReport(raw) {
     raw,
     [
       'schemaVersion', 'schema_version',
+      'verificationVersion', 'verification_version',
       'jobId', 'job_id',
       'sessionId', 'session_id',
       'planDigest', 'plan_digest',
@@ -2627,6 +3328,12 @@ export function normalizeSecureRedactionVerificationReport(raw) {
   const schemaVersion = assertStrictString(schemaVersionRaw, 'schemaVersion');
   if (schemaVersion !== REDACTION_SCHEMA_VERSION) {
     throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_POLICY_VERSION_UNSUPPORTED, `Unsupported verification report schema version: '${schemaVersion}'`);
+  }
+
+  const verificationVersionRaw = readExclusiveAlias(raw, 'verificationVersion', 'verification_version', true, 'verificationVersion', 'SecureRedactionVerificationReport');
+  const verificationVersion = assertStrictString(verificationVersionRaw, 'verificationVersion');
+  if (verificationVersion !== SECURE_REDACTION_VERIFICATION_VERSION) {
+    throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_POLICY_VERSION_UNSUPPORTED, `Unsupported secure redaction verification version: '${verificationVersion}'`);
   }
 
   const jobIdRaw = readExclusiveAlias(raw, 'jobId', 'job_id', true, 'jobId', 'SecureRedactionVerificationReport');
@@ -2648,36 +3355,26 @@ export function normalizeSecureRedactionVerificationReport(raw) {
 
   const rawChecks = readExclusiveAlias(raw, 'verificationChecks', 'verification_checks', true, 'verificationChecks', 'SecureRedactionVerificationReport');
   const verificationChecks = validateUniqueVerificationChecks(rawChecks);
+  if (verificationChecks.length !== REQUIRED_SECURE_REDACTION_VERIFICATION_CHECKS.length ||
+      verificationChecks.some((item, index) => item.code !== REQUIRED_SECURE_REDACTION_VERIFICATION_CHECKS[index])) {
+    throw new RedactionError(REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY, 'Verification report must contain the exact canonical required check set in order');
+  }
 
   const blockers = validateUniqueBlockers(raw.blockers);
   const warnings = validateUniqueWarnings(raw.warnings);
 
-  // Cross-Field Invariants for Verification Report
-  if (isVerified) {
-    if (blockers.length > 0) {
-      throw new RedactionError(
-        REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
-        'Verification report isVerified cannot be true when blockers exist'
-      );
-    }
-    if (verificationChecks.length === 0) {
-      throw new RedactionError(
-        REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
-        'Verification report isVerified cannot be true when verificationChecks is empty'
-      );
-    }
-    for (const check of verificationChecks) {
-      if (check.status !== 'passed') {
-        throw new RedactionError(
-          REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
-          `Verification report isVerified cannot be true when check '${check.code}' status is '${check.status}'`
-        );
-      }
-    }
+  // `isVerified` is a biconditional protocol value, not an advisory flag.
+  const expectedVerified = blockers.length === 0 && verificationChecks.every((check) => check.status === 'passed');
+  if (isVerified !== expectedVerified) {
+    throw new RedactionError(
+      REDACTION_ERROR_CODES.REDACTION_INVALID_POLICY,
+      'Verification report isVerified must equal (all required checks passed AND blockers empty)'
+    );
   }
 
   return {
     schemaVersion,
+    verificationVersion,
     jobId,
     sessionId,
     planDigest,

@@ -26,4 +26,16 @@ describe("ui state", () => {
     expect(state.panels.sensitiveDataScan).toBe(true);
     expect(state.isSensitiveDataScanPanelOpen).toBe(true);
   });
+
+  it("keeps secure-redaction panel state independent from scan and other panels", () => {
+    const state = createUiState();
+    state.setPanel("sensitiveDataScan", true);
+    state.isSecureRedactionPanelOpen = true;
+    state.setPanel("prepress", true);
+    state.setPanel("sensitiveDataScan", false);
+    expect(state.panels.secureRedaction).toBe(true);
+    expect(state.panels.prepress).toBe(true);
+    state.isSecureRedactionPanelOpen = false;
+    expect(state.panels.secureRedaction).toBe(false);
+  });
 });

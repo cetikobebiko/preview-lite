@@ -30,6 +30,8 @@ describe("frontend architecture acceptance gates", () => {
       "src/components/ViewerShell.svelte",
       "src/components/WorkspacePanels.svelte",
       "src/components/SearchHost.svelte",
+      "src/components/SecureRedactionPanel.svelte",
+      "src/services/app/secureRedactionController.js",
     ]) expect(lines(read(file)), file).toBeLessThan(600);
   });
 
@@ -45,6 +47,31 @@ describe("frontend architecture acceptance gates", () => {
     ]) expect(appSource, forbidden).not.toContain(forbidden);
     expect(appSource).not.toMatch(/\bswitch\s*\(/);
     expect(appSource).not.toContain("onMount(async");
+  });
+
+  it("keeps secure-redaction business logic in its canonical controller and behind panel/runtime gates", () => {
+    const controller = read("src/services/app/secureRedactionController.js");
+    const workspace = read("src/components/WorkspacePanels.svelte");
+    const viewerShell = read("src/components/ViewerShell.svelte");
+    expect(controller).toContain("startSecureRedactionPlan");
+    expect(controller).toContain("startSecureRedactionExecution");
+    expect(appSource).not.toContain("startSecureRedactionPlan");
+    expect(appSource).not.toContain("startSecureRedactionExecution");
+    expect(appSource).not.toContain("planDigest");
+    expect(workspace).toContain('featureUi("redaction").visible');
+    expect(viewerShell).toContain('featureUi("redaction").runnable');
+    for (const file of [
+      "src/App.svelte",
+      "src/components/PdfPage.svelte",
+      "src/components/SensitiveDataScanPanel.svelte",
+      "src/components/SecureRedactionPanel.svelte",
+    ]) {
+      const source = read(file);
+      expect(source, file).not.toContain("startSecureRedactionPlan");
+      expect(source, file).not.toContain("startSecureRedactionExecution");
+      expect(source, file).not.toContain('invoke("plan_secure_redaction"');
+      expect(source, file).not.toContain('invoke("execute_secure_redaction"');
+    }
   });
 
   it("uses typed modal and panel APIs in the extracted shell", () => {

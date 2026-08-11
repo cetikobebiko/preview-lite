@@ -1,0 +1,60 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names 5 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 3 >>
+stream
+q Q
+endstream
+endobj
+5 0 obj
+<< /Dests 6 0 R /JavaScript 7 0 R /EmbeddedFiles 9 0 R >>
+endobj
+6 0 obj
+<< /Names [(preserved-destination) [3 0 R /Fit]] >>
+endobj
+7 0 obj
+<< /Names [(fixture-script) 8 0 R] >>
+endobj
+8 0 obj
+<< /S /JavaScript /JS (SANITIZATION_COMBINED_NAMES_JS_001) >>
+endobj
+9 0 obj
+<< /Names [(fixture.bin) 10 0 R] >>
+endobj
+10 0 obj
+<< /Type /Filespec /F (fixture.bin) /EF << /F 11 0 R >> >>
+endobj
+11 0 obj
+<< /Length 40 /Type /EmbeddedFile >>
+stream
+SANITIZATION_COMBINED_NAMES_EMBEDDED_001
+endstream
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000015 00000 n 
+0000000077 00000 n 
+0000000134 00000 n 
+0000000221 00000 n 
+0000000273 00000 n 
+0000000346 00000 n 
+0000000413 00000 n 
+0000000466 00000 n 
+0000000543 00000 n 
+0000000594 00000 n 
+0000000669 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R  >>
+startxref
+780
+%%EOF

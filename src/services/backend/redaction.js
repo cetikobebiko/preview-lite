@@ -1,5 +1,14 @@
 import { callBackend } from "./client.js";
 import { runSessionJob } from "./sessionJob.js";
+import {
+  normalizeSecureRedactionPolicy,
+  normalizeRedactionAcknowledgements,
+  normalizeRedactionRegionInput,
+  validateRedactionRegionInputs,
+  validateSha256Digest,
+  normalizeAndVerifySecureRedactionPlan,
+  normalizeSecureRedactionExecutionReport,
+} from "../../features/redaction/redactionSchemas.js";
 
 const ALLOWED_REPORT_KEYS = new Set([
   "schema_version",
@@ -309,4 +318,127 @@ export const startSensitiveDataScan = (sessionId, expectedContentGeneration, pat
 export const scanSensitiveData = (sessionId, expectedContentGeneration, patterns) =>
   startSensitiveDataScan(sessionId, expectedContentGeneration, patterns).promise;
 
+export function toSecureRedactionPolicyWire(policy) {
+  const norm = normalizeSecureRedactionPolicy(policy);
+  return {
+    schema_version: norm.schemaVersion,
+    profile: norm.profile,
+    strategy: norm.strategy,
+    raster_dpi: norm.rasterDpi,
+    appearance: {
+      kind: norm.appearance.kind,
+      color: norm.appearance.color,
+      opacity: norm.appearance.opacity,
+    },
+    safety_margin_points: norm.safetyMarginPoints,
+    interactive_content_policy: norm.interactiveContentPolicy,
+    signature_policy: norm.signaturePolicy,
+    encryption_policy: norm.encryptionPolicy,
+  };
+}
 
+export function toRedactionAcknowledgementsWire(acknowledgements) {
+  const norm = normalizeRedactionAcknowledgements(acknowledgements);
+  return {
+    schema_version: norm.schemaVersion,
+    rasterized_pages_accepted: norm.rasterizedPagesAccepted,
+    text_search_loss_accepted: norm.textSearchLossAccepted,
+    accessibility_loss_accepted: norm.accessibilityLossAccepted,
+    annotation_loss_accepted: norm.annotationLossAccepted,
+    form_loss_accepted: norm.formLossAccepted,
+    signature_invalidation_accepted: norm.signatureInvalidationAccepted,
+    encryption_change_accepted: norm.encryptionChangeAccepted,
+  };
+}
+
+export function toRedactionRegionInputWire(region) {
+  const norm = normalizeRedactionRegionInput(region);
+  return {
+    id: norm.id,
+    page_index: norm.pageIndex,
+    normalized_top_left_rect: {
+      x: norm.normalizedTopLeftRect.x,
+      y: norm.normalizedTopLeftRect.y,
+      width: norm.normalizedTopLeftRect.width,
+      height: norm.normalizedTopLeftRect.height,
+    },
+    source: norm.source,
+  };
+}
+
+export const startSecureRedactionPlan = (
+  sessionId,
+  expectedContentGeneration,
+  policy,
+  acknowledgements,
+  regions,
+) => {
+  const wirePolicy = toSecureRedactionPolicyWire(policy);
+  const wireAcks = toRedactionAcknowledgementsWire(acknowledgements);
+  const canonicalRegions = validateRedactionRegionInputs(regions);
+  const wireRegions = canonicalRegions.map(toRedactionRegionInputWire);
+
+  const handle = runSessionJob(sessionId, (jobId) =>
+    callBackend("planSecureRedaction", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      policy: wirePolicy,
+      acknowledgements: wireAcks,
+      regions: wireRegions,
+    }),
+  );
+
+  return {
+    jobId: handle.jobId,
+    promise: handle.promise.then(async (rawPlan) => {
+      const verifiedPlan = await normalizeAndVerifySecureRedactionPlan(rawPlan);
+      if (!verifiedPlan || verifiedPlan.digestVerified !== true) {
+        throw new Error("Plan verification failed: digestVerified must be true");
+      }
+      return verifiedPlan;
+    }),
+    cancel: handle.cancel,
+  };
+};
+
+/**
+ * Starts the secure export pipeline for the canonical secureRedactionController.
+ * Target filesystem authority remains exclusively in Rust.
+ */
+export const startSecureRedactionExecution = (
+  sessionId,
+  expectedContentGeneration,
+  policy,
+  acknowledgements,
+  regions,
+  expectedPlanDigest,
+  targetPath,
+) => {
+  const wirePolicy = toSecureRedactionPolicyWire(policy);
+  const wireAcks = toRedactionAcknowledgementsWire(acknowledgements);
+  const canonicalRegions = validateRedactionRegionInputs(regions);
+  const wireRegions = canonicalRegions.map(toRedactionRegionInputWire);
+  validateSha256Digest(expectedPlanDigest, "expectedPlanDigest");
+  if (typeof targetPath !== "string" || targetPath.trim().length === 0 || targetPath.length > 4096) {
+    throw new Error("targetPath must be a non-empty contract-level path string up to 4096 characters");
+  }
+
+  const handle = runSessionJob(sessionId, (jobId) =>
+    callBackend("executeSecureRedaction", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      policy: wirePolicy,
+      acknowledgements: wireAcks,
+      regions: wireRegions,
+      expectedPlanDigest,
+      targetPath,
+    }),
+  );
+  return {
+    jobId: handle.jobId,
+    promise: handle.promise.then(normalizeSecureRedactionExecutionReport),
+    cancel: handle.cancel,
+  };
+};

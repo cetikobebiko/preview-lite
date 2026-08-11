@@ -1,0 +1,84 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names 5 0 R /OpenAction 9 0 R /AA << /WC 10 0 R >> /AcroForm 14 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /AA << /O 11 0 R /C << /S /JavaScript /JS <53414E4954495A4154494F4E5F4A535F4845585F303031> >> >> /Annots [12 0 R 15 0 R] >>
+endobj
+4 0 obj
+<< /Length 3 >>
+stream
+q Q
+endstream
+endobj
+5 0 obj
+<< /Dests 6 0 R /JavaScript 7 0 R >>
+endobj
+6 0 obj
+<< /Names [(kept-destination) [3 0 R /Fit]] >>
+endobj
+7 0 obj
+<< /Names [(fixture-script) 8 0 R] >>
+endobj
+8 0 obj
+<< /S /JavaScript /JS (SANITIZATION_JS_PAYLOAD_001) >>
+endobj
+9 0 obj
+<< /S /JavaScript /JS 17 0 R >>
+endobj
+10 0 obj
+<< /S /JavaScript /JS (SANITIZATION_CATALOG_AA_001) >>
+endobj
+11 0 obj
+<< /S /JavaScript /JS (SANITIZATION_PAGE_AA_001) >>
+endobj
+12 0 obj
+<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A 13 0 R /AA << /E 10 0 R >> >>
+endobj
+13 0 obj
+<< /S /JavaScript /JS (SANITIZATION_ANNOTATION_JS_001) >>
+endobj
+14 0 obj
+<< /Fields [15 0 R] /CO [15 0 R] >>
+endobj
+15 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (fixture-field) /Rect [20 20 80 40] /A 13 0 R /AA << /K 13 0 R /V 13 0 R /C 13 0 R /F 13 0 R >> >>
+endobj
+16 0 obj
+null
+endobj
+17 0 obj
+<< /Length 34 >>
+stream
+SANITIZATION_JS_STREAM_PAYLOAD_001
+endstream
+endobj
+xref
+0 18
+0000000000 65535 f 
+0000000015 00000 n 
+0000000133 00000 n 
+0000000190 00000 n 
+0000000398 00000 n 
+0000000450 00000 n 
+0000000502 00000 n 
+0000000564 00000 n 
+0000000617 00000 n 
+0000000687 00000 n 
+0000000734 00000 n 
+0000000805 00000 n 
+0000000873 00000 n 
+0000000971 00000 n 
+0000001045 00000 n 
+0000001097 00000 n 
+0000001256 00000 n 
+0000001277 00000 n 
+trailer
+<< /Size 18 /Root 1 0 R  >>
+startxref
+1362
+%%EOF

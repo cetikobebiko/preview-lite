@@ -343,6 +343,14 @@ pub(crate) struct SessionEntry {
     pub(crate) state: Mutex<DocumentSession>,
 }
 
+/// Holds the session operation read lease from secure-redaction target
+/// preflight through publication. Save and Save As use the corresponding write
+/// lease, so they cannot change persistence identity while this guard exists.
+pub(crate) struct SecureRedactionExportGuard {
+    pub(crate) paths: SecureRedactionExportPaths,
+    _operation_lease: OwnedRwLockReadGuard<()>,
+}
+
 struct WorkerReadContext {
     _admission: WorkerAdmissionPermit,
     _lease: OwnedRwLockReadGuard<()>,
@@ -438,6 +446,9 @@ struct SessionJobRegistry {
 pub struct SessionJobFailure {
     pub code: String,
     pub message: String,
+    pub commit_state: Option<String>,
+    pub recovery_path: Option<String>,
+    pub replacement_digest: Option<String>,
 }
 
 impl SessionJobFailure {
@@ -445,11 +456,30 @@ impl SessionJobFailure {
         Self {
             code: code.into(),
             message: message.into(),
+            commit_state: None,
+            recovery_path: None,
+            replacement_digest: None,
         }
     }
 
     pub fn pdf_engine(message: impl Into<String>) -> Self {
         Self::new("DOCUMENT_SESSION_PDF_ENGINE_ERROR", message)
+    }
+
+    pub(crate) fn publication_failure(
+        code: impl Into<String>,
+        error: crate::document_io::DocumentIoError,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: error.detail,
+            commit_state: Some(error.state.to_string()),
+            recovery_path: error
+                .recovery_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+            replacement_digest: error.replacement_digest,
+        }
     }
 }
 
@@ -2659,6 +2689,13 @@ pub struct SessionJobCancellationCheckpoint {
 }
 
 impl SessionJobCancellationCheckpoint {
+    pub fn new(token: CancellationToken) -> Self {
+        Self {
+            token,
+            reason: Arc::new(Mutex::new(None)),
+        }
+    }
+
     pub fn is_cancel_requested(&self) -> bool {
         self.token.is_cancelled()
     }
@@ -2763,11 +2800,22 @@ impl SessionJobChildProcessOwner {
         timeout: Duration,
         cancellation: &SessionJobCancellationCheckpoint,
     ) -> Result<ExitStatus, SessionJobOperationError> {
+        self.run_with_timeout_after_spawn(command, timeout, cancellation, || {})
+    }
+
+    pub(crate) fn run_with_timeout_after_spawn(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancellation: &SessionJobCancellationCheckpoint,
+        after_spawn: impl FnOnce(),
+    ) -> Result<ExitStatus, SessionJobOperationError> {
         cancellation.check_cancelled()?;
         let child = command.spawn().map_err(|error| {
             SessionJobOperationError::failed(format!("Platform süreci başlatılamadı: {error}"))
         })?;
         let child_guard = SessionJobChildRegistrationGuard::register(self, child);
+        after_spawn();
         let deadline = std::time::Instant::now() + timeout;
         loop {
             if cancellation.is_cancel_requested() {
@@ -2965,6 +3013,17 @@ pub struct SessionJobContext {
     pub child_processes: SessionJobChildProcessOwner,
 }
 
+/// Private paths required by an export preflight. This is intentionally not an
+/// IPC DTO: it never crosses the frontend boundary.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct SecureRedactionExportPaths {
+    pub original_path: PathBuf,
+    pub working_path: PathBuf,
+    pub session_dir: PathBuf,
+    pub jobs_root: PathBuf,
+}
+
 impl SessionJobContext {
     pub(crate) fn detached(
         snapshot_path: PathBuf,
@@ -3075,6 +3134,7 @@ pub struct DocumentSessionError {
     pub message: String,
     pub commit_state: Option<String>,
     pub recovery_path: Option<String>,
+    pub replacement_digest: Option<String>,
     pub snapshot: Option<Box<DocumentSessionSnapshot>>,
 }
 
@@ -3085,6 +3145,7 @@ impl DocumentSessionError {
             message: message.into(),
             commit_state: None,
             recovery_path: None,
+            replacement_digest: None,
             snapshot: None,
         }
     }
@@ -3112,6 +3173,7 @@ impl DocumentSessionError {
                 .recovery_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
+            replacement_digest: error.replacement_digest.clone(),
             snapshot: None,
         }
     }
@@ -3129,6 +3191,7 @@ impl DocumentSessionError {
             ),
             commit_state: Some("committed_but_session_refresh_failed".to_string()),
             recovery_path: None,
+            replacement_digest: Some(report.committed_digest.clone()),
             snapshot: Some(Box::new(snapshot)),
         }
     }
@@ -3435,6 +3498,7 @@ pub struct DocumentSessionStore {
     search_cancellations: Mutex<HashMap<String, (u64, CancellationToken)>>,
     mutation_transaction_manager: Arc<MutationTransactionManager>,
     shutdown_admission_closed: AtomicBool,
+    secure_redaction_save_lease_test_hook: Mutex<Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>>,
     #[cfg(test)]
     snapshot_worker_panic_jobs: Mutex<HashSet<Uuid>>,
     #[cfg(test)]
@@ -3567,6 +3631,7 @@ impl DocumentSessionStore {
             search_cancellations: Mutex::new(HashMap::new()),
             mutation_transaction_manager: Arc::new(MutationTransactionManager::new()),
             shutdown_admission_closed: AtomicBool::new(false),
+            secure_redaction_save_lease_test_hook: Mutex::new(None),
             #[cfg(test)]
             snapshot_worker_panic_jobs: Mutex::new(HashSet::new()),
             #[cfg(test)]
@@ -4214,7 +4279,13 @@ impl DocumentSessionStore {
         let entry = self.entry(session_id)?;
         #[cfg(test)]
         self.pause_after_lifecycle_before_operation().await;
+        if let Some(hook) = self.secure_redaction_save_lease_test_hook.lock().clone() {
+            hook(false);
+        }
         let _lease = entry.operation.clone().write_owned().await;
+        if let Some(hook) = self.secure_redaction_save_lease_test_hook.lock().clone() {
+            hook(true);
+        }
         #[cfg(test)]
         self.trace_transition_authority_release(
             TransitionAuthorityReleaseEvent::SaveOperationAcquired,
@@ -5237,6 +5308,49 @@ impl DocumentSessionStore {
             .insert(canonical_job_id, Arc::clone(&record));
         drop(registry);
         Ok((record, working_path, _lease))
+    }
+
+    pub(crate) async fn acquire_secure_redaction_export_guard(
+        &self,
+        session_id: &str,
+        expected_generation: u64,
+    ) -> Result<SecureRedactionExportGuard, DocumentSessionError> {
+        let entry = self.entry(session_id)?;
+        let operation_lease = entry.operation.clone().read_owned().await;
+        let state = entry.state.lock();
+        session_read_path(&state, Some(expected_generation))?;
+        Ok(SecureRedactionExportGuard {
+            paths: SecureRedactionExportPaths {
+                original_path: state.save_target_path.clone(),
+                working_path: state.working_path.clone(),
+                session_dir: state.session_dir.clone(),
+                jobs_root: self.jobs_root(),
+            },
+            _operation_lease: operation_lease,
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn secure_redaction_export_paths_for_acceptance(
+        &self,
+        session_id: &str,
+    ) -> Result<SecureRedactionExportPaths, DocumentSessionError> {
+        let entry = self.entry(session_id)?;
+        let state = entry.state.lock();
+        Ok(SecureRedactionExportPaths {
+            original_path: state.save_target_path.clone(),
+            working_path: state.working_path.clone(),
+            session_dir: state.session_dir.clone(),
+            jobs_root: self.jobs_root(),
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn set_secure_redaction_save_lease_test_hook(
+        &self,
+        hook: Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>,
+    ) {
+        *self.secure_redaction_save_lease_test_hook.lock() = hook;
     }
 
     pub async fn run_snapshot_job<T, F>(
@@ -12057,6 +12171,40 @@ mod tests {
         assert_eq!(state.content_generation, 2);
         assert_eq!(state.state_revision, 2);
         assert_eq!(state.working_digest.as_deref(), Some("after"));
+    }
+
+    #[test]
+    fn secure_redaction_publication_failure_preserves_typed_commit_metadata_on_wire() {
+        let digest = "a".repeat(64);
+        for state in [
+            CommitState::OriginalPreserved,
+            CommitState::RecoveryRequired,
+            CommitState::Indeterminate,
+        ] {
+            let state_wire = state.to_string();
+            let recovery = PathBuf::from("/tmp/secure-redaction-recovery.pdf");
+            let error = crate::document_io::DocumentIoError::new(
+                "secure_redaction_publish_test",
+                DocumentIoStage::Replace,
+                state,
+                "controlled publication failure",
+            )
+            .with_recovery_path(recovery.clone())
+            .with_replacement_digest(digest.clone());
+            let failure =
+                SessionJobFailure::publication_failure("REDACTION_PUBLICATION_FAILED", error);
+            assert_eq!(failure.commit_state.as_deref(), Some(state_wire.as_str()));
+            assert_eq!(
+                failure.recovery_path.as_deref(),
+                Some(recovery.to_string_lossy().as_ref())
+            );
+            assert_eq!(failure.replacement_digest.as_deref(), Some(digest.as_str()));
+
+            let wire = serde_json::to_value(&failure).unwrap();
+            assert_eq!(wire["commitState"], state_wire);
+            assert_eq!(wire["recoveryPath"], recovery.to_string_lossy().as_ref());
+            assert_eq!(wire["replacementDigest"], digest);
+        }
     }
 
     #[test]

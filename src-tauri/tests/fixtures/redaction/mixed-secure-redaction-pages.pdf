@@ -1,0 +1,48 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [0 0 600 800] /Annots [7 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [0 0 600 800] /Resources << /Font << /F1 5 0 R >> >> /Contents 8 0 R >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Length 60 >>
+stream
+BT /F1 18 Tf 60 740 Td (AFFECTED ORIGINAL TEXT MARKER) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Link /Rect [60 720 320 750] /Border [0 0 0] /A << /S /URI /URI (https://example.invalid/controlled-link) >> >>
+endobj
+8 0 obj
+<< /Length 87 >>
+stream
+BT /F1 18 Tf 60 740 Td (UNTOUCHED PAGE TEXT MARKER) Tj ET 0 1 0 rg 420 120 100 100 re f
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000292 00000 n 
+0000000441 00000 n 
+0000000511 00000 n 
+0000000621 00000 n 
+0000000773 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R  >>
+startxref
+910
+%%EOF

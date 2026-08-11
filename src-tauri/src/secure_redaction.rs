@@ -4,6 +4,26 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 pub const REDACTION_SCHEMA_VERSION: &str = "1.0.0";
+/// Version of the independent, worker-only secure-redaction verification protocol.
+/// This is deliberately separate from the wire schema version so a future verifier
+/// can tighten its observations without accepting a partial v1 check list.
+pub const SECURE_REDACTION_VERIFICATION_VERSION: &str = "secure_redaction_verifier_v1";
+pub const REQUIRED_SECURE_REDACTION_VERIFICATION_CHECKS: [&str; 14] = [
+    "SOURCE_PLAN_BINDING",
+    "TRANSFORM_REPORT_CONSISTENCY",
+    "ARTIFACT_PATH_INTEGRITY",
+    "ARTIFACT_DIGEST_AND_SIZE",
+    "DUAL_PARSER_REOPEN",
+    "FULL_REWRITE_STRUCTURE",
+    "FORBIDDEN_DOCUMENT_STRUCTURES_ABSENT",
+    "PAGE_COUNT_AND_STRATEGY",
+    "PAGE_GEOMETRY",
+    "AFFECTED_PAGE_IMAGE_ONLY",
+    "AFFECTED_PAGE_INTERACTIVE_CONTENT_ABSENT",
+    "AFFECTED_PAGE_REDACTION_PIXEL_COVERAGE",
+    "UNAFFECTED_PAGE_EQUIVALENCE",
+    "ARTIFACT_FINAL_DIGEST_STABILITY",
+];
 pub const MAX_REGIONS_PER_INPUT: usize = 1000;
 pub const MAX_REGION_ID_LEN: usize = 128;
 pub const MAX_SOURCE_LEN: usize = 256;
@@ -26,12 +46,20 @@ pub const MAX_PATH_LEN: usize = 4096;
 
 pub const MIN_RASTER_DPI: u32 = 72;
 pub const MAX_RASTER_DPI: u32 = 600;
+pub const MAX_RASTER_DIMENSION: u32 = 16384;
 pub const MIN_SAFETY_MARGIN_POINTS: f64 = 0.0;
 pub const MAX_SAFETY_MARGIN_POINTS: f64 = 36.0;
 
 pub const MAX_PIXELS_PER_PAGE: u64 = 100_000_000;
 pub const MAX_TOTAL_ESTIMATED_PIXELS: u64 = 1_000_000_000;
 pub const MAX_REPORT_SIZE_BYTES: usize = 10_485_760;
+/// Maximum size of the internal, non-published secure-redaction artifact.
+///
+/// This is deliberately below the worker's address-space ceiling and is a
+/// separate policy from the `u64` wire representation of a file length. The
+/// latter remains `u64` because filesystem metadata is `u64`; this bound is
+/// what makes the value safely and exactly representable by the JS contract.
+pub const MAX_SECURE_REDACTION_OUTPUT_BYTES: u64 = 1073741824;
 
 // ---------------------------------------------------------------------------
 // 0. Centralized Typed Error Family
@@ -394,6 +422,7 @@ pub const ADJACENCY_TOLERANCE_POINTS: f64 = 0.0;
 pub const MERGE_EDGE_TOUCHING: bool = true;
 pub const MERGE_CORNER_TOUCHING: bool = false;
 pub const GEOMETRY_EPSILON: f64 = 1e-6;
+pub const GEOMETRY_COMPARISON_EPSILON: f64 = 1e-6;
 
 impl<'de> Deserialize<'de> for InspectionFactState {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -466,6 +495,9 @@ pub struct CanonicalPageGeometry {
     pub page_index: u32,
     pub media_box: PdfPointRect,
     pub crop_box: Option<PdfPointRect>,
+    pub trim_box: Option<PdfPointRect>,
+    pub bleed_box: Option<PdfPointRect>,
+    pub art_box: Option<PdfPointRect>,
     pub effective_box: PdfPointRect,
     pub rotation: PageRotation,
 }
@@ -488,6 +520,20 @@ pub fn validate_canonical_page_geometry(
             ));
         }
     }
+    for (label, boundary) in [
+        ("TrimBox", geom.trim_box.as_ref()),
+        ("BleedBox", geom.bleed_box.as_ref()),
+        ("ArtBox", geom.art_box.as_ref()),
+    ] {
+        if let Some(boundary) = boundary {
+            validate_pdf_point_rect(boundary).map_err(|_| {
+                make_redaction_error(
+                    SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+                    format!("{label} is not a valid finite PDF rectangle"),
+                )
+            })?;
+        }
+    }
     validate_pdf_point_rect(&geom.effective_box)?;
 
     let expected_box = geom.crop_box.as_ref().unwrap_or(&geom.media_box);
@@ -503,6 +549,50 @@ pub fn validate_canonical_page_geometry(
         ));
     }
     Ok(())
+}
+
+/// The one capability gate used by both planning and the transform worker.
+/// PDFium's page-boundary setters accept f32 coordinates, so accepted geometry
+/// must survive that conversion within the canonical comparison epsilon.
+pub fn evaluate_secure_redaction_rebuild_geometry(
+    geom: &CanonicalPageGeometry,
+) -> Result<(), SessionJobOperationError> {
+    validate_canonical_page_geometry(geom)?;
+    for (label, rectangle) in [
+        ("MediaBox", Some(&geom.media_box)),
+        ("CropBox", geom.crop_box.as_ref()),
+        ("TrimBox", geom.trim_box.as_ref()),
+        ("BleedBox", geom.bleed_box.as_ref()),
+        ("ArtBox", geom.art_box.as_ref()),
+    ] {
+        let Some(rectangle) = rectangle else { continue };
+        for (component, value) in [
+            ("left", rectangle.left),
+            ("bottom", rectangle.bottom),
+            ("right", rectangle.left + rectangle.width),
+            ("top", rectangle.bottom + rectangle.height),
+        ] {
+            let converted = value as f32;
+            if !converted.is_finite() || ((converted as f64) - value).abs() > GEOMETRY_EPSILON {
+                return Err(make_redaction_error(
+                    SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+                    format!("{label} {component} cannot be reproduced by the locked PDFium f32 boundary API"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn secure_redaction_rebuild_geometry_blocker(
+    geom: &CanonicalPageGeometry,
+) -> Option<RedactionBlocker> {
+    evaluate_secure_redaction_rebuild_geometry(geom).err().map(|error| RedactionBlocker {
+        schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+        code: "REDACTION_PAGE_GEOMETRY_MISMATCH".to_string(),
+        message: "Affected page geometry cannot be reproduced and verified by the secure PDFium rebuild path".to_string(),
+        details: Some(error.to_string()),
+    })
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -528,6 +618,27 @@ pub struct CanonicalRedactionRegion {
     pub applied_margins: AppliedMargins,
     pub boundary_adjusted: bool,
     pub device_pixel_rect: Option<DevicePixelRect>,
+}
+
+pub fn compare_canonical_redaction_regions(
+    a: &CanonicalRedactionRegion,
+    b: &CanonicalRedactionRegion,
+) -> std::cmp::Ordering {
+    a.page_index
+        .cmp(&b.page_index)
+        .then_with(|| {
+            a.applied_pdf_point_rect
+                .bottom
+                .partial_cmp(&b.applied_pdf_point_rect.bottom)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .then_with(|| {
+            a.applied_pdf_point_rect
+                .left
+                .partial_cmp(&b.applied_pdf_point_rect.left)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .then_with(|| a.region_id.cmp(&b.region_id))
 }
 
 pub fn validate_canonical_redaction_region(
@@ -691,11 +802,86 @@ pub fn validate_canonical_redaction_region(
     Ok(())
 }
 
+pub fn validate_canonical_redaction_region_with_context(
+    region: &CanonicalRedactionRegion,
+    page_geometry: Option<&CanonicalPageGeometry>,
+    policy_safety_margin: Option<f64>,
+) -> Result<(), SessionJobOperationError> {
+    validate_canonical_redaction_region(region)?;
+
+    let eps = GEOMETRY_EPSILON;
+    if let Some(policy_margin) = policy_safety_margin {
+        if (region.requested_safety_margin_points - policy_margin).abs() > eps {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!(
+                    "requested_safety_margin_points ({}) does not match policy safety margin ({})",
+                    region.requested_safety_margin_points, policy_margin
+                ),
+            ));
+        }
+    }
+
+    if let Some(geom) = page_geometry {
+        if region.page_index != geom.page_index {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+                format!(
+                    "Canonical region page_index ({}) mismatch with page geometry page_index ({})",
+                    region.page_index, geom.page_index
+                ),
+            ));
+        }
+
+        let expected_base =
+            normalized_top_left_to_pdf_point_rect(&region.original_normalized_rect, geom)?;
+        let base = &region.base_pdf_point_rect;
+        if (base.left - expected_base.left).abs() > eps
+            || (base.bottom - expected_base.bottom).abs() > eps
+            || (base.width - expected_base.width).abs() > eps
+            || (base.height - expected_base.height).abs() > eps
+        {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+                "base_pdf_point_rect does not match recomputed rect from original_normalized_rect and page geometry",
+            ));
+        }
+
+        let eff = &geom.effective_box;
+        if base.left < eff.left - eps
+            || base.bottom < eff.bottom - eps
+            || base.left + base.width > eff.left + eff.width + eps
+            || base.bottom + base.height > eff.bottom + eff.height + eps
+        {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+                "base_pdf_point_rect extends outside effective_box",
+            ));
+        }
+
+        let applied = &region.applied_pdf_point_rect;
+        if applied.left < eff.left - eps
+            || applied.bottom < eff.bottom - eps
+            || applied.left + applied.width > eff.left + eff.width + eps
+            || applied.bottom + applied.height > eff.bottom + eff.height + eps
+        {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+                "applied_pdf_point_rect extends outside effective_box",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 3. Policy Contract
 // ---------------------------------------------------------------------------
 
-pub const SECURE_REDACTION_PLAN_VERSION: &str = "secure_redaction_plan_v1";
+// v2 signs all page boundaries that are reproduced by the transform worker.
+// A separate version keeps the v1 wire contract from being silently widened.
+pub const SECURE_REDACTION_PLAN_VERSION: &str = "secure_redaction_plan_v2";
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -875,6 +1061,28 @@ pub fn validate_redaction_acknowledgement_requirements(
     Ok(())
 }
 
+pub fn derive_redaction_acknowledgement_requirements(
+    document_facts: &DocumentRedactionFacts,
+    document_losses: &RedactionFeatureLosses,
+    page_plans: &[PageRedactionPlan],
+) -> RedactionAcknowledgementRequirements {
+    RedactionAcknowledgementRequirements {
+        schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+        rasterized_pages_required: page_plans
+            .iter()
+            .any(|p| p.strategy == PageRedactionStrategy::RasterizePage),
+        text_search_loss_required: document_losses.searchability_lost,
+        accessibility_loss_required: document_losses.accessibility_tags_lost
+            || document_losses.structure_association_lost,
+        annotation_loss_required: document_losses.annotations_lost || document_losses.links_lost,
+        form_loss_required: document_losses.forms_lost,
+        signature_invalidation_required: document_facts.signature_dictionary
+            != InspectionFactState::Absent
+            || document_facts.signature_field != InspectionFactState::Absent,
+        encryption_change_required: document_facts.encryption != InspectionFactState::Absent,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 5. Plan & Result DTOs
 // ---------------------------------------------------------------------------
@@ -922,6 +1130,31 @@ pub struct SecureRedactionPublicationReport {
     pub publication_id: String,
     pub published_path: String,
     pub published_digest: String,
+    pub commit_state: SecureRedactionCommitState,
+}
+
+/// Typed disk truth for a completed secure-redaction publication. `published`
+/// means replacement bytes are present; durability confirmation is deliberately
+/// separate so callers do not treat the platform fallback as silent success.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SecureRedactionCommitState {
+    NewCommitted,
+    NewCommittedDurabilityUnconfirmed,
+}
+
+impl SecureRedactionCommitState {
+    pub(crate) fn from_document_io(state: crate::document_io::CommitState) -> Self {
+        match state {
+            crate::document_io::CommitState::NewCommitted => Self::NewCommitted,
+            crate::document_io::CommitState::NewCommittedDurabilityUnconfirmed => {
+                Self::NewCommittedDurabilityUnconfirmed
+            }
+            other => {
+                panic!("non-committed document_io state cannot build publication report: {other}")
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -1050,24 +1283,65 @@ pub struct SecureRedactionPlan {
     pub ready_for_execution: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SecureRedactionTransformReport {
     pub schema_version: String,
     pub job_id: String,
     pub session_id: String,
+    pub input_digest: String,
     pub plan_digest: String,
-    pub processed_pages: u32,
-    pub output_path: String,
+    pub output_relative_name: String,
     pub output_digest: String,
+    pub output_size_bytes: u64,
+    pub page_count: u32,
+    pub affected_pages: Vec<u32>,
+    pub unaffected_pages: Vec<u32>,
+    pub raster_dpi: u32,
+    pub applied_canonical_regions: Vec<CanonicalRedactionRegion>,
+    pub affected_page_raster_geometry: Vec<TransformRasterPageEvidence>,
+    pub page_feature_losses: Vec<TransformPageFeatureLoss>,
+    pub background_policy: String,
     pub warnings: Vec<RedactionWarning>,
-    pub status: String, // "transformed" or "transformed_unverified"
+    pub transform_evidence: SecureRedactionTransformEvidence,
+    pub status: String, // only "transformed_unverified" for this stage
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TransformRasterPageEvidence {
+    pub page_index: u32,
+    pub width: u32,
+    pub height: u32,
+    pub dpi: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TransformPageFeatureLoss {
+    pub page_index: u32,
+    pub feature_losses: RedactionFeatureLosses,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SecureRedactionTransformEvidence {
+    pub new_document_constructed: bool,
+    pub affected_pages_rasterized: bool,
+    pub affected_page_original_objects_not_imported: bool,
+    pub unaffected_pages_imported: bool,
+    pub full_rewrite_used: bool,
+    pub incremental_save_not_used: bool,
+    pub opaque_white_background_policy: bool,
+    pub lossless_raster_path: bool,
+    pub output_digest_calculated: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SecureRedactionVerificationReport {
     pub schema_version: String,
+    pub verification_version: String,
     pub job_id: String,
     pub session_id: String,
     pub plan_digest: String,
@@ -1078,7 +1352,7 @@ pub struct SecureRedactionVerificationReport {
     pub warnings: Vec<RedactionWarning>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SecureRedactionExecutionReport {
     pub schema_version: String,
@@ -1242,6 +1516,102 @@ pub fn validate_redaction_feature_losses(
     Ok(())
 }
 
+pub fn evaluate_page_redaction_blockers(page_facts: &PageRedactionFacts) -> Vec<RedactionBlocker> {
+    let mut page_blockers = Vec::new();
+    if page_facts.complex_resources == InspectionFactState::Unknown
+        || page_facts.optional_content == InspectionFactState::Unknown
+        || page_facts.structure_association == InspectionFactState::Unknown
+        || page_facts.page_actions == InspectionFactState::Unknown
+        || page_facts.complex_color_spaces == InspectionFactState::Unknown
+        || page_facts.spot_colors == InspectionFactState::Unknown
+        || page_facts.transparency == InspectionFactState::Unknown
+        || page_facts.widgets == InspectionFactState::Unknown
+        || page_facts.link_annotations == InspectionFactState::Unknown
+        || page_facts.form_xobjects == InspectionFactState::Unknown
+        || page_facts.vector_paths == InspectionFactState::Unknown
+    {
+        push_aggregated_blocker(
+            &mut page_blockers,
+            RedactionBlocker {
+                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                code: "REDACTION_BLOCKED_DOCUMENT_FEATURE".to_string(),
+                message: format!(
+                    "Page {} contains critical unknown inspection fact state",
+                    page_facts.page_index
+                ),
+                details: None,
+            },
+        );
+    }
+    page_blockers
+}
+
+pub fn has_merged_source_id_overflow(regions: &[CanonicalRedactionRegion]) -> bool {
+    let n = regions.len();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let r1 = &regions[i].applied_pdf_point_rect;
+            let r2 = &regions[j].applied_pdf_point_rect;
+
+            let r1_right = r1.left + r1.width;
+            let r1_top = r1.bottom + r1.height;
+            let r2_right = r2.left + r2.width;
+            let r2_top = r2.bottom + r2.height;
+
+            let x_gap = if r2.left > r1_right {
+                r2.left - r1_right
+            } else if r1.left > r2_right {
+                r1.left - r2_right
+            } else {
+                0.0
+            };
+
+            let y_gap = if r2.bottom > r1_top {
+                r2.bottom - r1_top
+            } else if r1.bottom > r2_top {
+                r1.bottom - r2_top
+            } else {
+                0.0
+            };
+
+            let has_x_overlap = r1.left < r2_right && r2.left < r1_right;
+            let has_y_overlap = r1.bottom < r2_top && r2.bottom < r1_top;
+
+            let is_x_touch = (r1.left - r2_right).abs() <= GEOMETRY_EPSILON
+                || (r1_right - r2.left).abs() <= GEOMETRY_EPSILON;
+            let is_y_touch = (r1.bottom - r2_top).abs() <= GEOMETRY_EPSILON
+                || (r1_top - r2.bottom).abs() <= GEOMETRY_EPSILON;
+
+            let is_true_overlap = has_x_overlap && has_y_overlap;
+            let is_edge_touch = (is_x_touch && has_y_overlap) || (is_y_touch && has_x_overlap);
+            let is_corner_touch = is_x_touch && is_y_touch;
+
+            let should_merge = if x_gap > 0.0 || y_gap > 0.0 {
+                false
+            } else if is_true_overlap {
+                true
+            } else if is_edge_touch {
+                MERGE_EDGE_TOUCHING
+            } else if is_corner_touch {
+                MERGE_CORNER_TOUCHING
+            } else {
+                false
+            };
+
+            if should_merge {
+                let mut combined_source_ids = regions[i].source_region_ids.clone();
+                combined_source_ids.extend(regions[j].source_region_ids.clone());
+                combined_source_ids.sort();
+                combined_source_ids.dedup();
+                if combined_source_ids.len() > MAX_SOURCE_REGION_IDS {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub fn validate_page_redaction_plan(
     page_plan: &PageRedactionPlan,
     total_pages: u32,
@@ -1293,7 +1663,7 @@ pub fn validate_page_redaction_plan(
 
     if page_plan.canonical_regions.len() > MAX_CANONICAL_REGIONS_PER_PAGE {
         return Err(make_redaction_error(
-            SecureRedactionErrorCode::RedactionRegionLimitExceeded,
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
             format!(
                 "Page {} canonical_regions count ({}) exceeds maximum limit of {}",
                 page_plan.page_index,
@@ -1344,8 +1714,97 @@ pub fn validate_page_redaction_plan(
     validate_unique_blockers(&page_plan.blockers)?;
     validate_unique_warnings(&page_plan.warnings)?;
 
+    let mut expected_page_blockers = evaluate_page_redaction_blockers(&page_plan.facts);
+    if page_plan.strategy == PageRedactionStrategy::RasterizePage {
+        if let Some(blocker) = secure_redaction_rebuild_geometry_blocker(&page_plan.geometry) {
+            push_aggregated_blocker(&mut expected_page_blockers, blocker);
+        }
+    }
+    let has_source_id_overflow = has_merged_source_id_overflow(&page_plan.canonical_regions);
+    if page_plan.canonical_regions.len() > MAX_CANONICAL_REGIONS_PER_PAGE || has_source_id_overflow
+    {
+        push_aggregated_blocker(
+            &mut expected_page_blockers,
+            RedactionBlocker {
+                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                code: "REDACTION_RESOURCE_LIMIT_EXCEEDED".to_string(),
+                message: if has_source_id_overflow {
+                    format!(
+                        "Page {} merged canonical region source_region_ids count would exceed limit of {}",
+                        page_plan.page_index, MAX_SOURCE_REGION_IDS
+                    )
+                } else {
+                    format!(
+                        "Page {} merged canonical regions count ({}) exceeds maximum limit of {}",
+                        page_plan.page_index,
+                        page_plan.canonical_regions.len(),
+                        MAX_CANONICAL_REGIONS_PER_PAGE
+                    )
+                },
+                details: None,
+            },
+        );
+    }
+    if page_plan.blockers != expected_page_blockers {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            format!(
+                "Page {} blockers mismatch derived blockers from facts and geometry",
+                page_plan.page_index
+            ),
+        ));
+    }
+
+    let derived_feature_losses = if page_plan.strategy == PageRedactionStrategy::RasterizePage {
+        RedactionFeatureLosses {
+            schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+            text_selection_lost: page_plan.facts.text.is_present(),
+            searchability_lost: page_plan.facts.text.is_present(),
+            accessibility_tags_lost: page_plan.facts.structure_association.is_present(),
+            links_lost: page_plan.facts.link_annotations.is_present(),
+            annotations_lost: page_plan.facts.annotations.is_present(),
+            forms_lost: page_plan.facts.widgets.is_present(),
+            vector_quality_lost: page_plan.facts.vector_paths.is_present()
+                || page_plan.facts.form_xobjects.is_present(),
+            color_space_fidelity_risk: page_plan.facts.complex_resources.is_present()
+                || page_plan.facts.transparency.is_present()
+                || page_plan.facts.complex_color_spaces.is_present(),
+            spot_colors_lost: page_plan.facts.spot_colors.is_present(),
+            layers_lost: page_plan.facts.optional_content.is_present(),
+            structure_association_lost: page_plan.facts.structure_association.is_present(),
+            page_actions_lost: page_plan.facts.page_actions.is_present(),
+        }
+    } else {
+        RedactionFeatureLosses {
+            schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+            text_selection_lost: false,
+            searchability_lost: false,
+            accessibility_tags_lost: false,
+            links_lost: false,
+            annotations_lost: false,
+            forms_lost: false,
+            vector_quality_lost: false,
+            color_space_fidelity_risk: false,
+            spot_colors_lost: false,
+            layers_lost: false,
+            structure_association_lost: false,
+            page_actions_lost: false,
+        }
+    };
+
+    if page_plan.feature_losses != derived_feature_losses {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            format!(
+                "Page {} feature_losses does not match derived losses from page facts and strategy",
+                page_plan.page_index
+            ),
+        ));
+    }
+
+    let mut prev_region: Option<&CanonicalRedactionRegion> = None;
     for region in &page_plan.canonical_regions {
-        validate_canonical_redaction_region(region)?;
+        validate_canonical_redaction_region_with_context(region, Some(&page_plan.geometry), None)?;
         if region.page_index != page_plan.page_index {
             return Err(make_redaction_error(
                 SecureRedactionErrorCode::RedactionPageGeometryMismatch,
@@ -1355,12 +1814,25 @@ pub fn validate_page_redaction_plan(
                 ),
             ));
         }
+        if let Some(prev) = prev_region {
+            if compare_canonical_redaction_regions(prev, region) == std::cmp::Ordering::Greater {
+                return Err(make_redaction_error(
+                    SecureRedactionErrorCode::RedactionInvalidPolicy,
+                    "Canonical regions must be in canonical sort order (pageIndex, bottom, left, regionId)",
+                ));
+            }
+        }
+        prev_region = Some(region);
     }
 
-    if page_plan.executable && !page_plan.blockers.is_empty() {
+    let expected_page_executable = page_plan.blockers.is_empty();
+    if page_plan.executable != expected_page_executable {
         return Err(make_redaction_error(
-            SecureRedactionErrorCode::RedactionBlockedDocumentFeature,
-            "PageRedactionPlan executable cannot be true when page-level blockers exist",
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            format!(
+                "Page {} executable ({}) does not match expected ({})",
+                page_plan.page_index, page_plan.executable, expected_page_executable
+            ),
         ));
     }
 
@@ -1573,6 +2045,16 @@ pub fn validate_publication_report(
         ));
     }
     validate_sha256_digest(&report.published_digest, "published_digest")?;
+    if !matches!(
+        report.commit_state,
+        SecureRedactionCommitState::NewCommitted
+            | SecureRedactionCommitState::NewCommittedDurabilityUnconfirmed
+    ) {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Publication report commit_state must be a definitive committed state",
+        ));
+    }
     Ok(())
 }
 
@@ -1584,8 +2066,83 @@ pub fn evaluate_document_blockers(
     facts: &DocumentRedactionFacts,
     policy: &SecureRedactionPolicy,
     _ack: &RedactionAcknowledgements,
+    page_plans: Option<&[PageRedactionPlan]>,
 ) -> Vec<RedactionBlocker> {
     let mut blockers = Vec::new();
+    if facts.total_pages as usize > MAX_PAGE_PLANS {
+        push_aggregated_blocker(
+            &mut blockers,
+            RedactionBlocker {
+                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                code: "REDACTION_RESOURCE_LIMIT_EXCEEDED".to_string(),
+                message: format!(
+                    "Total page count ({}) exceeds maximum page plan limit of {}",
+                    facts.total_pages, MAX_PAGE_PLANS
+                ),
+                details: None,
+            },
+        );
+    }
+    if let Some(pp_list) = page_plans {
+        let mut total_estimated_pixels: u64 = 0;
+        for page_plan in pp_list {
+            if page_plan.strategy == PageRedactionStrategy::RasterizePage {
+                let width_px = (page_plan.geometry.effective_box.width / 72.0
+                    * policy.raster_dpi as f64)
+                    .ceil() as u64;
+                let height_px = (page_plan.geometry.effective_box.height / 72.0
+                    * policy.raster_dpi as f64)
+                    .ceil() as u64;
+                let page_pixels = match width_px.checked_mul(height_px) {
+                    Some(px) => px,
+                    None => {
+                        push_aggregated_blocker(
+                            &mut blockers,
+                            RedactionBlocker {
+                                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                                code: "REDACTION_RESOURCE_LIMIT_EXCEEDED".to_string(),
+                                message: format!(
+                                    "Pixel count arithmetic overflow on page {}",
+                                    page_plan.page_index
+                                ),
+                                details: None,
+                            },
+                        );
+                        u64::MAX
+                    }
+                };
+                if page_pixels > MAX_PIXELS_PER_PAGE {
+                    push_aggregated_blocker(
+                        &mut blockers,
+                        RedactionBlocker {
+                            schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                            code: "REDACTION_RESOURCE_LIMIT_EXCEEDED".to_string(),
+                            message: format!(
+                                "Page {} estimated pixel count ({}) exceeds limit of {}",
+                                page_plan.page_index, page_pixels, MAX_PIXELS_PER_PAGE
+                            ),
+                            details: None,
+                        },
+                    );
+                }
+                total_estimated_pixels = total_estimated_pixels.saturating_add(page_pixels);
+            }
+        }
+        if total_estimated_pixels > MAX_TOTAL_ESTIMATED_PIXELS {
+            push_aggregated_blocker(
+                &mut blockers,
+                RedactionBlocker {
+                    schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                    code: "REDACTION_RESOURCE_LIMIT_EXCEEDED".to_string(),
+                    message: format!(
+                        "Total estimated pixels ({}) exceeds limit of {}",
+                        total_estimated_pixels, MAX_TOTAL_ESTIMATED_PIXELS
+                    ),
+                    details: None,
+                },
+            );
+        }
+    }
     if facts.encryption == InspectionFactState::Present
         || facts.encryption == InspectionFactState::Unknown
     {
@@ -1728,6 +2285,23 @@ pub fn evaluate_document_blockers(
 pub fn validate_secure_redaction_plan(
     plan: &SecureRedactionPlan,
 ) -> Result<(), SessionJobOperationError> {
+    let serialized_bytes = serde_json::to_vec(plan).map_err(|e| {
+        make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            format!("Plan serialization error: {}", e),
+        )
+    })?;
+    if serialized_bytes.len() > MAX_REPORT_SIZE_BYTES {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            format!(
+                "Serialized plan size ({} bytes) exceeds MAX_REPORT_SIZE_BYTES ({} bytes)",
+                serialized_bytes.len(),
+                MAX_REPORT_SIZE_BYTES
+            ),
+        ));
+    }
+
     if plan.schema_version != REDACTION_SCHEMA_VERSION {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionPolicyVersionUnsupported,
@@ -1805,6 +2379,13 @@ pub fn validate_secure_redaction_plan(
         .iter()
         .zip(expected_top_regions.iter())
     {
+        validate_canonical_redaction_region_with_context(
+            top_r,
+            plan.page_plans
+                .get(top_r.page_index as usize)
+                .map(|p| &p.geometry),
+            Some(plan.policy.safety_margin_points),
+        )?;
         if top_r != exp_r {
             return Err(make_redaction_error(
                 SecureRedactionErrorCode::RedactionInvalidPolicy,
@@ -1827,6 +2408,134 @@ pub fn validate_secure_redaction_plan(
 
     validate_unique_blockers(&plan.blockers)?;
     validate_unique_warnings(&plan.warnings)?;
+
+    let mut doc_text_lost = false;
+    let mut doc_search_lost = false;
+    let mut doc_a11y_lost = false;
+    let mut doc_links_lost = false;
+    let mut doc_annot_lost = false;
+    let mut doc_forms_lost = false;
+    let mut doc_vector_rasterized = false;
+    let mut doc_color_risk = false;
+    let mut doc_spot_lost = false;
+    let mut doc_layers_lost = false;
+    let mut doc_struct_lost = false;
+    let mut doc_actions_lost = false;
+
+    for pp in &plan.page_plans {
+        if pp.feature_losses.text_selection_lost {
+            doc_text_lost = true;
+        }
+        if pp.feature_losses.searchability_lost {
+            doc_search_lost = true;
+        }
+        if pp.feature_losses.accessibility_tags_lost {
+            doc_a11y_lost = true;
+        }
+        if pp.feature_losses.links_lost {
+            doc_links_lost = true;
+        }
+        if pp.feature_losses.annotations_lost {
+            doc_annot_lost = true;
+        }
+        if pp.feature_losses.forms_lost {
+            doc_forms_lost = true;
+        }
+        if pp.feature_losses.vector_quality_lost {
+            doc_vector_rasterized = true;
+        }
+        if pp.feature_losses.color_space_fidelity_risk {
+            doc_color_risk = true;
+        }
+        if pp.feature_losses.spot_colors_lost {
+            doc_spot_lost = true;
+        }
+        if pp.feature_losses.layers_lost {
+            doc_layers_lost = true;
+        }
+        if pp.feature_losses.structure_association_lost {
+            doc_struct_lost = true;
+        }
+        if pp.feature_losses.page_actions_lost {
+            doc_actions_lost = true;
+        }
+    }
+
+    let expected_doc_losses = RedactionFeatureLosses {
+        schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+        text_selection_lost: doc_text_lost,
+        searchability_lost: doc_search_lost,
+        accessibility_tags_lost: doc_a11y_lost,
+        links_lost: doc_links_lost,
+        annotations_lost: doc_annot_lost,
+        forms_lost: doc_forms_lost,
+        vector_quality_lost: doc_vector_rasterized,
+        color_space_fidelity_risk: doc_color_risk,
+        spot_colors_lost: doc_spot_lost,
+        layers_lost: doc_layers_lost,
+        structure_association_lost: doc_struct_lost,
+        page_actions_lost: doc_actions_lost,
+    };
+
+    if plan.losses != expected_doc_losses {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Document losses mismatch aggregated page feature losses",
+        ));
+    }
+
+    let expected_ack_reqs =
+        derive_redaction_acknowledgement_requirements(&plan.facts, &plan.losses, &plan.page_plans);
+
+    if plan.acknowledgement_requirements != expected_ack_reqs {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Document acknowledgement_requirements mismatch derived requirements",
+        ));
+    }
+
+    let expected_doc_blockers = evaluate_document_blockers(
+        &plan.facts,
+        &plan.policy,
+        &plan.acknowledgements,
+        Some(&plan.page_plans),
+    );
+    let mut expected_top_level_blockers = expected_doc_blockers.clone();
+    let mut expected_top_level_warnings = Vec::new();
+    for page_plan in &plan.page_plans {
+        for b in &page_plan.blockers {
+            push_aggregated_blocker(&mut expected_top_level_blockers, b.clone());
+        }
+        for w in &page_plan.warnings {
+            push_aggregated_warning(&mut expected_top_level_warnings, w.clone());
+        }
+    }
+
+    if plan.blockers != expected_top_level_blockers {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Top-level blockers mismatch expected aggregated blockers",
+        ));
+    }
+
+    if plan.warnings != expected_top_level_warnings {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Top-level warnings mismatch expected aggregated warnings",
+        ));
+    }
+
+    let expected_executable =
+        expected_doc_blockers.is_empty() && plan.page_plans.iter().all(|p| p.executable);
+    if plan.executable != expected_executable {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            format!(
+                "plan.executable ({}) mismatch expected ({})",
+                plan.executable, expected_executable
+            ),
+        ));
+    }
 
     let expected_acks_satisfied = evaluate_acknowledgements_satisfied(
         &plan.acknowledgement_requirements,
@@ -1853,38 +2562,22 @@ pub fn validate_secure_redaction_plan(
         ));
     }
 
-    let has_top_blockers = !plan.blockers.is_empty();
-    let has_absolute_document_blockers = (plan.facts.encryption != InspectionFactState::Absent
-        && plan.policy.encryption_policy == EncryptionPolicy::Block)
-        || ((plan.facts.signature_dictionary != InspectionFactState::Absent
-            || plan.facts.signature_field != InspectionFactState::Absent
-            || plan.facts.byte_range != InspectionFactState::Absent)
-            && plan.policy.signature_policy == SignaturePolicy::Block)
-        || plan.facts.xfa != InspectionFactState::Absent
-        || (plan.facts.acro_form != InspectionFactState::Absent
-            && plan.policy.interactive_content_policy == InteractiveContentPolicy::Block);
-
-    if plan.executable {
-        if has_top_blockers || has_absolute_document_blockers {
-            return Err(make_redaction_error(
-                SecureRedactionErrorCode::RedactionBlockedDocumentFeature,
-                "Plan executable cannot be true when document has blockers or blocked features",
-            ));
-        }
-        for page_plan in &plan.page_plans {
-            if !page_plan.executable {
-                return Err(make_redaction_error(
-                    SecureRedactionErrorCode::RedactionInvalidPolicy,
-                    "Top-level plan executable cannot be true when any page plan executable is false",
-                ));
-            }
-            if !page_plan.blockers.is_empty() {
-                return Err(make_redaction_error(
-                    SecureRedactionErrorCode::RedactionBlockedDocumentFeature,
-                    "Top-level plan executable cannot be true when any page plan has blockers",
-                ));
-            }
-        }
+    let serialized_plan_bytes = serde_json::to_vec(plan)
+        .map_err(|e| {
+            make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!("Failed to serialize plan: {}", e),
+            )
+        })?
+        .len();
+    if serialized_plan_bytes > MAX_REPORT_SIZE_BYTES {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            format!(
+                "Plan serialized size ({} bytes) exceeds MAX_REPORT_SIZE_BYTES limit ({})",
+                serialized_plan_bytes, MAX_REPORT_SIZE_BYTES
+            ),
+        ));
     }
 
     let expected_plan_digest = compute_plan_digest(
@@ -1920,6 +2613,22 @@ pub fn validate_secure_redaction_plan(
 pub fn validate_transform_report(
     report: &SecureRedactionTransformReport,
 ) -> Result<(), SessionJobOperationError> {
+    let serialized_bytes = serde_json::to_vec(report).map_err(|error| {
+        make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            format!("Transform report serialization failed: {error}"),
+        )
+    })?;
+    if serialized_bytes.len() > MAX_REPORT_SIZE_BYTES {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            format!(
+                "Transform report serialized size ({}) exceeds MAX_REPORT_SIZE_BYTES ({})",
+                serialized_bytes.len(),
+                MAX_REPORT_SIZE_BYTES
+            ),
+        ));
+    }
     if report.schema_version != REDACTION_SCHEMA_VERSION {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionPolicyVersionUnsupported,
@@ -1943,17 +2652,217 @@ pub fn validate_transform_report(
         ));
     }
     validate_sha256_digest(&report.plan_digest, "plan_digest")?;
+    validate_sha256_digest(&report.input_digest, "input_digest")?;
     validate_sha256_digest(&report.output_digest, "output_digest")?;
-    if report.output_path.trim().is_empty() || report.output_path.as_bytes().len() > MAX_PATH_LEN {
+    if report.output_relative_name != "secure-redaction-transform.pdf" {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
-            "output_path invalid in transform report",
+            "output_relative_name must be the fixed internal artifact name",
         ));
     }
-    if report.status != "transformed" && report.status != "transformed_unverified" {
+    if report.output_size_bytes == 0 || report.output_size_bytes > MAX_SECURE_REDACTION_OUTPUT_BYTES
+    {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            format!(
+                "output_size_bytes ({}) is outside 1..={} bytes",
+                report.output_size_bytes, MAX_SECURE_REDACTION_OUTPUT_BYTES
+            ),
+        ));
+    }
+    if report.status != "transformed_unverified" {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
-            "Transform report status must be 'transformed' or 'transformed_unverified'",
+            "Transform report status must be 'transformed_unverified'",
+        ));
+    }
+    if report.page_count as usize > MAX_PAGE_PLANS
+        || report.applied_canonical_regions.len() > MAX_REGIONS_PER_INPUT
+        || report.affected_page_raster_geometry.len() > MAX_PAGE_PLANS
+        || report.page_feature_losses.len() > MAX_PAGE_PLANS
+    {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            "Transform report collections exceed their bounds",
+        ));
+    }
+    if report.raster_dpi < MIN_RASTER_DPI || report.raster_dpi > MAX_RASTER_DPI {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            format!(
+                "Transform report raster_dpi must be between {MIN_RASTER_DPI} and {MAX_RASTER_DPI}"
+            ),
+        ));
+    }
+    if report.background_policy != "opaque_white_v1" {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Transform report background_policy must be opaque_white_v1",
+        ));
+    }
+
+    let mut affected = HashSet::new();
+    for &page_index in &report.affected_pages {
+        if page_index >= report.page_count {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionPageNotFound,
+                format!("Affected page index {page_index} is outside page_count"),
+            ));
+        }
+        if !affected.insert(page_index) {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!("Duplicate affected page index {page_index}"),
+            ));
+        }
+    }
+    let mut unaffected = HashSet::new();
+    for &page_index in &report.unaffected_pages {
+        if page_index >= report.page_count {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionPageNotFound,
+                format!("Unaffected page index {page_index} is outside page_count"),
+            ));
+        }
+        if !unaffected.insert(page_index) {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!("Duplicate unaffected page index {page_index}"),
+            ));
+        }
+        if affected.contains(&page_index) {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!("Page index {page_index} is both affected and unaffected"),
+            ));
+        }
+    }
+    if affected.len() + unaffected.len() != report.page_count as usize {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Affected and unaffected pages must be a complete page partition",
+        ));
+    }
+
+    if report.affected_page_raster_geometry.len() != affected.len() {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Affected raster evidence must contain exactly one entry per affected page",
+        ));
+    }
+    let mut raster_pages = HashSet::new();
+    for raster in &report.affected_page_raster_geometry {
+        if !affected.contains(&raster.page_index) || !raster_pages.insert(raster.page_index) {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!(
+                    "Raster evidence page {} is duplicate or not affected",
+                    raster.page_index
+                ),
+            ));
+        }
+        if raster.width == 0
+            || raster.height == 0
+            || raster.width > MAX_RASTER_DIMENSION
+            || raster.height > MAX_RASTER_DIMENSION
+            || raster.dpi < MIN_RASTER_DPI
+            || raster.dpi > MAX_RASTER_DPI
+            || raster.dpi != report.raster_dpi
+        {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!(
+                    "Raster evidence for page {} has invalid dimensions or DPI",
+                    raster.page_index
+                ),
+            ));
+        }
+        let pixels = (raster.width as u64)
+            .checked_mul(raster.height as u64)
+            .ok_or_else(|| {
+                make_redaction_error(
+                    SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+                    "Raster evidence pixel-count arithmetic overflow",
+                )
+            })?;
+        if pixels > MAX_PIXELS_PER_PAGE {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+                format!(
+                    "Raster evidence for page {} exceeds pixel limit",
+                    raster.page_index
+                ),
+            ));
+        }
+    }
+
+    if report.page_feature_losses.len() != report.page_count as usize {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Feature-loss evidence must contain exactly one entry per page",
+        ));
+    }
+    let mut loss_pages = HashSet::new();
+    for loss in &report.page_feature_losses {
+        if loss.page_index >= report.page_count || !loss_pages.insert(loss.page_index) {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!(
+                    "Feature-loss evidence page {} is duplicate or out of range",
+                    loss.page_index
+                ),
+            ));
+        }
+        validate_redaction_feature_losses(&loss.feature_losses)?;
+    }
+
+    let mut region_ids = HashSet::new();
+    let mut source_region_ids = HashSet::new();
+    for region in &report.applied_canonical_regions {
+        validate_canonical_redaction_region(region)?;
+        if !affected.contains(&region.page_index) {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionInvalidPolicy,
+                format!(
+                    "Applied canonical region '{}' is not on an affected page",
+                    region.region_id
+                ),
+            ));
+        }
+        if !region_ids.insert(&region.region_id) {
+            return Err(make_redaction_error(
+                SecureRedactionErrorCode::RedactionDuplicateRegionId,
+                format!(
+                    "Duplicate applied canonical region ID '{}'",
+                    region.region_id
+                ),
+            ));
+        }
+        for source_region_id in &region.source_region_ids {
+            if !source_region_ids.insert(source_region_id) {
+                return Err(make_redaction_error(
+                    SecureRedactionErrorCode::RedactionDuplicateRegionId,
+                    format!("Duplicate applied source region ID '{source_region_id}'"),
+                ));
+            }
+        }
+    }
+
+    let evidence = &report.transform_evidence;
+    if !evidence.new_document_constructed
+        || !evidence.full_rewrite_used
+        || !evidence.incremental_save_not_used
+        || !evidence.opaque_white_background_policy
+        || !evidence.lossless_raster_path
+        || !evidence.output_digest_calculated
+        || (!affected.is_empty()
+            && (!evidence.affected_pages_rasterized
+                || !evidence.affected_page_original_objects_not_imported))
+        || (!unaffected.is_empty() && !evidence.unaffected_pages_imported)
+    {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Transform evidence contradicts the reported transform collections or required path",
         ));
     }
     validate_unique_warnings(&report.warnings)?;
@@ -1970,6 +2879,12 @@ pub fn validate_verification_report(
                 "Unsupported verification report schema version: '{}'",
                 report.schema_version
             ),
+        ));
+    }
+    if report.verification_version != SECURE_REDACTION_VERIFICATION_VERSION {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionPolicyVersionUnsupported,
+            "Unsupported secure redaction verification version",
         ));
     }
     if report.job_id.trim().is_empty() || report.job_id.as_bytes().len() > MAX_IDENTITY_LEN {
@@ -1992,27 +2907,31 @@ pub fn validate_verification_report(
     validate_unique_blockers(&report.blockers)?;
     validate_unique_warnings(&report.warnings)?;
 
-    if report.is_verified {
-        if !report.blockers.is_empty() {
-            return Err(make_redaction_error(
-                SecureRedactionErrorCode::RedactionInvalidPolicy,
-                "Verification report is_verified cannot be true when blockers exist",
-            ));
-        }
-        if report.verification_checks.is_empty() {
-            return Err(make_redaction_error(
-                SecureRedactionErrorCode::RedactionInvalidPolicy,
-                "Verification report is_verified cannot be true when verification_checks list is empty",
-            ));
-        }
-        for check in &report.verification_checks {
-            if check.status != VerificationCheckStatus::Passed {
-                return Err(make_redaction_error(
-                    SecureRedactionErrorCode::RedactionInvalidPolicy,
-                    format!("Verification report is_verified cannot be true when check '{}' status is not passed", check.code),
-                ));
-            }
-        }
+    if report.verification_checks.len() != REQUIRED_SECURE_REDACTION_VERIFICATION_CHECKS.len()
+        || report
+            .verification_checks
+            .iter()
+            .map(|check| check.code.as_str())
+            .ne(REQUIRED_SECURE_REDACTION_VERIFICATION_CHECKS
+                .iter()
+                .copied())
+    {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Verification report must contain the exact canonical required check set in order",
+        ));
+    }
+
+    let expected_verified = report.blockers.is_empty()
+        && report
+            .verification_checks
+            .iter()
+            .all(|check| check.status == VerificationCheckStatus::Passed);
+    if report.is_verified != expected_verified {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Verification report is_verified must equal (all required checks passed AND blockers empty)",
+        ));
     }
 
     Ok(())
@@ -2300,10 +3219,17 @@ pub fn evaluate_acknowledgements_satisfied(
         && (!reqs.encryption_change_required || acks.encryption_change_accepted)
 }
 
+#[derive(Debug, Clone)]
+pub struct PageMergeOutcome {
+    pub merged_regions: Vec<CanonicalRedactionRegion>,
+    pub resource_limit_exceeded: bool,
+}
+
 pub fn merge_canonical_regions_on_page(
     mut regions: Vec<CanonicalRedactionRegion>,
     page_index: u32,
-) -> Result<Vec<CanonicalRedactionRegion>, SessionJobOperationError> {
+) -> Result<PageMergeOutcome, SessionJobOperationError> {
+    let mut resource_limit_exceeded = false;
     if regions.len() <= 1 {
         for (idx, r) in regions.iter_mut().enumerate() {
             if r.source_region_ids.len() == 1 {
@@ -2312,22 +3238,13 @@ pub fn merge_canonical_regions_on_page(
                 r.region_id = format!("merged_p{}_{}", page_index, idx + 1);
             }
         }
-        return Ok(regions);
+        return Ok(PageMergeOutcome {
+            merged_regions: regions,
+            resource_limit_exceeded: false,
+        });
     }
 
-    regions.sort_by(|a, b| {
-        a.applied_pdf_point_rect
-            .bottom
-            .partial_cmp(&b.applied_pdf_point_rect.bottom)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                a.applied_pdf_point_rect
-                    .left
-                    .partial_cmp(&b.applied_pdf_point_rect.left)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| a.region_id.cmp(&b.region_id))
-    });
+    regions.sort_by(compare_canonical_redaction_regions);
 
     let mut merged = true;
     while merged {
@@ -2344,30 +3261,58 @@ pub fn merge_canonical_regions_on_page(
                 let r2_right = r2.left + r2.width;
                 let r2_top = r2.bottom + r2.height;
 
-                let overlaps_x = r1.left.max(r2.left) <= r1_right.min(r2_right) + ADJACENCY_TOLERANCE_POINTS;
-                let overlaps_y = r1.bottom.max(r2.bottom) <= r1_top.min(r2_top) + ADJACENCY_TOLERANCE_POINTS;
-
-                let is_corner_touch = ((r1.left - r2_right).abs() <= GEOMETRY_EPSILON
-                    || (r1_right - r2.left).abs() <= GEOMETRY_EPSILON)
-                    && ((r1.bottom - r2_top).abs() <= GEOMETRY_EPSILON
-                        || (r1_top - r2.bottom).abs() <= GEOMETRY_EPSILON);
-
-                let is_edge_touch = (((r1.left - r2_right).abs() <= GEOMETRY_EPSILON
-                    || (r1_right - r2.left).abs() <= GEOMETRY_EPSILON)
-                    && r1.bottom.max(r2.bottom) < r1_top.min(r2_top) - GEOMETRY_EPSILON)
-                    || (((r1.bottom - r2_top).abs() <= GEOMETRY_EPSILON
-                        || (r1_top - r2.bottom).abs() <= GEOMETRY_EPSILON)
-                    && r1.left.max(r2.left) < r1_right.min(r2_right) - GEOMETRY_EPSILON);
-
-                let should_merge = if is_corner_touch {
-                    MERGE_CORNER_TOUCHING
-                } else if is_edge_touch {
-                    MERGE_EDGE_TOUCHING && overlaps_x && overlaps_y
+                let x_gap = if r2.left > r1_right {
+                    r2.left - r1_right
+                } else if r1.left > r2_right {
+                    r1.left - r2_right
                 } else {
-                    overlaps_x && overlaps_y
+                    0.0
+                };
+
+                let y_gap = if r2.bottom > r1_top {
+                    r2.bottom - r1_top
+                } else if r1.bottom > r2_top {
+                    r1.bottom - r2_top
+                } else {
+                    0.0
+                };
+
+                let has_x_overlap = r1.left < r2_right && r2.left < r1_right;
+                let has_y_overlap = r1.bottom < r2_top && r2.bottom < r1_top;
+
+                let is_x_touch = (r1.left - r2_right).abs() < f64::EPSILON
+                    || (r1_right - r2.left).abs() < f64::EPSILON;
+                let is_y_touch = (r1.bottom - r2_top).abs() < f64::EPSILON
+                    || (r1_top - r2.bottom).abs() < f64::EPSILON;
+
+                let is_true_overlap = has_x_overlap && has_y_overlap;
+                let is_edge_touch = (is_x_touch && has_y_overlap) || (is_y_touch && has_x_overlap);
+                let is_corner_touch = is_x_touch && is_y_touch;
+
+                let should_merge = if x_gap > 0.0 || y_gap > 0.0 {
+                    false
+                } else if is_true_overlap {
+                    true
+                } else if is_edge_touch {
+                    MERGE_EDGE_TOUCHING
+                } else if is_corner_touch {
+                    MERGE_CORNER_TOUCHING
+                } else {
+                    false
                 };
 
                 if should_merge {
+                    let mut combined_source_ids = regions[i].source_region_ids.clone();
+                    combined_source_ids.extend(regions[j].source_region_ids.clone());
+                    combined_source_ids.sort();
+                    combined_source_ids.dedup();
+
+                    if combined_source_ids.len() > MAX_SOURCE_REGION_IDS {
+                        resource_limit_exceeded = true;
+                        j += 1;
+                        continue;
+                    }
+
                     let new_left = r1.left.min(r2.left);
                     let new_bottom = r1.bottom.min(r2.bottom);
                     let new_right = r1_right.max(r2_right);
@@ -2379,22 +3324,6 @@ pub fn merge_canonical_regions_on_page(
                         width: new_right - new_left,
                         height: new_top - new_bottom,
                     };
-
-                    let mut combined_source_ids = regions[i].source_region_ids.clone();
-                    combined_source_ids.extend(regions[j].source_region_ids.clone());
-                    combined_source_ids.sort();
-                    combined_source_ids.dedup();
-
-                    if combined_source_ids.len() > MAX_SOURCE_REGION_IDS {
-                        return Err(make_redaction_error(
-                            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
-                            format!(
-                                "Merged canonical region source_region_ids count ({}) exceeds maximum limit of {}",
-                                combined_source_ids.len(),
-                                MAX_SOURCE_REGION_IDS
-                            ),
-                        ));
-                    }
 
                     let combined_orig_rect = NormalizedTopLeftRect {
                         x: regions[i]
@@ -2506,7 +3435,12 @@ pub fn merge_canonical_regions_on_page(
         }
     }
 
-    Ok(regions)
+    regions.sort_by(compare_canonical_redaction_regions);
+
+    Ok(PageMergeOutcome {
+        merged_regions: regions,
+        resource_limit_exceeded,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2619,9 +3553,14 @@ fn fact_state_str(state: InspectionFactState) -> &'static str {
     }
 }
 
-pub fn write_canonical_page_geometry_fields(s: &mut CanonicalSerializer, geom: &CanonicalPageGeometry) {
-    s.write_object_start(7);
-    s.write_field("schema_version", |s| s.write_string(REDACTION_SCHEMA_VERSION));
+pub fn write_canonical_page_geometry_fields(
+    s: &mut CanonicalSerializer,
+    geom: &CanonicalPageGeometry,
+) {
+    s.write_object_start(10);
+    s.write_field("schema_version", |s| {
+        s.write_string(REDACTION_SCHEMA_VERSION)
+    });
     s.write_field("page_index", |s| s.write_u32(geom.page_index));
     s.write_field("media_box", |s| {
         s.write_object_start(4);
@@ -2641,6 +3580,23 @@ pub fn write_canonical_page_geometry_fields(s: &mut CanonicalSerializer, geom: &
             s.write_null();
         }
     });
+    for (field, boundary) in [
+        ("trim_box", geom.trim_box.as_ref()),
+        ("bleed_box", geom.bleed_box.as_ref()),
+        ("art_box", geom.art_box.as_ref()),
+    ] {
+        s.write_field(field, |s| {
+            if let Some(boundary) = boundary {
+                s.write_object_start(4);
+                s.write_field("left", |b| b.write_f64(boundary.left));
+                s.write_field("bottom", |b| b.write_f64(boundary.bottom));
+                s.write_field("width", |b| b.write_f64(boundary.width));
+                s.write_field("height", |b| b.write_f64(boundary.height));
+            } else {
+                s.write_null();
+            }
+        });
+    }
     s.write_field("effective_box", |s| {
         s.write_object_start(4);
         s.write_field("left", |b| b.write_f64(geom.effective_box.left));
@@ -2649,7 +3605,9 @@ pub fn write_canonical_page_geometry_fields(s: &mut CanonicalSerializer, geom: &
         s.write_field("height", |b| b.write_f64(geom.effective_box.height));
     });
     s.write_field("rotation", |s| s.write_u32(geom.rotation.as_u16() as u32));
-    s.write_field("geometry_profile", |s| s.write_string("standard_effective_box_v1"));
+    s.write_field("geometry_profile", |s| {
+        s.write_string("standard_effective_box_v1")
+    });
 }
 
 pub fn compute_geometry_digest(geom: &CanonicalPageGeometry) -> String {
@@ -2682,7 +3640,9 @@ pub fn write_canonical_region(s: &mut CanonicalSerializer, r: &CanonicalRedactio
         s.write_field("width", |s| s.write_f64(r.base_pdf_point_rect.width));
         s.write_field("height", |s| s.write_f64(r.base_pdf_point_rect.height));
     });
-    s.write_field("requested_safety_margin_points", |s| s.write_f64(r.requested_safety_margin_points));
+    s.write_field("requested_safety_margin_points", |s| {
+        s.write_f64(r.requested_safety_margin_points)
+    });
     s.write_field("applied_pdf_point_rect", |s| {
         s.write_object_start(4);
         s.write_field("left", |s| s.write_f64(r.applied_pdf_point_rect.left));
@@ -2745,19 +3705,43 @@ fn write_page_redaction_facts(s: &mut CanonicalSerializer, f: &PageRedactionFact
     s.write_field("page_index", |s| s.write_u32(f.page_index));
     s.write_field("text", |s| s.write_string(fact_state_str(f.text)));
     s.write_field("images", |s| s.write_string(fact_state_str(f.images)));
-    s.write_field("vector_paths", |s| s.write_string(fact_state_str(f.vector_paths)));
-    s.write_field("form_xobjects", |s| s.write_string(fact_state_str(f.form_xobjects)));
-    s.write_field("annotations", |s| s.write_string(fact_state_str(f.annotations)));
-    s.write_field("link_annotations", |s| s.write_string(fact_state_str(f.link_annotations)));
+    s.write_field("vector_paths", |s| {
+        s.write_string(fact_state_str(f.vector_paths))
+    });
+    s.write_field("form_xobjects", |s| {
+        s.write_string(fact_state_str(f.form_xobjects))
+    });
+    s.write_field("annotations", |s| {
+        s.write_string(fact_state_str(f.annotations))
+    });
+    s.write_field("link_annotations", |s| {
+        s.write_string(fact_state_str(f.link_annotations))
+    });
     s.write_field("widgets", |s| s.write_string(fact_state_str(f.widgets)));
-    s.write_field("transparency", |s| s.write_string(fact_state_str(f.transparency)));
-    s.write_field("optional_content", |s| s.write_string(fact_state_str(f.optional_content)));
-    s.write_field("complex_resources", |s| s.write_string(fact_state_str(f.complex_resources)));
-    s.write_field("structure_association", |s| s.write_string(fact_state_str(f.structure_association)));
-    s.write_field("page_actions", |s| s.write_string(fact_state_str(f.page_actions)));
-    s.write_field("spot_colors", |s| s.write_string(fact_state_str(f.spot_colors)));
-    s.write_field("complex_color_spaces", |s| s.write_string(fact_state_str(f.complex_color_spaces)));
-    s.write_field("geometry_profile", |s| s.write_string(f.geometry_profile.as_str()));
+    s.write_field("transparency", |s| {
+        s.write_string(fact_state_str(f.transparency))
+    });
+    s.write_field("optional_content", |s| {
+        s.write_string(fact_state_str(f.optional_content))
+    });
+    s.write_field("complex_resources", |s| {
+        s.write_string(fact_state_str(f.complex_resources))
+    });
+    s.write_field("structure_association", |s| {
+        s.write_string(fact_state_str(f.structure_association))
+    });
+    s.write_field("page_actions", |s| {
+        s.write_string(fact_state_str(f.page_actions))
+    });
+    s.write_field("spot_colors", |s| {
+        s.write_string(fact_state_str(f.spot_colors))
+    });
+    s.write_field("complex_color_spaces", |s| {
+        s.write_string(fact_state_str(f.complex_color_spaces))
+    });
+    s.write_field("geometry_profile", |s| {
+        s.write_string(f.geometry_profile.as_str())
+    });
     s.write_field("rotation", |s| s.write_u32(f.rotation.as_u16() as u32));
 }
 
@@ -2765,38 +3749,74 @@ fn write_document_redaction_facts(s: &mut CanonicalSerializer, f: &DocumentRedac
     s.write_object_start(18);
     s.write_field("schema_version", |s| s.write_string(&f.schema_version));
     s.write_field("total_pages", |s| s.write_u32(f.total_pages));
-    s.write_field("encryption", |s| s.write_string(fact_state_str(f.encryption)));
-    s.write_field("signature_dictionary", |s| s.write_string(fact_state_str(f.signature_dictionary)));
-    s.write_field("signature_field", |s| s.write_string(fact_state_str(f.signature_field)));
-    s.write_field("byte_range", |s| s.write_string(fact_state_str(f.byte_range)));
+    s.write_field("encryption", |s| {
+        s.write_string(fact_state_str(f.encryption))
+    });
+    s.write_field("signature_dictionary", |s| {
+        s.write_string(fact_state_str(f.signature_dictionary))
+    });
+    s.write_field("signature_field", |s| {
+        s.write_string(fact_state_str(f.signature_field))
+    });
+    s.write_field("byte_range", |s| {
+        s.write_string(fact_state_str(f.byte_range))
+    });
     s.write_field("acro_form", |s| s.write_string(fact_state_str(f.acro_form)));
     s.write_field("xfa", |s| s.write_string(fact_state_str(f.xfa)));
-    s.write_field("annotations", |s| s.write_string(fact_state_str(f.annotations)));
-    s.write_field("optional_content", |s| s.write_string(fact_state_str(f.optional_content)));
-    s.write_field("embedded_files", |s| s.write_string(fact_state_str(f.embedded_files)));
-    s.write_field("javascript", |s| s.write_string(fact_state_str(f.javascript)));
-    s.write_field("incremental_revisions", |s| s.write_string(fact_state_str(f.incremental_revisions)));
-    s.write_field("structure_tree", |s| s.write_string(fact_state_str(f.structure_tree)));
+    s.write_field("annotations", |s| {
+        s.write_string(fact_state_str(f.annotations))
+    });
+    s.write_field("optional_content", |s| {
+        s.write_string(fact_state_str(f.optional_content))
+    });
+    s.write_field("embedded_files", |s| {
+        s.write_string(fact_state_str(f.embedded_files))
+    });
+    s.write_field("javascript", |s| {
+        s.write_string(fact_state_str(f.javascript))
+    });
+    s.write_field("incremental_revisions", |s| {
+        s.write_string(fact_state_str(f.incremental_revisions))
+    });
+    s.write_field("structure_tree", |s| {
+        s.write_string(fact_state_str(f.structure_tree))
+    });
     s.write_field("outlines", |s| s.write_string(fact_state_str(f.outlines)));
-    s.write_field("names_dictionary", |s| s.write_string(fact_state_str(f.names_dictionary)));
-    s.write_field("document_actions", |s| s.write_string(fact_state_str(f.document_actions)));
-    s.write_field("complex_document_resources", |s| s.write_string(fact_state_str(f.complex_document_resources)));
+    s.write_field("names_dictionary", |s| {
+        s.write_string(fact_state_str(f.names_dictionary))
+    });
+    s.write_field("document_actions", |s| {
+        s.write_string(fact_state_str(f.document_actions))
+    });
+    s.write_field("complex_document_resources", |s| {
+        s.write_string(fact_state_str(f.complex_document_resources))
+    });
 }
 
 fn write_redaction_feature_losses(s: &mut CanonicalSerializer, l: &RedactionFeatureLosses) {
     s.write_object_start(13);
     s.write_field("schema_version", |s| s.write_string(&l.schema_version));
-    s.write_field("text_selection_lost", |s| s.write_bool(l.text_selection_lost));
+    s.write_field("text_selection_lost", |s| {
+        s.write_bool(l.text_selection_lost)
+    });
     s.write_field("searchability_lost", |s| s.write_bool(l.searchability_lost));
-    s.write_field("accessibility_tags_lost", |s| s.write_bool(l.accessibility_tags_lost));
+    s.write_field("accessibility_tags_lost", |s| {
+        s.write_bool(l.accessibility_tags_lost)
+    });
     s.write_field("links_lost", |s| s.write_bool(l.links_lost));
     s.write_field("annotations_lost", |s| s.write_bool(l.annotations_lost));
     s.write_field("forms_lost", |s| s.write_bool(l.forms_lost));
-    s.write_field("vector_quality_lost", |s| s.write_bool(l.vector_quality_lost));
-    s.write_field("color_space_fidelity_risk", |s| s.write_bool(l.color_space_fidelity_risk));
+    s.write_field("vector_quality_lost", |s| {
+        s.write_bool(l.vector_quality_lost)
+    });
+    s.write_field("color_space_fidelity_risk", |s| {
+        s.write_bool(l.color_space_fidelity_risk)
+    });
     s.write_field("spot_colors_lost", |s| s.write_bool(l.spot_colors_lost));
     s.write_field("layers_lost", |s| s.write_bool(l.layers_lost));
-    s.write_field("structure_association_lost", |s| s.write_bool(l.structure_association_lost));
+    s.write_field("structure_association_lost", |s| {
+        s.write_bool(l.structure_association_lost)
+    });
     s.write_field("page_actions_lost", |s| s.write_bool(l.page_actions_lost));
 }
 
@@ -2812,11 +3832,15 @@ fn write_secure_redaction_policy(s: &mut CanonicalSerializer, p: &SecureRedactio
         s.write_field("color", |s| s.write_string(&p.appearance.color));
         s.write_field("opacity", |s| s.write_f64(p.appearance.opacity));
     });
-    s.write_field("safety_margin_points", |s| s.write_f64(p.safety_margin_points));
-    s.write_field("interactive_content_policy", |s| s.write_string(match p.interactive_content_policy {
-        InteractiveContentPolicy::Strip => "strip",
-        InteractiveContentPolicy::Block => "block",
-    }));
+    s.write_field("safety_margin_points", |s| {
+        s.write_f64(p.safety_margin_points)
+    });
+    s.write_field("interactive_content_policy", |s| {
+        s.write_string(match p.interactive_content_policy {
+            InteractiveContentPolicy::Strip => "strip",
+            InteractiveContentPolicy::Block => "block",
+        })
+    });
     s.write_field("signature_policy", |s| s.write_string("block"));
     s.write_field("encryption_policy", |s| s.write_string("block"));
 }
@@ -2824,36 +3848,67 @@ fn write_secure_redaction_policy(s: &mut CanonicalSerializer, p: &SecureRedactio
 fn write_redaction_acknowledgements(s: &mut CanonicalSerializer, a: &RedactionAcknowledgements) {
     s.write_object_start(8);
     s.write_field("schema_version", |s| s.write_string(&a.schema_version));
-    s.write_field("rasterized_pages_accepted", |s| s.write_bool(a.rasterized_pages_accepted));
-    s.write_field("text_search_loss_accepted", |s| s.write_bool(a.text_search_loss_accepted));
-    s.write_field("accessibility_loss_accepted", |s| s.write_bool(a.accessibility_loss_accepted));
-    s.write_field("annotation_loss_accepted", |s| s.write_bool(a.annotation_loss_accepted));
+    s.write_field("rasterized_pages_accepted", |s| {
+        s.write_bool(a.rasterized_pages_accepted)
+    });
+    s.write_field("text_search_loss_accepted", |s| {
+        s.write_bool(a.text_search_loss_accepted)
+    });
+    s.write_field("accessibility_loss_accepted", |s| {
+        s.write_bool(a.accessibility_loss_accepted)
+    });
+    s.write_field("annotation_loss_accepted", |s| {
+        s.write_bool(a.annotation_loss_accepted)
+    });
     s.write_field("form_loss_accepted", |s| s.write_bool(a.form_loss_accepted));
-    s.write_field("signature_invalidation_accepted", |s| s.write_bool(a.signature_invalidation_accepted));
-    s.write_field("encryption_change_accepted", |s| s.write_bool(a.encryption_change_accepted));
+    s.write_field("signature_invalidation_accepted", |s| {
+        s.write_bool(a.signature_invalidation_accepted)
+    });
+    s.write_field("encryption_change_accepted", |s| {
+        s.write_bool(a.encryption_change_accepted)
+    });
 }
 
-fn write_redaction_acknowledgement_requirements(s: &mut CanonicalSerializer, r: &RedactionAcknowledgementRequirements) {
+fn write_redaction_acknowledgement_requirements(
+    s: &mut CanonicalSerializer,
+    r: &RedactionAcknowledgementRequirements,
+) {
     s.write_object_start(8);
     s.write_field("schema_version", |s| s.write_string(&r.schema_version));
-    s.write_field("rasterized_pages_required", |s| s.write_bool(r.rasterized_pages_required));
-    s.write_field("text_search_loss_required", |s| s.write_bool(r.text_search_loss_required));
-    s.write_field("accessibility_loss_required", |s| s.write_bool(r.accessibility_loss_required));
-    s.write_field("annotation_loss_required", |s| s.write_bool(r.annotation_loss_required));
+    s.write_field("rasterized_pages_required", |s| {
+        s.write_bool(r.rasterized_pages_required)
+    });
+    s.write_field("text_search_loss_required", |s| {
+        s.write_bool(r.text_search_loss_required)
+    });
+    s.write_field("accessibility_loss_required", |s| {
+        s.write_bool(r.accessibility_loss_required)
+    });
+    s.write_field("annotation_loss_required", |s| {
+        s.write_bool(r.annotation_loss_required)
+    });
     s.write_field("form_loss_required", |s| s.write_bool(r.form_loss_required));
-    s.write_field("signature_invalidation_required", |s| s.write_bool(r.signature_invalidation_required));
-    s.write_field("encryption_change_required", |s| s.write_bool(r.encryption_change_required));
+    s.write_field("signature_invalidation_required", |s| {
+        s.write_bool(r.signature_invalidation_required)
+    });
+    s.write_field("encryption_change_required", |s| {
+        s.write_bool(r.encryption_change_required)
+    });
 }
 
 fn write_page_redaction_plan(s: &mut CanonicalSerializer, p: &PageRedactionPlan) {
     s.write_object_start(11);
     s.write_field("schema_version", |s| s.write_string(&p.schema_version));
     s.write_field("page_index", |s| s.write_u32(p.page_index));
-    s.write_field("strategy", |s| s.write_string(match p.strategy {
-        PageRedactionStrategy::RasterizePage => "rasterize_page",
-        PageRedactionStrategy::ImportUnaffectedPage => "import_unaffected_page",
-    }));
-    s.write_field("geometry", |s| write_canonical_page_geometry_fields(s, &p.geometry));
+    s.write_field("strategy", |s| {
+        s.write_string(match p.strategy {
+            PageRedactionStrategy::RasterizePage => "rasterize_page",
+            PageRedactionStrategy::ImportUnaffectedPage => "import_unaffected_page",
+        })
+    });
+    s.write_field("geometry", |s| {
+        write_canonical_page_geometry_fields(s, &p.geometry)
+    });
     s.write_field("geometry_digest", |s| s.write_string(&p.geometry_digest));
     s.write_field("canonical_regions", |s| {
         s.write_list_start(p.canonical_regions.len());
@@ -2862,7 +3917,9 @@ fn write_page_redaction_plan(s: &mut CanonicalSerializer, p: &PageRedactionPlan)
         }
     });
     s.write_field("facts", |s| write_page_redaction_facts(s, &p.facts));
-    s.write_field("feature_losses", |s| write_redaction_feature_losses(s, &p.feature_losses));
+    s.write_field("feature_losses", |s| {
+        write_redaction_feature_losses(s, &p.feature_losses)
+    });
     s.write_field("blockers", |s| {
         s.write_list_start(p.blockers.len());
         for b in &p.blockers {
@@ -2899,26 +3956,43 @@ pub fn compute_plan_digest(
 
     s.write_field("identity", |s| {
         s.write_object_start(4);
-        s.write_field("schema_version", |s| s.write_string(REDACTION_SCHEMA_VERSION));
-        s.write_field("plan_version", |s| s.write_string(SECURE_REDACTION_PLAN_VERSION));
+        s.write_field("schema_version", |s| {
+            s.write_string(REDACTION_SCHEMA_VERSION)
+        });
+        s.write_field("plan_version", |s| {
+            s.write_string(SECURE_REDACTION_PLAN_VERSION)
+        });
         s.write_field("input_digest", |s| s.write_string(input_digest));
         s.write_field("content_generation", |s| s.write_u64(content_generation));
     });
     s.write_field("policy", |s| write_secure_redaction_policy(s, policy));
     s.write_field("merge_profile", |s| {
-        s.write_object_start(3);
-        s.write_field("adjacency_tolerance_points", |s| s.write_f64(ADJACENCY_TOLERANCE_POINTS));
+        s.write_object_start(4);
+        s.write_field("adjacency_tolerance_points", |s| {
+            s.write_f64(ADJACENCY_TOLERANCE_POINTS)
+        });
         s.write_field("merge_edge_touching", |s| s.write_bool(MERGE_EDGE_TOUCHING));
-        s.write_field("merge_corner_touching", |s| s.write_bool(MERGE_CORNER_TOUCHING));
+        s.write_field("merge_corner_touching", |s| {
+            s.write_bool(MERGE_CORNER_TOUCHING)
+        });
+        s.write_field("geometry_comparison_epsilon", |s| {
+            s.write_f64(GEOMETRY_COMPARISON_EPSILON)
+        });
     });
-    s.write_field("acknowledgements", |s| write_redaction_acknowledgements(s, acknowledgements));
-    s.write_field("acknowledgement_requirements", |s| write_redaction_acknowledgement_requirements(s, ack_requirements));
+    s.write_field("acknowledgements", |s| {
+        write_redaction_acknowledgements(s, acknowledgements)
+    });
+    s.write_field("acknowledgement_requirements", |s| {
+        write_redaction_acknowledgement_requirements(s, ack_requirements)
+    });
     s.write_field("facts", |s| write_document_redaction_facts(s, facts));
     s.write_field("losses", |s| write_redaction_feature_losses(s, losses));
     s.write_field("readiness", |s| {
         s.write_object_start(3);
         s.write_field("executable", |s| s.write_bool(executable));
-        s.write_field("acknowledgements_satisfied", |s| s.write_bool(acks_satisfied));
+        s.write_field("acknowledgements_satisfied", |s| {
+            s.write_bool(acks_satisfied)
+        });
         s.write_field("ready_for_execution", |s| s.write_bool(ready_for_execution));
     });
     s.write_field("page_plans", |s| {
@@ -2958,6 +4032,7 @@ pub fn build_secure_redaction_plan(
         &input.document_facts,
         &input.policy,
         &input.acknowledgements,
+        None,
     );
     let mut warnings: Vec<RedactionWarning> = Vec::new();
 
@@ -3066,35 +4141,8 @@ pub fn build_secure_redaction_plan(
         let raw_regions = regions_by_page.get(&page_index);
 
         let mut canonical_unmerged = Vec::new();
-        let mut page_blockers = Vec::new();
+        let mut page_blockers = evaluate_page_redaction_blockers(page_facts);
         let mut page_warnings = Vec::new();
-
-        // Section 10.3: Check unknown critical page facts
-        if page_facts.complex_resources == InspectionFactState::Unknown
-            || page_facts.optional_content == InspectionFactState::Unknown
-            || page_facts.structure_association == InspectionFactState::Unknown
-            || page_facts.page_actions == InspectionFactState::Unknown
-            || page_facts.complex_color_spaces == InspectionFactState::Unknown
-            || page_facts.spot_colors == InspectionFactState::Unknown
-            || page_facts.transparency == InspectionFactState::Unknown
-            || page_facts.widgets == InspectionFactState::Unknown
-            || page_facts.link_annotations == InspectionFactState::Unknown
-            || page_facts.form_xobjects == InspectionFactState::Unknown
-            || page_facts.vector_paths == InspectionFactState::Unknown
-        {
-            push_aggregated_blocker(
-                &mut page_blockers,
-                RedactionBlocker {
-                    schema_version: REDACTION_SCHEMA_VERSION.to_string(),
-                    code: "REDACTION_BLOCKED_DOCUMENT_FEATURE".to_string(),
-                    message: format!(
-                        "Page {} contains critical unknown inspection fact state",
-                        page_index
-                    ),
-                    details: None,
-                },
-            );
-        }
 
         if let Some(r_list) = raw_regions {
             for raw in r_list {
@@ -3156,8 +4204,24 @@ pub fn build_secure_redaction_plan(
             }
         }
 
-        let mut merged_canonical_regions =
-            merge_canonical_regions_on_page(canonical_unmerged, page_index)?;
+        let merge_outcome = merge_canonical_regions_on_page(canonical_unmerged, page_index)?;
+        let merged_canonical_regions = merge_outcome.merged_regions;
+
+        if merge_outcome.resource_limit_exceeded {
+            push_aggregated_blocker(
+                &mut page_blockers,
+                RedactionBlocker {
+                    schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                    code: "REDACTION_RESOURCE_LIMIT_EXCEEDED".to_string(),
+                    message: format!(
+                        "Page {} merged canonical region source_region_ids count would exceed limit of {}",
+                        page_index,
+                        MAX_SOURCE_REGION_IDS
+                    ),
+                    details: None,
+                },
+            );
+        }
 
         if merged_canonical_regions.len() > MAX_CANONICAL_REGIONS_PER_PAGE {
             push_aggregated_blocker(
@@ -3174,7 +4238,6 @@ pub fn build_secure_redaction_plan(
                     details: None,
                 },
             );
-            merged_canonical_regions.truncate(MAX_CANONICAL_REGIONS_PER_PAGE);
         }
 
         let is_affected = !merged_canonical_regions.is_empty();
@@ -3183,6 +4246,15 @@ pub fn build_secure_redaction_plan(
         } else {
             PageRedactionStrategy::ImportUnaffectedPage
         };
+
+        // Keep planning and execution capability-identical. The worker repeats
+        // this check before mutation as defense in depth, but must never invent
+        // a different geometry rejection after an executable plan is issued.
+        if is_affected {
+            if let Some(blocker) = secure_redaction_rebuild_geometry_blocker(geom) {
+                push_aggregated_blocker(&mut page_blockers, blocker);
+            }
+        }
 
         // Section 10.1 & 10.2: Feature Loss Calculations strictly bound to actual facts
         let feature_losses = if is_affected {
@@ -3369,42 +4441,24 @@ pub fn build_secure_redaction_plan(
         page_actions_lost: doc_actions_lost,
     };
 
-    let ack_requirements = RedactionAcknowledgementRequirements {
-        schema_version: REDACTION_SCHEMA_VERSION.to_string(),
-        rasterized_pages_required: page_plans
-            .iter()
-            .any(|p| p.strategy == PageRedactionStrategy::RasterizePage),
-        text_search_loss_required: doc_search_lost,
-        accessibility_loss_required: doc_a11y_lost,
-        annotation_loss_required: doc_annot_lost,
-        form_loss_required: doc_forms_lost,
-        signature_invalidation_required: input.document_facts.signature_dictionary.is_present()
-            || input.document_facts.signature_field.is_present(),
-        encryption_change_required: input.document_facts.encryption.is_present(),
-    };
+    let ack_requirements = derive_redaction_acknowledgement_requirements(
+        &input.document_facts,
+        &doc_losses,
+        &page_plans,
+    );
 
     let mut all_canonical_regions = Vec::new();
     for pp in &page_plans {
         all_canonical_regions.extend(pp.canonical_regions.clone());
     }
-    all_canonical_regions.sort_by(|a, b| {
-        a.page_index
-            .cmp(&b.page_index)
-            .then_with(|| {
-                a.applied_pdf_point_rect
-                    .bottom
-                    .partial_cmp(&b.applied_pdf_point_rect.bottom)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| {
-                a.applied_pdf_point_rect
-                    .left
-                    .partial_cmp(&b.applied_pdf_point_rect.left)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| a.region_id.cmp(&b.region_id))
-    });
+    all_canonical_regions.sort_by(compare_canonical_redaction_regions);
 
+    let doc_blockers = evaluate_document_blockers(
+        &input.document_facts,
+        &input.policy,
+        &input.acknowledgements,
+        Some(&page_plans),
+    );
     let mut all_blockers = doc_blockers;
     for pp in &page_plans {
         for b in &pp.blockers {
@@ -3457,7 +4511,13 @@ pub fn build_secure_redaction_plan(
         ready_for_execution,
     };
 
-    let serialized_plan_bytes = serde_json::to_vec(&plan).unwrap_or_default().len();
+    let serialized_plan = serde_json::to_vec(&plan).map_err(|e| {
+        make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            format!("Failed to serialize secure redaction plan: {}", e),
+        )
+    })?;
+    let serialized_plan_bytes = serialized_plan.len();
     if serialized_plan_bytes > MAX_REPORT_SIZE_BYTES {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionResourceLimitExceeded,
@@ -3483,6 +4543,74 @@ mod tests {
 
     fn sample_sha256() -> String {
         "a".repeat(64)
+    }
+
+    fn required_verification_checks(
+        status: VerificationCheckStatus,
+    ) -> Vec<RedactionVerificationCheck> {
+        REQUIRED_SECURE_REDACTION_VERIFICATION_CHECKS
+            .iter()
+            .map(|code| RedactionVerificationCheck {
+                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                code: (*code).to_string(),
+                status,
+                message: "check".to_string(),
+                details: None,
+            })
+            .collect()
+    }
+
+    fn sample_transform_report() -> SecureRedactionTransformReport {
+        SecureRedactionTransformReport {
+            schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+            job_id: "job_1".to_string(),
+            session_id: "sess_1".to_string(),
+            input_digest: sample_sha256(),
+            plan_digest: sample_sha256(),
+            output_relative_name: "secure-redaction-transform.pdf".to_string(),
+            output_digest: sample_sha256(),
+            output_size_bytes: 1,
+            page_count: 0,
+            affected_pages: vec![],
+            unaffected_pages: vec![],
+            raster_dpi: MIN_RASTER_DPI,
+            applied_canonical_regions: vec![],
+            affected_page_raster_geometry: vec![],
+            page_feature_losses: vec![],
+            background_policy: "opaque_white_v1".to_string(),
+            warnings: vec![],
+            transform_evidence: SecureRedactionTransformEvidence {
+                new_document_constructed: true,
+                affected_pages_rasterized: true,
+                affected_page_original_objects_not_imported: true,
+                unaffected_pages_imported: true,
+                full_rewrite_used: true,
+                incremental_save_not_used: true,
+                opaque_white_background_policy: true,
+                lossless_raster_path: true,
+                output_digest_calculated: true,
+            },
+            status: "transformed_unverified".to_string(),
+        }
+    }
+
+    fn sample_populated_transform_report() -> SecureRedactionTransformReport {
+        let page_plan = sample_valid_page_plan();
+        let mut report = sample_transform_report();
+        report.page_count = 1;
+        report.affected_pages = vec![0];
+        report.applied_canonical_regions = page_plan.canonical_regions;
+        report.affected_page_raster_geometry = vec![TransformRasterPageEvidence {
+            page_index: 0,
+            width: 100,
+            height: 100,
+            dpi: MIN_RASTER_DPI,
+        }];
+        report.page_feature_losses = vec![TransformPageFeatureLoss {
+            page_index: 0,
+            feature_losses: page_plan.feature_losses,
+        }];
+        report
     }
 
     fn sample_valid_input(id: &str, x: f64, y: f64, w: f64, h: f64) -> RedactionRegionInput {
@@ -3540,6 +4668,9 @@ mod tests {
                 height: 792.0,
             },
             crop_box: None,
+            trim_box: None,
+            bleed_box: None,
+            art_box: None,
             effective_box: PdfPointRect {
                 left: 0.0,
                 bottom: 0.0,
@@ -3566,21 +4697,21 @@ mod tests {
                 original_normalized_rect: NormalizedTopLeftRect {
                     x: 0.1,
                     y: 0.1,
-                    width: 0.5,
-                    height: 0.5,
+                    width: 0.3,
+                    height: 0.2,
                 },
                 base_pdf_point_rect: PdfPointRect {
-                    left: 10.0,
-                    bottom: 10.0,
-                    width: 100.0,
-                    height: 100.0,
+                    left: 61.2,
+                    bottom: 554.4,
+                    width: 183.6,
+                    height: 158.4,
                 },
                 requested_safety_margin_points: 2.0,
                 applied_pdf_point_rect: PdfPointRect {
-                    left: 8.0,
-                    bottom: 8.0,
-                    width: 104.0,
-                    height: 104.0,
+                    left: 59.2,
+                    bottom: 552.4,
+                    width: 187.6,
+                    height: 162.4,
                 },
                 applied_margins: AppliedMargins {
                     left: 2.0,
@@ -3646,6 +4777,9 @@ mod tests {
                 height: 792.0,
             },
             crop_box: None,
+            trim_box: None,
+            bleed_box: None,
+            art_box: None,
             effective_box: PdfPointRect {
                 left: 0.0,
                 bottom: 0.0,
@@ -3843,7 +4977,7 @@ mod tests {
         let ack_reqs = RedactionAcknowledgementRequirements {
             schema_version: "1.0.0".to_string(),
             rasterized_pages_required: true,
-            text_search_loss_required: false,
+            text_search_loss_required: true,
             accessibility_loss_required: false,
             annotation_loss_required: false,
             form_loss_required: false,
@@ -4102,42 +5236,26 @@ mod tests {
     }
 
     #[test]
-    fn test_secure_redaction_plan_wire_fixture_exact_round_trip() {
+    fn test_v1_wire_fixture_is_rejected_by_explicit_v2_geometry_migration() {
         let fixture_str =
             include_str!("../tests/fixtures/contracts/secure-redaction-plan-wire-v1.json");
         let fixture: serde_json::Value =
             serde_json::from_str(fixture_str).expect("Parse canonical wire fixture");
 
-        let typed = canonical_wire_fixture_plan();
-        let serialized = serde_json::to_value(&typed).expect("Serialize typed wire DTO");
-        if serialized != fixture {
-            let s_str = serde_json::to_string_pretty(&serialized).unwrap();
-            let f_str = serde_json::to_string_pretty(&fixture).unwrap();
-            for (l1, l2) in s_str.lines().zip(f_str.lines()) {
-                if l1 != l2 {
-                    println!("DIFF: SERIALIZED='{}' vs FIXTURE='{}'", l1, l2);
-                }
-            }
-            assert_eq!(serialized, fixture);
-        }
+        let legacy: SecureRedactionPlan =
+            serde_json::from_value(fixture).expect("Deserialize legacy v1 wire fixture");
+        assert!(validate_secure_redaction_plan(&legacy).is_err());
 
-        let deserialized: SecureRedactionPlan =
-            serde_json::from_value(fixture.clone()).expect("Deserialize canonical wire fixture");
-        validate_secure_redaction_plan(&deserialized).expect("Validate canonical wire fixture");
-        let reserialized =
-            serde_json::to_value(&deserialized).expect("Reserialize canonical wire DTO");
-        assert_eq!(reserialized, fixture);
+        let typed = canonical_wire_fixture_plan();
+        validate_secure_redaction_plan(&typed).expect("Validate v2 canonical wire DTO");
+        assert_eq!(typed.plan_version, SECURE_REDACTION_PLAN_VERSION);
     }
 
     #[test]
     fn test_page_plan_executable_invariants_and_blockers() {
         let mut page_plan = sample_valid_page_plan();
-        page_plan.blockers.push(RedactionBlocker {
-            schema_version: "1.0.0".to_string(),
-            code: "PAGE_BLOCK_1".to_string(),
-            message: "Page is blocked".to_string(),
-            details: None,
-        });
+        page_plan.facts.complex_resources = InspectionFactState::Unknown;
+        page_plan.blockers = evaluate_page_redaction_blockers(&page_plan.facts);
 
         // Page plan with blocker + executable: true must be rejected
         page_plan.executable = true;
@@ -4385,6 +5503,7 @@ mod tests {
             publication_id: "i".repeat(MAX_IDENTITY_LEN),
             published_path: "p".repeat(MAX_PATH_LEN),
             published_digest: sample_sha256(),
+            commit_state: SecureRedactionCommitState::NewCommitted,
         };
         assert!(validate_publication_report(&publication).is_ok());
         let mut oversized_publication = publication.clone();
@@ -4425,32 +5544,20 @@ mod tests {
     #[test]
     fn test_execution_report_cross_field_invariants_and_publication() {
         let digest = sample_sha256();
-        let transform_report = SecureRedactionTransformReport {
-            schema_version: "1.0.0".to_string(),
-            job_id: "job_1".to_string(),
-            session_id: "sess_1".to_string(),
-            plan_digest: digest.clone(),
-            processed_pages: 1,
-            output_path: "/out.pdf".to_string(),
-            output_digest: digest.clone(),
-            warnings: vec![],
-            status: "transformed".to_string(),
-        };
+        let mut transform_report = sample_transform_report();
+        transform_report.plan_digest = digest.clone();
+        transform_report.input_digest = digest.clone();
+        transform_report.output_digest = digest.clone();
 
         let ver_report_unverified = SecureRedactionVerificationReport {
             schema_version: "1.0.0".to_string(),
+            verification_version: SECURE_REDACTION_VERIFICATION_VERSION.to_string(),
             job_id: "job_1".to_string(),
             session_id: "sess_1".to_string(),
             plan_digest: digest.clone(),
             transform_digest: digest.clone(),
             is_verified: false,
-            verification_checks: vec![RedactionVerificationCheck {
-                schema_version: "1.0.0".to_string(),
-                code: "SCAN_1".to_string(),
-                status: VerificationCheckStatus::Passed,
-                message: "passed".to_string(),
-                details: None,
-            }],
+            verification_checks: required_verification_checks(VerificationCheckStatus::Passed),
             blockers: vec![],
             warnings: vec![],
         };
@@ -4460,6 +5567,7 @@ mod tests {
             publication_id: "pub_1".to_string(),
             published_path: "/published.pdf".to_string(),
             published_digest: digest.clone(),
+            commit_state: SecureRedactionCommitState::NewCommitted,
         };
 
         let exec_invalid = SecureRedactionExecutionReport {
@@ -4486,18 +5594,13 @@ mod tests {
 
         let ver_report_valid = SecureRedactionVerificationReport {
             schema_version: "1.0.0".to_string(),
+            verification_version: SECURE_REDACTION_VERIFICATION_VERSION.to_string(),
             job_id: "job_1".to_string(),
             session_id: "sess_1".to_string(),
             plan_digest: digest.clone(),
             transform_digest: digest.clone(),
             is_verified: true,
-            verification_checks: vec![RedactionVerificationCheck {
-                schema_version: "1.0.0".to_string(),
-                code: "SCAN_1".to_string(),
-                status: VerificationCheckStatus::Passed,
-                message: "passed".to_string(),
-                details: None,
-            }],
+            verification_checks: required_verification_checks(VerificationCheckStatus::Passed),
             blockers: vec![],
             warnings: vec![],
         };
@@ -4511,6 +5614,46 @@ mod tests {
             publication_report: Some(pub_report),
         };
         assert!(validate_execution_report(&exec_valid).is_ok());
+    }
+
+    #[test]
+    fn test_verification_report_is_verified_is_a_biconditional() {
+        let verified = || SecureRedactionVerificationReport {
+            schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+            verification_version: SECURE_REDACTION_VERIFICATION_VERSION.to_string(),
+            job_id: "job_1".to_string(),
+            session_id: "sess_1".to_string(),
+            plan_digest: sample_sha256(),
+            transform_digest: sample_sha256(),
+            is_verified: true,
+            verification_checks: required_verification_checks(VerificationCheckStatus::Passed),
+            blockers: vec![],
+            warnings: vec![],
+        };
+        assert!(validate_verification_report(&verified()).is_ok());
+
+        let mut false_negative = verified();
+        false_negative.is_verified = false;
+        assert!(validate_verification_report(&false_negative).is_err());
+
+        let mut failed = verified();
+        failed.is_verified = false;
+        failed.verification_checks[0].status = VerificationCheckStatus::Failed;
+        failed.blockers.push(RedactionBlocker {
+            schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+            code: "REDACTION_VERIFICATION_TEST_FAILED".to_string(),
+            message: "failed".to_string(),
+            details: None,
+        });
+        assert!(validate_verification_report(&failed).is_ok());
+
+        let mut not_run = failed.clone();
+        not_run.verification_checks[1].status = VerificationCheckStatus::NotRun;
+        assert!(validate_verification_report(&not_run).is_ok());
+
+        let mut invalid_true = failed;
+        invalid_true.is_verified = true;
+        assert!(validate_verification_report(&invalid_true).is_err());
     }
 
     #[test]
@@ -4628,21 +5771,15 @@ mod tests {
         plan.schema_version = "999.0.0".to_string();
         assert_unsupported(validate_secure_redaction_plan(&plan));
 
-        let mut transform = SecureRedactionTransformReport {
-            schema_version: "999.0.0".to_string(),
-            job_id: "job".to_string(),
-            session_id: "session".to_string(),
-            plan_digest: sample_sha256(),
-            processed_pages: 0,
-            output_path: "/out.pdf".to_string(),
-            output_digest: sample_sha256(),
-            warnings: vec![],
-            status: "transformed".to_string(),
-        };
+        let mut transform = sample_transform_report();
+        transform.schema_version = "999.0.0".to_string();
+        transform.job_id = "job".to_string();
+        transform.session_id = "session".to_string();
         assert_unsupported(validate_transform_report(&transform));
         transform.schema_version = REDACTION_SCHEMA_VERSION.to_string();
         let mut verification = SecureRedactionVerificationReport {
             schema_version: "999.0.0".to_string(),
+            verification_version: SECURE_REDACTION_VERIFICATION_VERSION.to_string(),
             job_id: "job".to_string(),
             session_id: "session".to_string(),
             plan_digest: sample_sha256(),
@@ -4665,6 +5802,7 @@ mod tests {
             publication_id: "publication".to_string(),
             published_path: "/published.pdf".to_string(),
             published_digest: sample_sha256(),
+            commit_state: SecureRedactionCommitState::NewCommitted,
         };
         assert_unsupported(validate_publication_report(&publication));
         publication.schema_version = REDACTION_SCHEMA_VERSION.to_string();
@@ -4701,7 +5839,7 @@ mod tests {
         let mut page_plan = sample_valid_page_plan();
         page_plan.canonical_regions = (0..MAX_CANONICAL_REGIONS_PER_PAGE)
             .map(|index| CanonicalRedactionRegion {
-                region_id: format!("region-{index}"),
+                region_id: format!("region-{index:04}"),
                 ..sample_valid_page_plan().canonical_regions[0].clone()
             })
             .collect();
@@ -4769,6 +5907,7 @@ mod tests {
         assert!(validate_unique_verification_checks(&too_many_checks).is_err());
 
         let mut plan = canonical_wire_fixture_plan();
+        plan.policy.raster_dpi = 72;
         plan.facts.total_pages = MAX_PAGE_PLANS as u32;
         plan.page_plans = (0..MAX_PAGE_PLANS)
             .map(|index| {
@@ -4787,6 +5926,17 @@ mod tests {
             .iter()
             .flat_map(|p| p.canonical_regions.clone())
             .collect();
+        plan.acknowledgement_requirements = derive_redaction_acknowledgement_requirements(
+            &plan.facts,
+            &plan.losses,
+            &plan.page_plans,
+        );
+        plan.acknowledgements.rasterized_pages_accepted = true;
+        plan.acknowledgements_satisfied = evaluate_acknowledgements_satisfied(
+            &plan.acknowledgement_requirements,
+            &plan.acknowledgements,
+        );
+        plan.ready_for_execution = plan.executable && plan.acknowledgements_satisfied;
         plan.plan_digest = compute_plan_digest(
             &plan.input_digest,
             plan.content_generation,
@@ -4803,7 +5953,7 @@ mod tests {
             plan.acknowledgements_satisfied,
             plan.ready_for_execution,
         );
-        assert!(validate_secure_redaction_plan(&plan).is_ok());
+        validate_secure_redaction_plan(&plan).unwrap();
         plan.page_plans.push(sample_valid_page_plan());
         assert!(validate_secure_redaction_plan(&plan).is_err());
     }
@@ -4900,6 +6050,7 @@ mod tests {
             publication_id: utf8_exact(MAX_IDENTITY_LEN),
             published_path: utf8_exact(MAX_PATH_LEN),
             published_digest: sample_sha256(),
+            commit_state: SecureRedactionCommitState::NewCommitted,
         };
         assert!(validate_publication_report(&publication).is_ok());
         for oversize in [
@@ -4910,22 +6061,14 @@ mod tests {
             oversize(&mut invalid);
             assert!(validate_publication_report(&invalid).is_err());
         }
-        let transform = SecureRedactionTransformReport {
-            schema_version: REDACTION_SCHEMA_VERSION.to_string(),
-            job_id: utf8_exact(MAX_IDENTITY_LEN),
-            session_id: utf8_exact(MAX_IDENTITY_LEN),
-            plan_digest: sample_sha256(),
-            processed_pages: 0,
-            output_path: utf8_exact(MAX_PATH_LEN),
-            output_digest: sample_sha256(),
-            warnings: vec![],
-            status: "transformed".to_string(),
-        };
+        let mut transform = sample_transform_report();
+        transform.job_id = utf8_exact(MAX_IDENTITY_LEN);
+        transform.session_id = utf8_exact(MAX_IDENTITY_LEN);
         assert!(validate_transform_report(&transform).is_ok());
         for oversize in [
             |value: &mut SecureRedactionTransformReport| value.job_id.push('a'),
             |value: &mut SecureRedactionTransformReport| value.session_id.push('a'),
-            |value: &mut SecureRedactionTransformReport| value.output_path.push('a'),
+            |value: &mut SecureRedactionTransformReport| value.output_relative_name.push('a'),
         ] {
             let mut invalid = transform.clone();
             oversize(&mut invalid);
@@ -4957,6 +6100,104 @@ mod tests {
             let mut policy = sample_valid_policy();
             policy.safety_margin_points = safety_margin_points;
             assert!(validate_secure_redaction_policy(&policy).is_err());
+        }
+    }
+
+    #[test]
+    fn test_transform_report_semantic_partition_evidence_and_size_limits() {
+        assert!(validate_transform_report(&sample_populated_transform_report()).is_ok());
+
+        let mut cases: Vec<(&str, Box<dyn Fn(&mut SecureRedactionTransformReport)>)> = vec![
+            (
+                "duplicate affected page",
+                Box::new(|r| r.affected_pages.push(0)),
+            ),
+            (
+                "duplicate unaffected page",
+                Box::new(|r| {
+                    r.page_count = 2;
+                    r.unaffected_pages = vec![1, 1];
+                    r.page_feature_losses.push(r.page_feature_losses[0].clone());
+                }),
+            ),
+            (
+                "affected-unaffected overlap",
+                Box::new(|r| {
+                    r.unaffected_pages = vec![0];
+                    r.page_count = 2;
+                    r.page_feature_losses.push(r.page_feature_losses[0].clone());
+                }),
+            ),
+            (
+                "missing partition page",
+                Box::new(|r| {
+                    r.page_count = 2;
+                    r.page_feature_losses.push(r.page_feature_losses[0].clone());
+                }),
+            ),
+            ("out-of-range page", Box::new(|r| r.affected_pages[0] = 1)),
+            (
+                "duplicate raster evidence",
+                Box::new(|r| {
+                    r.affected_page_raster_geometry
+                        .push(r.affected_page_raster_geometry[0].clone())
+                }),
+            ),
+            (
+                "missing raster evidence",
+                Box::new(|r| r.affected_page_raster_geometry.clear()),
+            ),
+            (
+                "raster evidence on unaffected page",
+                Box::new(|r| {
+                    r.page_count = 2;
+                    r.unaffected_pages = vec![1];
+                    r.page_feature_losses.push(TransformPageFeatureLoss {
+                        page_index: 1,
+                        feature_losses: r.page_feature_losses[0].feature_losses.clone(),
+                    });
+                    r.affected_page_raster_geometry[0].page_index = 1;
+                }),
+            ),
+            (
+                "duplicate feature-loss evidence",
+                Box::new(|r| r.page_feature_losses.push(r.page_feature_losses[0].clone())),
+            ),
+            (
+                "missing feature-loss evidence",
+                Box::new(|r| r.page_feature_losses.clear()),
+            ),
+            (
+                "region on unaffected page",
+                Box::new(|r| r.applied_canonical_regions[0].page_index = 1),
+            ),
+            (
+                "oversized raster dimensions",
+                Box::new(|r| r.affected_page_raster_geometry[0].width = MAX_RASTER_DIMENSION + 1),
+            ),
+            ("zero output size", Box::new(|r| r.output_size_bytes = 0)),
+            (
+                "oversized output size",
+                Box::new(|r| r.output_size_bytes = MAX_SECURE_REDACTION_OUTPUT_BYTES + 1),
+            ),
+        ];
+        for (name, mutate) in cases.drain(..) {
+            let mut invalid = sample_populated_transform_report();
+            mutate(&mut invalid);
+            assert!(
+                validate_transform_report(&invalid).is_err(),
+                "{name} must be rejected"
+            );
+        }
+
+        let mut too_large = sample_transform_report();
+        too_large.job_id = "x".repeat(MAX_REPORT_SIZE_BYTES + 1);
+        let error = validate_transform_report(&too_large).unwrap_err();
+        match error {
+            SessionJobOperationError::Failed(failure) => {
+                assert_eq!(failure.code, "REDACTION_RESOURCE_LIMIT_EXCEEDED")
+            }
+            SessionJobOperationError::Cancelled(_) => panic!("report validation cannot cancel"),
         }
     }
 
@@ -5063,6 +6304,60 @@ mod tests {
 
         // Document-level losses aggregated
         assert!(plan.losses.text_selection_lost);
+    }
+
+    #[test]
+    fn test_rebuild_geometry_capability_is_planner_worker_parity_gate() {
+        let mut supported = sample_planner_input_2pages();
+        supported.page_geometries[0].media_box.left = -100.0;
+        supported.page_geometries[0].media_box.bottom = 50.0;
+        supported.page_geometries[0].effective_box = supported.page_geometries[0].media_box.clone();
+        supported.page_geometries[0].crop_box = Some(PdfPointRect {
+            left: -50.0,
+            bottom: 75.0,
+            width: 400.0,
+            height: 600.0,
+        });
+        supported.page_geometries[0].effective_box =
+            supported.page_geometries[0].crop_box.clone().unwrap();
+        supported.page_geometries[0].trim_box = Some(PdfPointRect {
+            left: -80.0,
+            bottom: 60.0,
+            width: 500.0,
+            height: 700.0,
+        });
+        supported.page_geometries[0].bleed_box = Some(PdfPointRect {
+            left: -90.0,
+            bottom: 55.0,
+            width: 520.0,
+            height: 720.0,
+        });
+        supported.page_geometries[0].art_box = Some(PdfPointRect {
+            left: -70.0,
+            bottom: 80.0,
+            width: 350.0,
+            height: 500.0,
+        });
+        supported.page_geometries[0].rotation = PageRotation::Deg270;
+        supported.page_facts[0].rotation = PageRotation::Deg270;
+
+        let plan =
+            build_secure_redaction_plan(&supported).expect("planner accepts safe PDFium geometry");
+        assert!(plan.executable && plan.ready_for_execution);
+        // This is precisely the worker's defense-in-depth call. An executable
+        // plan cannot fail it solely because of geometry capability.
+        evaluate_secure_redaction_rebuild_geometry(&plan.page_plans[0].geometry).unwrap();
+
+        let mut unsupported = sample_planner_input_2pages();
+        unsupported.page_geometries[0].media_box.left = 100_000_000.0;
+        unsupported.page_geometries[0].effective_box.left = 100_000_000.0;
+        let plan = build_secure_redaction_plan(&unsupported)
+            .expect("planner returns blockers, not a late worker surprise");
+        assert!(!plan.executable && !plan.ready_for_execution);
+        assert!(plan.page_plans[0]
+            .blockers
+            .iter()
+            .any(|blocker| { blocker.code == "REDACTION_PAGE_GEOMETRY_MISMATCH" }));
     }
 
     #[test]
@@ -5251,16 +6546,13 @@ mod tests {
     fn test_planner_resource_limit_blockers() {
         let mut input = sample_planner_input_2pages();
         input.policy.safety_margin_points = 0.0;
-        input.region_inputs = (0..MAX_REGIONS_PER_INPUT + 1)
-            .map(|i| {
-                let row = (i / 50) as f64 * 0.018;
-                let col = (i % 50) as f64 * 0.018;
-                sample_valid_input(&format!("r{i}"), col, row, 0.01, 0.01)
-            })
+        input.region_inputs = (0..MAX_SOURCE_REGION_IDS + 1)
+            .map(|i| sample_valid_input(&format!("r{i}"), 0.1, 0.1, 0.2, 0.2))
             .collect();
 
         let plan = build_secure_redaction_plan(&input).expect("Plan with resource limit");
         assert!(!plan.executable);
+        assert!(!plan.ready_for_execution);
         assert!(plan
             .blockers
             .iter()
@@ -5279,7 +6571,7 @@ mod tests {
         let input = sample_planner_input_2pages();
         let plan = build_secure_redaction_plan(&input).expect("Plan should succeed");
 
-        assert_eq!(plan.plan_version, "secure_redaction_plan_v1");
+        assert_eq!(plan.plan_version, "secure_redaction_plan_v2");
         assert_eq!(plan.plan_digest.len(), 64);
         assert_eq!(
             plan.page_plans[0].strategy,
@@ -5333,5 +6625,570 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "REDACTION_REGION_SAFETY_MARGIN_CLAMPED");
         assert_eq!(warnings[0].details.as_deref(), Some("Detail 1; Detail 2"));
+    }
+
+    #[test]
+    fn test_real_no_io_planner_isolation() {
+        let temp_dir = std::env::temp_dir();
+        let before_entries: Vec<_> = std::fs::read_dir(&temp_dir)
+            .expect("Read temp dir before planner")
+            .filter_map(|e| e.ok().map(|entry| entry.file_name()))
+            .collect();
+
+        let input = sample_planner_input_2pages();
+        let plan = build_secure_redaction_plan(&input).expect("Build plan");
+        assert!(plan.executable);
+
+        let after_entries: Vec<_> = std::fs::read_dir(&temp_dir)
+            .expect("Read temp dir after planner")
+            .filter_map(|e| e.ok().map(|entry| entry.file_name()))
+            .collect();
+
+        assert_eq!(
+            before_entries, after_entries,
+            "Planner must produce zero I/O side-effects or temporary files"
+        );
+
+        let source = include_str!("secure_redaction.rs");
+        let non_test_source = source.split("mod tests").next().unwrap_or(source);
+        assert!(!non_test_source.contains("File::create"));
+        assert!(!non_test_source.contains("OpenOptions"));
+    }
+
+    #[test]
+    fn test_semantically_fake_freshly_digested_plans_rejected() {
+        let valid_plan = canonical_wire_fixture_plan();
+        assert!(validate_secure_redaction_plan(&valid_plan).is_ok());
+
+        // 1. Mutate text_selection_lost when text is present
+        let mut plan1 = valid_plan.clone();
+        plan1.page_plans[0].feature_losses.text_selection_lost = false;
+        plan1.plan_digest = compute_plan_digest(
+            &plan1.input_digest,
+            plan1.content_generation,
+            &plan1.policy,
+            &plan1.acknowledgements,
+            &plan1.acknowledgement_requirements,
+            &plan1.facts,
+            &plan1.page_plans,
+            &plan1.canonical_regions,
+            &plan1.losses,
+            &plan1.blockers,
+            &plan1.warnings,
+            plan1.executable,
+            plan1.acknowledgements_satisfied,
+            plan1.ready_for_execution,
+        );
+        assert!(validate_secure_redaction_plan(&plan1).is_err());
+
+        // 2. Mismatch document losses vs page feature losses
+        let mut plan2 = valid_plan.clone();
+        plan2.losses.searchability_lost = false;
+        plan2.plan_digest = compute_plan_digest(
+            &plan2.input_digest,
+            plan2.content_generation,
+            &plan2.policy,
+            &plan2.acknowledgements,
+            &plan2.acknowledgement_requirements,
+            &plan2.facts,
+            &plan2.page_plans,
+            &plan2.canonical_regions,
+            &plan2.losses,
+            &plan2.blockers,
+            &plan2.warnings,
+            plan2.executable,
+            plan2.acknowledgements_satisfied,
+            plan2.ready_for_execution,
+        );
+        assert!(validate_secure_redaction_plan(&plan2).is_err());
+
+        // 3. Mismatch acknowledgement requirements
+        let mut plan3 = valid_plan.clone();
+        plan3.acknowledgement_requirements.text_search_loss_required = false;
+        plan3.plan_digest = compute_plan_digest(
+            &plan3.input_digest,
+            plan3.content_generation,
+            &plan3.policy,
+            &plan3.acknowledgements,
+            &plan3.acknowledgement_requirements,
+            &plan3.facts,
+            &plan3.page_plans,
+            &plan3.canonical_regions,
+            &plan3.losses,
+            &plan3.blockers,
+            &plan3.warnings,
+            plan3.executable,
+            plan3.acknowledgements_satisfied,
+            plan3.ready_for_execution,
+        );
+        assert!(validate_secure_redaction_plan(&plan3).is_err());
+
+        // 4. Mismatch executable = false without blocker
+        let mut plan4 = valid_plan.clone();
+        plan4.executable = false;
+        plan4.plan_digest = compute_plan_digest(
+            &plan4.input_digest,
+            plan4.content_generation,
+            &plan4.policy,
+            &plan4.acknowledgements,
+            &plan4.acknowledgement_requirements,
+            &plan4.facts,
+            &plan4.page_plans,
+            &plan4.canonical_regions,
+            &plan4.losses,
+            &plan4.blockers,
+            &plan4.warnings,
+            plan4.executable,
+            plan4.acknowledgements_satisfied,
+            plan4.ready_for_execution,
+        );
+        assert!(validate_secure_redaction_plan(&plan4).is_err());
+
+        // 5. Unsorted source_region_ids
+        let mut plan5 = valid_plan.clone();
+        plan5.canonical_regions[0].source_region_ids = vec!["z".to_string(), "a".to_string()];
+        plan5.plan_digest = compute_plan_digest(
+            &plan5.input_digest,
+            plan5.content_generation,
+            &plan5.policy,
+            &plan5.acknowledgements,
+            &plan5.acknowledgement_requirements,
+            &plan5.facts,
+            &plan5.page_plans,
+            &plan5.canonical_regions,
+            &plan5.losses,
+            &plan5.blockers,
+            &plan5.warnings,
+            plan5.executable,
+            plan5.acknowledgements_satisfied,
+            plan5.ready_for_execution,
+        );
+        assert!(validate_secure_redaction_plan(&plan5).is_err());
+    }
+
+    #[test]
+    fn test_fresh_digest_duplicate_global_canonical_region_id_rejected() {
+        let mut plan = canonical_wire_fixture_plan();
+        let mut duplicate_a = plan.page_plans[0].canonical_regions[0].clone();
+        duplicate_a.region_id = "canon_duplicate".to_string();
+        duplicate_a.source_region_ids = vec!["s_duplicate_a".to_string()];
+        let mut duplicate_b = duplicate_a.clone();
+        duplicate_b.source_region_ids = vec!["s_duplicate_b".to_string()];
+
+        plan.page_plans[0].canonical_regions = vec![duplicate_a.clone(), duplicate_b.clone()];
+        plan.canonical_regions = vec![duplicate_a, duplicate_b];
+        plan.plan_digest = compute_plan_digest(
+            &plan.input_digest,
+            plan.content_generation,
+            &plan.policy,
+            &plan.acknowledgements,
+            &plan.acknowledgement_requirements,
+            &plan.facts,
+            &plan.page_plans,
+            &plan.canonical_regions,
+            &plan.losses,
+            &plan.blockers,
+            &plan.warnings,
+            plan.executable,
+            plan.acknowledgements_satisfied,
+            plan.ready_for_execution,
+        );
+
+        let error = validate_secure_redaction_plan(&plan).unwrap_err();
+        if let crate::document_session::SessionJobOperationError::Failed(failure) = error {
+            assert_eq!(failure.code, "REDACTION_DUPLICATE_REGION_ID");
+            assert_eq!(
+                failure.message,
+                "Duplicate global canonical region ID found: 'canon_duplicate'"
+            );
+        } else {
+            panic!("Expected duplicate global canonical region ID failure");
+        }
+    }
+
+    #[test]
+    fn test_adversarial_planner_self_validation_with_unknown_facts() {
+        let mut input = sample_planner_input_2pages();
+        input.page_facts[0].complex_resources = InspectionFactState::Unknown;
+        let plan = build_secure_redaction_plan(&input).expect("Planner handles unknown facts");
+
+        assert!(!plan.executable);
+        assert!(!plan.ready_for_execution);
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|b| b.code == "REDACTION_BLOCKED_DOCUMENT_FEATURE"));
+        assert!(validate_secure_redaction_plan(&plan).is_ok());
+    }
+
+    #[test]
+    fn test_adversarial_page_blocker_tampering_rejected_with_fresh_digest() {
+        let mut input = sample_planner_input_2pages();
+        input.page_facts[0].complex_resources = InspectionFactState::Unknown;
+        let mut plan = build_secure_redaction_plan(&input).expect("Plan with page blocker");
+
+        // Tamper: remove page blocker and mark page executable
+        plan.page_plans[0].blockers.clear();
+        plan.page_plans[0].executable = true;
+
+        // Recompute fresh digest for tampered plan
+        plan.plan_digest = compute_plan_digest(
+            &plan.input_digest,
+            plan.content_generation,
+            &plan.policy,
+            &plan.acknowledgements,
+            &plan.acknowledgement_requirements,
+            &plan.facts,
+            &plan.page_plans,
+            &plan.canonical_regions,
+            &plan.losses,
+            &plan.blockers,
+            &plan.warnings,
+            plan.executable,
+            plan.acknowledgements_satisfied,
+            plan.ready_for_execution,
+        );
+
+        assert!(validate_secure_redaction_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn test_adversarial_missing_top_level_blocker_rejected_with_fresh_digest() {
+        let mut input = sample_planner_input_2pages();
+        input.page_facts[0].complex_resources = InspectionFactState::Unknown;
+        let mut plan = build_secure_redaction_plan(&input).expect("Plan with page blocker");
+
+        // Tamper: remove top-level blockers
+        plan.blockers.clear();
+
+        // Recompute fresh digest
+        plan.plan_digest = compute_plan_digest(
+            &plan.input_digest,
+            plan.content_generation,
+            &plan.policy,
+            &plan.acknowledgements,
+            &plan.acknowledgement_requirements,
+            &plan.facts,
+            &plan.page_plans,
+            &plan.canonical_regions,
+            &plan.losses,
+            &plan.blockers,
+            &plan.warnings,
+            plan.executable,
+            plan.acknowledgements_satisfied,
+            plan.ready_for_execution,
+        );
+
+        assert!(validate_secure_redaction_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn test_adversarial_altered_blocker_details_rejected_with_fresh_digest() {
+        let mut input = sample_planner_input_2pages();
+        input.page_facts[0].complex_resources = InspectionFactState::Unknown;
+        let mut plan = build_secure_redaction_plan(&input).expect("Plan with page blocker");
+
+        // Tamper: alter blocker details
+        plan.blockers[0].details = Some("Tampered detail text".to_string());
+
+        // Recompute fresh digest
+        plan.plan_digest = compute_plan_digest(
+            &plan.input_digest,
+            plan.content_generation,
+            &plan.policy,
+            &plan.acknowledgements,
+            &plan.acknowledgement_requirements,
+            &plan.facts,
+            &plan.page_plans,
+            &plan.canonical_regions,
+            &plan.losses,
+            &plan.blockers,
+            &plan.warnings,
+            plan.executable,
+            plan.acknowledgements_satisfied,
+            plan.ready_for_execution,
+        );
+
+        assert!(validate_secure_redaction_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn test_adversarial_encryption_unknown_self_validation() {
+        let mut input = sample_planner_input_2pages();
+        input.document_facts.encryption = InspectionFactState::Unknown;
+        let plan =
+            build_secure_redaction_plan(&input).expect("Planner handles unknown encryption state");
+
+        assert!(!plan.executable);
+        assert!(!plan.ready_for_execution);
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|b| b.code == "REDACTION_ENCRYPTED_INPUT_UNSUPPORTED"));
+        assert!(validate_secure_redaction_plan(&plan).is_ok());
+    }
+
+    #[test]
+    fn test_adversarial_signature_unknown_self_validation() {
+        let mut input = sample_planner_input_2pages();
+        input.document_facts.signature_dictionary = InspectionFactState::Unknown;
+        let plan =
+            build_secure_redaction_plan(&input).expect("Planner handles unknown signature state");
+
+        assert!(!plan.executable);
+        assert!(!plan.ready_for_execution);
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|b| b.code == "REDACTION_SIGNED_INPUT_UNSUPPORTED"));
+        assert!(validate_secure_redaction_plan(&plan).is_ok());
+    }
+
+    #[test]
+    fn test_adversarial_altered_blocker_message_rejected_with_fresh_digest() {
+        let mut input = sample_planner_input_2pages();
+        input.page_facts[0].complex_resources = InspectionFactState::Unknown;
+        let mut plan = build_secure_redaction_plan(&input).expect("Plan with page blocker");
+
+        // Tamper: alter blocker message
+        plan.blockers[0].message = "Arbitrary altered blocker message".to_string();
+
+        // Recompute fresh digest
+        plan.plan_digest = compute_plan_digest(
+            &plan.input_digest,
+            plan.content_generation,
+            &plan.policy,
+            &plan.acknowledgements,
+            &plan.acknowledgement_requirements,
+            &plan.facts,
+            &plan.page_plans,
+            &plan.canonical_regions,
+            &plan.losses,
+            &plan.blockers,
+            &plan.warnings,
+            plan.executable,
+            plan.acknowledgements_satisfied,
+            plan.ready_for_execution,
+        );
+
+        assert!(validate_secure_redaction_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn test_source_id_exact_boundary_100() {
+        let mut input = sample_planner_input_2pages();
+        input.policy.safety_margin_points = 0.0;
+        input.region_inputs = (0..MAX_SOURCE_REGION_IDS)
+            .map(|i| sample_valid_input(&format!("r{i}"), 0.1, 0.1, 0.2, 0.2))
+            .collect();
+
+        let plan = build_secure_redaction_plan(&input).expect("100 source IDs plan");
+        assert!(plan.executable);
+        assert!(plan.ready_for_execution);
+        assert_eq!(plan.page_plans[0].canonical_regions.len(), 1);
+        assert_eq!(
+            plan.page_plans[0].canonical_regions[0]
+                .source_region_ids
+                .len(),
+            100
+        );
+        assert!(validate_secure_redaction_plan(&plan).is_ok());
+    }
+
+    #[test]
+    fn test_source_id_plus_one_overflow_101() {
+        let mut input = sample_planner_input_2pages();
+        input.policy.safety_margin_points = 0.0;
+        input.region_inputs = (0..MAX_SOURCE_REGION_IDS + 1)
+            .map(|i| sample_valid_input(&format!("r{i}"), 0.1, 0.1, 0.2, 0.2))
+            .collect();
+
+        let plan = build_secure_redaction_plan(&input).expect("101 source IDs plan");
+        assert!(!plan.executable);
+        assert!(!plan.ready_for_execution);
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|b| b.code == "REDACTION_RESOURCE_LIMIT_EXCEEDED"));
+        assert!(validate_secure_redaction_plan(&plan).is_ok());
+
+        // Evidence of coverage preservation
+        let total_source_ids: usize = plan.page_plans[0]
+            .canonical_regions
+            .iter()
+            .map(|r| r.source_region_ids.len())
+            .sum();
+        assert_eq!(
+            total_source_ids, 101,
+            "All 101 source IDs must be preserved in canonical regions without silent truncation"
+        );
+    }
+
+    #[test]
+    fn test_external_oversized_wire_rejected_even_with_resource_blocker() {
+        let mut plan = canonical_wire_fixture_plan();
+        let oversized_regions: Vec<_> = (0..MAX_CANONICAL_REGIONS_PER_PAGE + 1)
+            .map(|i| {
+                let mut r = plan.page_plans[0].canonical_regions[0].clone();
+                r.region_id = format!("r{i}");
+                r.source_region_ids = vec![format!("src_{i}")];
+                r
+            })
+            .collect();
+
+        plan.page_plans[0].canonical_regions = oversized_regions;
+        plan.page_plans[0].blockers.push(RedactionBlocker {
+            schema_version: "1.0.0".to_string(),
+            code: "REDACTION_RESOURCE_LIMIT_EXCEEDED".to_string(),
+            message: "fake resource blocker".to_string(),
+            details: None,
+        });
+        plan.page_plans[0].executable = false;
+
+        assert!(validate_page_redaction_plan(&plan.page_plans[0], plan.facts.total_pages).is_err());
+    }
+
+    #[test]
+    fn test_adversarial_strict_manifest_parity_key_sets() {
+        let contract_str =
+            include_str!("../tests/fixtures/contracts/secure-redaction-contract-v1.json");
+        let manifest_str = include_str!("../tests/fixtures/redaction/manifest.json");
+
+        let contract: serde_json::Value = serde_json::from_str(contract_str).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(manifest_str).unwrap();
+
+        let manifest_limits: HashSet<_> = manifest["limits"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let expected_manifest_limits: HashSet<_> = vec![
+            "maxPixelsPerAffectedPage".to_string(),
+            "maxTotalEstimatedAffectedPixels".to_string(),
+            "maxReportSizeBytes".to_string(),
+            "maxSourceRegionIdsPerCanonicalRegion".to_string(),
+            "maxCanonicalRegionsPerPage".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(manifest_limits, expected_manifest_limits);
+
+        let manifest_merge: HashSet<_> = manifest["merge_profile"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let expected_manifest_merge: HashSet<_> = vec![
+            "adjacencyTolerancePoints".to_string(),
+            "mergeEdgeTouching".to_string(),
+            "mergeCornerTouching".to_string(),
+            "geometryComparisonEpsilon".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(manifest_merge, expected_manifest_merge);
+
+        // Shared duplicate limits parity check
+        let contract_max_source = contract["limits"]["MAX_SOURCE_REGION_IDS"]
+            .as_u64()
+            .unwrap();
+        let manifest_max_source = manifest["limits"]["maxSourceRegionIdsPerCanonicalRegion"]
+            .as_u64()
+            .unwrap();
+        assert_eq!(contract_max_source, manifest_max_source);
+
+        let contract_max_canonical = contract["limits"]["MAX_CANONICAL_REGIONS_PER_PAGE"]
+            .as_u64()
+            .unwrap();
+        let manifest_max_canonical = manifest["limits"]["maxCanonicalRegionsPerPage"]
+            .as_u64()
+            .unwrap();
+        assert_eq!(contract_max_canonical, manifest_max_canonical);
+    }
+
+    #[test]
+    fn test_canonical_region_ordering_validation_wire_rejection() {
+        let mut page_plan = sample_valid_page_plan();
+        let mut reg1 = page_plan.canonical_regions[0].clone();
+        let mut reg2 = page_plan.canonical_regions[0].clone();
+
+        reg1.region_id = "\u{E000}".to_string();
+        reg1.source_region_ids = vec!["s1".to_string()];
+        reg2.region_id = "😀".to_string();
+        reg2.source_region_ids = vec!["s2".to_string()];
+
+        page_plan.canonical_regions = vec![reg1.clone(), reg2.clone()];
+        assert!(validate_page_redaction_plan(&page_plan, 1).is_ok());
+
+        page_plan.canonical_regions = vec![reg2, reg1];
+        let error = validate_page_redaction_plan(&page_plan, 1).unwrap_err();
+        if let crate::document_session::SessionJobOperationError::Failed(failure) = error {
+            assert_eq!(failure.code, "REDACTION_INVALID_POLICY");
+            assert_eq!(
+                failure.message,
+                "Canonical regions must be in canonical sort order (pageIndex, bottom, left, regionId)"
+            );
+        } else {
+            panic!("Expected canonical ordering policy failure");
+        }
+    }
+
+    #[test]
+    fn test_unicode_region_id_tie_break_utf8_order() {
+        let mut reg1 = sample_valid_page_plan().canonical_regions[0].clone();
+        let mut reg2 = reg1.clone();
+
+        reg1.region_id = "\u{E000}".to_string();
+        reg2.region_id = "😀".to_string();
+
+        assert_eq!(
+            compare_canonical_redaction_regions(&reg1, &reg2),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_near_equal_numeric_bottom_exact_ordering() {
+        let mut reg_a = sample_valid_page_plan().canonical_regions[0].clone();
+        reg_a.region_id = "z".to_string();
+        reg_a.applied_pdf_point_rect.bottom = 100.0;
+        reg_a.applied_pdf_point_rect.left = 500.0;
+
+        let mut reg_b = reg_a.clone();
+        reg_b.region_id = "a".to_string();
+        reg_b.applied_pdf_point_rect.bottom = 100.0000005;
+        reg_b.applied_pdf_point_rect.left = 0.0;
+
+        assert_eq!(
+            compare_canonical_redaction_regions(&reg_a, &reg_b),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_details_part_sorting_exact_unicode_vector() {
+        let mut warnings = Vec::new();
+        push_aggregated_warning(
+            &mut warnings,
+            RedactionWarning {
+                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                code: "REDACTION_WARNING_TEST".to_string(),
+                message: "Test message".to_string(),
+                details: Some("😀".to_string()),
+            },
+        );
+        push_aggregated_warning(
+            &mut warnings,
+            RedactionWarning {
+                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                code: "REDACTION_WARNING_TEST".to_string(),
+                message: "Test message".to_string(),
+                details: Some("\u{E000}".to_string()),
+            },
+        );
+
+        assert_eq!(warnings[0].details.as_deref(), Some("\u{E000}; 😀"));
     }
 }

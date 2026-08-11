@@ -444,6 +444,7 @@ describe("backend service boundaries", () => {
       [sources.ocr, "run_ocr_on_page_for_session"],
       [sources.ai, "extract_semantic_page_texts"],
       [sources.redaction, "scan_sensitive_data"],
+      [sources.redaction, "plan_secure_redaction"],
       [rustLib, "perform_ocr_on_page"],
     ];
 
@@ -644,7 +645,7 @@ describe("backend service boundaries", () => {
       expect(REDACTION_LIMITS[limitKey], `JS REDACTION_LIMITS.${limitKey} mismatch`).toBe(limitVal);
       // Check Rust constant presence
       expect(rustSource, `Rust constant for ${limitKey} missing or mismatch`).toMatch(
-        new RegExp(`pub const ${limitKey}:\\s*(?:usize|u32|f64)\\s*=\\s*${limitVal}(?:\\.0)?;`),
+        new RegExp(`pub const ${limitKey}:\\s*(?:usize|u32|u64|f64)\\s*=\\s*${limitVal}(?:\\.0)?;`),
       );
     }
 
@@ -657,5 +658,121 @@ describe("backend service boundaries", () => {
     // Verify rotations and status enums in manifest match JS/Rust expectations
     expect(manifest.rotations).toEqual([0, 90, 180, 270]);
     expect(manifest.verificationStatuses).toEqual(["passed", "failed", "not_run"]);
+  });
+
+  it("enforces plan_secure_redaction boundary and isolation rules", () => {
+    const redactionSource = readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8");
+    const planBody = rustFunctionBody(redactionSource, "plan_secure_redaction");
+    const forbidden = [
+      "with_pdfium(",
+      "get_pdfium(",
+      "load_pdf_from_file(",
+      "open_pdfium_doc(",
+      "Document::load(",
+    ];
+    for (const call of forbidden) {
+      expect(planBody, `plan_secure_redaction must not contain ${call}`).not.toContain(call);
+    }
+    expect(planBody).toContain("run_snapshot_job");
+    expect(planBody).toContain("job_worker::run_job");
+    expect(planBody).toContain("JobCommand::PlanSecureRedaction");
+
+    const planContract = CONTRACTS.planSecureRedaction;
+    expect(planContract).toBeDefined();
+    expect(planContract.command).toBe("plan_secure_redaction");
+    const payloadKeys = Object.keys(planContract.payload.required);
+    expect(payloadKeys).toEqual([
+      "jobId",
+      "sessionId",
+      "expectedContentGeneration",
+      "policy",
+      "acknowledgements",
+      "regions",
+    ]);
+
+    const planCallsites = sourceFiles(sourceRoot)
+      .filter((path) => !path.endsWith(".test.js") && !path.endsWith("services/backend/redaction.js"))
+      .filter((path) => readFileSync(path, "utf8").includes("startSecureRedactionPlan"))
+      .map((path) => relative(sourceRoot, path));
+    expect(planCallsites).toEqual(["services/app/secureRedactionController.js"]);
+  });
+
+  it("keeps secure execution worker-isolated and publication digest-bound", () => {
+    const redactionSource = readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8");
+    const workerSource = readFileSync(resolve(rustSourceRoot, "job_worker.rs"), "utf8");
+    const documentIoSource = readFileSync(resolve(rustSourceRoot, "document_io.rs"), "utf8");
+    const publicExecutionBody = rustFunctionBody(redactionSource, "execute_secure_redaction_core");
+    const executionBody = rustFunctionBody(
+      redactionSource,
+      "execute_secure_redaction_core_internal",
+    );
+
+    expect(publicExecutionBody).toContain("execute_secure_redaction_core_internal");
+    expect(publicExecutionBody).toContain("None");
+    expect(executionBody).toContain("run_snapshot_job");
+    expect(executionBody).toContain("JobCommand::ApplySecureRedaction");
+    expect(executionBody).toContain("JobCommand::VerifySecureRedaction");
+    expect(executionBody).toContain("validate_verification_report");
+    expect(executionBody).toContain("atomic_publish_prevalidated_pdf");
+    expect(executionBody).not.toMatch(/with_pdfium\(|load_pdf_from_file\(|Document::load\(/);
+    const applyVariant = workerSource.match(
+      /ApplySecureRedaction\s*\{([\s\S]*?)\n\s*\},\n\s*\/\/\/ Private worker-only verifier/,
+    )?.[1];
+    const verifyVariant = workerSource.match(
+      /VerifySecureRedaction\s*\{([\s\S]*?)\n\s*\},\n\}/,
+    )?.[1];
+    expect(applyVariant).toContain("output_name:");
+    expect(verifyVariant).toContain("transform_report:");
+    expect(applyVariant).not.toMatch(/(?:target_path|targetPath|output_path):/);
+    expect(verifyVariant).not.toMatch(/(?:target_path|targetPath|output_path):/);
+    expect(documentIoSource).toContain("REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH");
+    expect(documentIoSource).toContain("REDACTION_TARGET_CONFLICT");
+
+    const executionContract = CONTRACTS.executeSecureRedaction;
+    expect(executionContract?.command).toBe("execute_secure_redaction");
+    expect(Object.keys(executionContract.payload.required)).toEqual([
+      "jobId",
+      "sessionId",
+      "expectedContentGeneration",
+      "policy",
+      "acknowledgements",
+      "regions",
+      "expectedPlanDigest",
+      "targetPath",
+    ]);
+
+    const executionCallsites = sourceFiles(sourceRoot)
+      .filter((path) => !path.endsWith(".test.js") && !path.endsWith("services/backend/redaction.js"))
+      .filter((path) => readFileSync(path, "utf8").includes("startSecureRedactionExecution"))
+      .map((path) => relative(sourceRoot, path));
+    expect(executionCallsites).toEqual(["services/app/secureRedactionController.js"]);
+
+    const controllerSource = readFileSync(
+      resolve(sourceRoot, "services/app/secureRedactionController.js"),
+      "utf8",
+    );
+    expect(controllerSource).not.toContain("callBackend");
+    expect(controllerSource).not.toContain("execute_secure_redaction");
+  });
+
+  it("keeps secure-redaction acceptance seams out of default production builds", () => {
+    const redactionSource = readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8");
+    const documentIoSource = readFileSync(resolve(rustSourceRoot, "document_io.rs"), "utf8");
+    const workerSource = readFileSync(resolve(rustSourceRoot, "job_worker.rs"), "utf8");
+    const cargoSource = readFileSync(resolve(rustSourceRoot, "../Cargo.toml"), "utf8");
+
+    expect(cargoSource).toMatch(/\[features\][\s\S]*?default\s*=\s*\[\]/);
+    expect(cargoSource).toContain("secure-redaction-test-support = []");
+    expect(redactionSource).toMatch(
+      /#\[cfg\(feature = "secure-redaction-test-support"\)\][\s\S]{0,180}pub async fn execute_secure_redaction_core_with_test_support/,
+    );
+    expect(redactionSource).toMatch(
+      /#\[cfg\(feature = "secure-redaction-test-support"\)\][\s\S]{0,180}pub struct SecureRedactionExecutionTestSupport/,
+    );
+    expect(documentIoSource).toMatch(
+      /#\[cfg\(feature = "secure-redaction-test-support"\)\][\s\S]{0,180}atomic_publish_prevalidated_pdf_for_acceptance/,
+    );
+    expect(redactionSource).not.toMatch(/std::env::(?:var|var_os)\(/);
+    expect(workerSource).not.toContain("WHOLE_OBJECT_DESTROY_PROBE");
   });
 });

@@ -1,5 +1,5 @@
 export function createUiState() {
-  const state = $state({ activeModal: null, panels: { sidebar: true, search: false, a11y: false, prepress: false, signature: false, sensitiveDataScan: false, readingRuler: false }, settingsPopover: false, isDraggingFileOver: false, toast: "", error: "" });
+  const state = $state({ activeModal: null, panels: { sidebar: true, search: false, a11y: false, prepress: false, signature: false, sensitiveDataScan: false, secureRedaction: false, readingRuler: false }, settingsPopover: false, isDraggingFileOver: false, toast: "", error: "" });
   const api = {
     get activeModal() { return state.activeModal; },
     openModal(type, props = {}) { state.activeModal = { type, props }; },
@@ -36,6 +36,7 @@ export function createUiState() {
     isPrepressPanelOpen: { get: () => state.panels.prepress, set: (value) => { state.panels.prepress = value; } },
     isSignaturePanelOpen: { get: () => state.panels.signature, set: (value) => { state.panels.signature = value; } },
     isSensitiveDataScanPanelOpen: { get: () => state.panels.sensitiveDataScan, set: (value) => { state.panels.sensitiveDataScan = value; } },
+    isSecureRedactionPanelOpen: { get: () => state.panels.secureRedaction, set: (value) => { state.panels.secureRedaction = value; } },
     isReadingRulerActive: { get: () => state.panels.readingRuler, set: (value) => { state.panels.readingRuler = value; } },
   });
   return api;

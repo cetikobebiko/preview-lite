@@ -237,6 +237,59 @@ async fn active_command_cancellation_reaps_worker_without_replay() {
 }
 
 #[tokio::test]
+async fn expected_cancellation_replaces_workers_without_spending_restart_budget() {
+    let broker = PdfiumWorkerBroker::with_launcher(Ok(helper_launcher("hang-command")));
+    let key = key("cancel-does-not-restart");
+    let admission = broker.admit_read(&key, None).await.unwrap();
+
+    for _ in 0..7 {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        cancellation.cancel();
+        let error = broker
+            .ensure_document(
+                &admission,
+                key.clone(),
+                "fake.pdf".to_string(),
+                None,
+                Some(&cancellation),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "PDFIUM_WORKER_CANCELLED");
+        assert_eq!(broker.restart_attempts_for_test().await, 0);
+    }
+}
+
+#[tokio::test]
+async fn one_worker_crash_charges_one_replacement_attempt() {
+    let broker = open_with_mode("normal").await.unwrap();
+    let key = key("normal");
+    let admission = broker.admit_read(&key, None).await.unwrap();
+
+    broker.kill_process_for_test().await.unwrap();
+    let error = broker
+        .command_for_document(
+            &admission,
+            &key,
+            |document_id| preview_alternative_lib::worker::ipc::WorkerCommand::GetPageCount {
+                document_id,
+            },
+            preview_alternative_lib::pdf_engine::subprocess_manager::CommandTimeout::PageCount,
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "PDFIUM_WORKER_CRASHED");
+    assert_eq!(broker.restart_attempts_for_test().await, 0);
+
+    broker
+        .ensure_document(&admission, key, "fake.pdf".to_string(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(broker.restart_attempts_for_test().await, 1);
+}
+
+#[tokio::test]
 async fn repeated_spawn_failures_exhaust_global_restart_budget() {
     let launcher = WorkerLauncher::for_test(
         PathBuf::from("definitely-missing-pdfium-worker-executable"),

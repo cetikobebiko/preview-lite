@@ -19,10 +19,16 @@ BT /F1 12 Tf 50 750 TD (ANNOTATED PAGE) Tj ET
 endstream
 endobj
 6 0 obj
-<< /Type /Annot /Subtype /Text /Rect [100 700 120 720] /Contents (Sensitive Note) /C [1 1 0] >>
+<< /Type /Annot /Subtype /Text /Rect [100 700 120 720] /Contents (Sensitive Note) /C [1 1 0] /AP << /N 7 0 R >> >>
+endobj
+7 0 obj
+<< /Length 23 /Type /XObject /Subtype /Form /BBox [0 0 20 20] >>
+stream
+1 1 0 rg 0 0 20 20 re f
+endstream
 endobj
 xref
-0 7
+0 8
 0000000000 65535 f 
 0000000015 00000 n 
 0000000064 00000 n 
@@ -30,8 +36,9 @@ xref
 0000000263 00000 n 
 0000000333 00000 n 
 0000000428 00000 n 
+0000000558 00000 n 
 trailer
-<< /Size 7 /Root 1 0 R  >>
+<< /Size 8 /Root 1 0 R  >>
 startxref
-539
+679
 %%EOF

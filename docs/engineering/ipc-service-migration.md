@@ -66,9 +66,10 @@ UI/component
 AI token streams, batch events, and drag/drop events were not moved into command
 contracts.
 
-`contracts.js` contains exactly the 66 command contracts that had static
-frontend consumers at the Prompt 2 baseline. It does not add public contracts
-for handler-only or unregistered commands.
+At the Prompt 2 baseline, `contracts.js` contained the 66 commands listed in the
+historical table below. Later session-native feature work adds versioned commands
+only with a canonical backend service and inventory entry; the current authority is
+`contracts.js` plus `ipc-inventory.md`.
 
 | Module | Wrappers | Rust commands |
 |---|---:|---|
@@ -85,6 +86,13 @@ for handler-only or unregistered commands.
 | `prepress.js` | 4 | `analyze_color_spaces`, `calculate_ink_coverage`, `render_separation_channels`, `export_pdf_x` |
 | `platform.js` | 5 | `trigger_continuity_camera_scan`, `speak_text`, `stop_speaking`, `share_file_macos`, `perform_ocr_on_page` |
 | **Total** | **66** | **66 static frontend commands** |
+
+8C.2 adds `sanitization.js` with the single
+`inspect_document_sanitization` session-job command. It accepts only job/session/
+content-generation/policy-version identity, strictly normalizes the typed report and
+is reachable from `sanitizationInspectionController.js` only under the disabled
+sanitization feature guard. It does not replace the dormant transform wrapper and
+does not accept an input/output/target path.
 
 `index.js` is deliberately a narrow, safe barrel. Protected raw wrappers are
 not re-exported. The following paths remain reachable only through existing

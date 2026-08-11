@@ -1,0 +1,61 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Metadata 6 0 R /PieceInfo << /Fixture << /LastModified (D:20000101000000Z) >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Metadata 7 0 R /Resources << /XObject << /Im1 8 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 30 >>
+stream
+q 10 0 0 10 10 10 cm /Im1 Do Q
+endstream
+endobj
+5 0 obj
+<< /Title (SANITIZATION_INFO_PAYLOAD_001) /Author (Fixture Author) >>
+endobj
+6 0 obj
+<< /Length 51 /Type /Metadata /Subtype /XML >>
+stream
+<x:xmpmeta>SANITIZATION_XMP_PAYLOAD_001</x:xmpmeta>
+endstream
+endobj
+7 0 obj
+<< /Length 56 /Type /Metadata /Subtype /XML >>
+stream
+<x:xmpmeta>SANITIZATION_PAGE_XMP_PAYLOAD_001</x:xmpmeta>
+endstream
+endobj
+8 0 obj
+<< /Length 1 /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Metadata 9 0 R >>
+stream
+
+endstream
+endobj
+9 0 obj
+<< /Length 58 /Type /Metadata /Subtype /XML >>
+stream
+<x:xmpmeta>SANITIZATION_OBJECT_XMP_PAYLOAD_001</x:xmpmeta>
+endstream
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000015 00000 n 
+0000000146 00000 n 
+0000000203 00000 n 
+0000000349 00000 n 
+0000000429 00000 n 
+0000000514 00000 n 
+0000000645 00000 n 
+0000000781 00000 n 
+0000000941 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R /Info 5 0 R /ID [<53414E4954495A452D4649582D4944> <53414E4954495A452D4649582D4944>] >>
+startxref
+1079
+%%EOF

@@ -12,10 +12,12 @@ use std::process::{Command, Stdio};
 #[cfg(not(test))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use tempfile::NamedTempFile;
 
-pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 3;
+pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 7;
+pub const SECURE_REDACTION_TRANSFORM_OUTPUT_NAME: &str = "secure-redaction-transform.pdf";
 const MAX_JOB_REQUEST_BYTES: u64 = 1024 * 1024;
-const MAX_JOB_RESPONSE_BYTES: u64 = 256 * 1024 * 1024;
+pub(crate) const MAX_JOB_RESPONSE_BYTES: u64 = 256 * 1024 * 1024;
 pub(crate) const MAX_JOB_TEXT_CHARS: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_JOB_PAGES: usize = 10_000;
 #[cfg(not(test))]
@@ -126,14 +128,64 @@ pub enum JobCommand {
     ScanSensitiveData {
         patterns: Vec<String>,
     },
+    PlanSecureRedaction {
+        content_generation: u64,
+        policy: crate::secure_redaction::SecureRedactionPolicy,
+        acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+        regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    },
+    /// Private worker-only operation; no public Tauri command exposes this.
+    ApplySecureRedaction {
+        content_generation: u64,
+        policy: crate::secure_redaction::SecureRedactionPolicy,
+        acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+        regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+        expected_input_digest: String,
+        expected_plan_digest: String,
+        output_name: String,
+    },
+    /// Private worker-only verifier. The artifact name is derived internally;
+    /// callers cannot supply an output path or verification result.
+    VerifySecureRedaction {
+        content_generation: u64,
+        policy: crate::secure_redaction::SecureRedactionPolicy,
+        acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+        regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+        transform_report: crate::secure_redaction::SecureRedactionTransformReport,
+    },
+    /// Private, read-only sanitization inspection. The worker receives only the
+    /// immutable snapshot path supplied by the session-job protocol.
+    InspectDocumentSanitization {
+        schema_version: String,
+        policy_schema_version: String,
+        inspection_profile: String,
+    },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 struct JobRequest {
     protocol_version: u16,
     snapshot_path: PathBuf,
     credential: Option<String>,
+    authoritative_job_id: String,
+    authoritative_session_id: String,
     command: JobCommand,
+}
+
+impl std::fmt::Debug for JobRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobRequest")
+            .field("protocol_version", &self.protocol_version)
+            .field("snapshot_path", &self.snapshot_path)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("authoritative_job_id", &self.authoritative_job_id)
+            .field("authoritative_session_id", &self.authoritative_session_id)
+            .field("command", &self.command)
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -149,6 +201,10 @@ pub enum JobResult {
     InkCoverage(InkCoverageResult),
     Separations(SeparationResult),
     SensitiveReport(SensitiveScanReport),
+    SecureRedactionPlan(crate::secure_redaction::SecureRedactionPlan),
+    SecureRedactionTransform(crate::secure_redaction::SecureRedactionTransformReport),
+    SecureRedactionVerification(crate::secure_redaction::SecureRedactionVerificationReport),
+    SanitizationInspection(crate::sanitization::SanitizationInspectionReport),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -223,6 +279,8 @@ pub fn run_job(
                 .credential
                 .as_ref()
                 .map(|credential| credential.as_deref()),
+            &context.job_id.to_string(),
+            &context.owner_session_id,
             command,
         )
         .map_err(|failure| {
@@ -241,6 +299,8 @@ pub fn run_job(
                 .credential
                 .as_ref()
                 .map(|credential| credential.as_deref().to_string()),
+            authoritative_job_id: context.job_id.to_string(),
+            authoritative_session_id: context.owner_session_id.clone(),
             command,
         };
         write_json_create_new(&request_path, &request, MAX_JOB_REQUEST_BYTES)?;
@@ -419,6 +479,8 @@ fn execute_worker_request() -> JobResponse {
             job_dir,
             &request.snapshot_path,
             request.credential.as_deref(),
+            &request.authoritative_job_id,
+            &request.authoritative_session_id,
             request.command,
         )
     })();
@@ -432,6 +494,8 @@ fn execute_command(
     job_dir: &Path,
     snapshot_path: &Path,
     credential: Option<&str>,
+    authoritative_job_id: &str,
+    authoritative_session_id: &str,
     command: JobCommand,
 ) -> Result<JobResult, JobFailure> {
     match command {
@@ -631,7 +695,485 @@ fn execute_command(
                     .map_err(operation_failure)?;
             Ok(JobResult::SensitiveReport(report))
         }
+        JobCommand::PlanSecureRedaction {
+            content_generation,
+            policy,
+            acknowledgements,
+            regions,
+        } => {
+            let plan = crate::secure_redaction_inspection::inspect_and_plan_secure_redaction(
+                snapshot_path,
+                credential,
+                content_generation,
+                policy,
+                acknowledgements,
+                regions,
+            )
+            .map_err(operation_failure)?;
+            Ok(JobResult::SecureRedactionPlan(plan))
+        }
+        JobCommand::ApplySecureRedaction {
+            content_generation,
+            policy,
+            acknowledgements,
+            regions,
+            expected_input_digest,
+            expected_plan_digest,
+            output_name,
+        } => execute_secure_redaction_transform(
+            job_dir,
+            snapshot_path,
+            credential,
+            authoritative_job_id,
+            authoritative_session_id,
+            content_generation,
+            policy,
+            acknowledgements,
+            regions,
+            &expected_input_digest,
+            &expected_plan_digest,
+            &output_name,
+        )
+        .map(JobResult::SecureRedactionTransform),
+        JobCommand::VerifySecureRedaction {
+            content_generation,
+            policy,
+            acknowledgements,
+            regions,
+            transform_report,
+        } => crate::secure_redaction_verifier::verify_secure_redaction(
+            job_dir,
+            snapshot_path,
+            credential,
+            authoritative_job_id,
+            authoritative_session_id,
+            content_generation,
+            policy,
+            acknowledgements,
+            regions,
+            transform_report,
+        )
+        .map(JobResult::SecureRedactionVerification)
+        .map_err(operation_failure),
+        JobCommand::InspectDocumentSanitization {
+            schema_version,
+            policy_schema_version,
+            inspection_profile,
+        } => crate::sanitization_inspection::inspect_snapshot(
+            snapshot_path,
+            credential,
+            &schema_version,
+            &policy_schema_version,
+            &inspection_profile,
+        )
+        .map(JobResult::SanitizationInspection)
+        .map_err(operation_failure),
     }
+}
+
+fn execute_secure_redaction_transform(
+    job_dir: &Path,
+    snapshot_path: &Path,
+    credential: Option<&str>,
+    job_id: &str,
+    session_id: &str,
+    content_generation: u64,
+    policy: crate::secure_redaction::SecureRedactionPolicy,
+    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    expected_input_digest: &str,
+    expected_plan_digest: &str,
+    output_name: &str,
+) -> Result<crate::secure_redaction::SecureRedactionTransformReport, JobFailure> {
+    use crate::secure_redaction::{
+        evaluate_secure_redaction_rebuild_geometry, make_redaction_error, PageRedactionStrategy,
+        SecureRedactionErrorCode, SecureRedactionTransformEvidence, TransformPageFeatureLoss,
+        TransformRasterPageEvidence, MAX_SECURE_REDACTION_OUTPUT_BYTES, REDACTION_SCHEMA_VERSION,
+    };
+
+    if output_name != SECURE_REDACTION_TRANSFORM_OUTPUT_NAME {
+        return Err(job_failed(
+            "SESSION_JOB_WORKER_PATH_REJECTED",
+            "Secure redaction output adı sabit internal artifact adı olmalıdır",
+        ));
+    }
+    crate::secure_redaction::validate_sha256_digest(expected_input_digest, "expected_input_digest")
+        .map_err(operation_failure)?;
+    crate::secure_redaction::validate_sha256_digest(expected_plan_digest, "expected_plan_digest")
+        .map_err(operation_failure)?;
+
+    // The digest is taken again from the immutable physical snapshot immediately before opening it.
+    let actual_input_digest = crate::document_io::sha256_file(snapshot_path).map_err(|error| {
+        operation_failure(make_redaction_error(
+            SecureRedactionErrorCode::RedactionPlanStale,
+            format!("Snapshot SHA-256 digest hesaplanamadı: {error}"),
+        ))
+    })?;
+    if actual_input_digest != expected_input_digest {
+        return Err(operation_failure(make_redaction_error(
+            SecureRedactionErrorCode::RedactionPlanStale,
+            "Immutable snapshot digest expected_input_digest ile eşleşmedi",
+        )));
+    }
+
+    let plan = crate::secure_redaction_inspection::inspect_and_plan_secure_redaction(
+        snapshot_path,
+        credential,
+        content_generation,
+        policy,
+        acknowledgements,
+        regions,
+    )
+    .map_err(operation_failure)?;
+    crate::secure_redaction::validate_secure_redaction_plan(&plan).map_err(operation_failure)?;
+    if !plan.executable || !plan.ready_for_execution || !plan.blockers.is_empty() {
+        return Err(operation_failure(make_redaction_error(
+            SecureRedactionErrorCode::RedactionBlockedDocumentFeature,
+            "Re-inspected secure-redaction plan is not ready for execution",
+        )));
+    }
+    if plan.plan_digest != expected_plan_digest {
+        return Err(operation_failure(make_redaction_error(
+            SecureRedactionErrorCode::RedactionPlanDigestMismatch,
+            "Re-inspected secure-redaction plan digest expected_plan_digest ile eşleşmedi",
+        )));
+    }
+
+    for page_plan in &plan.page_plans {
+        if page_plan.strategy == PageRedactionStrategy::RasterizePage {
+            evaluate_secure_redaction_rebuild_geometry(&page_plan.geometry)
+                .map_err(operation_failure)?;
+        }
+    }
+
+    let final_path = secure_redaction_output_path(job_dir)?;
+    let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+    let source =
+        crate::pdf_engine::open_pdfium_doc(&pdfium, &snapshot_path.to_string_lossy(), credential)
+            .map_err(pdf_open_failed)?;
+    let mut output = pdfium.create_new_pdf().map_err(|error| {
+        job_failed(
+            "SESSION_JOB_PDF_WRITE_FAILED",
+            format!("Yeni PDF oluşturulamadı: {error}"),
+        )
+    })?;
+
+    let mut affected_pages = Vec::new();
+    let mut unaffected_pages = Vec::new();
+    let mut raster_geometry = Vec::new();
+    let mut page_feature_losses = Vec::new();
+    let mut applied_regions = Vec::new();
+
+    for page_plan in &plan.page_plans {
+        let source_index = u16::try_from(page_plan.page_index).map_err(|_| {
+            job_failed(
+                "REDACTION_RESOURCE_LIMIT_EXCEEDED",
+                "Page index PDFium limitini aşıyor",
+            )
+        })?;
+        match page_plan.strategy {
+            PageRedactionStrategy::ImportUnaffectedPage => {
+                let destination = u16::try_from(output.pages().len()).map_err(|_| {
+                    job_failed(
+                        "REDACTION_RESOURCE_LIMIT_EXCEEDED",
+                        "Output page count PDFium limitini aşıyor",
+                    )
+                })?;
+                output
+                    .pages_mut()
+                    .copy_page_from_document(&source, source_index, destination)
+                    .map_err(|error| {
+                        job_failed(
+                            "SESSION_JOB_PDF_WRITE_FAILED",
+                            format!("Unaffected page import failed: {error}"),
+                        )
+                    })?;
+                unaffected_pages.push(page_plan.page_index);
+            }
+            PageRedactionStrategy::RasterizePage => {
+                let source_page = source.pages().get(source_index).map_err(|error| {
+                    job_failed(
+                        "SESSION_JOB_PDF_OPEN_FAILED",
+                        format!("Affected source page could not be loaded: {error}"),
+                    )
+                })?;
+                let payload =
+                    crate::secure_redaction_raster::build_lossless_raster_payload_for_page(
+                        &plan,
+                        &source,
+                        page_plan.page_index,
+                        None,
+                    )
+                    .map_err(operation_failure)?;
+                let image =
+                    image::RgbaImage::from_raw(payload.width, payload.height, payload.pixels)
+                        .ok_or_else(|| {
+                            job_failed(
+                                "REDACTION_RESOURCE_LIMIT_EXCEEDED",
+                                "Lossless RGBA payload length is invalid",
+                            )
+                        })?;
+                let dynamic = image::DynamicImage::ImageRgba8(image);
+                let size = PdfPagePaperSize::Custom(
+                    PdfPoints::new(page_plan.geometry.media_box.width as f32),
+                    PdfPoints::new(page_plan.geometry.media_box.height as f32),
+                );
+                let mut page = output
+                    .pages_mut()
+                    .create_page_at_end(size)
+                    .map_err(|error| {
+                        job_failed(
+                            "SESSION_JOB_PDF_WRITE_FAILED",
+                            format!("Raster output page could not be created: {error}"),
+                        )
+                    })?;
+                apply_rebuilt_page_geometry(&mut page, &page_plan.geometry)?;
+                let placement = crate::secure_redaction_raster::raster_image_placement_matrix(
+                    &source_page,
+                    &page_plan.geometry,
+                    payload.width,
+                    payload.height,
+                )
+                .map_err(operation_failure)?;
+                let mut image_object = page
+                    .objects_mut()
+                    .create_image_object(PdfPoints::ZERO, PdfPoints::ZERO, &dynamic, None, None)
+                    .map_err(|error| {
+                        job_failed(
+                            "SESSION_JOB_PDF_WRITE_FAILED",
+                            format!("Lossless image insertion failed: {error}"),
+                        )
+                    })?;
+                image_object.reset_matrix(placement).map_err(|error| {
+                    job_failed(
+                        "SESSION_JOB_PDF_WRITE_FAILED",
+                        format!("Lossless image placement failed: {error}"),
+                    )
+                })?;
+                page.regenerate_content().map_err(|error| {
+                    job_failed(
+                        "SESSION_JOB_PDF_WRITE_FAILED",
+                        format!("Raster page content generation failed: {error}"),
+                    )
+                })?;
+                affected_pages.push(page_plan.page_index);
+                raster_geometry.push(TransformRasterPageEvidence {
+                    page_index: page_plan.page_index,
+                    width: payload.width,
+                    height: payload.height,
+                    dpi: plan.policy.raster_dpi,
+                });
+                applied_regions.extend(page_plan.canonical_regions.clone());
+            }
+        }
+        page_feature_losses.push(TransformPageFeatureLoss {
+            page_index: page_plan.page_index,
+            feature_losses: page_plan.feature_losses.clone(),
+        });
+    }
+
+    let staging = NamedTempFile::new_in(job_dir).map_err(|error| {
+        job_failed(
+            "SESSION_JOB_OUTPUT_WRITE_FAILED",
+            format!("Secure transform staging file oluşturulamadı: {error}"),
+        )
+    })?;
+    output.save_to_file(staging.path()).map_err(|error| {
+        job_failed(
+            "SESSION_JOB_OUTPUT_WRITE_FAILED",
+            format!("Secure transform full save başarısız: {error}"),
+        )
+    })?;
+    // Setter success is not sufficient: reopen the serialized artifact and
+    // compare each rebuilt page against the canonical plan before promotion.
+    let reopened =
+        crate::pdf_engine::open_pdfium_doc(&pdfium, &staging.path().to_string_lossy(), None)
+            .map_err(pdf_open_failed)?;
+    for (output_index, page_plan) in plan.page_plans.iter().enumerate() {
+        if page_plan.strategy != PageRedactionStrategy::RasterizePage {
+            continue;
+        }
+        let reopened_page = reopened.pages().get(output_index as u16).map_err(|error| {
+            job_failed(
+                "SESSION_JOB_PDF_OPEN_FAILED",
+                format!("Saved affected page could not be reopened: {error}"),
+            )
+        })?;
+        crate::secure_redaction_raster::validate_pdfium_page_geometry(
+            &reopened_page,
+            &page_plan.geometry,
+            page_plan.page_index,
+        )
+        .map_err(operation_failure)?;
+    }
+    staging.as_file().sync_all().map_err(|error| {
+        job_failed(
+            "SESSION_JOB_OUTPUT_WRITE_FAILED",
+            format!("Secure transform staging flush başarısız: {error}"),
+        )
+    })?;
+    let output_size_bytes = staging
+        .as_file()
+        .metadata()
+        .map_err(|error| {
+            job_failed(
+                "SESSION_JOB_OUTPUT_READ_FAILED",
+                format!("Secure transform staging metadata okunamadı: {error}"),
+            )
+        })?
+        .len();
+    if output_size_bytes > MAX_SECURE_REDACTION_OUTPUT_BYTES {
+        return Err(operation_failure(make_redaction_error(
+            SecureRedactionErrorCode::RedactionResourceLimitExceeded,
+            format!(
+                "Secure transform staging artifact size ({output_size_bytes}) exceeds limit ({MAX_SECURE_REDACTION_OUTPUT_BYTES})"
+            ),
+        )));
+    }
+    let output_digest = crate::document_io::sha256_file(staging.path()).map_err(|error| {
+        job_failed(
+            "SESSION_JOB_OUTPUT_READ_FAILED",
+            format!("Secure transform output digest hesaplanamadı: {error}"),
+        )
+    })?;
+    staging.persist_noclobber(&final_path).map_err(|error| {
+        job_failed(
+            "SESSION_JOB_OUTPUT_WRITE_FAILED",
+            format!(
+                "Secure transform artifact promote başarısız: {}",
+                error.error
+            ),
+        )
+    })?;
+
+    let report = crate::secure_redaction::SecureRedactionTransformReport {
+        schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+        job_id: job_id.to_string(),
+        session_id: session_id.to_string(),
+        input_digest: actual_input_digest,
+        plan_digest: plan.plan_digest,
+        output_relative_name: SECURE_REDACTION_TRANSFORM_OUTPUT_NAME.to_string(),
+        output_digest,
+        output_size_bytes,
+        page_count: plan.page_plans.len() as u32,
+        affected_pages,
+        unaffected_pages,
+        raster_dpi: plan.policy.raster_dpi,
+        applied_canonical_regions: applied_regions,
+        affected_page_raster_geometry: raster_geometry,
+        page_feature_losses,
+        background_policy: "opaque_white_v1".to_string(),
+        warnings: plan.warnings.clone(),
+        transform_evidence: SecureRedactionTransformEvidence {
+            new_document_constructed: true,
+            affected_pages_rasterized: true,
+            affected_page_original_objects_not_imported: true,
+            unaffected_pages_imported: true,
+            full_rewrite_used: true,
+            incremental_save_not_used: true,
+            opaque_white_background_policy: true,
+            lossless_raster_path: true,
+            output_digest_calculated: true,
+        },
+        status: "transformed_unverified".to_string(),
+    };
+    crate::secure_redaction::validate_transform_report(&report).map_err(operation_failure)?;
+    Ok(report)
+}
+
+fn secure_redaction_output_path(job_dir: &Path) -> Result<PathBuf, JobFailure> {
+    let job_meta = fs::symlink_metadata(job_dir).map_err(|error| {
+        job_failed(
+            "SESSION_JOB_WORKER_PATH_REJECTED",
+            format!("Job directory doğrulanamadı: {error}"),
+        )
+    })?;
+    if !job_meta.file_type().is_dir() || job_meta.file_type().is_symlink() {
+        return Err(job_failed(
+            "SESSION_JOB_WORKER_PATH_REJECTED",
+            "Secure transform job directory güvenli bir dizin değil",
+        ));
+    }
+    let path = job_dir.join(SECURE_REDACTION_TRANSFORM_OUTPUT_NAME);
+    if fs::symlink_metadata(&path).is_ok() {
+        return Err(job_failed(
+            "SESSION_JOB_WORKER_PATH_REJECTED",
+            "Secure transform artifact zaten mevcut veya güvenli olmayan bir dosya tipi",
+        ));
+    }
+    Ok(path)
+}
+
+fn pdf_rect_from_canonical(rect: &crate::secure_redaction::PdfPointRect) -> PdfRect {
+    PdfRect::new_from_values(
+        rect.bottom as f32,
+        rect.left as f32,
+        (rect.bottom + rect.height) as f32,
+        (rect.left + rect.width) as f32,
+    )
+}
+
+fn apply_rebuilt_page_geometry(
+    page: &mut PdfPage<'_>,
+    geometry: &crate::secure_redaction::CanonicalPageGeometry,
+) -> Result<(), JobFailure> {
+    let boundaries = page.boundaries_mut();
+    boundaries
+        .set_media(pdf_rect_from_canonical(&geometry.media_box))
+        .map_err(|error| {
+            job_failed(
+                "SESSION_JOB_PDF_WRITE_FAILED",
+                format!("MediaBox rebuild failed: {error}"),
+            )
+        })?;
+    if let Some(crop) = &geometry.crop_box {
+        boundaries
+            .set_crop(pdf_rect_from_canonical(crop))
+            .map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_PDF_WRITE_FAILED",
+                    format!("CropBox rebuild failed: {error}"),
+                )
+            })?;
+    }
+    if let Some(trim) = &geometry.trim_box {
+        boundaries
+            .set_trim(pdf_rect_from_canonical(trim))
+            .map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_PDF_WRITE_FAILED",
+                    format!("TrimBox rebuild failed: {error}"),
+                )
+            })?;
+    }
+    if let Some(bleed) = &geometry.bleed_box {
+        boundaries
+            .set_bleed(pdf_rect_from_canonical(bleed))
+            .map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_PDF_WRITE_FAILED",
+                    format!("BleedBox rebuild failed: {error}"),
+                )
+            })?;
+    }
+    if let Some(art) = &geometry.art_box {
+        boundaries
+            .set_art(pdf_rect_from_canonical(art))
+            .map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_PDF_WRITE_FAILED",
+                    format!("ArtBox rebuild failed: {error}"),
+                )
+            })?;
+    }
+    let rotation = match geometry.rotation {
+        crate::secure_redaction::PageRotation::Deg0 => PdfPageRenderRotation::None,
+        crate::secure_redaction::PageRotation::Deg90 => PdfPageRenderRotation::Degrees90,
+        crate::secure_redaction::PageRotation::Deg180 => PdfPageRenderRotation::Degrees180,
+        crate::secure_redaction::PageRotation::Deg270 => PdfPageRenderRotation::Degrees270,
+    };
+    page.set_rotation(rotation);
+    Ok(())
 }
 
 fn execute_mutation(
@@ -1252,6 +1794,8 @@ mod tests {
             protocol_version: JOB_WORKER_PROTOCOL_VERSION,
             snapshot_path: PathBuf::from("/tmp/job/snapshot.pdf"),
             credential: Some("pass".to_string()),
+            authoritative_job_id: "job-id".to_string(),
+            authoritative_session_id: "session-id".to_string(),
             command: JobCommand::ScanSensitiveData {
                 patterns: vec!["\\b[0-9]{11}\\b".to_string()],
             },
@@ -1259,7 +1803,7 @@ mod tests {
 
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: JobRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.protocol_version, 3);
+        assert_eq!(deserialized.protocol_version, JOB_WORKER_PROTOCOL_VERSION);
         if let JobCommand::ScanSensitiveData { patterns } = deserialized.command {
             assert_eq!(patterns, vec!["\\b[0-9]{11}\\b"]);
         } else {
@@ -1268,7 +1812,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_protocol_v3_sensitive_report_response_and_geometry_status_serialization() {
+    fn test_worker_protocol_v4_sensitive_report_response_and_geometry_status_serialization() {
         use crate::redaction::{
             BoxOrigin, CoordinateSpace, GeometryStatus, GeometryUnit, IntrinsicRotation,
             PageGeometry, PdfPageBox, PdfRect, SensitiveScanItem, SensitiveScanReport,
@@ -1336,18 +1880,19 @@ mod tests {
         assert!(json.contains("\"intrinsic_rotation\":0"));
 
         let deserialized: JobResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.protocol_version, 3);
+        assert_eq!(deserialized.protocol_version, JOB_WORKER_PROTOCOL_VERSION);
         assert_eq!(format!("{:?}", deserialized), format!("{:?}", response));
     }
 
     #[test]
     fn test_worker_protocol_version_validation_helpers() {
-        // Version 3 should succeed
-        assert!(validate_request_protocol_version(3).is_ok());
-        assert!(validate_response_protocol_version(3).is_ok());
+        // Current version should succeed
+        assert!(validate_request_protocol_version(JOB_WORKER_PROTOCOL_VERSION).is_ok());
+        assert!(validate_response_protocol_version(JOB_WORKER_PROTOCOL_VERSION).is_ok());
 
-        // Version 2 request mismatch -> SESSION_JOB_WORKER_PROTOCOL_ERROR
-        let req_err = validate_request_protocol_version(2).unwrap_err();
+        // Previous version request mismatch -> SESSION_JOB_WORKER_PROTOCOL_ERROR
+        let req_err =
+            validate_request_protocol_version(JOB_WORKER_PROTOCOL_VERSION - 1).unwrap_err();
         assert_eq!(req_err.code, "SESSION_JOB_WORKER_PROTOCOL_ERROR");
 
         // Version 2 response mismatch -> SESSION_JOB_WORKER_PROTOCOL_ERROR

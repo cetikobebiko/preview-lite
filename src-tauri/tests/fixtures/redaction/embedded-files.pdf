@@ -1,0 +1,48 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 6 0 R >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 49 >>
+stream
+BT /F1 12 Tf 50 750 TD (EMBEDDED FILE PAGE) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Names [(sample.txt) 7 0 R] >>
+endobj
+7 0 obj
+<< /Type /Filespec /F (sample.txt) /EF << /F 8 0 R >> >>
+endobj
+8 0 obj
+<< /Length 34 >>
+stream
+Secret Embedded Attachment Content
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000098 00000 n 
+0000000155 00000 n 
+0000000281 00000 n 
+0000000351 00000 n 
+0000000450 00000 n 
+0000000499 00000 n 
+0000000571 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R  >>
+startxref
+655
+%%EOF

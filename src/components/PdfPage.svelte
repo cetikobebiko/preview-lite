@@ -24,6 +24,11 @@
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
   import { createTextLayerItems } from "../utils/textLayerUtils.js";
   import { positionSearchBox } from "../utils/searchResultUtils.js";
+  import {
+    logicalRectToViewportRect,
+    viewportDragToLogicalRect,
+  } from "../features/redaction/secureRedactionGeometry.js";
+  import { validateRedactionRegionInputs } from "../features/redaction/redactionSchemas.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
   const dispatch = createEventDispatcher();
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
@@ -64,6 +69,10 @@
   export let prepressChannels = { c: true, m: true, y: true, k: true };
   export let prepressBoxes = null;
   export let sensitiveDataHighlights = [];
+  export let secureRedactionEnabled = false;
+  export let secureRedactionSelectionMode = false;
+  export let pendingRedactionRegions = [];
+  export let onRedactionRegionSelected = null;
 
   let pageRef;
   let canvasRef;
@@ -108,6 +117,9 @@
   let isBufferIntersecting = false;
   let cachedHeight = 1131;
   let containerWidth = 800;
+  let redactionDragStart = null;
+  let redactionDragCurrent = null;
+  let redactionPointerId = null;
 
   $: normalizedRotation = ((rotation % 360) + 360) % 360;
   $: unscaledWidth = lastRenderedScale > 0 ? baseImgWidth / lastRenderedScale : 1;
@@ -181,6 +193,24 @@
           }))
           .filter((match) => match.boxes.length > 0)
       : [];
+
+  $: positionedPendingRedactions = Array.isArray(pendingRedactionRegions)
+    ? pendingRedactionRegions
+        .map((region) => ({
+          ...region,
+          viewportRect: logicalRectToViewportRect(region.normalizedTopLeftRect, normalizedRotation),
+        }))
+        .filter((region) => region.viewportRect)
+    : [];
+
+  $: redactionPreviewRect = redactionDragStart && redactionDragCurrent
+    ? {
+        x: Math.min(redactionDragStart.x, redactionDragCurrent.x),
+        y: Math.min(redactionDragStart.y, redactionDragCurrent.y),
+        width: Math.abs(redactionDragCurrent.x - redactionDragStart.x),
+        height: Math.abs(redactionDragCurrent.y - redactionDragStart.y),
+      }
+    : null;
 
   $: {
     const activeMatch = positionedSearchMatches.find((match) => match.isActive);
@@ -348,6 +378,7 @@
     const requestId = ++renderRequestId;
     pendingRenderKey = snapshot.key;
     failedRenderKey = "";
+    renderErrorMsg = "";
 
     zoomDebounceTimer = setTimeout(() => {
       zoomDebounceTimer = null;
@@ -374,6 +405,20 @@
     renderErrorMsg = "";
     let requestSnapshot;
 
+    const requestIsCurrent = () =>
+      queueRequestId === renderRequestId &&
+      (!requestSnapshot || renderCoordinator.isCurrent(requestSnapshot)) &&
+      viewGeneration === generationId &&
+      documentGeneration === documentGenerationId &&
+      session === sessionId &&
+      page === pageIndex &&
+      viewScale === scale &&
+      pageRotation === normalizedRotation &&
+      pageColorMode === colorMode &&
+      key === desiredRenderKey &&
+      shouldRender &&
+      !isDestroyed;
+
     try {
       console.log("Rendering page:", page + 1);
 
@@ -397,21 +442,7 @@
         await request.wait(renderPromise),
         requestSnapshot,
       );
-      const requestIsCurrent =
-        queueRequestId === renderRequestId &&
-        renderCoordinator.isCurrent(requestSnapshot) &&
-        viewGeneration === generationId &&
-        documentGeneration === documentGenerationId &&
-        session === sessionId &&
-        page === pageIndex &&
-        viewScale === scale &&
-        pageRotation === normalizedRotation &&
-        pageColorMode === colorMode &&
-        key === desiredRenderKey &&
-        shouldRender &&
-        !isDestroyed;
-
-      if (!requestIsCurrent || !canvasRef) {
+      if (!requestIsCurrent() || !canvasRef) {
         console.log(`Render result dropped for page ${page + 1}`);
         return;
       }
@@ -438,12 +469,11 @@
       paintedPageIndex = page;
       paintedPageRotation = pageRotation;
       failedRenderKey = "";
+      renderErrorMsg = "";
 
     } catch (err) {
       if (
-        queueRequestId === renderRequestId &&
-        shouldRender &&
-        !isDestroyed &&
+        requestIsCurrent() &&
         !isExpectedRenderCancellation(err)
       ) {
         console.error(`Sayfa ${page} render hatası:`, err);
@@ -593,6 +623,78 @@
       selection.removeAllRanges();
     }
   }
+
+  function getViewportPoint(event, element) {
+    const bounds = element.getBoundingClientRect();
+    if (!(bounds.width > 0) || !(bounds.height > 0)) return null;
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+    };
+  }
+
+  function startRedactionSelection(event) {
+    if (!secureRedactionEnabled || !secureRedactionSelectionMode || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = getViewportPoint(event, event.currentTarget);
+    if (!point) return;
+    redactionPointerId = event.pointerId;
+    redactionDragStart = point;
+    redactionDragCurrent = point;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function moveRedactionSelection(event) {
+    if (redactionPointerId !== event.pointerId || !redactionDragStart) return;
+    event.preventDefault();
+    event.stopPropagation();
+    redactionDragCurrent = getViewportPoint(event, event.currentTarget);
+  }
+
+  function finishRedactionSelection(event) {
+    if (redactionPointerId !== event.pointerId || !redactionDragStart) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const finalPoint = getViewportPoint(event, event.currentTarget);
+    const startPoint = redactionDragStart;
+    redactionPointerId = null;
+    redactionDragStart = null;
+    redactionDragCurrent = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    if (!finalPoint || !(bounds.width > 0) || !(bounds.height > 0)) return;
+    const viewportWidth = Math.abs(finalPoint.x - startPoint.x) * bounds.width;
+    const viewportHeight = Math.abs(finalPoint.y - startPoint.y) * bounds.height;
+    if (viewportWidth < 3 || viewportHeight < 3) return;
+
+    const normalizedTopLeftRect = viewportDragToLogicalRect(
+      startPoint,
+      finalPoint,
+      normalizedRotation,
+    );
+    if (!normalizedTopLeftRect) return;
+    try {
+      validateRedactionRegionInputs([{
+        id: "redaction-region:selection-validation",
+        pageIndex,
+        normalizedTopLeftRect,
+        source: "manual_selection",
+      }]);
+    } catch (_) {
+      return;
+    }
+    if (typeof onRedactionRegionSelected === "function") {
+      onRedactionRegionSelected({ pageIndex, normalizedTopLeftRect });
+    }
+  }
+
+  function cancelRedactionSelection(event) {
+    if (redactionPointerId !== event.pointerId) return;
+    redactionPointerId = null;
+    redactionDragStart = null;
+    redactionDragCurrent = null;
+  }
 </script>
 
 <div class="pdf-page-container" bind:this={pageRef} bind:clientWidth={containerWidth} id={`page-${pageIndex}`} style="height: {cachedHeight}px; min-height: {cachedHeight}px;">
@@ -611,6 +713,33 @@
           aria-label="Sayfa {pageIndex + 1}"
           style="width: 100%; height: 100%; opacity: {prepressSeparations ? 0 : 1};"
         ></canvas>
+
+        {#if secureRedactionEnabled && (secureRedactionSelectionMode || positionedPendingRedactions.length > 0)}
+          <!-- Review-only layer: these rectangles are not PDF mutations or secure-redaction results. -->
+          <div
+            class="pending-redaction-review-layer"
+            class:is-selecting={secureRedactionSelectionMode}
+            role="presentation"
+            aria-label="Bekleyen redaksiyon adayları"
+            on:pointerdown={startRedactionSelection}
+            on:pointermove={moveRedactionSelection}
+            on:pointerup={finishRedactionSelection}
+            on:pointercancel={cancelRedactionSelection}
+          >
+            {#each positionedPendingRedactions as region (region.id)}
+              <div
+                class="pending-redaction-region"
+                style="left: {region.viewportRect.x * 100}%; top: {region.viewportRect.y * 100}%; width: {region.viewportRect.width * 100}%; height: {region.viewportRect.height * 100}%;"
+              ><span>PENDING</span></div>
+            {/each}
+            {#if redactionPreviewRect}
+              <div
+                class="pending-redaction-region preview"
+                style="left: {redactionPreviewRect.x * 100}%; top: {redactionPreviewRect.y * 100}%; width: {redactionPreviewRect.width * 100}%; height: {redactionPreviewRect.height * 100}%;"
+              ><span>PENDING</span></div>
+            {/if}
+          </div>
+        {/if}
 
         {#if prepressHeatmap}
           <img
@@ -788,6 +917,44 @@
 </div>
 
 <style>
+  .pending-redaction-review-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .pending-redaction-review-layer.is-selecting {
+    pointer-events: auto;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  .pending-redaction-region {
+    position: absolute;
+    box-sizing: border-box;
+    border: 2px dashed #f59e0b;
+    background: rgba(245, 158, 11, 0.18);
+    color: #1c1917;
+    pointer-events: none;
+  }
+
+  .pending-redaction-region.preview {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+  }
+
+  .pending-redaction-region span {
+    position: absolute;
+    top: 0;
+    left: 0;
+    padding: 1px 3px;
+    background: #f59e0b;
+    color: #111827;
+    font: 700 9px/1.2 monospace;
+  }
+
   .pdf-page-container {
     position: relative;
     width: 100%;

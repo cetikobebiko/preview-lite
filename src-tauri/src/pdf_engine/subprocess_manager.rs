@@ -130,6 +130,10 @@ struct BrokerState {
     next_request_id: u64,
     next_worker_epoch: u64,
     documents: HashMap<WorkerDocumentKey, WorkerDocumentRef>,
+    // A replacement is charged only after a worker-health or startup failure.
+    // Expected cancellation still tears down the active worker to preserve the
+    // single in-flight IPC protocol, but it must not look like a crash loop.
+    restart_required: bool,
     restart_events: VecDeque<Instant>,
     document_failures: HashMap<WorkerDocumentKey, VecDeque<FailureEvent>>,
     quarantined: HashMap<WorkerDocumentKey, WorkerFailureReason>,
@@ -586,6 +590,7 @@ impl PdfiumWorkerBroker {
                 next_request_id: 1,
                 next_worker_epoch: 1,
                 documents: HashMap::new(),
+                restart_required: false,
                 restart_events: VecDeque::new(),
                 document_failures: HashMap::new(),
                 quarantined: HashMap::new(),
@@ -836,6 +841,7 @@ impl PdfiumWorkerBroker {
                 .protocol_violation(state, None, "CloseDocument returned an unexpected response")
                 .await),
             Err(error) => {
+                state.restart_required = true;
                 self.terminate_worker(state).await?;
                 let _ = error;
                 Ok(())
@@ -955,6 +961,11 @@ impl PdfiumWorkerBroker {
     }
 
     #[doc(hidden)]
+    pub async fn restart_attempts_for_test(&self) -> usize {
+        self.state.lock().await.restart_events.len()
+    }
+
+    #[doc(hidden)]
     pub async fn kill_process_for_test(&self) -> Result<(), BrokerError> {
         let mut state = self.state.lock().await;
         let worker = state
@@ -993,15 +1004,19 @@ impl PdfiumWorkerBroker {
         if state.worker.is_some() {
             return Ok(());
         }
-        prune_instants(&mut state.restart_events, RESTART_WINDOW);
-        if state.restart_events.len() >= MAX_RESTARTS_PER_WINDOW {
-            return Err(BrokerError::new(
-                "PDFIUM_WORKER_RESTART_LIMIT",
-                "PDF worker restart budget was exhausted",
-            ));
-        }
+        let restart_attempt_recorded = if state.restart_required {
+            let attempt = reserve_restart_attempt(state)?;
+            state.restart_required = false;
+            tracing::debug!(
+                restart_attempt = attempt,
+                restart_budget_remaining = MAX_RESTARTS_PER_WINDOW.saturating_sub(attempt),
+                "starting PDF worker replacement after worker-health failure"
+            );
+            true
+        } else {
+            false
+        };
         let launcher = self.launcher.clone()?;
-        state.restart_events.push_back(Instant::now());
 
         let mut command = Command::new(&launcher.executable);
         command
@@ -1016,30 +1031,27 @@ impl PdfiumWorkerBroker {
         {
             command.env("PDFIUM_PATH", path);
         }
-        let mut child = command.spawn().map_err(|error| {
-            BrokerError::new(
-                "PDFIUM_WORKER_SPAWN_FAILED",
-                format!("PDF worker could not be started: {error}"),
-            )
-        })?;
-        let stdin = child.stdin.take().ok_or_else(|| {
-            BrokerError::new(
-                "PDFIUM_WORKER_SPAWN_FAILED",
-                "PDF worker stdin pipe was not created",
-            )
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            BrokerError::new(
-                "PDFIUM_WORKER_SPAWN_FAILED",
-                "PDF worker stdout pipe was not created",
-            )
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            BrokerError::new(
-                "PDFIUM_WORKER_SPAWN_FAILED",
-                "PDF worker stderr pipe was not created",
-            )
-        })?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                record_start_failure(state, restart_attempt_recorded);
+                return Err(BrokerError::new(
+                    "PDFIUM_WORKER_SPAWN_FAILED",
+                    format!("PDF worker could not be started: {error}"),
+                ));
+            }
+        };
+        let (stdin, stdout, stderr) =
+            match (child.stdin.take(), child.stdout.take(), child.stderr.take()) {
+                (Some(stdin), Some(stdout), Some(stderr)) => (stdin, stdout, stderr),
+                _ => {
+                    record_start_failure(state, restart_attempt_recorded);
+                    return Err(BrokerError::new(
+                        "PDFIUM_WORKER_SPAWN_FAILED",
+                        "PDF worker stdio pipes were not created",
+                    ));
+                }
+            };
         let stderr_buffer = Arc::new(SyncMutex::new(Vec::new()));
         let drain_buffer = Arc::clone(&stderr_buffer);
         let stderr_drain = tokio::spawn(async move {
@@ -1078,6 +1090,7 @@ impl PdfiumWorkerBroker {
         let result = match hello {
             Ok(result) => result,
             Err(error) => {
+                record_start_failure(state, restart_attempt_recorded);
                 let _ = self.terminate_worker(state).await;
                 return Err(error);
             }
@@ -1094,6 +1107,7 @@ impl PdfiumWorkerBroker {
             return Err(error);
         };
         if !ready {
+            record_start_failure(state, restart_attempt_recorded);
             let _ = self.terminate_worker(state).await;
             return Err(BrokerError::unavailable(
                 "PDFium runtime is unavailable in the worker process",
@@ -1127,6 +1141,12 @@ impl PdfiumWorkerBroker {
             Ok(result) => Ok(result),
             Err(error) => {
                 if error.code == "PDFIUM_WORKER_CANCELLED" {
+                    tracing::debug!(
+                        worker_epoch = state.worker.as_ref().map(|worker| worker.epoch),
+                        session_id = key.map(|key| key.session_id.as_str()),
+                        content_generation = key.map(|key| key.content_generation),
+                        "cancelled PDF worker command is being reaped without consuming restart budget"
+                    );
                     self.terminate_worker(state).await?;
                     return Err(error);
                 }
@@ -1144,6 +1164,15 @@ impl PdfiumWorkerBroker {
                     record_document_failure(state, key, reason);
                 }
                 if reason.is_some() {
+                    state.restart_required = true;
+                    tracing::warn!(
+                        worker_epoch = state.worker.as_ref().map(|worker| worker.epoch),
+                        session_id = key.map(|key| key.session_id.as_str()),
+                        content_generation = key.map(|key| key.content_generation),
+                        failure_category = ?reason,
+                        restart_budget_remaining = MAX_RESTARTS_PER_WINDOW.saturating_sub(state.restart_events.len()),
+                        "PDF worker health failure requires a replacement"
+                    );
                     self.terminate_worker(state).await?;
                 }
                 Err(error)
@@ -1253,6 +1282,7 @@ impl PdfiumWorkerBroker {
         if let Some(key) = key {
             record_document_failure(state, key, WorkerFailureReason::ProtocolViolation);
         }
+        state.restart_required = true;
         let _ = self.terminate_worker(state).await;
         BrokerError::new("PDFIUM_WORKER_PROTOCOL_ERROR", message)
     }
@@ -1471,6 +1501,28 @@ fn record_document_failure(
     if category_count >= DOCUMENT_QUARANTINE_THRESHOLD {
         state.quarantined.insert(key.clone(), reason);
     }
+}
+
+fn reserve_restart_attempt(state: &mut BrokerState) -> Result<usize, BrokerError> {
+    prune_instants(&mut state.restart_events, RESTART_WINDOW);
+    if state.restart_events.len() >= MAX_RESTARTS_PER_WINDOW {
+        return Err(BrokerError::new(
+            "PDFIUM_WORKER_RESTART_LIMIT",
+            "PDF worker restart budget was exhausted",
+        ));
+    }
+    state.restart_events.push_back(Instant::now());
+    Ok(state.restart_events.len())
+}
+
+fn record_start_failure(state: &mut BrokerState, restart_attempt_recorded: bool) {
+    if !restart_attempt_recorded {
+        // The initial spawn is not a restart, but a failed startup can still
+        // crash-loop. Count that failure once; its eventual replacement is a
+        // separate attempt.
+        let _ = reserve_restart_attempt(state);
+    }
+    state.restart_required = true;
 }
 
 fn prune_instants(events: &mut VecDeque<Instant>, window: Duration) {
@@ -1741,6 +1793,7 @@ mod tests {
             next_request_id: 1,
             next_worker_epoch: 1,
             documents: HashMap::new(),
+            restart_required: false,
             restart_events: VecDeque::new(),
             document_failures: HashMap::new(),
             quarantined: HashMap::new(),

@@ -1,0 +1,67 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 5 0 R >> /AF [7 0 R] /Collection << /View /D >> /StructTreeRoot 10 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /AF [7 0 R] /Annots [9 0 R] >>
+endobj
+4 0 obj
+<< /Length 3 >>
+stream
+q Q
+endstream
+endobj
+5 0 obj
+<< /Names [(fixture.bin) 7 0 R] >>
+endobj
+6 0 obj
+null
+endobj
+7 0 obj
+<< /Type /Filespec /F (fixture.bin) /UF (fixture.bin) /Desc (fixture attachment) /EF << /F 8 0 R >> /RF << /F 8 0 R >> /Params << /Size 37 /CreationDate (D:20000101000000Z) >> >>
+endobj
+8 0 obj
+<< /Length 33 /Type /EmbeddedFile >>
+stream
+SANITIZATION_EMBEDDED_PAYLOAD_001
+endstream
+endobj
+9 0 obj
+<< /Type /Annot /Subtype /FileAttachment /Rect [0 0 10 10] /FS 7 0 R /AF [7 0 R] >>
+endobj
+10 0 obj
+<< /Type /StructTreeRoot /K 11 0 R >>
+endobj
+11 0 obj
+<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K 0 /AF [7 0 R << /Type /Filespec /F (structure-direct.bin) /EF << /F 12 0 R >> >>] >>
+endobj
+12 0 obj
+<< /Length 42 /Type /EmbeddedFile >>
+stream
+SANITIZATION_STRUCTURE_DIRECT_EMBEDDED_001
+endstream
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000015 00000 n 
+0000000160 00000 n 
+0000000217 00000 n 
+0000000332 00000 n 
+0000000384 00000 n 
+0000000434 00000 n 
+0000000454 00000 n 
+0000000648 00000 n 
+0000000751 00000 n 
+0000000850 00000 n 
+0000000904 00000 n 
+0000001062 00000 n 
+trailer
+<< /Size 13 /Root 1 0 R  >>
+startxref
+1175
+%%EOF

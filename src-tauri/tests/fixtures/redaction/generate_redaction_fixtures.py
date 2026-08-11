@@ -80,12 +80,63 @@ def generate_rotations() -> bytes:
     ]
     return build_pdf_bytes_from_raw_objects(objs)
 
+def generate_same_size_same_rotation_pages() -> bytes:
+    # The pages intentionally have identical geometry and rotation. Their solid
+    # colored content makes document/index page acquisition observable in tests.
+    page_zero = b"1 0 0 rg 10 700 50 50 re f"
+    page_one = b"0 1 0 rg 10 700 50 50 re f"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Rotate 0 /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Rotate 0 /Contents 6 0 R >>\nendobj\n",
+        build_stream_object_bytes(5, "", page_zero),
+        build_stream_object_bytes(6, "", page_one),
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_mixed_secure_redaction_pages() -> bytes:
+    """Two-page runnable transform fixture for affected/unaffected integration coverage.
+
+    Page 0 has selectable source text and a controlled link annotation. Page 1 has
+    distinct selectable text plus a solid green visual landmark that survives page
+    import without requiring a second raster path.
+    """
+    affected_content = b"BT /F1 18 Tf 60 740 Td (AFFECTED ORIGINAL TEXT MARKER) Tj ET"
+    unaffected_content = (
+        b"BT /F1 18 Tf 60 740 Td (UNTOUCHED PAGE TEXT MARKER) Tj ET "
+        b"0 1 0 rg 420 120 100 100 re f"
+    )
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [0 0 600 800] /Annots [7 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [0 0 600 800] /Resources << /Font << /F1 5 0 R >> >> /Contents 8 0 R >>\nendobj\n",
+        b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(6, "", affected_content),
+        b"7 0 obj\n<< /Type /Annot /Subtype /Link /Rect [60 720 320 750] /Border [0 0 0] /A << /S /URI /URI (https://example.invalid/controlled-link) >> >>\nendobj\n",
+        build_stream_object_bytes(8, "", unaffected_content),
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
 def generate_cropbox_mediabox_diff() -> bytes:
     stream_content = b"BT /F1 12 Tf 70 700 TD (CROPBOX DIFFERENT) Tj ET"
     objs = [
         b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
         b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
         b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [50 50 550 750] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_explicit_print_boxes() -> bytes:
+    """A page whose print-production boxes differ from MediaBox and CropBox."""
+    stream_content = b"BT /F1 12 Tf 70 700 TD (EXPLICIT TRIM BLEED ART BOXES) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [40 50 560 750] /TrimBox [60 70 540 730] /BleedBox [50 60 550 740] /ArtBox [80 90 520 710] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
         b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
         build_stream_object_bytes(5, "", stream_content)
     ]
@@ -126,27 +177,35 @@ def generate_image_only() -> bytes:
     return build_pdf_bytes_from_raw_objects(objs)
 
 def generate_text_image() -> bytes:
-    img_data = bytes([128, 128, 128, 128])
+    # 2x2 /DeviceRGB image:
+    # Row 0: Red [255,0,0], Green [0,255,0]
+    # Row 1: Blue [0,0,255], White [255,255,255]
+    img_data = bytes([
+        255, 0, 0,    0, 255, 0,
+        0, 0, 255,    255, 255, 255
+    ])
     content_stream = b"BT /F1 12 Tf 50 750 TD (TEXT AND IMAGE PAGE) Tj ET q 200 0 0 200 50 500 cm /Im1 Do Q"
     objs = [
         b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
         b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
         b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 6 0 R >>\nendobj\n",
         b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
-        build_stream_object_bytes(5, "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8", img_data),
+        build_stream_object_bytes(5, "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8", img_data),
         build_stream_object_bytes(6, "", content_stream)
     ]
     return build_pdf_bytes_from_raw_objects(objs)
 
 def generate_annotations_fixture() -> bytes:
     content_stream = b"BT /F1 12 Tf 50 750 TD (ANNOTATED PAGE) Tj ET"
+    ap_stream = b"1 1 0 rg 0 0 20 20 re f"
     objs = [
         b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
         b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
         b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Annots [6 0 R] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
         b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
         build_stream_object_bytes(5, "", content_stream),
-        b"6 0 obj\n<< /Type /Annot /Subtype /Text /Rect [100 700 120 720] /Contents (Sensitive Note) /C [1 1 0] >>\nendobj\n"
+        b"6 0 obj\n<< /Type /Annot /Subtype /Text /Rect [100 700 120 720] /Contents (Sensitive Note) /C [1 1 0] /AP << /N 7 0 R >> >>\nendobj\n",
+        build_stream_object_bytes(7, "/Type /XObject /Subtype /Form /BBox [0 0 20 20]", ap_stream)
     ]
     return build_pdf_bytes_from_raw_objects(objs)
 
@@ -349,7 +408,306 @@ def generate_object_stream() -> bytes:
     
     return bytes(buf)
 
+def generate_inherited_geometry() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (INHERITED GEOMETRY) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [10 20 610 820] /CropBox [30 40 590 800] >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_inherited_resources() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (INHERITED RESOURCES) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> /ExtGState << /GS1 6 0 R >> >> >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content),
+        b"6 0 obj\n<< /Type /ExtGState /ca 0.5 >>\nendobj\n"
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_embedded_files() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (EMBEDDED FILE PAGE) Tj ET"
+    file_bytes = b"Secret Embedded Attachment Content"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 6 0 R >> >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content),
+        b"6 0 obj\n<< /Names [(sample.txt) 7 0 R] >>\nendobj\n",
+        b"7 0 obj\n<< /Type /Filespec /F (sample.txt) /EF << /F 8 0 R >> >>\nendobj\n",
+        build_stream_object_bytes(8, "", file_bytes)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_non_js_openaction() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (NON JS OPENACTION) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /GoTo /D [3 0 R /XYZ null null null] >> >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_js_action() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (JS ACTION PAGE) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /JavaScript /JS (app.alert('hello')) >> >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_stream_literal_prev() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (/Prev 12345 %%EOF) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_unresolved_acroform() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (UNRESOLVED ACROFORM) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /AcroForm 99 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_unresolved_resources() -> bytes:
+    stream_content = b"BT /F1 12 Tf 50 750 TD (UNRESOLVED RESOURCES) Tj ET"
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources 99 0 R /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "", stream_content)
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
+def generate_whole_object_adversarial() -> bytes:
+    """Whole-object NO-GO characterization corpus in one deterministic PDF.
+
+    The fixture deliberately combines transformed text/image/path objects, clipping,
+    transparency, pattern/shading, optional content, tagged content, nested forms,
+    and a Form XObject invoked twice through one shared resource.
+    """
+    secret_pixels = bytes([
+        17, 34, 51, 68, 85, 102,
+        119, 136, 153, 170, 187, 204,
+    ])
+    page_content = (
+        b"BT /F1 14 Tf 1 0 0 1 40 750 Tm (WHOLE_OBJECT_SECRET_MARKER_PLAIN) Tj ET "
+        b"BT /F1 14 Tf 0 1 -1 0 180 620 Tm (ROTATED_TEXT) Tj ET "
+        b"BT /F1 14 Tf 1 .35 .2 1 230 620 Tm (SKEWED_TEXT) Tj ET "
+        b"1 0 0 rg 40 500 80 60 re f "
+        b"0 0 1 RG 18 w 150 500 m 250 550 l S "
+        b"q 90 0 0 70 280 490 cm /ImSecret Do Q "
+        b"q -90 0 0 70 480 490 cm /ImSecret Do Q "
+        b"q 30 360 120 70 re W n BT /F1 14 Tf 20 380 Td (CLIPPED_TEXT) Tj ET Q "
+        b"q /GSAlpha gs 0 1 0 rg 180 360 100 70 re f Q "
+        b"/Pattern cs /P1 scn 310 360 90 70 re f "
+        b"/Sh1 sh "
+        b"/OC /LayerSecret BDC BT /F1 14 Tf 40 300 Td (HIDDEN_LAYER_SECRET) Tj ET EMC "
+        b"/P <</MCID 0>> BDC BT /F1 14 Tf 40 260 Td (TAGGED_SECRET) Tj ET EMC "
+        b"q 1 0 0 1 40 120 cm /FmNestedHost Do Q "
+        b"q 1 0 0 1 260 120 cm /FmShared Do Q "
+        b"q 1 0 0 1 390 120 cm /FmShared Do Q"
+    )
+    nested_host = b"BT /F1 12 Tf 0 60 Td (FORM_CHILD_SECRET) Tj ET /FmInner Do"
+    nested_inner = b"BT /F1 10 Tf 0 20 Td (NESTED_FORM_SECRET) Tj ET"
+    shared_form = b"BT /F1 11 Tf 0 20 Td (SHARED_FORM_SECRET) Tj ET"
+    mask_group = b"0 g 0 0 1 1 re f"
+    pattern_stream = b"1 0 0 rg 0 0 4 4 re f"
+
+    objs = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [14 0 R] /D << /OFF [14 0 R] >> >> /StructTreeRoot 15 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [-20 -10 600 800] /CropBox [0 0 580 780] /TrimBox [5 5 575 775] /BleedBox [2 2 578 778] /ArtBox [10 10 570 770] /StructParents 0 /Resources << /Font << /F1 4 0 R >> /XObject << /ImSecret 5 0 R /FmNestedHost 7 0 R /FmShared 9 0 R /MaskGroup 11 0 R >> /ExtGState << /GSAlpha 12 0 R >> /Pattern << /P1 13 0 R >> /Shading << /Sh1 16 0 R >> /Properties << /LayerSecret 14 0 R >> >> /Contents 6 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        build_stream_object_bytes(5, "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8", secret_pixels),
+        build_stream_object_bytes(6, "", page_content),
+        build_stream_object_bytes(7, "/Type /XObject /Subtype /Form /BBox [0 0 180 90] /Resources << /Font << /F1 4 0 R >> /XObject << /FmInner 8 0 R >> >>", nested_host),
+        build_stream_object_bytes(8, "/Type /XObject /Subtype /Form /BBox [0 0 120 40] /Matrix [1 .2 0 1 10 5] /Resources << /Font << /F1 4 0 R >> >>", nested_inner),
+        build_stream_object_bytes(9, "/Type /XObject /Subtype /Form /BBox [0 0 120 40] /Resources << /Font << /F1 4 0 R >> >>", shared_form),
+        b"10 0 obj\n<< /Type /ExtGState /BM /Multiply /ca .5 /CA .5 >>\nendobj\n",
+        build_stream_object_bytes(11, "/Type /XObject /Subtype /Form /BBox [0 0 1 1] /Group << /S /Transparency /CS /DeviceGray >>", mask_group),
+        b"12 0 obj\n<< /Type /ExtGState /BM /Multiply /ca .5 /CA .5 /SMask << /S /Alpha /G 11 0 R >> >>\nendobj\n",
+        build_stream_object_bytes(13, "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 4 4] /XStep 4 /YStep 4 /Resources << >>", pattern_stream),
+        b"14 0 obj\n<< /Type /OCG /Name (Hidden redaction layer) >>\nendobj\n",
+        b"15 0 obj\n<< /Type /StructTreeRoot /K [<< /Type /StructElem /S /P /Pg 3 0 R /K 0 >>] /ParentTree << /Nums [0 [<< /Type /StructElem /S /P /Pg 3 0 R /K 0 >>]] >> >>\nendobj\n",
+        b"16 0 obj\n<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 580 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [1 1 1] /N 1 >> /Extend [true true] >>\nendobj\n",
+    ]
+    return build_pdf_bytes_from_raw_objects(objs)
+
 FIXTURE_DEFINITIONS = [
+    {
+        "id": "whole-object-adversarial",
+        "filename": "whole-object-adversarial.pdf",
+        "purpose": "Whole-object eligibility icin transform, Form, clipping, transparency, pattern, layer ve tag adversarial corpusu",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": [
+            "whole_object_bounds_cases", "nested_and_shared_forms", "clipping",
+            "transparency_and_soft_mask", "pattern_and_shading", "optional_content",
+            "tagged_mcid", "mixed_eligible_and_ineligible_objects"
+        ],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": [
+            "pdfium_and_lopdf_reopen", "form_children_enumerated",
+            "unsafe_whole_object_cases_remain_raster_only"
+        ],
+        "generator": generate_whole_object_adversarial,
+    },
+    {
+        "id": "inherited-geometry",
+        "filename": "inherited-geometry.pdf",
+        "purpose": "Inherited MediaBox ve CropBox iceren 1 sayfalik PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["inherited_geometry"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["inherited_geometry_resolved"],
+        "generator": generate_inherited_geometry,
+    },
+    {
+        "id": "inherited-resources",
+        "filename": "inherited-resources.pdf",
+        "purpose": "Inherited Resources ve ExtGState iceren 1 sayfalik PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["inherited_resources"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["inherited_resources_resolved"],
+        "generator": generate_inherited_resources,
+    },
+    {
+        "id": "embedded-files",
+        "filename": "embedded-files.pdf",
+        "purpose": "Gomulu dosya (EmbeddedFiles) iceren 1 sayfalik PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["embedded_files"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["embedded_files_detected"],
+        "generator": generate_embedded_files,
+    },
+    {
+        "id": "non-js-openaction",
+        "filename": "non-js-openaction.pdf",
+        "purpose": "JS icermeyen OpenAction iceren 1 sayfalik PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["document_actions"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["doc_actions_present_javascript_absent"],
+        "generator": generate_non_js_openaction,
+    },
+    {
+        "id": "js-action",
+        "filename": "js-action.pdf",
+        "purpose": "JS aksiyonu iceren 1 sayfalik PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["javascript"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["javascript_detected"],
+        "generator": generate_js_action,
+    },
+    {
+        "id": "stream-literal-prev",
+        "filename": "stream-literal-prev.pdf",
+        "purpose": "Akis icinde /Prev ve %%EOF kelimeleri gecen fakat incremental olmayan PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["no_incremental_revisions"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["incremental_revisions_absent"],
+        "generator": generate_stream_literal_prev,
+    },
+    {
+        "id": "unresolved-acroform",
+        "filename": "unresolved-acroform.pdf",
+        "purpose": "Bozuk/cozulemeyen AcroForm referansı iceren 1 sayfalik PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["unresolved_acroform"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["acroform_present_xfa_unknown"],
+        "generator": generate_unresolved_acroform,
+    },
+    {
+        "id": "unresolved-resources",
+        "filename": "unresolved-resources.pdf",
+        "purpose": "Bozuk/cozulemeyen Resources referansı iceren 1 sayfalik PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["unresolved_resources"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": ["facts_unknown"],
+        "generator": generate_unresolved_resources,
+    },
     {
         "id": "simple-text",
         "filename": "simple-text.pdf",
@@ -393,6 +751,48 @@ FIXTURE_DEFINITIONS = [
         "generator": generate_rotations,
     },
     {
+        "id": "same-size-same-rotation-pages",
+        "filename": "same-size-same-rotation-pages.pdf",
+        "purpose": "Ayni geometri ve rotasyona sahip, farkli gorunur icerikli iki sayfa",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 2,
+        "expected_properties": ["same_geometry_same_rotation_distinct_content"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": [
+            "page_zero_red_content",
+            "page_one_green_content",
+            "same_media_crop_rotation"
+        ],
+        "generator": generate_same_size_same_rotation_pages,
+    },
+    {
+        "id": "mixed-secure-redaction-pages",
+        "filename": "mixed-secure-redaction-pages.pdf",
+        "purpose": "Etkilenen raster sayfa ve etkilenmeyen import sayfasini ayni transformda kapsayan iki sayfali belge",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 2,
+        "expected_text": None,
+        "expected_properties": ["affected_text_and_link", "unaffected_text_and_green_landmark"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": [
+            "page_zero_contains_selectable_affected_text",
+            "page_zero_contains_controlled_link_annotation",
+            "page_one_contains_selectable_unaffected_text",
+            "page_one_contains_green_visual_landmark"
+        ],
+        "generator": generate_mixed_secure_redaction_pages,
+    },
+    {
         "id": "cropbox-mediabox-diff",
         "filename": "cropbox-mediabox-diff.pdf",
         "purpose": "CropBox ve MediaBox sinirlari birbirinden farkli olan PDF",
@@ -411,6 +811,26 @@ FIXTURE_DEFINITIONS = [
             "effective_dimensions_derived_correctly"
         ],
         "generator": generate_cropbox_mediabox_diff,
+    },
+    {
+        "id": "explicit-print-boxes",
+        "filename": "explicit-print-boxes.pdf",
+        "purpose": "Media/CropBox'tan farkli explicit TrimBox, BleedBox ve ArtBox iceren PDF",
+        "encrypted": False,
+        "test_credential": None,
+        "expected_page_count": 1,
+        "expected_properties": ["explicit_trim_bleed_art_boxes"],
+        "expected_planning_outcome": "ready",
+        "expected_blocker": None,
+        "expected_profile": "secure_rasterized_pages_v1",
+        "expected_strategy": "rasterized_pages",
+        "expected_verification_outcome": "verified_clean",
+        "semantic_assertions": [
+            "trimbox_differs_from_mediabox_and_cropbox",
+            "bleedbox_differs_from_mediabox_and_cropbox",
+            "artbox_differs_from_mediabox_and_cropbox"
+        ],
+        "generator": generate_explicit_print_boxes,
     },
     {
         "id": "nonzero-origin",
@@ -690,6 +1110,19 @@ def generate_all_fixtures_and_manifest(target_dir: Path) -> dict[str, dict]:
     manifest_data = {
         "version": 1,
         "description": "Deterministik PDF Redaksiyon Fixture Corpus ve Kanonik Manifest",
+        "limits": {
+            "maxPixelsPerAffectedPage": 100000000,
+            "maxTotalEstimatedAffectedPixels": 1000000000,
+            "maxReportSizeBytes": 10485760,
+            "maxSourceRegionIdsPerCanonicalRegion": 100,
+            "maxCanonicalRegionsPerPage": 1000
+        },
+        "merge_profile": {
+            "adjacencyTolerancePoints": 0.0,
+            "mergeEdgeTouching": True,
+            "mergeCornerTouching": False,
+            "geometryComparisonEpsilon": 0.000001
+        },
         "fixtures": manifest_items
     }
 

@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 static PDFIUM_MUTEX: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
-pub(crate) fn with_pdfium<T, E>(operation: impl FnOnce(&Pdfium) -> Result<T, E>) -> Result<T, E>
+pub fn with_pdfium<T, E>(operation: impl FnOnce(&Pdfium) -> Result<T, E>) -> Result<T, E>
 where
     E: From<String>,
 {

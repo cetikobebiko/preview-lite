@@ -355,10 +355,22 @@ fn test_fixture_generator_output_matches_repository_manifest() {
     let temp_manifest_content =
         fs::read_to_string(temp_dir.path().join("manifest.json")).expect("Read temp manifest");
 
-    assert_eq!(
-        temp_manifest_content, repo_manifest_content,
-        "Generated manifest.json differs from repository manifest.json"
-    );
+    if temp_manifest_content != repo_manifest_content {
+        println!("MANIFEST DIFF DETECTED:");
+        for (i, (l1, l2)) in temp_manifest_content
+            .lines()
+            .zip(repo_manifest_content.lines())
+            .enumerate()
+        {
+            if l1 != l2 {
+                println!("Line {}: TEMP='{}' vs REPO='{}'", i + 1, l1, l2);
+            }
+        }
+        assert_eq!(
+            temp_manifest_content, repo_manifest_content,
+            "Generated manifest.json differs from repository manifest.json"
+        );
+    }
 
     let manifest: FixtureManifest =
         serde_json::from_str(&repo_manifest_content).expect("Parse manifest");
@@ -412,8 +424,8 @@ fn test_fixture_manifest_serialization_is_deterministic() {
     assert_eq!(manifest.version, 1);
     assert_eq!(
         manifest.fixtures.len(),
-        14,
-        "Manifest must contain exactly 14 fixtures"
+        26,
+        "Manifest must contain exactly 26 fixtures"
     );
 
     for item in &manifest.fixtures {
@@ -995,4 +1007,302 @@ fn test_incremental_rewrite_characterization() {
             "PDFium save_to_file characterization mismatch"
         );
     });
+}
+
+#[test]
+fn test_prompt_8b_3_5_true_no_io_in_planner() {
+    use preview_alternative_lib::secure_redaction::*;
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+
+    let entries_before: Vec<_> = std::fs::read_dir(temp_dir.path())
+        .unwrap()
+        .map(|r| r.unwrap().path())
+        .collect();
+
+    let geom = CanonicalPageGeometry {
+        page_index: 0,
+        media_box: PdfPointRect {
+            left: 0.0,
+            bottom: 0.0,
+            width: 612.0,
+            height: 792.0,
+        },
+        crop_box: None,
+        trim_box: None,
+        bleed_box: None,
+        art_box: None,
+        effective_box: PdfPointRect {
+            left: 0.0,
+            bottom: 0.0,
+            width: 612.0,
+            height: 792.0,
+        },
+        rotation: PageRotation::Deg0,
+    };
+    let page_facts = PageRedactionFacts {
+        schema_version: "1.0.0".to_string(),
+        page_index: 0,
+        text: InspectionFactState::Present,
+        images: InspectionFactState::Absent,
+        vector_paths: InspectionFactState::Absent,
+        form_xobjects: InspectionFactState::Absent,
+        annotations: InspectionFactState::Absent,
+        link_annotations: InspectionFactState::Absent,
+        widgets: InspectionFactState::Absent,
+        transparency: InspectionFactState::Absent,
+        optional_content: InspectionFactState::Absent,
+        complex_resources: InspectionFactState::Absent,
+        structure_association: InspectionFactState::Absent,
+        page_actions: InspectionFactState::Absent,
+        spot_colors: InspectionFactState::Absent,
+        complex_color_spaces: InspectionFactState::Absent,
+        geometry_profile: GeometryProfile::StandardEffectiveBoxV1,
+        rotation: PageRotation::Deg0,
+    };
+    let doc_facts = DocumentRedactionFacts {
+        schema_version: "1.0.0".to_string(),
+        total_pages: 1,
+        encryption: InspectionFactState::Absent,
+        signature_dictionary: InspectionFactState::Absent,
+        signature_field: InspectionFactState::Absent,
+        byte_range: InspectionFactState::Absent,
+        acro_form: InspectionFactState::Absent,
+        xfa: InspectionFactState::Absent,
+        annotations: InspectionFactState::Absent,
+        optional_content: InspectionFactState::Absent,
+        embedded_files: InspectionFactState::Absent,
+        javascript: InspectionFactState::Absent,
+        incremental_revisions: InspectionFactState::Absent,
+        structure_tree: InspectionFactState::Absent,
+        outlines: InspectionFactState::Absent,
+        names_dictionary: InspectionFactState::Absent,
+        document_actions: InspectionFactState::Absent,
+        complex_document_resources: InspectionFactState::Absent,
+    };
+
+    let reg_input = RedactionRegionInput {
+        id: "r1".to_string(),
+        page_index: 0,
+        normalized_top_left_rect: NormalizedTopLeftRect {
+            x: 0.1,
+            y: 0.1,
+            width: 0.2,
+            height: 0.2,
+        },
+        source: "manual".to_string(),
+    };
+
+    let planner_input = RedactionPlannerInput {
+        input_digest: "a0".repeat(32),
+        content_generation: 0,
+        policy: sample_test_policy(),
+        acknowledgements: sample_test_acknowledgements(),
+        document_facts: doc_facts,
+        page_facts: vec![page_facts],
+        page_geometries: vec![geom],
+        region_inputs: vec![reg_input],
+    };
+
+    let plan = build_secure_redaction_plan(&planner_input).expect("build plan");
+    assert!(plan.executable);
+
+    let entries_after: Vec<_> = std::fs::read_dir(temp_dir.path())
+        .unwrap()
+        .map(|r| r.unwrap().path())
+        .collect();
+
+    assert_eq!(
+        entries_before, entries_after,
+        "Planner MUST NOT write to disk (True No-I/O requirement)"
+    );
+}
+
+#[test]
+fn test_prompt_8b_3_5_zero_gap_merge_policy_isolation() {
+    use preview_alternative_lib::secure_redaction::*;
+    let geom = CanonicalPageGeometry {
+        page_index: 0,
+        media_box: PdfPointRect {
+            left: 0.0,
+            bottom: 0.0,
+            width: 612.0,
+            height: 792.0,
+        },
+        crop_box: None,
+        trim_box: None,
+        bleed_box: None,
+        art_box: None,
+        effective_box: PdfPointRect {
+            left: 0.0,
+            bottom: 0.0,
+            width: 612.0,
+            height: 792.0,
+        },
+        rotation: PageRotation::Deg0,
+    };
+    let page_facts = PageRedactionFacts {
+        schema_version: "1.0.0".to_string(),
+        page_index: 0,
+        text: InspectionFactState::Present,
+        images: InspectionFactState::Absent,
+        vector_paths: InspectionFactState::Absent,
+        form_xobjects: InspectionFactState::Absent,
+        annotations: InspectionFactState::Absent,
+        link_annotations: InspectionFactState::Absent,
+        widgets: InspectionFactState::Absent,
+        transparency: InspectionFactState::Absent,
+        optional_content: InspectionFactState::Absent,
+        complex_resources: InspectionFactState::Absent,
+        structure_association: InspectionFactState::Absent,
+        page_actions: InspectionFactState::Absent,
+        spot_colors: InspectionFactState::Absent,
+        complex_color_spaces: InspectionFactState::Absent,
+        geometry_profile: GeometryProfile::StandardEffectiveBoxV1,
+        rotation: PageRotation::Deg0,
+    };
+    let doc_facts = DocumentRedactionFacts {
+        schema_version: "1.0.0".to_string(),
+        total_pages: 1,
+        encryption: InspectionFactState::Absent,
+        signature_dictionary: InspectionFactState::Absent,
+        signature_field: InspectionFactState::Absent,
+        byte_range: InspectionFactState::Absent,
+        acro_form: InspectionFactState::Absent,
+        xfa: InspectionFactState::Absent,
+        annotations: InspectionFactState::Absent,
+        optional_content: InspectionFactState::Absent,
+        embedded_files: InspectionFactState::Absent,
+        javascript: InspectionFactState::Absent,
+        incremental_revisions: InspectionFactState::Absent,
+        structure_tree: InspectionFactState::Absent,
+        outlines: InspectionFactState::Absent,
+        names_dictionary: InspectionFactState::Absent,
+        document_actions: InspectionFactState::Absent,
+        complex_document_resources: InspectionFactState::Absent,
+    };
+
+    let reg1 = RedactionRegionInput {
+        id: "r1".to_string(),
+        page_index: 0,
+        normalized_top_left_rect: NormalizedTopLeftRect {
+            x: 0.1,
+            y: 0.1,
+            width: 0.1,
+            height: 0.1,
+        },
+        source: "manual".to_string(),
+    };
+    let reg2 = RedactionRegionInput {
+        id: "r2".to_string(),
+        page_index: 0,
+        normalized_top_left_rect: NormalizedTopLeftRect {
+            x: 0.25, // gap > 0.0
+            y: 0.1,
+            width: 0.1,
+            height: 0.1,
+        },
+        source: "manual".to_string(),
+    };
+
+    let planner_input = RedactionPlannerInput {
+        input_digest: "a0".repeat(32),
+        content_generation: 0,
+        policy: sample_test_policy(),
+        acknowledgements: sample_test_acknowledgements(),
+        document_facts: doc_facts,
+        page_facts: vec![page_facts],
+        page_geometries: vec![geom],
+        region_inputs: vec![reg1, reg2],
+    };
+
+    let plan = build_secure_redaction_plan(&planner_input).expect("build plan");
+    assert_eq!(
+        plan.canonical_regions.len(),
+        2,
+        "Regions separated by a positive gap MUST NOT be merged"
+    );
+}
+
+#[test]
+fn test_prompt_8b_3_5_manifest_parity_and_constants_match() {
+    use preview_alternative_lib::secure_redaction::*;
+    let manifest_str = std::fs::read_to_string("tests/fixtures/redaction/manifest.json")
+        .expect("read manifest.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_str).expect("parse manifest.json");
+
+    let limits = &manifest["limits"];
+    assert_eq!(
+        limits["maxPixelsPerAffectedPage"].as_u64().unwrap(),
+        MAX_PIXELS_PER_PAGE as u64
+    );
+    assert_eq!(
+        limits["maxTotalEstimatedAffectedPixels"].as_u64().unwrap(),
+        MAX_TOTAL_ESTIMATED_PIXELS
+    );
+    assert_eq!(
+        limits["maxReportSizeBytes"].as_u64().unwrap(),
+        MAX_REPORT_SIZE_BYTES as u64
+    );
+    assert_eq!(
+        limits["maxSourceRegionIdsPerCanonicalRegion"]
+            .as_u64()
+            .unwrap(),
+        MAX_SOURCE_REGION_IDS as u64
+    );
+    assert_eq!(
+        limits["maxCanonicalRegionsPerPage"].as_u64().unwrap(),
+        MAX_CANONICAL_REGIONS_PER_PAGE as u64
+    );
+
+    let merge_profile = &manifest["merge_profile"];
+    assert_eq!(
+        merge_profile["adjacencyTolerancePoints"].as_f64().unwrap(),
+        ADJACENCY_TOLERANCE_POINTS
+    );
+    assert_eq!(
+        merge_profile["mergeEdgeTouching"].as_bool().unwrap(),
+        MERGE_EDGE_TOUCHING
+    );
+    assert_eq!(
+        merge_profile["mergeCornerTouching"].as_bool().unwrap(),
+        MERGE_CORNER_TOUCHING
+    );
+    assert_eq!(
+        merge_profile["geometryComparisonEpsilon"].as_f64().unwrap(),
+        GEOMETRY_COMPARISON_EPSILON
+    );
+}
+
+fn sample_test_policy() -> preview_alternative_lib::secure_redaction::SecureRedactionPolicy {
+    use preview_alternative_lib::secure_redaction::*;
+    SecureRedactionPolicy {
+        schema_version: "1.0.0".to_string(),
+        profile: RedactionProfile::SecureRasterizedPagesV1,
+        strategy: RedactionStrategy::RasterizedPages,
+        raster_dpi: 300,
+        appearance: RedactionAppearancePolicy {
+            kind: "solid".to_string(),
+            color: "black".to_string(),
+            opacity: 1.0,
+        },
+        safety_margin_points: 2.0,
+        interactive_content_policy: InteractiveContentPolicy::Block,
+        signature_policy: SignaturePolicy::Block,
+        encryption_policy: EncryptionPolicy::Block,
+    }
+}
+
+fn sample_test_acknowledgements(
+) -> preview_alternative_lib::secure_redaction::RedactionAcknowledgements {
+    preview_alternative_lib::secure_redaction::RedactionAcknowledgements {
+        schema_version: "1.0.0".to_string(),
+        rasterized_pages_accepted: true,
+        text_search_loss_accepted: true,
+        accessibility_loss_accepted: true,
+        annotation_loss_accepted: true,
+        form_loss_accepted: true,
+        signature_invalidation_accepted: true,
+        encryption_change_accepted: true,
+    }
 }

@@ -3,7 +3,7 @@ name = "preview-alternative"
 version = "0.1.0"
 description = "Fast macOS Preview alternative built with Tauri v2, Rust & Svelte"
 edition = "2021"
-
+default-run = "preview-alternative"
 [lib]
 name = "preview_alternative_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -11,6 +11,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 tracy = ["dep:tracy-client", "dep:tracing-tracy"]
+# Explicitly opt-in integration-test authority. This feature is never enabled
+# by the production build or Tauri runtime configuration.
+secure-redaction-test-support = []
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }

@@ -3,7 +3,7 @@
   "plan_version": "secure_redaction_plan_v1",
   "input_digest": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
   "content_generation": 0,
-  "plan_digest": "dffeeb396eda5448bc37a9901e02a42cd6c74eeb9f7db559d7b67642dbbd2cd3",
+  "plan_digest": "19bd0975c11c01f7cf1b9eccc910fc59cc03c342893b3583189c03ab016ff496",
   "policy": {
     "schema_version": "1.0.0",
     "profile": "secure_rasterized_pages_v1",

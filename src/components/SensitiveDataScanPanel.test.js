@@ -135,4 +135,24 @@ describe("SensitiveDataScanPanel", () => {
     expect(queryByText("Tümünü redaksiyona ekle")).toBeNull();
     expect(queryByText("Redaksiyonu Uygula")).toBeNull();
   });
+
+  it("offers explicit candidate promotion only for resolved geometry when gated runnable", async () => {
+    const onPromote = vi.fn();
+    const { getByText, queryAllByText } = render(SensitiveDataScanPanel, {
+      props: { scanState: state, onScan: onScanMock, canPromote: true, onPromote },
+    });
+    const resolved = {
+      pageIndex: 3, patternIndex: 0, textPreview: "resolved", geometryStatus: "resolved",
+      pageGeometry: validGeom, sourceRectsPdfPoints: [{ x: 10, y: 20, width: 50, height: 10 }], warnings: [],
+    };
+    state.beginScan(["TC"]);
+    state.completeScan({
+      schemaVersion: 2, truncated: false, warnings: [],
+      items: [resolved, { pageIndex: 4, patternIndex: 0, textPreview: "unresolved", geometryStatus: "unresolved", pageGeometry: null, sourceRectsPdfPoints: [], warnings: [] }],
+    }, {});
+    await tick();
+    expect(queryAllByText("Redaksiyon adayı olarak ekle")).toHaveLength(1);
+    await fireEvent.click(getByText("Redaksiyon adayı olarak ekle"));
+    expect(onPromote).toHaveBeenCalledWith(resolved);
+  });
 });

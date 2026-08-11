@@ -20,7 +20,12 @@ pub mod pdf_engine;
 pub mod plugins;
 pub mod prepress;
 pub mod redaction;
+pub mod sanitization;
+pub mod sanitization_inspection;
 pub mod secure_redaction;
+pub mod secure_redaction_inspection;
+pub mod secure_redaction_raster;
+pub mod secure_redaction_verifier;
 pub mod signature;
 pub mod worker;
 
@@ -971,7 +976,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_log::Builder::new().skip_logger().build())
         .manage(PasswordCache(password_cache))
         .manage(SearchCache(parking_lot::Mutex::new(lru::LruCache::new(
             std::num::NonZeroUsize::new(50).unwrap(),
@@ -1065,7 +1070,10 @@ pub fn run() {
             signature::sign_pdf_pades,
             signature::enable_ltv,
             redaction::apply_redactions,
+            redaction::plan_secure_redaction,
+            redaction::execute_secure_redaction,
             redaction::sanitize_pdf_document,
+            sanitization::inspect_document_sanitization,
             redaction::scan_sensitive_data,
             ocr::export_as_searchable_pdf,
             ai::build_semantic_index,

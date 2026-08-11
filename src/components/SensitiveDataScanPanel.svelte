@@ -2,7 +2,7 @@
   import FeatureNotice from "./FeatureNotice.svelte";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
 
-  let { scanState, onScan = () => {}, onNavigate = () => {} } = $props();
+  let { scanState, onScan = () => {}, onNavigate = () => {}, canPromote = false, onPromote = () => {} } = $props();
 
   const featureContext = getRuntimeFeatureContext();
   const scanPresentation = getFeaturePresentation("sensitive_data_scan", featureContext);
@@ -91,6 +91,13 @@
               <div class="item-type">{getCategoryLabel(item.patternIndex)}</div>
               <div class="item-text">{item.textPreview}</div>
               <div class="item-page">Kaynak sayfa {item.pageIndex + 1}</div>
+              {#if canPromote && item.geometryStatus === "resolved" && item.pageGeometry && item.sourceRectsPdfPoints?.length > 0}
+                <button
+                  type="button"
+                  class="promote-btn"
+                  onclick={(event) => { event.stopPropagation(); onPromote(item); }}
+                >Redaksiyon adayı olarak ekle</button>
+              {/if}
             </div>
           {/each}
         </div>
@@ -237,6 +244,16 @@
     text-transform: uppercase;
     font-weight: 600;
     margin-bottom: 4px;
+  }
+
+  .promote-btn {
+    margin-top: 7px;
+    border: 1px dashed #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    color: #fbbf24;
+    padding: 5px 7px;
+    cursor: pointer;
+    font-size: 11px;
   }
 
   .item-text {

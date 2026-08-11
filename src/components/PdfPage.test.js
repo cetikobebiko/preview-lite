@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import {
   getPageTextLayout,
@@ -143,6 +143,81 @@ afterEach(() => {
 });
 
 describe("PdfPage PDFium text layer", () => {
+  it("does not let a stale worker failure overwrite a newer successful render", async () => {
+    const oldRender = createDeferred();
+    const newRender = createDeferred();
+    renderPage
+      .mockImplementationOnce(() => oldRender.promise)
+      .mockImplementationOnce(() => newRender.promise);
+
+    const { container, rerender } = renderPdfPage({
+      props: {
+        sessionId: "test-document",
+        pageIndex: 0,
+        isSinglePageMode: true,
+        currentPage: 0,
+        documentGenerationId: 1,
+      },
+    });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
+
+    await rerender({ scale: 1.25 });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+    const newRequest = renderPage.mock.calls[1][0];
+    newRender.resolve({
+      ...renderedPage(newRequest.rotation),
+      pageIndex: newRequest.pageIndex,
+      generation: newRequest.contentGeneration,
+      requestId: newRequest.requestId,
+    });
+    await waitFor(() => expect(container.querySelector(".page-error")).toBeNull());
+
+    oldRender.reject(new Error("PDF worker restart budget was exhausted"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(container.querySelector(".page-error")).toBeNull();
+  });
+
+  it("clears a transient worker failure when a newer request succeeds", async () => {
+    const failedRender = createDeferred();
+    const recoveredRender = createDeferred();
+    renderPage
+      .mockImplementationOnce(() => failedRender.promise)
+      .mockImplementationOnce(() => recoveredRender.promise);
+
+    const { container, rerender } = renderPdfPage({
+      props: {
+        sessionId: "test-document",
+        pageIndex: 0,
+        isSinglePageMode: true,
+        currentPage: 0,
+        documentGenerationId: 1,
+      },
+    });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
+
+    failedRender.reject(new Error("PDF worker restart budget was exhausted"));
+    await waitFor(() => {
+      expect(container.querySelector(".page-error")?.textContent).toContain(
+        "PDF worker restart budget was exhausted",
+      );
+    });
+
+    await rerender({ scale: 1.25 });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+    expect(container.querySelector(".page-error")).toBeNull();
+    const recoveredRequest = renderPage.mock.calls[1][0];
+    recoveredRender.resolve({
+      ...renderedPage(recoveredRequest.rotation),
+      pageIndex: recoveredRequest.pageIndex,
+      generation: recoveredRequest.contentGeneration,
+      requestId: recoveredRequest.requestId,
+    });
+
+    await waitFor(() => expect(container.querySelector(".page-error")).toBeNull());
+  });
+
   it("PDFium sırasını koruyan güvenli span metni ve kontrollü boşluk üretir", async () => {
     getPageTextLayout.mockResolvedValue([
       { x: 0.1, y: 0.1, width: 0.2, height: 0.1, text: "<first&>" },
@@ -500,5 +575,77 @@ describe("PdfPage PDFium text layer", () => {
 
     // Synchronously check before render completes
     expect(container.querySelector(".review-highlight-layer")).toBeNull();
+  });
+});
+
+describe("PdfPage secure-redaction review selection", () => {
+  const pendingRegion = {
+    id: "region-1",
+    pageIndex: 0,
+    normalizedTopLeftRect: { x: 0.1, y: 0.2, width: 0.3, height: 0.25 },
+    source: "manual_selection",
+  };
+
+  it("does not install review interaction when selection mode is disabled", async () => {
+    const { container } = renderPdfPage({
+      props: {
+        sessionId: "test-document", pageIndex: 0, isSinglePageMode: true, currentPage: 0,
+        documentGenerationId: 1, secureRedactionEnabled: true,
+      },
+    });
+    await waitFor(() => expect(container.querySelector(".pdf-canvas")).not.toBeNull());
+    expect(container.querySelector(".pending-redaction-review-layer")).toBeNull();
+  });
+
+  it.each([
+    [0, { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }],
+    [90, { x: 0.2, y: 0.6, width: 0.4, height: 0.3 }],
+    [180, { x: 0.6, y: 0.4, width: 0.3, height: 0.4 }],
+    [270, { x: 0.4, y: 0.1, width: 0.4, height: 0.3 }],
+  ])("emits strict logical normalized rectangles at rotation %i", async (rotation, expected) => {
+    const onRedactionRegionSelected = vi.fn();
+    const { container } = renderPdfPage({
+      props: {
+        sessionId: "test-document", pageIndex: 4, isSinglePageMode: true, currentPage: 4,
+        documentGenerationId: 1, rotation, secureRedactionEnabled: true,
+        secureRedactionSelectionMode: true, onRedactionRegionSelected,
+      },
+    });
+    const layer = await waitFor(() => {
+      const element = container.querySelector(".pending-redaction-review-layer");
+      expect(element).not.toBeNull();
+      return element;
+    });
+    layer.getBoundingClientRect = () => ({ left: 0, top: 0, right: 200, bottom: 100, width: 200, height: 100, x: 0, y: 0, toJSON() {} });
+    await fireEvent.pointerDown(layer, { pointerId: 7, button: 0, clientX: 20, clientY: 20 });
+    await fireEvent.pointerMove(layer, { pointerId: 7, clientX: 80, clientY: 60 });
+    await fireEvent.pointerUp(layer, { pointerId: 7, button: 0, clientX: 80, clientY: 60 });
+    expect(onRedactionRegionSelected).toHaveBeenCalledTimes(1);
+    expect(onRedactionRegionSelected).toHaveBeenCalledWith({
+      pageIndex: 4,
+      normalizedTopLeftRect: expect.objectContaining(expected),
+    });
+  });
+
+  it("rejects tiny drags and presents pending regions as a dashed non-black review tint", async () => {
+    const callback = vi.fn();
+    const { container } = renderPdfPage({
+      props: {
+        sessionId: "test-document", pageIndex: 0, isSinglePageMode: true, currentPage: 0,
+        documentGenerationId: 1, secureRedactionEnabled: true, secureRedactionSelectionMode: true,
+        pendingRedactionRegions: [pendingRegion], onRedactionRegionSelected: callback,
+      },
+    });
+    const layer = await waitFor(() => container.querySelector(".pending-redaction-review-layer"));
+    layer.getBoundingClientRect = () => ({ left: 0, top: 0, right: 200, bottom: 100, width: 200, height: 100, x: 0, y: 0, toJSON() {} });
+    await fireEvent.pointerDown(layer, { pointerId: 2, button: 0, clientX: 10, clientY: 10 });
+    await fireEvent.pointerUp(layer, { pointerId: 2, button: 0, clientX: 11, clientY: 11 });
+    expect(callback).not.toHaveBeenCalled();
+    const region = layer.querySelector(".pending-redaction-region");
+    expect(region).not.toBeNull();
+    expect(region.textContent).toContain("PENDING");
+    expect(container.querySelector(".redaction-layer")).toBeNull();
+    const source = readFileSync(resolve(process.cwd(), "src/components/PdfPage.svelte"), "utf8");
+    expect(source).not.toMatch(/pending-redaction-region[^}]*background:\s*(?:#000|black|rgb\(0,\s*0,\s*0\))/s);
   });
 });

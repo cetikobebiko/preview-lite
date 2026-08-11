@@ -76,12 +76,15 @@ describe("Prompt 8B-1 — Redaction Preconditions & Capability Invariants", () =
 
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
     expect(manifest.version).toBe(1);
-    expect(manifest.fixtures.length).toBe(14);
+    expect(manifest.fixtures.length).toBe(26);
 
     const requiredFixtureIds = [
       "simple-text",
       "rotations",
+      "same-size-same-rotation-pages",
+      "mixed-secure-redaction-pages",
       "cropbox-mediabox-diff",
+      "explicit-print-boxes",
       "nonzero-origin",
       "negative-origin",
       "image-only",
@@ -93,6 +96,15 @@ describe("Prompt 8B-1 — Redaction Preconditions & Capability Invariants", () =
       "signature-marked-byterange",
       "incremental-revision",
       "object-stream",
+      "inherited-geometry",
+      "inherited-resources",
+      "embedded-files",
+      "non-js-openaction",
+      "js-action",
+      "stream-literal-prev",
+      "unresolved-acroform",
+      "unresolved-resources",
+      "whole-object-adversarial",
     ];
 
     const fixtureMap = new Map(manifest.fixtures.map((f) => [f.id, f]));

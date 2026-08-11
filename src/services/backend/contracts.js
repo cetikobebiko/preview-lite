@@ -102,6 +102,49 @@ const sanitizationOptions = objectOf({
   remove_hidden_layers: booleanType,
 });
 
+const redactionAppearancePolicyWire = objectOf({
+  kind: stringType,
+  color: stringType,
+  opacity: numberType,
+});
+
+const secureRedactionPolicyWire = objectOf({
+  schema_version: stringType,
+  profile: stringType,
+  strategy: stringType,
+  raster_dpi: u32Type,
+  appearance: redactionAppearancePolicyWire,
+  safety_margin_points: numberType,
+  interactive_content_policy: stringType,
+  signature_policy: stringType,
+  encryption_policy: stringType,
+});
+
+const redactionAcknowledgementsWire = objectOf({
+  schema_version: stringType,
+  rasterized_pages_accepted: booleanType,
+  text_search_loss_accepted: booleanType,
+  accessibility_loss_accepted: booleanType,
+  annotation_loss_accepted: booleanType,
+  form_loss_accepted: booleanType,
+  signature_invalidation_accepted: booleanType,
+  encryption_change_accepted: booleanType,
+});
+
+const normalizedTopLeftRectWire = objectOf({
+  x: numberType,
+  y: numberType,
+  width: numberType,
+  height: numberType,
+});
+
+const redactionRegionInputWire = objectOf({
+  id: stringType,
+  page_index: u32Type,
+  normalized_top_left_rect: normalizedTopLeftRectWire,
+  source: stringType,
+});
+
 const visualSignatureOptions = objectOf(
   {
     page_index: u32Type,
@@ -569,11 +612,35 @@ export const CONTRACTS = Object.freeze({
     outputPath: stringType,
     options: sanitizationOptions,
   }),
+  inspectDocumentSanitization: command("inspect_document_sanitization", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    policySchemaVersion: stringType,
+  }),
   scanSensitiveData: command("scan_sensitive_data", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     patterns: arrayOf(stringType),
+  }),
+  planSecureRedaction: command("plan_secure_redaction", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    policy: secureRedactionPolicyWire,
+    acknowledgements: redactionAcknowledgementsWire,
+    regions: arrayOf(redactionRegionInputWire),
+  }),
+  executeSecureRedaction: command("execute_secure_redaction", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    policy: secureRedactionPolicyWire,
+    acknowledgements: redactionAcknowledgementsWire,
+    regions: arrayOf(redactionRegionInputWire),
+    expectedPlanDigest: stringType,
+    targetPath: stringType,
   }),
 
   speakText: command(
@@ -613,7 +680,10 @@ export const PROTECTED_CONTRACT_IDS = Object.freeze([
   "deleteAnnotation",
   "savePdfWithAnnotations",
   "applyRedactions",
+  "planSecureRedaction",
+  "executeSecureRedaction",
   "sanitizePdfDocument",
+  "inspectDocumentSanitization",
   "scanSensitiveData",
   "listSystemCertificates",
   "signPdfPades",

@@ -106,13 +106,19 @@ değildir.
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
 | Sensitive-data scan & review highlight | `src/components/SensitiveDataScanPanel.svelte` | `redaction::scan_sensitive_data`; `redaction.rs` | `working` | Svelte 5 state store, controller, pure rotation selector, amber review highlight katmanı, async job cancel guard'ları. | OCR yapılmamış görsellerdeki metinleri bulmayabilir. | `src/stores/sensitiveDataScanState.test.js`, `src/services/app/sensitiveDataScanController.test.js`, `src/components/SensitiveDataScanPanel.test.js`, `src/components/PdfPage.test.js`. |
-| Secure Redaction (Kalıcı Silme) | `docs/engineering/redaction-capability-boundary.md` | `redaction::apply_redactions` | `FEATURE_UNAVAILABLE` | Mimaride açık sınır tanımlanmıştır; UI'dan ulaşılamaz; fail-closed `FEATURE_UNAVAILABLE` döndürür. | Görsel maskeleme redaksiyon yerine kullanılmaz. Kalıcı silme Prompt 8B kapsamındadır. | `src/uiFeatureWiring.test.js` (redaction callsite yokluğu doğrulanır). |
+| Secure Redaction (Kalıcı Silme) | `SecureRedactionPanel.svelte`; `secureRedactionState.svelte.js`; `secureRedactionController.js`; `PdfPage.svelte` review-selection | `redaction::plan_secure_redaction`; `redaction::execute_secure_redaction`; legacy `apply_redactions` fail-closed | `disabled` | 8B secure rasterized redaction pipeline ve kullanıcı workflow'u tamamlanmıştır: explicit pending-region → authoritative plan review → ayrı loss acknowledgements → re-plan → Save dialog → cancellable independent verification → digest-bound atomic publication. macOS arm64 runtime acceptance PASS'tir. | **Activation deferred:** advertised all-desktop platform kümesi için macOS x86_64, Windows ve Linux runtime certification çalıştırılmamıştır. Registry `enabled: false`, `status: disabled` kalır. Optional whole-object strategy NO-GO'dur ve etkin değildir; bu raster pipeline durumunu düşürmez. | Store/controller/component/rotation/selection/wiring/architecture testleri, backend contract/worker/atomic I/O testleri, feature-gated `secure_redaction_execution_acceptance` ve `whole_object_backend_characterization`. |
 
 ## Sanitization
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| PDF Sanitization (Metadüzeltme/Temizlik) | `docs/engineering/redaction-capability-boundary.md` | `redaction::sanitize_pdf_document` | `FEATURE_UNAVAILABLE` | Mimaride açık sınır tanımlanmıştır; UI'dan ulaşılamaz; fail-closed `FEATURE_UNAVAILABLE` döndürür. | Dezenfeksiyon Prompt 8B kapsamındadır. | Action/architecture guard testleri. |
+| PDF Sanitization (Metadüzeltme/Temizlik) | Read-only `SanitizationInspectionPanel.svelte`; dormant legacy `SanitizationDialog.svelte` | `sanitization::inspect_document_sanitization`; legacy `redaction::sanitize_pdf_document` fail-closed | `disabled` | 8C.2 session-native immutable-snapshot inspection pipeline, ephemeral bounded object/action/name-tree worker, strict typed report, JS normalizer, Runes state ve stale-safe controller uygulanmıştır. `sanitize_pdf_document` hâlâ `FEATURE_UNAVAILABLE`; `sanitization.status == disabled`, `enabled == false`. | Transform, bağımsız verification ve atomic publication uygulanmadı. XFA, RichMedia/multimedia, optional content, encrypted input ve imza minimum-profile blocker'ıdır. Inspection bütün aktif/gizli içerikleri kapsama garantisi vermez. Legacy broad booleans ve `_sanitized.pdf` inspection hattına bağlı değildir. | Rust contract/scanner/name-tree/action/metadata/embedded/XFA/encryption/signature/cancel tests; strict frontend schema/store/controller/component tests; `sanitizationArchitecture.test.js`; 16-fixture characterization corpus. |
+
+Terminoloji sınırı: **8A** sensitive-data detection ve geometry foundation'dır; **8B** yalnız kullanıcının açıkça seçtiği dikdörtgen bölgeler için destructive secure-redaction export'udur; **8C** document-wide sanitization, hidden payload ve metadata cleaning kapsamıdır.
+
+8C.1 yalnız capability characterization'dır. Candidate status production support
+anlamına gelmez; verified-limited assurance ancak bağımsız transform/verifier ve
+atomic publication kabulünden sonra mümkündür.
 
 ## Signature / PAdES
 
@@ -230,5 +236,5 @@ src/utils/textLayerUtils.test.js
 5. `apply_redactions` ve `sanitize_pdf_document` fail-closed `FEATURE_UNAVAILABLE` döndürür.
 6. Plugin permission enforcement kanıtlanmamıştır.
 7. Batch engine gerçek işleri yürütmez ve frontend status consumer'ı yoktur.
-8. Viewer PDFium yolları uzun ömürlü viewer worker’a; OCR/AI extraction/export/print preparation/prepress/sensitive scan ve snapshot validation yolları ayrı ephemeral job worker’a bağlıdır. Mock/disabled signature, redaction, sanitization, searchable-PDF ve PDF/X handler’ları parse öncesi `FEATURE_UNAVAILABLE` döndürür.
+8. Viewer PDFium yolları uzun ömürlü viewer worker’a; OCR/AI extraction/export/print preparation/prepress/sensitive scan, sanitization inspection ve snapshot validation yolları ayrı ephemeral job worker’a bağlıdır. Sanitization transform (`sanitize_pdf_document`) ile diğer mock/disabled signature, redaction, searchable-PDF ve PDF/X handler’ları parse öncesi `FEATURE_UNAVAILABLE` döndürür.
 9. Signature Settings ve Markdown notes export UI'ları gerçek persistence/write yapmadan başarı bildirir.

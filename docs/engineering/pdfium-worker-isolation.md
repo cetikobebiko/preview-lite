@@ -46,9 +46,12 @@ The active job-worker commands cover:
 - recovery snapshot validation and normal session-job snapshot validation;
 - sensitive-data scanning.
 
-Signature verification, PAdES signing, secure redaction, sanitization, searchable-PDF export, and
-PDF/X export are mock/disabled in the feature registry. Their backend handlers return
-`FEATURE_UNAVAILABLE` before `run_snapshot_job` or any PDF parser is reached. The obsolete raw
+Sanitization remains disabled for transform/publication, but its read-only
+`inspect_document_sanitization` command now uses an immutable session snapshot and the ephemeral
+`InspectDocumentSanitization` job worker. The Tauri process validates/routs the typed report and
+does not parse the PDF. Legacy `sanitize_pdf_document`, signature/PAdES execution,
+searchable-PDF export, and PDF/X export remain mock/disabled and return `FEATURE_UNAVAILABLE`
+before their transformation paths run. The obsolete raw
 annotation-burn and raw merge handlers are not registered.
 
 The job flow is:

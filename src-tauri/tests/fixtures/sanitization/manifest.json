@@ -1,0 +1,435 @@
+{
+  "schemaVersion": "sanitization-fixture-manifest/1",
+  "description": "Deterministic synthetic 8C.1 sanitization characterization corpus; never user data.",
+  "fixtures": [
+    {
+      "name": "clean-minimal.pdf",
+      "purpose": "Clean parser and PDFium reopen baseline",
+      "threatCategories": [],
+      "expectedInspection": [],
+      "candidateControls": [],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "none",
+      "futureTransformExpectation": "preserve",
+      "futureVerificationExpectation": "reopen and preserve invariants",
+      "notes": "No active-content findings.",
+      "sha256": "a7302175f2dfc0e019288c5ab4f536e8f18e4f88dfa59621e198271c43cef555",
+      "byteSize": 451
+    },
+    {
+      "name": "metadata-paths.pdf",
+      "purpose": "Info, XMP, page/object metadata, private data and ID",
+      "threatCategories": [
+        "document_info",
+        "xmp_metadata",
+        "object_metadata",
+        "document_identifier",
+        "private_application_data"
+      ],
+      "expectedInspection": [
+        "info",
+        "catalog_metadata",
+        "page_metadata",
+        "xobject_metadata",
+        "piece_info",
+        "document_id"
+      ],
+      "candidateControls": [
+        "document_info",
+        "xmp_metadata",
+        "object_metadata",
+        "document_identifier"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "metadata unavailable",
+      "futureTransformExpectation": "remove selected metadata paths",
+      "futureVerificationExpectation": "forbidden paths and fingerprints absent",
+      "notes": "Fixed dates and ID.",
+      "sha256": "9de594613615b87830567a8efbc72de3b250c692101b36be1b892922f2806002",
+      "byteSize": 1429
+    },
+    {
+      "name": "javascript-actions.pdf",
+      "purpose": "Document, page, annotation and form JavaScript representations",
+      "threatCategories": [
+        "document_javascript",
+        "additional_actions",
+        "form_actions"
+      ],
+      "expectedInspection": [
+        "names_javascript",
+        "open_action_javascript",
+        "catalog_aa",
+        "page_aa",
+        "annotation_action",
+        "widget_action",
+        "literal_hex_stream_payloads"
+      ],
+      "candidateControls": [
+        "document_javascript",
+        "additional_actions"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "scripts and form automation stop",
+      "futureTransformExpectation": "remove targeted actions while retaining Dests and fields",
+      "futureVerificationExpectation": "all action paths independently rescanned",
+      "notes": "Covers literal, hex and stream JS payloads.",
+      "sha256": "64adc4db5e4925a0ba231946eed5d7c79a9373fe28b10c46bd4fb689e5ee8c5b",
+      "byteSize": 1789
+    },
+    {
+      "name": "combined-names.pdf",
+      "purpose": "Dests, JavaScript and EmbeddedFiles sibling branches in one Names dictionary",
+      "threatCategories": [
+        "document_javascript",
+        "embedded_files"
+      ],
+      "expectedInspection": [
+        "names_dests",
+        "names_javascript",
+        "embedded_files_name_tree",
+        "sibling_preservation"
+      ],
+      "candidateControls": [
+        "document_javascript",
+        "embedded_files"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "scripts and attachments stop independently",
+      "futureTransformExpectation": "remove only the selected Names branch and prune detached payload",
+      "futureVerificationExpectation": "Dests and non-target siblings match the selected control",
+      "notes": "Executable selective-mutation evidence; the whole Names dictionary is retained.",
+      "sha256": "cd9d16018dabadda949137bb4d5a019cc3dbf41e9adca924f0e23f900b600c47",
+      "byteSize": 1086
+    },
+    {
+      "name": "openaction-destination.pdf",
+      "purpose": "Valid destination-shaped OpenAction negative control",
+      "threatCategories": [],
+      "expectedInspection": [
+        "open_action_destination_not_action"
+      ],
+      "candidateControls": [],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "none",
+      "futureTransformExpectation": "preserve",
+      "futureVerificationExpectation": "destination remains and no JavaScript finding",
+      "notes": "OpenAction is not always an action.",
+      "sha256": "f120326e287539eb30d43fcf7abab2154588b95b546b59c18959da6d87055eb5",
+      "byteSize": 475
+    },
+    {
+      "name": "action-chain-network.pdf",
+      "purpose": "Nested and cyclic Launch/network/action Next graph",
+      "threatCategories": [
+        "launch_actions",
+        "uri_actions",
+        "remote_navigation_actions",
+        "form_submission_actions"
+      ],
+      "expectedInspection": [
+        "launch",
+        "uri",
+        "goto_remote",
+        "goto_embedded",
+        "submit_form",
+        "import_data",
+        "next_array",
+        "cycle"
+      ],
+      "candidateControls": [
+        "launch_actions",
+        "uri_actions",
+        "remote_navigation_actions",
+        "form_submission_actions"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "external navigation and submission stop",
+      "futureTransformExpectation": "remove action edges and retain link when safe",
+      "futureVerificationExpectation": "bounded cycle-safe rescan",
+      "notes": "Local GoTo is intentionally absent.",
+      "sha256": "75dc5c5f923605389cbeac427532840995b00a9acef65c7ca0cc294f23e5f9e0",
+      "byteSize": 1187
+    },
+    {
+      "name": "embedded-files-af.pdf",
+      "purpose": "EmbeddedFiles name tree, EF/RF, Catalog/Page/Annotation/Structure AF and FileAttachment",
+      "threatCategories": [
+        "embedded_files",
+        "associated_files",
+        "file_attachment_annotations",
+        "portfolio"
+      ],
+      "expectedInspection": [
+        "embedded_files_name_tree",
+        "filespec",
+        "ef",
+        "rf",
+        "embedded_file_stream",
+        "catalog_af",
+        "page_af",
+        "annotation_af",
+        "structure_element_af",
+        "direct_filespec",
+        "indirect_filespec",
+        "file_attachment",
+        "collection"
+      ],
+      "candidateControls": [
+        "embedded_files",
+        "associated_files",
+        "file_attachment_annotations"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "attachments and portfolio behavior removed",
+      "futureTransformExpectation": "detach every owner edge then prune payload",
+      "futureVerificationExpectation": "paths, duplicate object IDs and embedded payload fingerprints absent",
+      "notes": "The same indirect FileSpec is shared across name-tree and four AF owners; Structure AF also has a direct FileSpec.",
+      "sha256": "8dfb09ffbe524f78090bf3b72c9d70db1f08b8148f0bd80e0430ef64cd6662e3",
+      "byteSize": 1502
+    },
+    {
+      "name": "xfa-single-stream.pdf",
+      "purpose": "XFA direct single indirect-stream reference representation",
+      "threatCategories": [
+        "xfa"
+      ],
+      "expectedInspection": [
+        "xfa_single_reference",
+        "xfa_stream"
+      ],
+      "candidateControls": [],
+      "blockingUnsupported": [
+        "xfa"
+      ],
+      "expectedVisualImpact": "possible visual and form loss",
+      "expectedFunctionalImpact": "dynamic form stops",
+      "futureTransformExpectation": "block; controlled edge removal is characterization only",
+      "futureVerificationExpectation": "blocking finding remains explicit",
+      "notes": "Single-stream reachability and pruning do not imply generic XFA support.",
+      "sha256": "3ebc2988855d0885d5aa2ee150303c6fd559651586ae27f2222645221bb7a57b",
+      "byteSize": 585
+    },
+    {
+      "name": "unsupported-active-content.pdf",
+      "purpose": "XFA array, optional content OCMD/annotation and multimedia blocker corpus",
+      "threatCategories": [
+        "xfa",
+        "optional_content",
+        "rich_media",
+        "rendition",
+        "multimedia"
+      ],
+      "expectedInspection": [
+        "xfa_array",
+        "xfa_streams",
+        "ocproperties",
+        "ocg",
+        "ocmd",
+        "marked_content",
+        "annotation_oc",
+        "rich_media",
+        "screen",
+        "movie",
+        "sound",
+        "3d",
+        "rendition"
+      ],
+      "candidateControls": [],
+      "blockingUnsupported": [
+        "xfa",
+        "optional_content",
+        "rich_media"
+      ],
+      "expectedVisualImpact": "possible visual and form loss",
+      "expectedFunctionalImpact": "dynamic forms, layers and multimedia may stop",
+      "futureTransformExpectation": "block; do not transform",
+      "futureVerificationExpectation": "blocking findings remain explicit",
+      "notes": "Removing OCProperties leaves marked content, OCMD and annotation OC reachable.",
+      "sha256": "80c381773d313ce29b0fd65fb10876d53735c80a837eb5296b9421bf2d0f5547",
+      "byteSize": 2083
+    },
+    {
+      "name": "incremental-revision.pdf",
+      "purpose": "Incremental history with old JavaScript and new metadata",
+      "threatCategories": [
+        "incremental_revisions",
+        "document_javascript",
+        "xmp_metadata"
+      ],
+      "expectedInspection": [
+        "prev",
+        "multiple_xref",
+        "old_revision_javascript",
+        "current_metadata"
+      ],
+      "candidateControls": [
+        "document_javascript",
+        "xmp_metadata"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "scripts and metadata removed",
+      "futureTransformExpectation": "remove references, prune, clear Prev and full-save",
+      "futureVerificationExpectation": "single rewrite with old marker absent",
+      "notes": "Two deterministic revisions.",
+      "sha256": "4b2d1b5222d7a9a052f5f32c710076dbaa6935dbbed23e39b64423e30234af9d",
+      "byteSize": 880
+    },
+    {
+      "name": "object-xref-stream.pdf",
+      "purpose": "Object stream and xref-stream parser capability",
+      "threatCategories": [
+        "object_stream",
+        "xref_stream",
+        "object_metadata"
+      ],
+      "expectedInspection": [
+        "compressed_object",
+        "xref_stream"
+      ],
+      "candidateControls": [
+        "object_metadata"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "metadata unavailable",
+      "futureTransformExpectation": "full rewrite may expand compressed objects",
+      "futureVerificationExpectation": "reopen and fingerprint scan",
+      "notes": "PDF 1.5.",
+      "sha256": "4684a538c93afd5681649cf20a4054f94a051a2dbf079aa97f23cbcf36c027a5",
+      "byteSize": 597
+    },
+    {
+      "name": "incremental-xref-stream-chain.pdf",
+      "purpose": "Two real incremental xref-stream revisions linked by Prev",
+      "threatCategories": [
+        "xref_stream",
+        "incremental_revisions",
+        "xmp_metadata"
+      ],
+      "expectedInspection": [
+        "xref_stream_chain",
+        "prev",
+        "latest_object_resolution",
+        "physical_old_revision"
+      ],
+      "candidateControls": [
+        "xmp_metadata"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "metadata unavailable",
+      "futureTransformExpectation": "remove selected edges, prune, normalize trailer and full-save",
+      "futureVerificationExpectation": "single rewrite, output-local xref and old marker absence",
+      "notes": "Revision two xref stream Prev points to revision one xref stream.",
+      "sha256": "1e5e54756b68600c29acb018533e4a11eb2a202f13cd81438226f34278be327c",
+      "byteSize": 939
+    },
+    {
+      "name": "hybrid-xref.pdf",
+      "purpose": "Hybrid-reference and incremental parser capability",
+      "threatCategories": [
+        "hybrid_xref",
+        "incremental_revisions",
+        "object_metadata"
+      ],
+      "expectedInspection": [
+        "xref_table",
+        "xref_stream",
+        "xrefstm",
+        "compressed_object",
+        "prev"
+      ],
+      "candidateControls": [
+        "object_metadata"
+      ],
+      "blockingUnsupported": [],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "metadata unavailable",
+      "futureTransformExpectation": "full rewrite to one canonical xref form",
+      "futureVerificationExpectation": "reopen with no Prev/XRefStm history",
+      "notes": "Hybrid fixture deliberately combines table and stream.",
+      "sha256": "e103c998ecd803e07f40a5c52c8e3e9fa8965166e5b4408d25cc022839fea6ff",
+      "byteSize": 937
+    },
+    {
+      "name": "encrypted.pdf",
+      "purpose": "Credential and encryption rewrite characterization",
+      "threatCategories": [
+        "encryption"
+      ],
+      "expectedInspection": [
+        "standard_security_handler",
+        "credential_required"
+      ],
+      "candidateControls": [],
+      "blockingUnsupported": [
+        "encrypted_input"
+      ],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "decrypted rewrite changes security semantics",
+      "futureTransformExpectation": "block production execution",
+      "futureVerificationExpectation": "no publication",
+      "notes": "Password is synthetic: fixture-password.",
+      "sha256": "3c959f1f678aeb45459f0d770583c17553fc143e7736281480de0f1d57ae622c",
+      "byteSize": 780
+    },
+    {
+      "name": "signature.pdf",
+      "purpose": "Signature, ByteRange, DocMDP and FieldMDP inspection",
+      "threatCategories": [
+        "digital_signatures"
+      ],
+      "expectedInspection": [
+        "signature_field",
+        "signature_dictionary",
+        "byte_range",
+        "doc_mdp",
+        "field_mdp"
+      ],
+      "candidateControls": [],
+      "blockingUnsupported": [
+        "signed_input_acknowledgement"
+      ],
+      "expectedVisualImpact": "none",
+      "expectedFunctionalImpact": "existing signatures invalidated by rewrite",
+      "futureTransformExpectation": "require explicit acknowledgement in future",
+      "futureVerificationExpectation": "signature facts independently rescanned",
+      "notes": "Cryptographic validity is not claimed.",
+      "sha256": "167a04767ed7865b4af4bdfa270fb7394dfa02b00a47352790f447bab088e50b",
+      "byteSize": 938
+    },
+    {
+      "name": "dangling-critical-references.pdf",
+      "purpose": "Reachable dangling action and EmbeddedFiles references",
+      "threatCategories": [
+        "malformed_graph",
+        "document_javascript",
+        "embedded_files"
+      ],
+      "expectedInspection": [
+        "unresolved_open_action",
+        "unresolved_embedded_files"
+      ],
+      "candidateControls": [],
+      "blockingUnsupported": [
+        "unresolved_critical_references"
+      ],
+      "expectedVisualImpact": "unknown",
+      "expectedFunctionalImpact": "unknown because graph is incomplete",
+      "futureTransformExpectation": "block before mutation",
+      "futureVerificationExpectation": "every critical reference must resolve",
+      "notes": "Parser-open success is not graph-completeness evidence.",
+      "sha256": "f2afe1262bab80d59ca4c0cd38d81acbb03be6de1d0f9b2fa336322eb8059a7b",
+      "byteSize": 504
+    }
+  ]
+}

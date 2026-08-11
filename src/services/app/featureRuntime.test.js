@@ -16,10 +16,17 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       reconcileContext: vi.fn(),
       destroy: vi.fn(),
     };
+    const secureRedactionControllerMock = {
+      start: vi.fn(), destroy: vi.fn(), plan: vi.fn(), execute: vi.fn(), cancelPlanning: vi.fn(),
+      cancelExecution: vi.fn(), reconcileContext: vi.fn(), addManualRegion: vi.fn(),
+      promoteSensitiveScanItem: vi.fn(), removeRegion: vi.fn(), clearRegions: vi.fn(),
+      updatePolicy: vi.fn(), setAcknowledgement: vi.fn(), setSelectionMode: vi.fn(), newRedaction: vi.fn(),
+    };
 
     const createExportController = vi.fn(() => ({ exportCurrentPageImage: vi.fn() }));
     const createSearchControllerMock = vi.fn(() => searchControllerMock);
     const createSensitiveScanControllerMock = vi.fn(() => sensitiveScanControllerMock);
+    const createSecureRedactionControllerMock = vi.fn(() => secureRedactionControllerMock);
 
     const exportActions = {
       exportPage: vi.fn(),
@@ -39,6 +46,7 @@ describe("featureRuntime lifecycle & façade assertions", () => {
         },
         reset: vi.fn(),
       },
+      secureRedactionState: { pendingRegions: [], reset: vi.fn() },
       ui: { openModal: vi.fn(), closeModal: vi.fn(), togglePanel: vi.fn(), setPanel: vi.fn(), panels: { sensitiveDataScan: true } },
       asyncPrompt: { request: vi.fn() },
       viewerRuntime: { navigation: { toggleBookMode: vi.fn(), resetZoom: vi.fn() }, render: vi.fn() },
@@ -51,6 +59,7 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       createExportController,
       createSearchController: createSearchControllerMock,
       createSensitiveDataScanController: createSensitiveScanControllerMock,
+      createSecureRedactionController: createSecureRedactionControllerMock,
       ...overrides,
     });
 
@@ -58,12 +67,13 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       runtime,
       searchControllerMock,
       sensitiveScanControllerMock,
+      secureRedactionControllerMock,
       createExportController,
     };
   }
 
-  it("calls searchController.start and sensitiveScanController.start exactly once when runtime.start() is invoked", () => {
-    const { runtime, searchControllerMock, sensitiveScanControllerMock } = setupTestRuntime();
+  it("starts search, sensitive scan, and secure redaction controllers", () => {
+    const { runtime, searchControllerMock, sensitiveScanControllerMock, secureRedactionControllerMock } = setupTestRuntime();
 
     expect(searchControllerMock.start).not.toHaveBeenCalled();
     expect(sensitiveScanControllerMock.start).not.toHaveBeenCalled();
@@ -72,15 +82,17 @@ describe("featureRuntime lifecycle & façade assertions", () => {
 
     expect(searchControllerMock.start).toHaveBeenCalledTimes(1);
     expect(sensitiveScanControllerMock.start).toHaveBeenCalledTimes(1);
+    expect(secureRedactionControllerMock.start).toHaveBeenCalledTimes(1);
   });
 
-  it("calls searchController.destroy and sensitiveScanController.destroy exactly once when runtime.destroy() is invoked", () => {
-    const { runtime, searchControllerMock, sensitiveScanControllerMock } = setupTestRuntime();
+  it("destroys search, sensitive scan, and secure redaction controllers", () => {
+    const { runtime, searchControllerMock, sensitiveScanControllerMock, secureRedactionControllerMock } = setupTestRuntime();
 
     runtime.destroy();
 
     expect(searchControllerMock.destroy).toHaveBeenCalledTimes(1);
     expect(sensitiveScanControllerMock.destroy).toHaveBeenCalledTimes(1);
+    expect(secureRedactionControllerMock.destroy).toHaveBeenCalledTimes(1);
   });
 
   it("delegates scanSensitiveData to sensitiveScanController.scan with exact pattern arguments", () => {
@@ -99,6 +111,14 @@ describe("featureRuntime lifecycle & façade assertions", () => {
     runtime.reconcileSensitiveDataContext();
 
     expect(sensitiveScanControllerMock.reconcileContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes a semantic secure-redaction façade and context reconciliation", () => {
+    const { runtime, secureRedactionControllerMock } = setupTestRuntime();
+    expect(runtime.secureRedaction).toBeDefined();
+    runtime.secureRedaction.reconcileContext();
+    expect(secureRedactionControllerMock.reconcileContext).toHaveBeenCalledTimes(1);
+    expect(runtime.secureRedactionController).toBeUndefined();
   });
 
   it("passes pageIndex and viewerRotation to highlight façade selector and returns logical highlights", () => {
