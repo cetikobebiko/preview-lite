@@ -85,6 +85,7 @@ pub struct WorkerLauncher {
     executable: PathBuf,
     arguments: Vec<OsString>,
     pdfium_path: Option<OsString>,
+    resolved_runtime_path: Option<PathBuf>,
 }
 
 impl WorkerLauncher {
@@ -95,10 +96,13 @@ impl WorkerLauncher {
                 format!("Worker executable could not be resolved: {error}"),
             )
         })?;
+        // Resolve the runtime path in the parent process to ensure main/worker parity
+        let resolved_runtime_path = crate::pdf_engine::resolve_runtime_path().ok();
         Ok(Self {
             executable,
             arguments: vec![OsString::from("--run-worker")],
             pdfium_path: std::env::var_os("PDFIUM_PATH"),
+            resolved_runtime_path,
         })
     }
 
@@ -108,6 +112,7 @@ impl WorkerLauncher {
             executable,
             arguments,
             pdfium_path: None,
+            resolved_runtime_path: None,
         }
     }
 }
@@ -1025,10 +1030,15 @@ impl PdfiumWorkerBroker {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        if let Some(path) = launcher
+        // Pass the pre-resolved absolute runtime path to the worker for main/worker parity.
+        // This avoids CWD/PATH divergence and ensures both processes load the exact same DLL.
+        if let Some(resolved_path) = &launcher.resolved_runtime_path {
+            command.env("PDFIUM_RESOLVED_PATH", resolved_path);
+        } else if let Some(path) = launcher
             .pdfium_path
             .or_else(|| std::env::var_os("PDFIUM_PATH"))
         {
+            // Fallback for tests or legacy: pass PDFIUM_PATH if resolved path not available
             command.env("PDFIUM_PATH", path);
         }
         let mut child = match command.spawn() {
@@ -1549,7 +1559,7 @@ fn required_capabilities() -> [WorkerCapability; 15] {
         WorkerCapability::GetMetadata,
         WorkerCapability::GetPageAnnotations,
         WorkerCapability::GetStructureTree,
-        WorkerCapability::ValidatePdfUa,
+        WorkerCapability::AuditAccessibility,
         WorkerCapability::Ping,
         WorkerCapability::Shutdown,
     ]

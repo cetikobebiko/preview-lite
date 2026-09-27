@@ -1,6 +1,5 @@
 <script>
   import PasswordModal from "./PasswordModal.svelte";
-  import PdfXWizard from "./PdfXWizard.svelte";
   import AsyncPromptDialog from "./AsyncPromptDialog.svelte";
 
   let {
@@ -9,10 +8,6 @@
     onPasswordSubmit,
     onPasswordCancel,
     asyncPrompt,
-    featureUi,
-    sessionId,
-    contentGeneration,
-    isLoadedPdfDocument,
   } = $props();
 
   let passwordAttempt = $derived(
@@ -44,15 +39,6 @@
 />
 
 <AsyncPromptDialog coordinator={asyncPrompt} />
-
-{#if ui.isModalOpen("pdf_x") && featureUi("pdf_x_export").visible}
-  <PdfXWizard
-    {sessionId}
-    {contentGeneration}
-    isDocumentReady={isLoadedPdfDocument}
-    on:close={() => ui.closeModal("pdf_x")}
-  />
-{/if}
 
 <style>
   .drag-overlay {

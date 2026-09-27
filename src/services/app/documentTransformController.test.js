@@ -7,16 +7,15 @@ function setup(overrides = {}) {
   };
   const guard = vi.fn(async (_feature, _runtime, action) => action());
   const merge = vi.fn(async () => undefined);
-  const sanitize = vi.fn(async () => undefined);
   const openDocument = vi.fn(async () => undefined);
   const onToast = vi.fn();
   const controller = createDocumentTransformController({
     getContext: () => ({ ...context }), openFile: vi.fn(async () => "/tmp/second.pdf"),
-    saveFile: vi.fn(async () => "/tmp/combined.pdf"), merge, sanitize,
+    saveFile: vi.fn(async () => "/tmp/combined.pdf"), merge,
     openDocument, guard, featureContext: {}, reportUnavailable: () => false,
     onToast, onError: vi.fn(), ...overrides,
   });
-  return { controller, context, guard, merge, sanitize, openDocument, onToast };
+  return { controller, context, guard, merge, openDocument, onToast };
 }
 
 describe("documentTransformController", () => {
@@ -33,10 +32,8 @@ describe("documentTransformController", () => {
     expect(controller.redact).toBeUndefined();
   });
 
-  it("captures sanitization options under the feature guard", async () => {
-    const { controller, sanitize, openDocument } = setup();
-    await controller.sanitizeDocument({ removeMetadata: true });
-    expect(sanitize).toHaveBeenCalledWith("session-a", 3, "/tmp/original_sanitized.pdf", { removeMetadata: true }, {});
-    expect(openDocument).toHaveBeenCalledWith("/tmp/original_sanitized.pdf");
+  it("does not own sanitization policy or output lifecycle", () => {
+    const { controller } = setup();
+    expect(controller.sanitizeDocument).toBeUndefined();
   });
 });

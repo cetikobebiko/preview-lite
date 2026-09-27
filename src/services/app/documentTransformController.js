@@ -1,6 +1,6 @@
 /** Coordinates guarded document transformations that create an output and may reopen it. */
 export function createDocumentTransformController({
-  getContext, openFile, saveFile, merge, sanitize, openDocument,
+  getContext, openFile, saveFile, merge, openDocument,
   guard, featureContext, reportUnavailable, onToast, onError,
 }) {
   function isCurrent(context) {
@@ -38,22 +38,5 @@ export function createDocumentTransformController({
     }
   }
 
-  async function sanitizeDocument(options) {
-    try { return await guard("sanitization", featureContext, () => executeSanitize(options)); }
-    catch (error) { if (!reportUnavailable(error)) throw error; }
-  }
-
-  async function executeSanitize(options) {
-    const context = getContext();
-    if (!context.path || !context.sessionId) return;
-    try {
-      const targetPath = context.path.replace(".pdf", "_sanitized.pdf");
-      await sanitize(context.sessionId, context.contentGeneration, targetPath, options, featureContext);
-      if (!isCurrent(context)) return;
-      onToast("Sınırlı temizleme çıktısı oluşturuldu; eksiksiz arındırma olarak kabul etmeyin.");
-      await openDocument(targetPath);
-    } catch (error) { onToast("Temizleme hatası: " + error); }
-  }
-
-  return Object.freeze({ mergePdf, sanitizeDocument });
+  return Object.freeze({ mergePdf });
 }

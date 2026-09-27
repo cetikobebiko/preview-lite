@@ -440,7 +440,6 @@ src/components/PdfPage.svelte
 src/components/PdfXWizard.svelte
 src/components/PluginManagerModal.svelte
 src/components/PrepressPanel.svelte
-src/components/ReadingOrderOverlay.svelte
 src/components/RedactionToolbar.svelte
 src/components/SanitizationDialog.svelte
 src/components/SearchBar.svelte
@@ -567,7 +566,6 @@ af39d37995d19021cea14b07f226fa18c6bb6fa0a44d66de76e231ddaf2c0b27  src/components
 8d7d109cd3b3b99ac02687961e17f34ce18e2b2222be4f1fa561561daab87e7f  src/components/PluginManagerModal.svelte
 3be4994e41e20255689ef58a0914d4955d162e687ab9604ac1c5b26e962d1e89  src/components/PrepressPanel.svelte
 366537aa13bba33181e460b4837e3af0e735fe75f0800c61346fe0bb07245b93  src/components/PrepressPanel.test.js
-d8721be642e4e96efdd47d6f8dd65213efcf27412473a3cca090a9dfd07ed97c  src/components/ReadingOrderOverlay.svelte
 cdb37829ae1f84582db7780a5813ef419de43095bb02c10b830c65612f0603e2  src/components/ReadingRuler.svelte
 cc1ba10a262d17ad0faef6152256d1d5f13e558831ce95556f4191e3ad0b5328  src/components/RedactionToolbar.svelte
 fccf0f6176151c4b60f74317039090dde8ca7f9ca9c89a7570e526ce1b717348  src/components/SanitizationDialog.svelte
@@ -671,7 +669,6 @@ Komut asıl repository'de, salt-okunur olarak çalıştırıldı:
 1 .A N... 000000 000000 100644 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 src/components/PdfXWizard.svelte
 1 .A N... 000000 000000 100644 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 src/components/PluginManagerModal.svelte
 1 .A N... 000000 000000 100644 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 src/components/PrepressPanel.svelte
-1 .A N... 000000 000000 100644 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 src/components/ReadingOrderOverlay.svelte
 1 .A N... 000000 000000 100644 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 src/components/RedactionToolbar.svelte
 1 .A N... 000000 000000 100644 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000 src/components/SanitizationDialog.svelte
 1 .M N... 100644 100644 100644 8210c76d5cbfe02f55fdd409009c5e4d26866c5f 8210c76d5cbfe02f55fdd409009c5e4d26866c5f src/components/SearchBar.svelte

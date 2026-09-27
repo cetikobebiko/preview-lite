@@ -1,0 +1,4352 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedFrom": {
+    "manifestPath": "src-tauri/tests/fixtures/corpus-manifest.json",
+    "corpusVersion": "1.0.0"
+  },
+  "description": "Canonical PDF Fixture Corpus Coverage and Traceability Matrix for Antigravity PDF Reader",
+  "unconsumedFixtureIds": [],
+  "traceabilityEdges": [
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_render_thumbnail_text",
+        "notes": "Direct render, thumbnail, and text extraction on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:worker_pdfium_integration::test_intrinsic_rotation_characterization_in_viewer_worker",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_rotation_render",
+        "notes": "Direct multi-angle rotation render verification on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-minimal",
+      "testId": "rust:worker_pdfium_integration::largest_practical_allowed_render_survives_worker_resource_envelope",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_max_dimension_render",
+        "notes": "Direct large dimension render envelope verification on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-encrypted",
+      "testId": "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_auth_rejection",
+        "notes": "Direct authentication rejection on encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-malformed",
+      "testId": "rust:crash_tests::committed_malformed_fixture_returns_typed_error_without_parent_crash",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "malformed",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/crash_tests.rs",
+        "verificationType": "worker_error_recovery",
+        "notes": "Direct crash-free typed error return on malformed.pdf"
+      }
+    },
+    {
+      "featureId": "search",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_text_search",
+        "notes": "Direct page search query execution on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "annotation",
+      "fixtureId": "core-annotations",
+      "testId": "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/annotations.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct annotation mutation and atomic save on annotations.pdf"
+      }
+    },
+    {
+      "featureId": "annotation",
+      "fixtureId": "core-annotations",
+      "testId": "rust_unit:annotations::document_io_invalid_annotation_type_preserves_original_bytes",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/annotations.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct invalid annotation type rejection on annotations.pdf"
+      }
+    },
+    {
+      "featureId": "annotation",
+      "fixtureId": "core-annotations",
+      "testId": "rust_unit:annotations::document_io_invalid_annotation_id_preserves_original_bytes",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/annotations.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct invalid annotation id rejection on annotations.pdf"
+      }
+    },
+    {
+      "featureId": "annotation",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_annotation_read",
+        "notes": "Direct page annotation reading verification on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "annotation",
+      "fixtureId": "core-reorder-with-metadata",
+      "testId": "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_annotation_read",
+        "notes": "Direct page annotation inspection on reorder-with-metadata.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:manipulation::document_io_rotate_page_commits_valid_pdf",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct page rotation on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:manipulation::document_io_insert_blank_page_validates_media_box",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct blank page insertion validation on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:manipulation::document_io_merge_validates_total_page_count",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct merge validation on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:manipulation::document_io_rejects_encrypted_mutation_without_changing_bytes",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct encrypted mutation rejection on encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust_unit:manipulation::document_io_delete_pages_preflights_and_preserves_invalid_source",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct page deletion on three-distinct-pages.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust_unit:manipulation::document_io_merge_validates_total_page_count",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct merge validation on three-distinct-pages.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust_unit:manipulation::document_io_reorder_modes_preserve_full_and_subset_contracts",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct full and subset reorder verification on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:document_io_pdfium::reorder_full_and_subset_preserve_text_rotation_and_annotations",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct integration reorder verification on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-form",
+      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct fail-closed rejection of unpreserved form fields on reorder-with-form.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-form",
+      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct integration rejection of unpreserved form fields on reorder-with-form.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-metadata",
+      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct fail-closed rejection of unpreserved metadata on reorder-with-metadata.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-metadata",
+      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct integration rejection of unpreserved metadata on reorder-with-metadata.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-named-destination",
+      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct fail-closed rejection of unpreserved named destinations on reorder-with-named-destination.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-named-destination",
+      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct integration rejection of unpreserved named destinations on reorder-with-named-destination.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-outline",
+      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct fail-closed rejection of unpreserved outline tree on reorder-with-outline.pdf"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-with-outline",
+      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct integration rejection of unpreserved outline tree on reorder-with-outline.pdf"
+      }
+    },
+    {
+      "featureId": "ocr",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:document_session::ocr_command_helper_rejects_stale_generation",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct OCR generation check on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "ocr",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:document_session::ocr_detection_uses_snapshot_credential_for_encrypted_pdf",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "encrypted",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct OCR encrypted credential resolution on encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "local_ai",
+      "fixtureId": "core-ai-text-rich",
+      "testId": "rust_unit:ai::security_acceptance_tests::test_ai_text_rich_fixture_sanity",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ai/security_acceptance_tests.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct text extraction sanity on ai-text-rich.pdf"
+      }
+    },
+    {
+      "featureId": "local_ai",
+      "fixtureId": "core-ai-text-rich",
+      "testId": "rust_unit:ai::security_acceptance_tests::test_security_c4_cancelled_index_build_publishes_nothing",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ai/security_acceptance_tests.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct cancelled index build security verification on ai-text-rich.pdf"
+      }
+    },
+    {
+      "featureId": "sensitive_data_scan",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:redaction::test_scan_sensitive_file_minimal_pdf_no_match",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/redaction.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct sensitive regex scanning on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "sensitive_data_scan",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:redaction::test_scan_sensitive_file_encrypted_pdf_valid_credential",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/redaction.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct sensitive regex scanning on encrypted.pdf with password"
+      }
+    },
+    {
+      "featureId": "sensitive_data_scan",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:redaction::test_scan_sensitive_file_encrypted_pdf_invalid_or_missing_credential",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/redaction.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct sensitive scan rejection on encrypted.pdf without password"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-acroform-widget",
+      "testId": "rust:secure_redaction_raster_primitives::test_55_acroform_widget_blocked_full_plan",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct AcroForm blocker verification on acroform-widget.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-annotations-fixture",
+      "testId": "rust:secure_redaction_raster_primitives::test_54_annotation_fixture_do_not_render",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct annotation exclusion verification on annotations-fixture.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-cropbox-mediabox-diff",
+      "testId": "rust:secure_redaction_raster_primitives::test_17_cropbox_mapping",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct CropBox mapping on cropbox-mediabox-diff.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-cropbox-mediabox-diff",
+      "testId": "rust:job_worker_process::secure_redaction_worker_round_trips_crop_and_nonzero_origins",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct worker roundtrip on cropbox-mediabox-diff.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-embedded-files",
+      "testId": "rust:secure_redaction_planning_worker::test_embedded_files_fixture_inspection",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct embedded file detection on embedded-files.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-encrypted-redaction",
+      "testId": "rust:secure_redaction_raster_primitives::test_60_encrypted_fixture_raster_blocked",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct encryption blocker verification on encrypted-redaction.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-explicit-print-boxes",
+      "testId": "rust:job_worker_process::secure_redaction_explicit_print_boxes_pass_separate_verifier_when_supported",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct verifier check on explicit-print-boxes.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-explicit-print-boxes",
+      "testId": "rust:job_worker_process::secure_redaction_worker_round_trips_crop_and_nonzero_origins",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct worker roundtrip on explicit-print-boxes.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-image-only",
+      "testId": "rust:secure_redaction_raster_primitives::test_39_opaque_output_alpha_after_white_background_clear",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct image-only redaction on image-only.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-image-only",
+      "testId": "rust:whole_object_backend_characterization::top_level_image_removal_prunes_source_image_resource_and_payload",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/whole_object_backend_characterization.rs",
+        "verificationType": "backend_characterization",
+        "notes": "Direct whole-object image pruning on image-only.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-incremental-revision",
+      "testId": "rust:redaction_fixtures_and_capabilities::test_semantic_fixture_corpus_assertions",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/redaction_fixtures_and_capabilities.rs",
+        "verificationType": "fixture_corpus_assertion",
+        "notes": "Direct semantic assertion on redaction incremental-revision.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-incremental-revision",
+      "testId": "rust:secure_redaction_planning_worker::test_incremental_revision_fixture_inspection",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct planning worker inspection on redaction incremental-revision.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-inherited-geometry",
+      "testId": "rust:secure_redaction_planning_worker::test_inherited_geometry_fixture_inspection",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct inherited geometry inspection on inherited-geometry.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-inherited-resources",
+      "testId": "rust:secure_redaction_planning_worker::test_inherited_resources_fixture_inspection",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct inherited resources inspection on inherited-resources.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-js-action",
+      "testId": "rust:secure_redaction_planning_worker::test_js_action_fixture_inspection",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct JS action inspection on js-action.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-mixed-secure-redaction-pages",
+      "testId": "rust:job_worker_process::secure_redaction_worker_mixes_rasterized_and_imported_pages_in_one_artifact",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct mixed-page worker execution on mixed-secure-redaction-pages.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-negative-origin",
+      "testId": "rust:secure_redaction_raster_primitives::test_19_negative_origin_mapping",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct negative origin mapping on negative-origin.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-negative-origin",
+      "testId": "rust:job_worker_process::secure_redaction_worker_round_trips_crop_and_nonzero_origins",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct worker roundtrip on negative-origin.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-non-js-openaction",
+      "testId": "rust:secure_redaction_planning_worker::test_non_js_openaction_fixture_inspection",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct non-JS OpenAction inspection on non-js-openaction.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-nonzero-origin",
+      "testId": "rust:secure_redaction_raster_primitives::test_18_nonzero_origin_mapping",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct non-zero origin mapping on nonzero-origin.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-nonzero-origin",
+      "testId": "rust:job_worker_process::secure_redaction_worker_round_trips_crop_and_nonzero_origins",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct worker roundtrip on nonzero-origin.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-object-stream",
+      "testId": "rust:redaction_fixtures_and_capabilities::test_semantic_fixture_corpus_assertions",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/redaction_fixtures_and_capabilities.rs",
+        "verificationType": "fixture_corpus_assertion",
+        "notes": "Direct semantic assertion on object-stream.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-rotations",
+      "testId": "rust:secure_redaction_raster_primitives::test_13_rotation_0_mapping",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct rotation mapping on rotations.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-rotations",
+      "testId": "rust:job_worker_process::secure_redaction_worker_round_trips_rotated_page_geometry",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct worker roundtrip on rotations.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-same-size-same-rotation-pages",
+      "testId": "rust:secure_redaction_raster_primitives::test_63_document_bound_page_identity_uses_exact_page_index",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct page identity verification on same-size-same-rotation-pages.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-signature-marked-byterange",
+      "testId": "rust:secure_redaction_raster_primitives::test_61_signed_fixture_raster_blocked",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct signature blocker verification on signature-marked-byterange.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-simple-text",
+      "testId": "rust:secure_redaction_execution_acceptance::existing_target_is_atomically_replaced_with_verified_bytes",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_execution_acceptance.rs",
+        "verificationType": "acceptance_test",
+        "notes": "Direct execution acceptance on simple-text.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-simple-text",
+      "testId": "rust:job_worker_process::secure_redaction_object_bounds_observation_passes_representative_dpis",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Direct worker observation on simple-text.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-stream-literal-prev",
+      "testId": "rust:secure_redaction_planning_worker::test_stream_literal_prev_false_positive_resistance",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct stream literal /Prev false-positive check on stream-literal-prev.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-text-image",
+      "testId": "rust:secure_redaction_raster_primitives::test_56_text_image_rasterization",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct text and image rasterization on text-image.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-unresolved-acroform",
+      "testId": "rust:secure_redaction_planning_worker::test_unresolved_acroform_produces_xfa_unknown",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct unresolved AcroForm inspection on unresolved-acroform.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-unresolved-resources",
+      "testId": "rust:secure_redaction_planning_worker::test_unresolved_resources_produces_unknown_facts",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs",
+        "verificationType": "planning_worker_test",
+        "notes": "Direct unresolved resources inspection on unresolved-resources.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-whole-object-adversarial",
+      "testId": "rust:whole_object_backend_characterization::adversarial_fixture_characterizes_bounds_and_form_enumeration",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/whole_object_backend_characterization.rs",
+        "verificationType": "backend_characterization",
+        "notes": "Direct adversarial characterization on whole-object-adversarial.pdf"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-xfa-fixture",
+      "testId": "rust:secure_redaction_raster_primitives::test_62_xfa_fixture_raster_blocked",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct XFA blocker verification on xfa-fixture.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-action-chain-network",
+      "testId": "rust:sanitization_capabilities::action_chain_traversal_is_type_aware_bounded_and_cycle_safe",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct action chain traversal on action-chain-network.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-action-chain-network",
+      "testId": "rust_unit:sanitization_inspection::action_chain_is_typed_cycle_safe_and_local_goto_is_not_remote",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct action chain inspection on action-chain-network.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-action-chain-network",
+      "testId": "rust_unit:sanitization_transform::targeted_action_types_remove_nested_next_but_local_goto_is_preserved",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct action chain transform on action-chain-network.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-clean-minimal",
+      "testId": "rust:sanitization_capabilities::pdfium_reopens_renders_and_reports_basic_facts_without_object_mutation_authority",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct clean fixture baseline on clean-minimal.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-clean-minimal",
+      "testId": "rust_unit:sanitization_inspection::clean_fixture_is_strict_and_has_no_supported_findings",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct clean fixture inspection on clean-minimal.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-clean-minimal",
+      "testId": "rust_unit:sanitization_transform::parent_rejects_transform_report_not_exactly_bound_to_request_policy",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct clean transform validation on clean-minimal.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-clean-minimal",
+      "testId": "rust:sanitization_inspection_acceptance::transform_real_process_success_is_private_until_terminal_cleanup",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_inspection_acceptance.rs",
+        "verificationType": "acceptance_test",
+        "notes": "Direct private transform acceptance on clean-minimal.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-combined-names",
+      "testId": "rust:sanitization_capabilities::names_tree_branches_are_independently_addressable_and_dests_survive",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct names tree capability test on combined-names.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-combined-names",
+      "testId": "rust_unit:sanitization_transform::names_mutation_is_branch_specific_and_prunes_payload",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct names tree branch pruning on combined-names.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-dangling-critical-references",
+      "testId": "rust:sanitization_capabilities::reachable_dangling_critical_references_open_but_block_graph_completeness",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct dangling reference handling on dangling-critical-references.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-embedded-files-af",
+      "testId": "rust:sanitization_capabilities::embedded_file_edges_payload_and_privacy_metadata_are_observable",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct embedded file observation on embedded-files-af.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-embedded-files-af",
+      "testId": "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct embedded file inspection on embedded-files-af.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-embedded-files-af",
+      "testId": "rust_unit:sanitization_transform::embedded_owner_edges_and_file_attachment_are_pruned_together",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct embedded file pruning on embedded-files-af.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-embedded-files-af",
+      "testId": "rust_unit:sanitization_verifier::reintroduced_embedded_stream_is_found_even_when_transform_claims_success",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_verifier.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct embedded stream verifier check on embedded-files-af.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-encrypted",
+      "testId": "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct encryption detection on sanitization encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-encrypted",
+      "testId": "rust_unit:sanitization_transform::unsupported_content_and_encryption_fail_without_artifact",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct encrypted transform blocker on sanitization encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-encrypted",
+      "testId": "rust:sanitization_inspection_acceptance::crash_and_timeout_are_typed_cleaned_credential_safe_and_session_neutral",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_inspection_acceptance.rs",
+        "verificationType": "acceptance_test",
+        "notes": "Direct encrypted inspection acceptance on sanitization encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-hybrid-xref",
+      "testId": "rust:sanitization_capabilities::parser_supports_classic_incremental_object_xref_and_hybrid_inputs",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct hybrid xref parsing on hybrid-xref.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-hybrid-xref",
+      "testId": "rust_unit:sanitization_verifier::incremental_object_stream_and_xref_stream_inputs_verify_as_single_full_rewrites",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "malformed",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_verifier.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct hybrid xref verification on hybrid-xref.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-incremental-revision",
+      "testId": "rust:sanitization_capabilities::parser_supports_classic_incremental_object_xref_and_hybrid_inputs",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct incremental revision parsing on sanitization incremental-revision.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-incremental-revision",
+      "testId": "rust_unit:sanitization_transform::incremental_history_is_not_serialized",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct incremental history removal on sanitization incremental-revision.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-incremental-revision",
+      "testId": "rust_unit:sanitization_verifier::incremental_object_stream_and_xref_stream_inputs_verify_as_single_full_rewrites",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_verifier.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct incremental revision rewrite verification on sanitization incremental-revision.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-incremental-xref-stream-chain",
+      "testId": "rust:sanitization_capabilities::incremental_xref_stream_chain_parses_latest_graph_and_retains_physical_history",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct xref stream chain parsing on incremental-xref-stream-chain.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-incremental-xref-stream-chain",
+      "testId": "rust_unit:sanitization_transform::object_and_xref_stream_inputs_are_rewritten_and_reopened",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct xref stream chain full rewrite on incremental-xref-stream-chain.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-incremental-xref-stream-chain",
+      "testId": "rust_unit:sanitization_verifier::incremental_object_stream_and_xref_stream_inputs_verify_as_single_full_rewrites",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_verifier.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct xref stream chain verification on incremental-xref-stream-chain.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-javascript-actions",
+      "testId": "rust:sanitization_capabilities::parser_supports_classic_incremental_object_xref_and_hybrid_inputs",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct JavaScript actions capability test on javascript-actions.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-javascript-actions",
+      "testId": "rust_unit:sanitization_inspection::javascript_paths_and_destination_negative_control_are_classified",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct JavaScript actions inspection on javascript-actions.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-javascript-actions",
+      "testId": "rust_unit:sanitization_transform::form_and_annotation_action_removal_preserves_fields_and_widgets",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct JavaScript actions removal on javascript-actions.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-metadata-paths",
+      "testId": "rust:sanitization_capabilities::metadata_paths_and_document_identifier_are_observable_separately",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct metadata paths capability test on metadata-paths.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-metadata-paths",
+      "testId": "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct metadata paths inspection on metadata-paths.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-metadata-paths",
+      "testId": "rust_unit:sanitization_transform::metadata_scopes_are_targeted_and_full_rewrite_reopens",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct metadata scope sanitization on metadata-paths.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-object-xref-stream",
+      "testId": "rust:sanitization_capabilities::parser_supports_classic_incremental_object_xref_and_hybrid_inputs",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct object stream parsing on object-xref-stream.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-object-xref-stream",
+      "testId": "rust_unit:sanitization_transform::object_and_xref_stream_inputs_are_rewritten_and_reopened",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct object stream rewrite on object-xref-stream.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-object-xref-stream",
+      "testId": "rust_unit:sanitization_verifier::incremental_object_stream_and_xref_stream_inputs_verify_as_single_full_rewrites",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_verifier.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct object stream verification on object-xref-stream.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-openaction-destination",
+      "testId": "rust:sanitization_capabilities::action_chain_traversal_is_type_aware_bounded_and_cycle_safe",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct OpenAction destination capability test on openaction-destination.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-openaction-destination",
+      "testId": "rust_unit:sanitization_inspection::javascript_paths_and_destination_negative_control_are_classified",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct OpenAction destination inspection on openaction-destination.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-openaction-destination",
+      "testId": "rust_unit:sanitization_transform::open_action_destination_is_preserved",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct OpenAction destination preservation on openaction-destination.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-signature",
+      "testId": "rust:sanitization_capabilities::signature_byte_range_docmdp_and_fieldmdp_are_structurally_visible",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct signature structural visibility on sanitization signature.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-signature",
+      "testId": "rust_unit:sanitization_transform::signed_input_requires_explicit_acknowledgement_and_reports_invalidation",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct signature invalidation acknowledgement on sanitization signature.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-signature",
+      "testId": "rust_unit:sanitization_verifier::acknowledged_signature_invalidation_remains_a_valid_transform_path",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_verifier.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct signature verification invalidation on sanitization signature.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-unsupported-active-content",
+      "testId": "rust:sanitization_capabilities::unsupported_xfa_optional_content_and_multimedia_paths_are_detectable",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct active content detection on unsupported-active-content.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-unsupported-active-content",
+      "testId": "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_inspection.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct active content inspection on unsupported-active-content.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-unsupported-active-content",
+      "testId": "rust_unit:sanitization_transform::unsupported_content_and_encryption_fail_without_artifact",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/sanitization_transform.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct active content blocker on unsupported-active-content.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-unsupported-active-content",
+      "testId": "rust:sanitization_inspection_acceptance::traversal_and_decode_cancellation_are_cancelled_not_failed_and_reaped",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_inspection_acceptance.rs",
+        "verificationType": "acceptance_test",
+        "notes": "Direct active content cancellation acceptance on unsupported-active-content.pdf"
+      }
+    },
+    {
+      "featureId": "sanitization",
+      "fixtureId": "sanitization-xfa-single-stream",
+      "testId": "rust:sanitization_capabilities::xfa_single_reference_resolves_stream_and_prunes_after_edge_removal",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct XFA single stream pruning on xfa-single-stream.pdf"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "sanitization-signature",
+      "testId": "rust:sanitization_capabilities::signature_byte_range_docmdp_and_fieldmdp_are_structurally_visible",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_capabilities.rs",
+        "verificationType": "capability_test",
+        "notes": "Direct structural signature validation on sanitization signature.pdf"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "redaction-signature-marked-byterange",
+      "testId": "rust:secure_redaction_raster_primitives::test_61_signed_fixture_raster_blocked",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Direct signed byte range detection on signature-marked-byterange.pdf"
+      }
+    },
+    {
+      "featureId": "basic_accessibility_audit",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:a11y::audit_never_returns_a_score_or_a_conformance_claim",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/a11y.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Indirect accessibility audit via minimal_document() loading minimal.pdf"
+      }
+    },
+    {
+      "featureId": "basic_accessibility_audit",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:a11y::untagged_document_returns_a_bounded_inspection_instead_of_an_error",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/a11y.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Indirect structure inspection via minimal_document() loading minimal.pdf"
+      }
+    },
+    {
+      "featureId": "print_resource_inspection",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:document_session::print_resource_inspection_runs_in_session_job_worker_with_authoritative_identity",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct print resource inspection on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "rgb_derived_print_preview",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:document_session::encrypted_rgb_derived_previews_use_snapshot_credential",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "encrypted",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Indirect RGB print resource analysis on encrypted.pdf via open_encrypted_test_session"
+      }
+    },
+    {
+      "featureId": "form_editing",
+      "fixtureId": "core-reorder-with-form",
+      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct form field preservation rejection on reorder-with-form.pdf"
+      }
+    },
+    {
+      "featureId": "form_editing",
+      "fixtureId": "core-reorder-with-form",
+      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct integration rejection of form fields on reorder-with-form.pdf"
+      }
+    },
+    {
+      "featureId": "document_open_lifecycle",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:document_session::two_sessions_are_isolated_and_discard_removes_only_working_copy",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct session isolation and lifecycle open on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "document_open_lifecycle",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:document_session::pdf_validation_distinguishes_encrypted_wrong_password_and_corrupt_files",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct encrypted password lifecycle validation on encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "document_open_lifecycle",
+      "fixtureId": "core-encrypted",
+      "testId": "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "encrypted",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_auth_rejection",
+        "notes": "Direct failed authentication open lifecycle on encrypted.pdf"
+      }
+    },
+    {
+      "featureId": "document_open_lifecycle",
+      "fixtureId": "core-malformed",
+      "testId": "rust:crash_tests::committed_malformed_fixture_returns_typed_error_without_parent_crash",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "malformed",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/crash_tests.rs",
+        "verificationType": "worker_error_recovery",
+        "notes": "Direct malformed error handling on malformed.pdf"
+      }
+    },
+    {
+      "featureId": "document_open_lifecycle",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:session_worker_integration::production_session_commands_use_worker_identity_and_preserve_frontend_contracts",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/session_worker_integration.rs",
+        "verificationType": "session_worker_test",
+        "notes": "Direct production session open on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "document_open_lifecycle",
+      "fixtureId": "core-reorder-with-metadata",
+      "testId": "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_document_open",
+        "notes": "Direct worker-owned document open on reorder-with-metadata.pdf"
+      }
+    },
+    {
+      "featureId": "document_open_lifecycle",
+      "fixtureId": "core-reorder-with-outline",
+      "testId": "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_document_open",
+        "notes": "Direct worker-owned outline open on reorder-with-outline.pdf"
+      }
+    },
+    {
+      "featureId": "atomic_save_persistence",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:document_session::open_mutate_save_preserves_original_until_commit_and_cleans_dirty",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct atomic mutate-save-commit lifecycle on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "atomic_save_persistence",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:document_session::isolated_mutation_validates_before_atomic_commit_and_advances_generation",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct generation-advancing atomic mutation on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "atomic_save_persistence",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:document_session::clean_save_and_canonical_same_target_save_as_are_identical_no_ops",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct canonical same-target save-as on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "atomic_save_persistence",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:manipulation::document_io_rotate_page_commits_valid_pdf",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/manipulation.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct atomic disk write on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "atomic_save_persistence",
+      "fixtureId": "core-annotations",
+      "testId": "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/annotations.rs",
+        "verificationType": "unit_assertion",
+        "notes": "Direct atomic annotation save on annotations.pdf"
+      }
+    },
+    {
+      "featureId": "worker_broker_isolation",
+      "fixtureId": "core-minimal",
+      "testId": "rust:crash_tests::forced_worker_kill_preserves_parent_and_allows_lazy_reopen",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/crash_tests.rs",
+        "verificationType": "crash_recovery_test",
+        "notes": "Direct child worker crash and lazy reopen on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "worker_broker_isolation",
+      "fixtureId": "core-minimal",
+      "testId": "rust:session_worker_integration::test_mutation_failure_triggers_worker_lazy_reopen",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/session_worker_integration.rs",
+        "verificationType": "session_worker_test",
+        "notes": "Direct mutation failure lazy reopen on minimal.pdf"
+      }
+    },
+    {
+      "featureId": "worker_broker_isolation",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_isolation_test",
+        "notes": "Direct out-of-process isolation verification on reorder-rich.pdf"
+      }
+    },
+    {
+      "featureId": "release_smoke_verification",
+      "fixtureId": "core-release-smoke",
+      "testId": "rust:worker_pdfium_integration::release_smoke_document_opens_with_expected_page_count_and_text_tokens",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_document_open_and_search",
+        "notes": "Opens release-smoke.pdf via worker broker, verifies 2-page count and text token search for ALPHA and Beta tokens"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-large-page-dimensions",
+      "testId": "rust:worker_pdfium_integration::large_page_dimensions_document_opens_with_bounded_geometry",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_document_open_and_search",
+        "notes": "Opens large-page-dimensions.pdf via worker broker, verifies 1-page count, text search, and accessibility audit without large bitmap render"
+      }
+    },
+    {
+      "featureId": "fuzz_pdf_parser",
+      "fixtureId": "fuzz-minimal",
+      "testId": "rust:crash_tests::fuzz_seed_minimal_opens_without_crash_and_returns_bounded_result",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/crash_tests.rs",
+        "verificationType": "worker_open_bounded_result",
+        "notes": "Opens fuzz-minimal.pdf seed via worker broker; asserts bounded result (open succeeds with page_count >= 1 or typed error code) without crash"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-release-smoke",
+      "testId": "rust:b4_integration_gaps::b4_viewer_unicode_extraction_preserves_turkish_tokens",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct PDFium text extraction unicode CMap verification on release-smoke.pdf Turkish tokens"
+      }
+    },
+    {
+      "featureId": "search",
+      "fixtureId": "core-release-smoke",
+      "testId": "rust:b4_integration_gaps::b4_search_unicode_normalized_query_finds_turkish_tokens",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct NFKC normalized search over release-smoke.pdf unicode tokens via PDFium extraction path"
+      }
+    },
+    {
+      "featureId": "local_ai",
+      "fixtureId": "core-release-smoke",
+      "testId": "rust:b4_integration_gaps::b4_local_ai_unicode_extraction_via_production_path",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct PDFium extraction + AI chunking preserves Turkish unicode tokens from release-smoke.pdf"
+      }
+    },
+    {
+      "featureId": "local_ai",
+      "fixtureId": "core-ai-text-rich",
+      "testId": "rust:b4_integration_gaps::b4_local_ai_unicode_extraction_via_production_path",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "AI text-rich fixture sanity with unicode-aware chunking via production extraction"
+      }
+    },
+    {
+      "featureId": "page_manipulation",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust:b4_integration_gaps::b4_reorder_persistence_save_reopen_observes_order_and_cleans_temp",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct reorder persistence save→close→reopen→observe via atomic_write_pdf on reorder-rich.pdf with temp cleanup verification"
+      }
+    },
+    {
+      "featureId": "atomic_save_persistence",
+      "fixtureId": "core-minimal",
+      "testId": "rust:b4_integration_gaps::b4_atomic_save_persistence_merge_roundtrip_verifies_digest_and_no_original_corruption",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct atomic merge persistence via merge_pdfs on minimal.pdf with digest and no-corruption verification"
+      }
+    },
+    {
+      "featureId": "atomic_save_persistence",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:b4_integration_gaps::b4_atomic_save_persistence_merge_roundtrip_verifies_digest_and_no_original_corruption",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Second fixture participant for merge persistence verification"
+      }
+    },
+    {
+      "featureId": "search",
+      "fixtureId": "core-encrypted",
+      "testId": "rust:b4_integration_gaps::b4_search_encrypted_typed_errors_and_no_partial_document",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
+        "verificationType": "integration_assertion",
+        "notes": "Direct encrypted search typed error vs success with password, no partial doc, no corruption on encrypted.pdf"
+      }
+    }
+  ],
+  "features": [
+    {
+      "id": "command_palette",
+      "name": "Command Palette",
+      "statusObservation": "experimental",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "not_applicable",
+        "negative": "not_applicable",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_applicable"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "pdf_viewer",
+      "name": "Pdf Viewer",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-large-page-dimensions",
+        "core-malformed",
+        "core-minimal",
+        "core-release-smoke",
+        "core-reorder-rich"
+      ],
+      "testIds": [
+        "rust:b4_integration_gaps::b4_viewer_unicode_extraction_preserves_turkish_tokens",
+        "rust:crash_tests::committed_malformed_fixture_returns_typed_error_without_parent_crash",
+        "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
+        "rust:worker_pdfium_integration::large_page_dimensions_document_opens_with_bounded_geometry",
+        "rust:worker_pdfium_integration::largest_practical_allowed_render_survives_worker_resource_envelope",
+        "rust:worker_pdfium_integration::test_intrinsic_rotation_characterization_in_viewer_worker",
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts"
+      ],
+      "dimensions": {
+        "positive": "partial",
+        "negative": "covered",
+        "malformed": "covered",
+        "encrypted": "covered",
+        "unicode": "covered",
+        "persistence": "not_applicable",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "search",
+      "name": "Search",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-release-smoke",
+        "core-reorder-rich"
+      ],
+      "testIds": [
+        "rust:b4_integration_gaps::b4_search_encrypted_typed_errors_and_no_partial_document",
+        "rust:b4_integration_gaps::b4_search_unicode_normalized_query_finds_turkish_tokens",
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_applicable",
+        "encrypted": "covered",
+        "unicode": "covered",
+        "persistence": "not_applicable",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "annotation",
+      "name": "Annotation",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-annotations",
+        "core-reorder-rich",
+        "core-reorder-with-metadata"
+      ],
+      "testIds": [
+        "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+        "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+        "rust_unit:annotations::document_io_invalid_annotation_id_preserves_original_bytes",
+        "rust_unit:annotations::document_io_invalid_annotation_type_preserves_original_bytes"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "partial",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "annotation_burn_export",
+      "name": "Annotation Burn Export",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "planned",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "page_manipulation",
+      "name": "Page Manipulation",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-minimal",
+        "core-reorder-rich",
+        "core-reorder-with-form",
+        "core-reorder-with-metadata",
+        "core-reorder-with-named-destination",
+        "core-reorder-with-outline",
+        "core-three-distinct-pages"
+      ],
+      "testIds": [
+        "rust:b4_integration_gaps::b4_reorder_persistence_save_reopen_observes_order_and_cleans_temp",
+        "rust:document_io_pdfium::reorder_full_and_subset_preserve_text_rotation_and_annotations",
+        "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+        "rust_unit:manipulation::document_io_delete_pages_preflights_and_preserves_invalid_source",
+        "rust_unit:manipulation::document_io_insert_blank_page_validates_media_box",
+        "rust_unit:manipulation::document_io_merge_validates_total_page_count",
+        "rust_unit:manipulation::document_io_rejects_encrypted_mutation_without_changing_bytes",
+        "rust_unit:manipulation::document_io_reorder_modes_preserve_full_and_subset_contracts",
+        "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+        "rust_unit:manipulation::document_io_rotate_page_commits_valid_pdf"
+      ],
+      "dimensions": {
+        "positive": "partial",
+        "negative": "covered",
+        "malformed": "not_applicable",
+        "encrypted": "covered",
+        "unicode": "not_applicable",
+        "persistence": "covered",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "page_merge_direct",
+      "name": "Page Merge Direct",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "planned",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "page_insert_blank",
+      "name": "Page Insert Blank",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "planned",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "ocr",
+      "name": "Ocr",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-minimal"
+      ],
+      "testIds": [
+        "rust_unit:document_session::ocr_command_helper_rejects_stale_generation",
+        "rust_unit:document_session::ocr_detection_uses_snapshot_credential_for_encrypted_pdf"
+      ],
+      "dimensions": {
+        "positive": "partial",
+        "negative": "covered",
+        "malformed": "not_covered",
+        "encrypted": "covered",
+        "unicode": "not_covered",
+        "persistence": "not_applicable",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "macos_vision_ocr",
+      "name": "Macos Vision Ocr",
+      "statusObservation": "platform_limited",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "planned",
+        "unicode": "planned",
+        "persistence": "not_applicable",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "local_ai",
+      "name": "Local Ai",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-ai-text-rich",
+        "core-release-smoke"
+      ],
+      "testIds": [
+        "rust:b4_integration_gaps::b4_local_ai_unicode_extraction_via_production_path",
+        "rust_unit:ai::security_acceptance_tests::test_ai_text_rich_fixture_sanity",
+        "rust_unit:ai::security_acceptance_tests::test_security_c4_cancelled_index_build_publishes_nothing"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "covered",
+        "persistence": "not_applicable",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "sensitive_data_scan",
+      "name": "Sensitive Data Scan",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-minimal"
+      ],
+      "testIds": [
+        "rust_unit:redaction::test_scan_sensitive_file_encrypted_pdf_invalid_or_missing_credential",
+        "rust_unit:redaction::test_scan_sensitive_file_encrypted_pdf_valid_credential",
+        "rust_unit:redaction::test_scan_sensitive_file_minimal_pdf_no_match"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_applicable",
+        "encrypted": "covered",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "visual_redaction_mask",
+      "name": "Visual Redaction Mask",
+      "statusObservation": "mock",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "redaction",
+      "name": "Redaction",
+      "statusObservation": "disabled",
+      "fixtureIds": [
+        "redaction-acroform-widget",
+        "redaction-annotations-fixture",
+        "redaction-cropbox-mediabox-diff",
+        "redaction-embedded-files",
+        "redaction-encrypted-redaction",
+        "redaction-explicit-print-boxes",
+        "redaction-image-only",
+        "redaction-incremental-revision",
+        "redaction-inherited-geometry",
+        "redaction-inherited-resources",
+        "redaction-js-action",
+        "redaction-mixed-secure-redaction-pages",
+        "redaction-negative-origin",
+        "redaction-non-js-openaction",
+        "redaction-nonzero-origin",
+        "redaction-object-stream",
+        "redaction-rotations",
+        "redaction-same-size-same-rotation-pages",
+        "redaction-signature-marked-byterange",
+        "redaction-simple-text",
+        "redaction-stream-literal-prev",
+        "redaction-text-image",
+        "redaction-unresolved-acroform",
+        "redaction-unresolved-resources",
+        "redaction-whole-object-adversarial",
+        "redaction-xfa-fixture"
+      ],
+      "testIds": [
+        "rust:job_worker_process::secure_redaction_explicit_print_boxes_pass_separate_verifier_when_supported",
+        "rust:job_worker_process::secure_redaction_object_bounds_observation_passes_representative_dpis",
+        "rust:job_worker_process::secure_redaction_worker_mixes_rasterized_and_imported_pages_in_one_artifact",
+        "rust:job_worker_process::secure_redaction_worker_round_trips_crop_and_nonzero_origins",
+        "rust:job_worker_process::secure_redaction_worker_round_trips_rotated_page_geometry",
+        "rust:redaction_fixtures_and_capabilities::test_semantic_fixture_corpus_assertions",
+        "rust:secure_redaction_execution_acceptance::existing_target_is_atomically_replaced_with_verified_bytes",
+        "rust:secure_redaction_planning_worker::test_embedded_files_fixture_inspection",
+        "rust:secure_redaction_planning_worker::test_incremental_revision_fixture_inspection",
+        "rust:secure_redaction_planning_worker::test_inherited_geometry_fixture_inspection",
+        "rust:secure_redaction_planning_worker::test_inherited_resources_fixture_inspection",
+        "rust:secure_redaction_planning_worker::test_js_action_fixture_inspection",
+        "rust:secure_redaction_planning_worker::test_non_js_openaction_fixture_inspection",
+        "rust:secure_redaction_planning_worker::test_stream_literal_prev_false_positive_resistance",
+        "rust:secure_redaction_planning_worker::test_unresolved_acroform_produces_xfa_unknown",
+        "rust:secure_redaction_planning_worker::test_unresolved_resources_produces_unknown_facts",
+        "rust:secure_redaction_raster_primitives::test_13_rotation_0_mapping",
+        "rust:secure_redaction_raster_primitives::test_17_cropbox_mapping",
+        "rust:secure_redaction_raster_primitives::test_18_nonzero_origin_mapping",
+        "rust:secure_redaction_raster_primitives::test_19_negative_origin_mapping",
+        "rust:secure_redaction_raster_primitives::test_39_opaque_output_alpha_after_white_background_clear",
+        "rust:secure_redaction_raster_primitives::test_54_annotation_fixture_do_not_render",
+        "rust:secure_redaction_raster_primitives::test_55_acroform_widget_blocked_full_plan",
+        "rust:secure_redaction_raster_primitives::test_56_text_image_rasterization",
+        "rust:secure_redaction_raster_primitives::test_60_encrypted_fixture_raster_blocked",
+        "rust:secure_redaction_raster_primitives::test_61_signed_fixture_raster_blocked",
+        "rust:secure_redaction_raster_primitives::test_62_xfa_fixture_raster_blocked",
+        "rust:secure_redaction_raster_primitives::test_63_document_bound_page_identity_uses_exact_page_index",
+        "rust:whole_object_backend_characterization::adversarial_fixture_characterizes_bounds_and_form_enumeration",
+        "rust:whole_object_backend_characterization::top_level_image_removal_prunes_source_image_resource_and_payload"
+      ],
+      "dimensions": {
+        "positive": "not_covered",
+        "negative": "covered",
+        "malformed": "covered",
+        "encrypted": "covered",
+        "unicode": "not_covered",
+        "persistence": "covered",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "sanitization",
+      "name": "Sanitization",
+      "statusObservation": "disabled",
+      "fixtureIds": [
+        "sanitization-action-chain-network",
+        "sanitization-clean-minimal",
+        "sanitization-combined-names",
+        "sanitization-dangling-critical-references",
+        "sanitization-embedded-files-af",
+        "sanitization-encrypted",
+        "sanitization-hybrid-xref",
+        "sanitization-incremental-revision",
+        "sanitization-incremental-xref-stream-chain",
+        "sanitization-javascript-actions",
+        "sanitization-metadata-paths",
+        "sanitization-object-xref-stream",
+        "sanitization-openaction-destination",
+        "sanitization-signature",
+        "sanitization-unsupported-active-content",
+        "sanitization-xfa-single-stream"
+      ],
+      "testIds": [
+        "rust:sanitization_capabilities::action_chain_traversal_is_type_aware_bounded_and_cycle_safe",
+        "rust:sanitization_capabilities::embedded_file_edges_payload_and_privacy_metadata_are_observable",
+        "rust:sanitization_capabilities::incremental_xref_stream_chain_parses_latest_graph_and_retains_physical_history",
+        "rust:sanitization_capabilities::metadata_paths_and_document_identifier_are_observable_separately",
+        "rust:sanitization_capabilities::names_tree_branches_are_independently_addressable_and_dests_survive",
+        "rust:sanitization_capabilities::parser_supports_classic_incremental_object_xref_and_hybrid_inputs",
+        "rust:sanitization_capabilities::pdfium_reopens_renders_and_reports_basic_facts_without_object_mutation_authority",
+        "rust:sanitization_capabilities::reachable_dangling_critical_references_open_but_block_graph_completeness",
+        "rust:sanitization_capabilities::signature_byte_range_docmdp_and_fieldmdp_are_structurally_visible",
+        "rust:sanitization_capabilities::unsupported_xfa_optional_content_and_multimedia_paths_are_detectable",
+        "rust:sanitization_capabilities::xfa_single_reference_resolves_stream_and_prunes_after_edge_removal",
+        "rust:sanitization_inspection_acceptance::crash_and_timeout_are_typed_cleaned_credential_safe_and_session_neutral",
+        "rust:sanitization_inspection_acceptance::transform_real_process_success_is_private_until_terminal_cleanup",
+        "rust:sanitization_inspection_acceptance::traversal_and_decode_cancellation_are_cancelled_not_failed_and_reaped",
+        "rust_unit:sanitization_inspection::action_chain_is_typed_cycle_safe_and_local_goto_is_not_remote",
+        "rust_unit:sanitization_inspection::clean_fixture_is_strict_and_has_no_supported_findings",
+        "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
+        "rust_unit:sanitization_inspection::javascript_paths_and_destination_negative_control_are_classified",
+        "rust_unit:sanitization_transform::embedded_owner_edges_and_file_attachment_are_pruned_together",
+        "rust_unit:sanitization_transform::form_and_annotation_action_removal_preserves_fields_and_widgets",
+        "rust_unit:sanitization_transform::incremental_history_is_not_serialized",
+        "rust_unit:sanitization_transform::metadata_scopes_are_targeted_and_full_rewrite_reopens",
+        "rust_unit:sanitization_transform::names_mutation_is_branch_specific_and_prunes_payload",
+        "rust_unit:sanitization_transform::object_and_xref_stream_inputs_are_rewritten_and_reopened",
+        "rust_unit:sanitization_transform::open_action_destination_is_preserved",
+        "rust_unit:sanitization_transform::parent_rejects_transform_report_not_exactly_bound_to_request_policy",
+        "rust_unit:sanitization_transform::signed_input_requires_explicit_acknowledgement_and_reports_invalidation",
+        "rust_unit:sanitization_transform::targeted_action_types_remove_nested_next_but_local_goto_is_preserved",
+        "rust_unit:sanitization_transform::unsupported_content_and_encryption_fail_without_artifact",
+        "rust_unit:sanitization_verifier::acknowledged_signature_invalidation_remains_a_valid_transform_path",
+        "rust_unit:sanitization_verifier::incremental_object_stream_and_xref_stream_inputs_verify_as_single_full_rewrites",
+        "rust_unit:sanitization_verifier::reintroduced_embedded_stream_is_found_even_when_transform_claims_success"
+      ],
+      "dimensions": {
+        "positive": "not_covered",
+        "negative": "covered",
+        "malformed": "covered",
+        "encrypted": "covered",
+        "unicode": "not_applicable",
+        "persistence": "covered",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "pades_signing",
+      "name": "Pades Signing",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "planned",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "signature_verification",
+      "name": "Signature Verification",
+      "statusObservation": "disabled",
+      "fixtureIds": [
+        "redaction-signature-marked-byterange",
+        "sanitization-signature"
+      ],
+      "testIds": [
+        "rust:sanitization_capabilities::signature_byte_range_docmdp_and_fieldmdp_are_structurally_visible",
+        "rust:secure_redaction_raster_primitives::test_61_signed_fixture_raster_blocked"
+      ],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "ltv",
+      "name": "Ltv",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "planned",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "signature_settings",
+      "name": "Signature Settings",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "not_applicable"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "basic_accessibility_audit",
+      "name": "Basic Accessibility Audit",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-minimal"
+      ],
+      "testIds": [
+        "rust_unit:a11y::audit_never_returns_a_score_or_a_conformance_claim",
+        "rust_unit:a11y::untagged_document_returns_a_bounded_inspection_instead_of_an_error"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_covered",
+        "encrypted": "not_covered",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "pdf_ua_machine_validation",
+      "name": "Pdf Ua Machine Validation",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "planned",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "pdf_auto_tag",
+      "name": "Pdf Auto Tag",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "reading_order_editing",
+      "name": "Reading Order Editing",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "pdf_x_export",
+      "name": "Pdf X Export",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "print_resource_inspection",
+      "name": "Print Resource Inspection",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-minimal"
+      ],
+      "testIds": [
+        "rust_unit:document_session::print_resource_inspection_runs_in_session_job_worker_with_authoritative_identity"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "not_covered",
+        "malformed": "not_covered",
+        "encrypted": "not_covered",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "rgb_derived_print_preview",
+      "name": "Rgb Derived Print Preview",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted"
+      ],
+      "testIds": [
+        "rust_unit:document_session::encrypted_rgb_derived_previews_use_snapshot_credential"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "not_covered",
+        "malformed": "not_covered",
+        "encrypted": "covered",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "plugin_system",
+      "name": "Plugin System",
+      "statusObservation": "experimental",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "not_applicable",
+        "negative": "not_applicable",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_applicable"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "batch_processing",
+      "name": "Batch Processing",
+      "statusObservation": "mock",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "form_editing",
+      "name": "Form Editing",
+      "statusObservation": "disabled",
+      "fixtureIds": [
+        "core-reorder-with-form"
+      ],
+      "testIds": [
+        "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+        "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features"
+      ],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "searchable_pdf_export",
+      "name": "Searchable Pdf Export",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "macos_continuity_camera",
+      "name": "Macos Continuity Camera",
+      "statusObservation": "disabled",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "macos_share",
+      "name": "Macos Share",
+      "statusObservation": "platform_limited",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "text_to_speech",
+      "name": "Text To Speech",
+      "statusObservation": "platform_limited",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "planned",
+        "persistence": "not_applicable",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "markdown_notes_export",
+      "name": "Markdown Notes Export",
+      "statusObservation": "mock",
+      "fixtureIds": [],
+      "testIds": [],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "not_covered",
+        "malformed": "not_applicable",
+        "encrypted": "not_applicable",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "document_open_lifecycle",
+      "name": "Document Open Lifecycle",
+      "statusObservation": "stable",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-malformed",
+        "core-minimal",
+        "core-reorder-rich",
+        "core-reorder-with-metadata",
+        "core-reorder-with-outline"
+      ],
+      "testIds": [
+        "rust:crash_tests::committed_malformed_fixture_returns_typed_error_without_parent_crash",
+        "rust:session_worker_integration::production_session_commands_use_worker_identity_and_preserve_frontend_contracts",
+        "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
+        "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
+        "rust_unit:document_session::pdf_validation_distinguishes_encrypted_wrong_password_and_corrupt_files",
+        "rust_unit:document_session::two_sessions_are_isolated_and_discard_removes_only_working_copy"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "covered",
+        "encrypted": "covered",
+        "unicode": "not_covered",
+        "persistence": "covered",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "atomic_save_persistence",
+      "name": "Atomic Save Persistence",
+      "statusObservation": "stable",
+      "fixtureIds": [
+        "core-annotations",
+        "core-minimal",
+        "core-three-distinct-pages"
+      ],
+      "testIds": [
+        "rust:b4_integration_gaps::b4_atomic_save_persistence_merge_roundtrip_verifies_digest_and_no_original_corruption",
+        "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+        "rust_unit:document_session::clean_save_and_canonical_same_target_save_as_are_identical_no_ops",
+        "rust_unit:document_session::isolated_mutation_validates_before_atomic_commit_and_advances_generation",
+        "rust_unit:document_session::open_mutate_save_preserves_original_until_commit_and_cleans_dirty",
+        "rust_unit:manipulation::document_io_rotate_page_commits_valid_pdf"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_covered",
+        "encrypted": "not_covered",
+        "unicode": "not_applicable",
+        "persistence": "covered",
+        "worker": "not_covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "worker_broker_isolation",
+      "name": "Worker Broker Isolation",
+      "statusObservation": "stable",
+      "fixtureIds": [
+        "core-minimal",
+        "core-reorder-rich"
+      ],
+      "testIds": [
+        "rust:crash_tests::forced_worker_kill_preserves_parent_and_allows_lazy_reopen",
+        "rust:session_worker_integration::test_mutation_failure_triggers_worker_lazy_reopen",
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_covered",
+        "encrypted": "not_covered",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
+    },
+    {
+      "id": "fuzz_pdf_parser",
+      "name": "Fuzz Pdf Parser",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "fuzz-minimal"
+      ],
+      "testIds": [
+        "rust:crash_tests::fuzz_seed_minimal_opens_without_crash_and_returns_bounded_result"
+      ],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "planned",
+        "malformed": "planned",
+        "encrypted": "not_covered",
+        "unicode": "planned",
+        "persistence": "not_applicable",
+        "worker": "not_applicable"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    },
+    {
+      "id": "release_smoke_verification",
+      "name": "Release Smoke Verification",
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-release-smoke"
+      ],
+      "testIds": [
+        "rust:worker_pdfium_integration::release_smoke_document_opens_with_expected_page_count_and_text_tokens"
+      ],
+      "dimensions": {
+        "positive": "planned",
+        "negative": "planned",
+        "malformed": "planned",
+        "encrypted": "planned",
+        "unicode": "planned",
+        "persistence": "planned",
+        "worker": "planned"
+      },
+      "platformEvidence": {
+        "macos": "not_run",
+        "linux": "not_run",
+        "windows": "not_run"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "id": "rust:crash_tests::forced_worker_kill_preserves_parent_and_allows_lazy_reopen",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/crash_tests.rs"
+    },
+    {
+      "id": "rust:crash_tests::committed_malformed_fixture_returns_typed_error_without_parent_crash",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/crash_tests.rs"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::largest_practical_allowed_render_survives_worker_resource_envelope",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::test_intrinsic_rotation_characterization_in_viewer_worker",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:session_worker_integration::production_session_commands_use_worker_identity_and_preserve_frontend_contracts",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/session_worker_integration.rs"
+    },
+    {
+      "id": "rust:session_worker_integration::test_mutation_failure_triggers_worker_lazy_reopen",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/session_worker_integration.rs"
+    },
+    {
+      "id": "rust:document_io_pdfium::reorder_full_and_subset_preserve_text_rotation_and_annotations",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/document_io_pdfium.rs"
+    },
+    {
+      "id": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/document_io_pdfium.rs"
+    },
+    {
+      "id": "rust_unit:manipulation::document_io_rotate_page_commits_valid_pdf",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/manipulation.rs"
+    },
+    {
+      "id": "rust_unit:manipulation::document_io_rejects_encrypted_mutation_without_changing_bytes",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/manipulation.rs"
+    },
+    {
+      "id": "rust_unit:manipulation::document_io_delete_pages_preflights_and_preserves_invalid_source",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/manipulation.rs"
+    },
+    {
+      "id": "rust_unit:manipulation::document_io_reorder_modes_preserve_full_and_subset_contracts",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/manipulation.rs"
+    },
+    {
+      "id": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/manipulation.rs"
+    },
+    {
+      "id": "rust_unit:manipulation::document_io_insert_blank_page_validates_media_box",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/manipulation.rs"
+    },
+    {
+      "id": "rust_unit:manipulation::document_io_merge_validates_total_page_count",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/manipulation.rs"
+    },
+    {
+      "id": "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/annotations.rs"
+    },
+    {
+      "id": "rust_unit:annotations::document_io_invalid_annotation_type_preserves_original_bytes",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/annotations.rs"
+    },
+    {
+      "id": "rust_unit:annotations::document_io_invalid_annotation_id_preserves_original_bytes",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/annotations.rs"
+    },
+    {
+      "id": "rust_unit:document_session::open_mutate_save_preserves_original_until_commit_and_cleans_dirty",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::isolated_mutation_validates_before_atomic_commit_and_advances_generation",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::clean_save_and_canonical_same_target_save_as_are_identical_no_ops",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::ocr_command_helper_rejects_stale_generation",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::ocr_detection_uses_snapshot_credential_for_encrypted_pdf",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::print_resource_inspection_runs_in_session_job_worker_with_authoritative_identity",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::encrypted_rgb_derived_previews_use_snapshot_credential",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::two_sessions_are_isolated_and_discard_removes_only_working_copy",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:document_session::pdf_validation_distinguishes_encrypted_wrong_password_and_corrupt_files",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "rust_unit:redaction::test_scan_sensitive_file_minimal_pdf_no_match",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/redaction.rs"
+    },
+    {
+      "id": "rust_unit:redaction::test_scan_sensitive_file_encrypted_pdf_valid_credential",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/redaction.rs"
+    },
+    {
+      "id": "rust_unit:redaction::test_scan_sensitive_file_encrypted_pdf_invalid_or_missing_credential",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/redaction.rs"
+    },
+    {
+      "id": "rust_unit:a11y::audit_never_returns_a_score_or_a_conformance_claim",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/a11y.rs"
+    },
+    {
+      "id": "rust_unit:a11y::untagged_document_returns_a_bounded_inspection_instead_of_an_error",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/a11y.rs"
+    },
+    {
+      "id": "rust_unit:ai::security_acceptance_tests::test_ai_text_rich_fixture_sanity",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ai/security_acceptance_tests.rs"
+    },
+    {
+      "id": "rust_unit:ai::security_acceptance_tests::test_security_c4_cancelled_index_build_publishes_nothing",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ai/security_acceptance_tests.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_12_pdf_rect_to_device_rect_rot0",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_13_rotation_0_mapping",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_17_cropbox_mapping",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_18_nonzero_origin_mapping",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_19_negative_origin_mapping",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_39_opaque_output_alpha_after_white_background_clear",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_54_annotation_fixture_do_not_render",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_55_acroform_widget_blocked_full_plan",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_56_text_image_rasterization",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_60_encrypted_fixture_raster_blocked",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_61_signed_fixture_raster_blocked",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_62_xfa_fixture_raster_blocked",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives::test_63_document_bound_page_identity_uses_exact_page_index",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_embedded_files_fixture_inspection",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_inherited_geometry_fixture_inspection",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_inherited_resources_fixture_inspection",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_js_action_fixture_inspection",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_non_js_openaction_fixture_inspection",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_stream_literal_prev_false_positive_resistance",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_unresolved_acroform_produces_xfa_unknown",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_unresolved_resources_produces_unknown_facts",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker::test_incremental_revision_fixture_inspection",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_planning_worker.rs"
+    },
+    {
+      "id": "rust:job_worker_process::secure_redaction_explicit_print_boxes_pass_separate_verifier_when_supported",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:job_worker_process::secure_redaction_worker_round_trips_crop_and_nonzero_origins",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:job_worker_process::secure_redaction_worker_mixes_rasterized_and_imported_pages_in_one_artifact",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:job_worker_process::secure_redaction_worker_round_trips_rotated_page_geometry",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:job_worker_process::secure_redaction_object_bounds_observation_passes_representative_dpis",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:whole_object_backend_characterization::top_level_image_removal_prunes_source_image_resource_and_payload",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/whole_object_backend_characterization.rs"
+    },
+    {
+      "id": "rust:whole_object_backend_characterization::adversarial_fixture_characterizes_bounds_and_form_enumeration",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/whole_object_backend_characterization.rs"
+    },
+    {
+      "id": "rust:redaction_fixtures_and_capabilities::test_semantic_fixture_corpus_assertions",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/redaction_fixtures_and_capabilities.rs"
+    },
+    {
+      "id": "rust:secure_redaction_execution_acceptance::existing_target_is_atomically_replaced_with_verified_bytes",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_execution_acceptance.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::parser_supports_classic_incremental_object_xref_and_hybrid_inputs",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::incremental_xref_stream_chain_parses_latest_graph_and_retains_physical_history",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::action_chain_traversal_is_type_aware_bounded_and_cycle_safe",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::names_tree_branches_are_independently_addressable_and_dests_survive",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::metadata_paths_and_document_identifier_are_observable_separately",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::embedded_file_edges_payload_and_privacy_metadata_are_observable",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::unsupported_xfa_optional_content_and_multimedia_paths_are_detectable",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::xfa_single_reference_resolves_stream_and_prunes_after_edge_removal",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::reachable_dangling_critical_references_open_but_block_graph_completeness",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::signature_byte_range_docmdp_and_fieldmdp_are_structurally_visible",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust:sanitization_capabilities::pdfium_reopens_renders_and_reports_basic_facts_without_object_mutation_authority",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_capabilities.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_inspection::clean_fixture_is_strict_and_has_no_supported_findings",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_inspection.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_inspection::javascript_paths_and_destination_negative_control_are_classified",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_inspection.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_inspection::action_chain_is_typed_cycle_safe_and_local_goto_is_not_remote",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_inspection.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_inspection.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::parent_rejects_transform_report_not_exactly_bound_to_request_policy",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::names_mutation_is_branch_specific_and_prunes_payload",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::open_action_destination_is_preserved",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::targeted_action_types_remove_nested_next_but_local_goto_is_preserved",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::form_and_annotation_action_removal_preserves_fields_and_widgets",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::embedded_owner_edges_and_file_attachment_are_pruned_together",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::metadata_scopes_are_targeted_and_full_rewrite_reopens",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::incremental_history_is_not_serialized",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::object_and_xref_stream_inputs_are_rewritten_and_reopened",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::unsupported_content_and_encryption_fail_without_artifact",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_transform::signed_input_requires_explicit_acknowledgement_and_reports_invalidation",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_transform.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_verifier::incremental_object_stream_and_xref_stream_inputs_verify_as_single_full_rewrites",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_verifier.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_verifier::reintroduced_embedded_stream_is_found_even_when_transform_claims_success",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_verifier.rs"
+    },
+    {
+      "id": "rust_unit:sanitization_verifier::acknowledged_signature_invalidation_remains_a_valid_transform_path",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/sanitization_verifier.rs"
+    },
+    {
+      "id": "rust:sanitization_inspection_acceptance::transform_real_process_success_is_private_until_terminal_cleanup",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_inspection_acceptance.rs"
+    },
+    {
+      "id": "rust:sanitization_inspection_acceptance::crash_and_timeout_are_typed_cleaned_credential_safe_and_session_neutral",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_inspection_acceptance.rs"
+    },
+    {
+      "id": "rust:sanitization_inspection_acceptance::traversal_and_decode_cancellation_are_cancelled_not_failed_and_reaped",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_inspection_acceptance.rs"
+    },
+    {
+      "id": "planned:annotation_burn::test_burn_annotations_to_raster_or_vector_stream",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:page_merge::test_direct_pdf_merge_conformance",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:page_insert_blank::test_insert_blank_page_conformance",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:macos_vision_ocr::test_vision_ocr_native_pipeline",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-B"
+    },
+    {
+      "id": "planned:pades_signing::test_pades_b_lt_cryptographic_signature_roundtrip",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-G"
+    },
+    {
+      "id": "planned:signature_verification::test_signature_trust_verification_pipeline",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-G"
+    },
+    {
+      "id": "planned:ltv::test_ltv_dss_and_vri_timestamp_embedding",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-G"
+    },
+    {
+      "id": "planned:signature_settings::test_trust_store_configuration_persistence",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-G"
+    },
+    {
+      "id": "planned:pdf_ua_machine_validation::test_verapdf_machine_validation_pipeline",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-E"
+    },
+    {
+      "id": "planned:pdf_auto_tag::test_heuristic_structure_tree_generation",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:reading_order_editing::test_reading_order_mutation_roundtrip",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:pdf_x_export::test_pdf_x_cmyk_profile_conversion",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:batch_processing::test_batch_processing_queue_execution",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:form_editing::test_acroform_value_editing_and_flattening",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:searchable_pdf_export::test_ocr_invisible_text_layer_export",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:macos_continuity_camera::test_continuity_camera_native_import",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-B"
+    },
+    {
+      "id": "planned:macos_share::test_macos_share_extension_native_handler",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-B"
+    },
+    {
+      "id": "planned:text_to_speech::test_speech_synthesis_audio_pipeline",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-B"
+    },
+    {
+      "id": "planned:markdown_notes_export::test_markdown_notes_extraction_pipeline",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:atomic_save::test_atomic_save_in_place_roundtrip",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:fuzz_parser::test_parser_fuzz_target_corpus_expansion",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11I-B"
+    },
+    {
+      "id": "planned:release_smoke::test_release_smoke_suite_macos",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-B"
+    },
+    {
+      "id": "planned:release_smoke::test_release_smoke_suite_linux",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-C"
+    },
+    {
+      "id": "planned:release_smoke::test_release_smoke_suite_windows",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-D"
+    },
+    {
+      "id": "planned:release_smoke::test_release_smoke_exact_artifact_macos",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-E"
+    },
+    {
+      "id": "planned:release_smoke::test_release_smoke_exact_artifact_linux",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-E"
+    },
+    {
+      "id": "planned:release_smoke::test_release_smoke_exact_artifact_windows",
+      "kind": "integration_test",
+      "state": "planned",
+      "plannedPrompt": "11V-E"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::release_smoke_document_opens_with_expected_page_count_and_text_tokens",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::large_page_dimensions_document_opens_with_bounded_geometry",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:crash_tests::fuzz_seed_minimal_opens_without_crash_and_returns_bounded_result",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/crash_tests.rs"
+    },
+    {
+      "id": "rust:b4_integration_gaps::b4_viewer_unicode_extraction_preserves_turkish_tokens",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/b4_integration_gaps.rs"
+    },
+    {
+      "id": "rust:b4_integration_gaps::b4_search_unicode_normalized_query_finds_turkish_tokens",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/b4_integration_gaps.rs"
+    },
+    {
+      "id": "rust:b4_integration_gaps::b4_local_ai_unicode_extraction_via_production_path",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/b4_integration_gaps.rs"
+    },
+    {
+      "id": "rust:b4_integration_gaps::b4_reorder_persistence_save_reopen_observes_order_and_cleans_temp",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/b4_integration_gaps.rs"
+    },
+    {
+      "id": "rust:b4_integration_gaps::b4_atomic_save_persistence_merge_roundtrip_verifies_digest_and_no_original_corruption",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/b4_integration_gaps.rs"
+    },
+    {
+      "id": "rust:b4_integration_gaps::b4_search_encrypted_typed_errors_and_no_partial_document",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/b4_integration_gaps.rs"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap-visual-redaction-mask-ui",
+      "featureId": "visual_redaction_mask",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement and verify visual redaction mask preview UI overlay"
+    },
+    {
+      "id": "gap-annotation-persistence-sync",
+      "featureId": "annotation",
+      "dimension": "persistence",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Verify annotation persistence synchronization with UI state"
+    },
+    {
+      "id": "gap-annotation-burn-export",
+      "featureId": "annotation_burn_export",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement and verify annotation burn export pipeline"
+    },
+    {
+      "id": "gap-direct-page-merge",
+      "featureId": "page_merge_direct",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement and verify direct page merge UI flow"
+    },
+    {
+      "id": "gap-insert-blank-page",
+      "featureId": "page_insert_blank",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement and verify blank page insertion UI flow"
+    },
+    {
+      "id": "gap-ocr-fixture-corpus",
+      "featureId": "ocr",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Expand OCR fixture corpus with scanned image fixtures"
+    },
+    {
+      "id": "gap-batch-processing-queue",
+      "featureId": "batch_processing",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement and verify batch processing execution queue"
+    },
+    {
+      "id": "gap-form-editing-support",
+      "featureId": "form_editing",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement AcroForm field editing and interactive filling"
+    },
+    {
+      "id": "gap-searchable-pdf-export",
+      "featureId": "searchable_pdf_export",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement searchable PDF export with invisible text layer"
+    },
+    {
+      "id": "gap-markdown-notes-export",
+      "featureId": "markdown_notes_export",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement markdown notes export from annotations"
+    },
+    {
+      "id": "gap-macos-vision-ocr-runtime",
+      "featureId": "macos_vision_ocr",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "native_runtime",
+      "plannedPrompt": "11V-B",
+      "releaseBlocking": false,
+      "description": "Verify macOS Vision OCR on native Apple Silicon runtime"
+    },
+    {
+      "id": "gap-macos-continuity-camera",
+      "featureId": "macos_continuity_camera",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "native_runtime",
+      "plannedPrompt": "11V-B",
+      "releaseBlocking": false,
+      "description": "Verify Continuity Camera native integration on macOS"
+    },
+    {
+      "id": "gap-macos-share-runtime",
+      "featureId": "macos_share",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "native_runtime",
+      "plannedPrompt": "11V-B",
+      "releaseBlocking": false,
+      "description": "Verify macOS native Share extension handler"
+    },
+    {
+      "id": "gap-tts-cross-platform-audio",
+      "featureId": "text_to_speech",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "native_runtime",
+      "plannedPrompt": "11V-B",
+      "releaseBlocking": false,
+      "description": "Verify native text-to-speech synthesis backend"
+    },
+    {
+      "id": "gap-linux-native-runtime",
+      "featureId": "release_smoke_verification",
+      "dimension": "positive",
+      "severity": "release_blocking",
+      "requiredLayer": "native_runtime",
+      "plannedPrompt": "11V-C",
+      "releaseBlocking": true,
+      "description": "Execute native PDFium test suite on Linux x86_64 host"
+    },
+    {
+      "id": "gap-windows-native-runtime",
+      "featureId": "release_smoke_verification",
+      "dimension": "positive",
+      "severity": "release_blocking",
+      "requiredLayer": "native_runtime",
+      "plannedPrompt": "11V-D",
+      "releaseBlocking": true,
+      "description": "Execute native PDFium test suite on Windows x86_64 host"
+    },
+    {
+      "id": "gap-exact-artifact-smoke-macos",
+      "featureId": "release_smoke_verification",
+      "dimension": "positive",
+      "severity": "release_blocking",
+      "requiredLayer": "exact_artifact",
+      "plannedPrompt": "11V-E",
+      "releaseBlocking": true,
+      "description": "Execute exact-artifact smoke test on packaged macOS .dmg"
+    },
+    {
+      "id": "gap-exact-artifact-smoke-linux",
+      "featureId": "release_smoke_verification",
+      "dimension": "positive",
+      "severity": "release_blocking",
+      "requiredLayer": "exact_artifact",
+      "plannedPrompt": "11V-E",
+      "releaseBlocking": true,
+      "description": "Execute exact-artifact smoke test on packaged Linux .deb"
+    },
+    {
+      "id": "gap-exact-artifact-smoke-windows",
+      "featureId": "release_smoke_verification",
+      "dimension": "positive",
+      "severity": "release_blocking",
+      "requiredLayer": "exact_artifact",
+      "plannedPrompt": "11V-E",
+      "releaseBlocking": true,
+      "description": "Execute exact-artifact smoke test on packaged Windows .msi"
+    },
+    {
+      "id": "gap-pdf-ua-machine-validator",
+      "featureId": "pdf_ua_machine_validation",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "exact_artifact",
+      "plannedPrompt": "11V-E",
+      "releaseBlocking": false,
+      "description": "Execute VeraPDF automated PDF/UA machine conformance validator"
+    },
+    {
+      "id": "gap-pdf-auto-tag",
+      "featureId": "pdf_auto_tag",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement automated structure tree generation for untagged documents"
+    },
+    {
+      "id": "gap-reading-order-editing",
+      "featureId": "reading_order_editing",
+      "dimension": "positive",
+      "severity": "low",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement visual reading order editing and structure reordering"
+    },
+    {
+      "id": "gap-pdf-x-export-pipeline",
+      "featureId": "pdf_x_export",
+      "dimension": "positive",
+      "severity": "high",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Implement PDF/X CMYK color space conversion pipeline"
+    },
+    {
+      "id": "gap-pades-cryptographic-signing",
+      "featureId": "pades_signing",
+      "dimension": "positive",
+      "severity": "high",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-G",
+      "releaseBlocking": true,
+      "description": "Implement PAdES cryptographic digital signature workflow"
+    },
+    {
+      "id": "gap-signature-verification-crypto",
+      "featureId": "signature_verification",
+      "dimension": "positive",
+      "severity": "high",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-G",
+      "releaseBlocking": true,
+      "description": "Implement cryptographic signature validation and certificate trust checks"
+    },
+    {
+      "id": "gap-ltv-timestamp-dss",
+      "featureId": "ltv",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-G",
+      "releaseBlocking": false,
+      "description": "Implement LTV DSS/VRI timestamp embedding"
+    },
+    {
+      "id": "gap-signature-settings-trust-store",
+      "featureId": "signature_settings",
+      "dimension": "positive",
+      "severity": "medium",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-G",
+      "releaseBlocking": false,
+      "description": "Implement trust store and signature certificate management"
+    },
+    {
+      "id": "gap-redaction-release-certification",
+      "featureId": "redaction",
+      "dimension": "positive",
+      "severity": "high",
+      "requiredLayer": "exact_artifact",
+      "plannedPrompt": "11R",
+      "releaseBlocking": true,
+      "description": "Execute full platform release certification for secure redaction"
+    },
+    {
+      "id": "gap-sanitization-release-certification",
+      "featureId": "sanitization",
+      "dimension": "positive",
+      "severity": "high",
+      "requiredLayer": "exact_artifact",
+      "plannedPrompt": "11R",
+      "releaseBlocking": true,
+      "description": "Execute full platform release certification for sanitization"
+    }
+  ]
+}

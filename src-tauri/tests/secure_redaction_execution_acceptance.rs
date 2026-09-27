@@ -179,17 +179,18 @@ mod macos_arm64 {
     ) -> SessionJobOutcome<preview_alternative_lib::secure_redaction::SecureRedactionExecutionReport>
     {
         let (policy, acknowledgements, regions) = request_parts();
-        redaction::execute_secure_redaction_core(
-            uuid::Uuid::new_v4().to_string(),
-            session.id.clone(),
-            session.content_generation,
+        let store = app.state::<document_session::DocumentSessionStore>();
+        redaction::execute_secure_redaction_core(redaction::SecureRedactionExecutionArgs {
+            job_id: uuid::Uuid::new_v4().to_string(),
+            session_id: session.id.clone(),
+            expected_content_generation: session.content_generation,
             policy,
             acknowledgements,
             regions,
-            plan.plan_digest.clone(),
-            target,
-            &app.state::<document_session::DocumentSessionStore>(),
-        )
+            expected_plan_digest: plan.plan_digest.clone(),
+            target_path: target,
+            store: &store,
+        })
         .await
         .unwrap()
     }
@@ -204,16 +205,19 @@ mod macos_arm64 {
     ) -> SessionJobOutcome<preview_alternative_lib::secure_redaction::SecureRedactionExecutionReport>
     {
         let (policy, acknowledgements, regions) = request_parts();
+        let store = app.state::<document_session::DocumentSessionStore>();
         redaction::execute_secure_redaction_core_with_test_support(
-            job_id,
-            session.id.clone(),
-            session.content_generation,
-            policy,
-            acknowledgements,
-            regions,
-            plan.plan_digest.clone(),
-            target,
-            &app.state::<document_session::DocumentSessionStore>(),
+            redaction::SecureRedactionExecutionArgs {
+                job_id,
+                session_id: session.id.clone(),
+                expected_content_generation: session.content_generation,
+                policy,
+                acknowledgements,
+                regions,
+                expected_plan_digest: plan.plan_digest.clone(),
+                target_path: target,
+                store: &store,
+            },
             Some(support),
         )
         .await
@@ -815,19 +819,20 @@ mod macos_arm64 {
                 "REDACTION_TARGET_PRIVATE_PATH",
             ),
         ] {
-            let error = redaction::execute_secure_redaction_core(
-                uuid::Uuid::new_v4().to_string(),
-                session.id.clone(),
-                session.content_generation,
-                policy.clone(),
-                acknowledgements.clone(),
-                regions.clone(),
-                plan.plan_digest.clone(),
-                target.to_string_lossy().into_owned(),
-                &store,
-            )
-            .await
-            .unwrap_err();
+            let error =
+                redaction::execute_secure_redaction_core(redaction::SecureRedactionExecutionArgs {
+                    job_id: uuid::Uuid::new_v4().to_string(),
+                    session_id: session.id.clone(),
+                    expected_content_generation: session.content_generation,
+                    policy: policy.clone(),
+                    acknowledgements: acknowledgements.clone(),
+                    regions: regions.clone(),
+                    expected_plan_digest: plan.plan_digest.clone(),
+                    target_path: target.to_string_lossy().into_owned(),
+                    store: &store,
+                })
+                .await
+                .unwrap_err();
             assert_eq!(error.code, expected_code);
         }
     }

@@ -1,264 +1,169 @@
 <script>
-    import { createEventDispatcher } from 'svelte';
-    import {
-        getSessionStructureTree,
-        validateSessionPdfUa,
-    } from '../services/backend/session.js';
-    import TagTreeExplorer from './TagTreeExplorer.svelte';
-    import FeatureNotice from './FeatureNotice.svelte';
-    import { FeatureUnavailableError, guardFeatureAction } from '../featureActionGuard.js';
-    import { getFeaturePresentation, getRuntimeFeatureContext } from '../featureRegistry.js';
-    
-    let {
-        sessionId = "",
-        contentGeneration = 0,
-    } = $props();
-    
-    const dispatch = createEventDispatcher();
-    const featureContext = getRuntimeFeatureContext();
-    const autoTagPresentation = getFeaturePresentation('pdf_auto_tag', featureContext);
-    const readingOrderPresentation = getFeaturePresentation('reading_order_editing', featureContext);
-    
-    let activeTab = $state('validate');
-    let isLoading = $state(false);
-    let errorMsg = $state("");
-    
-    // Validate State
-    let report = $state(null);
-    
-    // Tree State
-    let tagTree = $state(null);
-    let selectedNode = $state(null);
-    let editAltText = $state("");
-    let editLang = $state("");
-    
-    // Preview State
-    let previewText = $state("");
-    let requestSequence = 0;
-    
-    $effect(() => {
-        const requestSessionId = sessionId;
-        const requestGeneration = contentGeneration;
-        const sequence = ++requestSequence;
-        report = null;
-        tagTree = null;
-        selectedNode = null;
-        previewText = "";
-        errorMsg = "";
-        if (!requestSessionId) {
-            isLoading = false;
-            return;
-        }
-        void refreshSessionData(
-            requestSessionId,
-            requestGeneration,
-            sequence,
-        );
-    });
-    
-    async function refreshSessionData(
-        requestSessionId,
-        requestGeneration,
-        sequence,
-    ) {
-        isLoading = true;
-        const [validationResult, treeResult] = await Promise.allSettled([
-            validateSessionPdfUa(requestSessionId, requestGeneration),
-            getSessionStructureTree(requestSessionId, requestGeneration),
-        ]);
-        if (
-            sequence !== requestSequence ||
-            requestSessionId !== sessionId ||
-            requestGeneration !== contentGeneration
-        ) return;
+  import { createEventDispatcher } from "svelte";
+  import { auditSessionAccessibility, getSessionStructureTree } from "../services/backend/session.js";
+  import FeatureNotice from "./FeatureNotice.svelte";
+  import TagTreeExplorer from "./TagTreeExplorer.svelte";
 
-        if (validationResult.status === "fulfilled") {
-            report = validationResult.value;
-        } else {
-            errorMsg = validationResult.reason?.toString?.() ?? String(validationResult.reason);
-        }
-        if (treeResult.status === "fulfilled") {
-            tagTree = treeResult.value;
-            generatePreviewText(tagTree);
-        } else {
-            console.error("Tree load error:", treeResult.reason);
-            tagTree = null;
-        }
-        isLoading = false;
-    }
-    
-    function generatePreviewText(node, depth = 0) {
-        if (!node) return;
-        if (depth === 0) {
-            previewText = "--- Screen Reader Preview ---\n\n";
-        }
-        
-        let prefix = "  ".repeat(depth);
-        let content = "";
-        
-        if (node.tag_type !== 'DocumentRoot') {
-            content += `${prefix}[${node.tag_type}] `;
-            if (node.alt_text) content += `Alt: "${node.alt_text}" `;
-            if (node.language) content += `(Lang: ${node.language}) `;
-            content += "\n";
-            previewText += content;
-        }
-        
-        if (node.children) {
-            for (let child of node.children) {
-                generatePreviewText(child, depth + 1);
-            }
-        }
-    }
-    
-    function handleNodeSelected(event) {
-        selectedNode = event.detail;
-        editAltText = selectedNode.alt_text || "";
-        editLang = selectedNode.language || "";
-    }
-    
-    async function handleNodeReorder() {
-        try {
-            await guardFeatureAction('reading_order_editing', featureContext, () => {});
-        } catch (error) {
-            if (error instanceof FeatureUnavailableError) {
-                errorMsg = error.presentation?.warning || error.message;
-                return;
-            }
-            throw error;
-        }
-    }
+  let { sessionId = "", contentGeneration = 0 } = $props();
+  const dispatch = createEventDispatcher();
+  let activeTab = $state("summary");
+  let isLoading = $state(false);
+  let errorMsg = $state("");
+  let report = $state(null);
+  let inspection = $state(null);
+  let selectedNode = $state(null);
+  let requestSequence = 0;
+  let mounted = true;
 
+  const resultLabels = {
+    pass: "No finding",
+    fail: "Finding",
+    warning: "Warning",
+    not_applicable: "Not applicable",
+    not_checked: "Not checked",
+    indeterminate: "Indeterminate",
+    human_review_required: "Human review",
+  };
+  const summaryLabels = {
+    findings_detected: "Findings detected",
+    no_findings_in_implemented_checks: "No findings in implemented checks",
+    audit_incomplete: "Audit incomplete",
+    audit_failed: "Audit failed",
+  };
+
+  $effect(() => {
+    mounted = true;
+    const requestedSession = sessionId;
+    const requestedGeneration = contentGeneration;
+    const sequence = ++requestSequence;
+    report = null;
+    inspection = null;
+    selectedNode = null;
+    errorMsg = "";
+    if (!requestedSession) {
+      isLoading = false;
+      return () => { mounted = false; requestSequence += 1; };
+    }
+    void refresh(requestedSession, requestedGeneration, sequence);
+    return () => { mounted = false; requestSequence += 1; };
+  });
+
+  async function refresh(requestedSession, requestedGeneration, sequence) {
+    isLoading = true;
+    const [auditResult, structureResult] = await Promise.allSettled([
+      auditSessionAccessibility(requestedSession, requestedGeneration),
+      getSessionStructureTree(requestedSession, requestedGeneration),
+    ]);
+    if (!mounted || sequence !== requestSequence || requestedSession !== sessionId || requestedGeneration !== contentGeneration) return;
+    if (auditResult.status === "fulfilled") report = auditResult.value;
+    else errorMsg = auditResult.reason?.toString?.() ?? String(auditResult.reason);
+    if (structureResult.status === "fulfilled") inspection = structureResult.value;
+    else if (!errorMsg) errorMsg = structureResult.reason?.toString?.() ?? String(structureResult.reason);
+    isLoading = false;
+  }
+
+  function statusClass(status) {
+    if (status === "findings_detected" || status === "audit_failed") return "text-red-300 border-red-500/30 bg-red-500/10";
+    if (status === "audit_incomplete") return "text-yellow-300 border-yellow-500/30 bg-yellow-500/10";
+    return "text-blue-300 border-blue-500/30 bg-blue-500/10";
+  }
 </script>
 
 <div class="h-full flex flex-col bg-[#1e1e1e] text-white border-l border-white/10 w-80 shadow-2xl z-50">
-    <div class="p-4 border-b border-white/10 flex justify-between items-center bg-[#252526]">
-        <h2 class="text-lg font-semibold flex items-center gap-2">
-            <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-            Accessibility
-        </h2>
-        <button
-            class="p-1 hover:bg-white/10 rounded"
-            onclick={() => dispatch('close')}
-            aria-label="Erişilebilirlik panelini kapat"
-        >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-        </button>
-    </div>
-    
-    <div class="flex border-b border-white/10 text-sm">
-        <button class="flex-1 py-2 text-center {activeTab === 'validate' ? 'bg-blue-600 font-bold' : 'hover:bg-white/5'}" onclick={() => activeTab = 'validate'}>Check</button>
-        <button class="flex-1 py-2 text-center {activeTab === 'tree' ? 'bg-blue-600 font-bold' : 'hover:bg-white/5'}" onclick={() => activeTab = 'tree'}>Tags</button>
-        <button class="flex-1 py-2 text-center {activeTab === 'preview' ? 'bg-blue-600 font-bold' : 'hover:bg-white/5'}" onclick={() => activeTab = 'preview'}>Preview</button>
-    </div>
-    
-    <div class="flex-1 overflow-y-auto p-4 custom-scrollbar">
-        <FeatureNotice featureId="pdf_ua_validation" />
-        {#if isLoading}
-            <div class="text-center text-gray-400 py-4">Processing...</div>
+  <div class="p-4 border-b border-white/10 flex justify-between items-center bg-[#252526]">
+    <h2 class="text-lg font-semibold">Basic accessibility audit</h2>
+    <button class="p-1 hover:bg-white/10 rounded" onclick={() => dispatch("close")} aria-label="Close accessibility panel">✕</button>
+  </div>
+
+  <div class="flex border-b border-white/10 text-xs overflow-x-auto">
+    {#each [["summary", "Summary"], ["checks", "Checks"], ["structure", "Structure"], ["review", "Review"], ["coverage", "Coverage"]] as tab}
+      <button class="px-3 py-2 whitespace-nowrap {activeTab === tab[0] ? 'bg-blue-600 font-bold' : 'hover:bg-white/5'}" onclick={() => activeTab = tab[0]}>{tab[1]}</button>
+    {/each}
+  </div>
+
+  <div class="flex-1 overflow-y-auto p-4 custom-scrollbar">
+    <FeatureNotice featureId="basic_accessibility_audit" />
+    {#if isLoading}<div class="text-center text-gray-400 py-4">Running bounded audit…</div>{/if}
+    {#if errorMsg}<div class="bg-red-500/20 text-red-300 p-3 rounded mb-4 text-sm border border-red-500/30">Audit could not be completed: {errorMsg}</div>{/if}
+
+    {#if report}
+      {#if activeTab === "summary"}
+        <div class="p-3 rounded border mb-4 {statusClass(report.summaryStatus)}">
+          <div class="font-semibold">{summaryLabels[report.summaryStatus]}</div>
+          <div class="text-xs mt-1">Reference: {report.referenceProfile}</div>
+        </div>
+        <p class="text-xs text-gray-300 mb-4">This basic audit covers only implemented machine checks. It does not establish PDF/UA conformance or document accessibility.</p>
+        {#if report.summaryStatus === "no_findings_in_implemented_checks"}
+          <p class="text-xs text-blue-200 mb-4">No issues were found in the implemented checks. Unchecked areas and items requiring human review remain.</p>
         {/if}
-        
-        {#if errorMsg}
-            <div class="bg-red-500/20 text-red-400 p-3 rounded mb-4 text-sm border border-red-500/30">
-                {errorMsg}
+        <div class="grid grid-cols-2 gap-2 text-xs mb-4">
+          <div class="p-2 bg-white/5 rounded">Findings: {report.checks.filter((item) => item.result === "fail").length}</div>
+          <div class="p-2 bg-white/5 rounded">Warnings: {report.checks.filter((item) => item.result === "warning").length}</div>
+          <div class="p-2 bg-white/5 rounded">Human review: {report.humanReview.length}</div>
+          <div class="p-2 bg-white/5 rounded">Not checked: {report.coverage.notImplementedCheckIds.length}</div>
+        </div>
+        <dl class="grid grid-cols-2 gap-2 text-xs">
+          <dt class="text-gray-400">PDF version</dt><dd>{report.documentFacts.effectiveVersion ?? "unknown"}</dd>
+          <dt class="text-gray-400">Pages</dt><dd>{report.documentFacts.pageCount}</dd>
+          <dt class="text-gray-400">Structure tree</dt><dd>{report.documentFacts.hasStructureTree ? "present" : "missing"}</dd>
+          <dt class="text-gray-400">MarkInfo dictionary</dt><dd>{report.documentFacts.hasMarkInfo ? "present" : "missing"}</dd>
+          <dt class="text-gray-400">Marked entry</dt><dd>{report.documentFacts.hasMarkedEntry ? "present" : "missing"}</dd>
+          <dt class="text-gray-400">Marked value</dt><dd>{report.documentFacts.marked ? "true" : "not true"}</dd>
+          <dt class="text-gray-400">XMP title</dt><dd>{report.documentFacts.xmpTitle}</dd>
+        </dl>
+        {#each report.warnings as warning}<div class="mt-2 p-2 text-xs border border-yellow-500/20 bg-yellow-500/5 text-yellow-200 rounded">{warning}</div>{/each}
+      {:else if activeTab === "checks"}
+        <div class="space-y-2">
+          {#each report.checks as check (check.id)}
+            <details class="p-3 bg-white/5 rounded border border-white/10 text-sm">
+              <summary class="cursor-pointer"><span class="font-medium">{check.title}</span><span class="float-right text-xs text-gray-300">{resultLabels[check.result]}</span></summary>
+              <div class="text-xs text-gray-400 mt-2">{check.id} · {check.automation} · {check.severity}</div>
+              <div class="text-xs text-gray-400 mt-1">Evidence: {check.evidence.length}</div>
+              {#each check.evidence as item}<div class="mt-2 text-xs border-l border-white/20 pl-2">{item.message}{#if item.valuePreview}: {item.valuePreview}{/if}</div>{/each}
+              {#each check.notes as note}<div class="mt-2 text-xs text-yellow-200">{note}</div>{/each}
+              {#each check.standardReferences as reference}<div class="mt-1 text-xs text-gray-500">{reference.standard} · {reference.clause}</div>{/each}
+            </details>
+          {/each}
+        </div>
+      {:else if activeTab === "structure"}
+        {#if inspection?.root}
+          <div class="text-xs text-yellow-200 mb-3">Read-only structural inspection; this is not a screen-reader preview or reading-order verification.</div>
+          <div class="bg-[#181818] rounded border border-white/10 p-2 overflow-x-auto">
+            <TagTreeExplorer node={inspection.root} isRoot on:nodeSelected={(event) => selectedNode = event.detail} />
+          </div>
+          {#if selectedNode}
+            <div class="mt-3 bg-[#252526] p-3 rounded border border-white/10 text-xs">
+              <div class="font-semibold">{selectedNode.rawType ?? selectedNode.kind}</div>
+              <div class="text-gray-400 break-all">{selectedNode.id}</div>
+              <div class="mt-2">Alt: {selectedNode.altTextState}{#if selectedNode.altTextPreview} — {selectedNode.altTextPreview}{/if}</div>
+              <div>Language: {selectedNode.languageState}{#if selectedNode.languagePreview} — {selectedNode.languagePreview}{/if}</div>
+              <div>Association: {selectedNode.associationStatus}</div>
             </div>
-        {/if}
-        
-        {#if activeTab === 'validate'}
-            {#if report}
-                <div class="mb-6 flex flex-col items-center">
-                    <div class="text-4xl font-bold {report.score > 80 ? 'text-green-400' : report.score > 50 ? 'text-yellow-400' : 'text-red-400'}">
-                        {report.score}/100
-                    </div>
-                    <div class="text-sm text-gray-400 mt-1">Heuristic PDF/UA estimate — compliance validation değildir</div>
-                </div>
-                
-                <h3 class="font-semibold mb-2 text-sm text-gray-300 uppercase tracking-wider">Report</h3>
-                <div class="space-y-2">
-                    {#each report.issues as issue, index (`${index}:${issue}`)}
-                        <div class="p-3 bg-white/5 rounded border border-white/10 text-sm flex gap-2">
-                            <span class="text-blue-400 mt-0.5">•</span>
-                            <span>{issue}</span>
-                        </div>
-                    {/each}
-                </div>
-                
-                {#if !report.is_tagged}
-                    <FeatureNotice featureId="pdf_auto_tag" compact />
-                    <button
-                        class="mt-4 w-full py-2 bg-blue-600 hover:bg-blue-500 rounded font-medium text-sm transition-colors shadow-lg"
-                        disabled={!autoTagPresentation.runnable}
-                    >
-                        Auto-Tag kullanılamıyor · DISABLED
-                    </button>
-                {/if}
-            {:else if !isLoading}
-                <div class="text-center text-gray-400 mt-10">No report available. Open a PDF to analyze.</div>
-            {/if}
-            
-        {:else if activeTab === 'tree'}
-            {#if tagTree}
-                <div class="bg-[#181818] rounded border border-white/10 p-2 mb-4 overflow-x-auto">
-                    <FeatureNotice featureId="reading_order_editing" compact />
-                    <TagTreeExplorer
-                        node={tagTree}
-                        isRoot={true}
-                        canReorder={readingOrderPresentation.runnable}
-                        on:nodeSelected={handleNodeSelected}
-                        on:nodeReorder={handleNodeReorder}
-                    />
-                </div>
-                
-                {#if selectedNode}
-                    <div class="bg-[#252526] p-3 rounded border border-white/10">
-                        <div class="flex justify-between items-center mb-2">
-                            <h3 class="font-semibold text-sm">Edit Tag: {selectedNode.tag_type}</h3>
-                            <span class="text-xs text-gray-500">#{selectedNode.id}</span>
-                        </div>
-                        
-                        <div class="space-y-3">
-                            <div>
-                                <label for="a11y-alt-text" class="block text-xs text-gray-400 mb-1">Alternative Text (/Alt)</label>
-                                <textarea id="a11y-alt-text" class="w-full bg-[#1e1e1e] border border-white/20 rounded p-2 text-sm focus:border-blue-500 focus:outline-none opacity-50 cursor-not-allowed" rows="2" bind:value={editAltText} placeholder="Enter alt text..." disabled readonly></textarea>
-                            </div>
-                            <div>
-                                <label for="a11y-language" class="block text-xs text-gray-400 mb-1">Language (/Lang)</label>
-                                <input id="a11y-language" type="text" class="w-full bg-[#1e1e1e] border border-white/20 rounded p-2 text-sm focus:border-blue-500 focus:outline-none opacity-50 cursor-not-allowed" bind:value={editLang} placeholder="e.g. en-US, tr-TR" disabled readonly>
-                            </div>
-                            <button class="w-full py-1.5 bg-green-600/50 cursor-not-allowed rounded text-sm font-medium transition-colors" disabled>
-                                Save Changes (Not Supported)
-                            </button>
-                        </div>
-                    </div>
-                {:else}
-                    <div class="text-center text-gray-500 text-sm mt-4 italic">
-                        Select a tag from the tree to edit its properties.
-                    </div>
-                {/if}
-            {:else if !isLoading}
-                <div class="text-center text-gray-400 mt-10">Document is not tagged. Cannot view Structure Tree.</div>
-            {/if}
-            
-        {:else if activeTab === 'preview'}
-             <div class="bg-[#181818] rounded border border-white/10 p-3 h-full">
-                <pre class="text-xs text-green-400 font-mono whitespace-pre-wrap overflow-y-auto h-full">{previewText}</pre>
-            </div>
-        {/if}
-    </div>
+          {/if}
+        {:else}<div class="text-center text-gray-400 mt-10">No structure tree is available.</div>{/if}
+      {:else if activeTab === "review"}
+        <p class="text-xs text-gray-300 mb-3">These items require a qualified human review.</p>
+        {#each report.humanReview as item (item.id)}
+          <div class="p-3 mb-2 bg-white/5 rounded border border-white/10 text-sm"><div>{item.title}</div><div class="text-xs text-gray-400">{item.category}</div></div>
+        {/each}
+      {:else if activeTab === "coverage"}
+        <div class="text-sm mb-2">Implemented checks: {report.coverage.implementedCheckIds.length}</div>
+        <div class="text-sm mb-2">Not implemented: {report.coverage.notImplementedCheckIds.length}</div>
+        <div class="text-sm mb-4">Incomplete: {report.coverage.incompleteCheckIds.length}</div>
+        <div class="text-xs text-gray-400 mb-4">Audit version: {report.auditVersion}</div>
+        {#each report.coverage.categories as category}
+          <div class="p-2 mb-2 text-xs bg-white/5 border border-white/10 rounded"><span class="font-medium">{category.category}</span> · {category.status}</div>
+        {/each}
+        {#each report.coverage.limitations as limitation}<div class="p-2 mb-2 text-xs bg-white/5 border border-white/10 rounded">{limitation}</div>{/each}
+        {#if inspection?.truncated}<div class="p-2 text-xs bg-yellow-500/10 border border-yellow-500/30 text-yellow-200 rounded">Structure output was truncated by a safety budget.</div>{/if}
+      {/if}
+    {:else if !isLoading && !errorMsg}
+      <div class="text-center text-gray-400 mt-10">Open a PDF to run the basic audit.</div>
+    {/if}
+  </div>
 </div>
 
 <style>
-    .custom-scrollbar::-webkit-scrollbar {
-        width: 6px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-track {
-        background: transparent;
-    }
-    .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.2);
-        border-radius: 3px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-        background: rgba(255, 255, 255, 0.3);
-    }
+  .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 3px; }
 </style>

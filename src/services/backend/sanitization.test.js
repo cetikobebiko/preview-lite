@@ -12,12 +12,14 @@ const runSessionJob = vi.hoisted(() => vi.fn((_sessionId, invokeOperation) => ({
 vi.mock("./client.js", () => ({ callBackend }));
 vi.mock("./sessionJob.js", () => ({ runSessionJob }));
 
-import { startSanitizationInspection } from "./sanitization.js";
+import { startSanitizationExecution, startSanitizationInspection } from "./sanitization.js";
 
 const validReport = {
-  schemaVersion: "1.0.0",
+  schemaVersion: "1.1.0",
   inspectionVersion: "sanitization-inspection-v1",
   policySchemaVersion: "sanitization-policy-v1",
+  controlRegistryVersion: "sanitization-controls/1",
+  inputDigest: "a".repeat(64),
   documentFacts: {
     encrypted: false, signed: false, certificationSignatureDetected: false,
     fieldMdpDetected: false, incrementalRevisionsDetected: false, xfaDetected: false,
@@ -53,6 +55,24 @@ describe("sanitization backend wrapper", () => {
       policySchemaVersion: "sanitization-policy-v1",
     });
     expect(await handle.promise).toMatchObject({ inspectionVersion: "sanitization-inspection-v1" });
+    expect(handle.cancel).toBe(cancel);
+  });
+
+  it("uses only the canonical versioned execution contract", () => {
+    callBackend.mockReturnValueOnce(new Promise(() => {}));
+    const policy = {
+      schemaVersion: "sanitization-policy-v1",
+      profile: "custom_supported_v1",
+      controls: ["incremental_revisions"],
+      acknowledgements: { acknowledgeSignatureInvalidation: false },
+      expectedInspectionVersion: "sanitization-inspection-v1",
+    };
+    const handle = startSanitizationExecution("session-1", 7, policy, "/exports/output.pdf");
+    expect(callBackend).toHaveBeenCalledWith("executeDocumentSanitization", {
+      jobId: "job-1", sessionId: "session-1", expectedContentGeneration: 7,
+      policy, targetPath: "/exports/output.pdf",
+    });
+    expect(handle.jobId).toBe("job-1");
     expect(handle.cancel).toBe(cancel);
   });
 });

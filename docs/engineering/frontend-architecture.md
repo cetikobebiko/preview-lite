@@ -107,7 +107,7 @@ Application startup, config initialization sırasında stop gelmesine karşı ep
 
 Extracted shell bileşenleri modal işlemlerinde `openModal`, `closeModal`, `isModalOpen`; panel işlemlerinde `togglePanel`, `setPanel` ve `panels` kullanır. Compatibility boolean alias'ları yalnız henüz migrate edilmemiş legacy tüketiciler için store sınırında bulunabilir.
 
-Tek `activeModal`, AI assistant ile AI settings dahil blocking modal'ların aynı anda açılmasını engeller. Docked panel'ler modal state'inden bağımsızdır.
+Tek `activeModal`, AI settings dahil blocking modal'ların aynı anda açılmasını engeller. AI sidebar ve docked panel'ler modal state'inden bağımsızdır.
 
 ## Kalan doğrudan Tauri tüketicileri
 
@@ -121,7 +121,6 @@ Bounded altyapı noktaları:
 Henüz platform adaptörüne taşınmamış legacy bileşenler:
 
 - `AnnotationLayer.svelte`
-- `PdfXWizard.svelte`
 - `ExportModal.svelte`
 - `PageOrganizer.svelte`
 - `PluginManagerModal.svelte`
@@ -129,31 +128,56 @@ Henüz platform adaptörüne taşınmamış legacy bileşenler:
 
 Bu envanter 7R kapsamında toplu olarak migrate edilmez; App composition sınırına sızmalarına izin verilmez.
 
-## Kalan `pdfState` tüketicileri
+## AI Subsystem Frontend Mimarisi (Prompt 9A.9)
 
-- `AiContextMenu.svelte`
-- `AiSidebar.svelte`
-- `OcrLayer.svelte`
-- `AnnotationLayer.svelte`
-- `MergeSplitModal.svelte`
-- `PageOrganizer.svelte`
+Canonical AI akışı `aiState.svelte.js` → `aiController.js` → `AiSettingsModal.svelte` / `AiSidebar.svelte` / `AiContextMenu.svelte` sınırındadır:
+- **Svelte 5 Runes**: `aiState.svelte.js` reaktif durumları `$state` ve `$derived` ile yönetir. `activeProfile` başlangıçta `null` olarak başlatılır; `isHydrated` durumu `Boolean(activeProfile?.endpoint_fingerprint)` üzerinden reaktif türetilir.
+- **Hydration Otoritesi**: `aiController.ensureHydrated()` çağrısı tüm AI eylemlerinden önce çalışır ve backend endpoint durumunu garanti eder.
+- **Authoritative Preview & Debounce**: `AiSettingsModal.svelte` kullanıcı girdi revizyon sayacı (`previewRevision`) ve 250ms debouncing ile `preview_ai_endpoint` çağrısı yapar; eski yanıtlar elenir.
+- **Lifecycle & Listener Teardown**: `aiController.dispose()` `applicationRuntime.js` unmount callback'ine bağlanmıştır; tekilleştirilmiş event listener güvenli bir şekilde kapatılır ve dispose sonrası gelen stream event'leri elenir.
 
-Bu legacy facade tüketicileri bağımsız takip işidir. `App.svelte` doğrudan `pdfState` kullanmaz.
 
-## Sanitization inspection ve legacy sınırı (8C.2)
+## Sanitization frontend workflow (8C.6)
 
-`SanitizationDialog.svelte` içindeki geniş boolean seçenekler, featureRuntime/App modal
-wiring ve `documentTransformController` içindeki implicit `_sanitized.pdf` hedefi
-dormant migration debt'tir. Feature gate kapalıdır ve bu zincir future 8C workflow
-contract'ı değildir. 8C.2 versioned inspection modeli bu payload'dan bağımsız olarak
-`sanitizationSchemas.js` → backend `sanitization.js` →
-`sanitizationInspectionController.js` → `sanitizationState.svelte.js` → read-only
-`SanitizationInspectionPanel.svelte` hattında kurulmuştur. Controller session ID,
-content generation, job ID ve local revision ownership uygular; App yalnız composition
-ve context reconciliation taşır. Feature gate kapalı olduğu için panel production'da
-runnable değildir. Save/transform/verifier/publication migration'ı 8C.6 kapsamındadır.
-`remove_hidden_layers` production control olarak taşınamaz çünkü `/OCProperties`
-removal hidden-content removal değildir.
+Canonical akış `featureRuntime.sanitization` → `sanitizationController.js` →
+`sanitizationState.svelte.js` → `SanitizationPanel.svelte` sınırındadır. `App.svelte`
+yalnız composition ve session/generation reconciliation tetiklemesi taşır; component
+backend wrapper veya Tauri dialog import etmez. Inspection, policy ve execution
+state'leri ayrıdır. Controller session ID, content generation, job ID, inspection
+version ve workflow revision ownership uygular; eski session/generation sonuçları
+presentation state'e uygulanmaz.
+
+Panel önce immutable-snapshot inspection yapar; findings/support matrix gösterildikten
+sonra canonical `verified_limited_v1` veya yalnız supported control içeren
+`custom_supported_v1` policy seçilir. Unsupported/unverified controls seçilemez ve
+XFA, RichMedia/rendition, optional content veya encryption blocker'ı acknowledgement
+ile aşılamaz. Signed input için signature invalidation onayı ayrı ve default `false`
+alanıdır. Policy değişikliği önceki execution-ready authority'yi workflow revision ile
+invalid eder.
+
+Save dialog yalnız current inspection, geçerli policy, blocker yokluğu ve gerekli açık
+onaylar sağlandıktan sonra platform adapter'ı üzerinden açılır. İptal edilen dialog job
+başlatmaz. Execution request session/generation/inspection/profile/controls/
+acknowledgements/revision immutable snapshot'ıdır. Canonical backend command aynı
+snapshot üzerinde inspection ve policy'yi yeniden doğrular; frontend inspection
+security authority değildir. Cancellation publication öncesinde cooperative'tir;
+commit başladıktan sonra backend'in published disk truth'u kazanır. Success sonucu
+limited/custom assurance, applied/not-found controls, verification, output path/digest
+ve typed commit state'i ayrı gösterir; recovery/indeterminate/target-conflict/
+verification-failure anlamları flatten edilmez.
+
+Legacy geniş boolean UI/wire service yolu ve implicit `_sanitized.pdf`/auto-open akışı
+8C.6'da kaldırılmıştır. Rust `sanitize_pdf_document` command'ı yalnız fail-closed legacy
+surface olarak kalır; canonical workflow bunu çağırmaz. `remove_hidden_layers`
+production control değildir. Registry hâlâ `status: disabled`, `enabled: false`;
+aktivasyon 8C.7 kapsamındadır.
+
+## Plugin System Frontend Workflow (Prompt 9B)
+
+Eklenti yönetimi `PluginManagerModal.svelte` ve `pluginStore.js` bileşenleri üzerinden yürütülür:
+- **Feature Gate Koruması**: Tüm eklenti eylemleri (`inspectPlugin`, `installPlugin`, `grantConsent`, `togglePluginEnabled`, `startPluginHook`, `cancelPlugin`) `guardFeatureAction('plugin_system', ...)` ile korunur. Feature devre dışıyken (`enabled: false`) tüm eylemler fail-closed olarak `FeatureUnavailableError` fırlatır.
+- **İki Aşamalı Onay & Yükleme**: Eklenti paketi seçildiğinde önce statik denetim (`inspectPlugin`) çalışır; manifest bilgileri, imzasız paket uyarısı ve izin bazlı veri etkisi açıklamaları sunulur. Kullanıcı onay kutusunu işaretlemeden (`consentAcknowledged === true`) yükleme butonu aktifleşmez. Onaylandığında atomik staging (`installPlugin`) ve tekil politika versiyonu (`grantConsent`) adımları işletilir.
+- **Svelte 5 Runes**: `PluginManagerModal.svelte` tamamen Svelte 5 runes (`$state`, `$derived`, `$props`) ile reaktifliği yönetir; legacy Svelte 3/4 syntax'ı barındırmaz.
 
 ## Kabul kapıları
 
@@ -165,3 +189,56 @@ removal hidden-content removal değildir.
 - Kalıcı todo/expected-failure bırakılmaz.
 
 Prompt 8 kapsamındaki gerçek sanitization/redaction semantiği bu refactor'un kapsamı değildir.
+
+## Signature Feature Production Surface Removal
+
+Dijital imza özelliğinin production UI, IPC ve backend yüzeyleri bu kodlamanın kapsam sınırında tamamen kaldırılmıştır. Aşağıdaki bileşenler ve artifactlar production kaynak ağacında **artık mevcut değildir**:
+
+### Kaldırılan Frontend Bileşenleri ve Dosyalar
+
+- `SignatureWizardModal.svelte` — Signature wizard modal bileşeni kaldırılmıştır; `AppModalHost` içermez.
+- `SignaturePanel.svelte` — Signature panel bileşeni kaldırılmıştır; `AppModalHost` içermez.
+- `SignatureSettingsModal.svelte` — Signature settings modal kaldırılmıştır; `AppModalHost` içermez.
+- `src/services/backend/signatures.js` — Production backend wrapper kaldırılmıştır.
+- `src/services/actions.js` içindeki signature action export'ları kaldırılmıştır.
+
+### Kaldırılan IPC Contracts
+
+Production `contracts.js` içinde imzayla ilgili anahtarlar (`verify_pdf_signatures`, `list_system_certificates`, `sign_pdf_pades`, `enable_ltv`) bulunmamaktadır.
+
+### Kaldırılan Backend Handler'lar
+
+- `src-tauri/src/signature.rs` dosyası mevcut değildir.
+- `lib.rs` generate_handler! içinde `signature::verify_pdf_signatures`, `signature::list_system_certificates`, `signature::sign_pdf_pades`, `signature::enable_ltv` kaydı yoktur.
+
+### Kaldırılan Mock / Prototype DTO'lar
+
+Production `src-tauri/src/` altında `SignatureValidationResult`, `SignatureOptions`, `VisualSignatureOptions` veya benzer mock DTO tanımı bulunmamaktadır.
+
+### Kaldırılan Hassas Production Kimlik Bilgileri
+
+- PIN alanı production kaynakta yoktur (yalnızca `PasswordModal` içindeki parola girişi, imza ile ilgisizdir).
+- `tsaPassword`, `timestamp.digicert` veya benzeri TSA credential alanı production kaynakta yoktur.
+- Hard-coded TSA URL yoktur.
+- DigiCert Assured ID Root CA, GlobalSign Root CA gibi sahte trust-root listeleri yoktur.
+
+### Feature Guard Durumu
+
+`featureRegistry.js` içinde signature feature'ları `status: "disabled"`, `enabled: false` olarak kayıtlıdır. Feature guard dışında backend capability sınırı da kapalıdır; backend handler'lar kaldırılmıştır.
+
+
+> [!NOTE]
+> Bu bölüm, acceptance matrix kriterleri #3–#20 ile doğrudan eşleşmektedir. Statik kontrol komutları için bkz. `ipc-inventory.md` ve `pades-architecture-design.md` (signature surface removal bağlamında §6).
+
+# Basic accessibility audit UI boundary
+
+`A11yPanel.svelte` consumes only the session-native basic audit and read-only structure
+inspection wrappers. Both responses cross strict schema/enum/size validation before UI
+state. Request sequence, session identity, content generation, and mounted state prevent
+stale commits. The production panel contains no score, conformance badge, screen-reader
+simulation, auto-tag action, accessibility editing form, or reading-order drag/drop.
+
+Audit schema `accessibility-audit/2` exposes `/MarkInfo` dictionary presence, `/Marked`
+entry presence, and the boolean `/Marked == true` result separately. Session close,
+generation change, a newer audit request, panel unmount, and PDF-to-image UI transitions
+all invalidate older results before state commit.

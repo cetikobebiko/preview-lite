@@ -33,22 +33,24 @@ describe("validated backend client", () => {
 
   it("rejects unknown top-level and validated nested fields", async () => {
     await expect(
-      callBackend("sanitizePdfDocument", {
+      callBackend("executeDocumentSanitization", {
         jobId: JOB_ID,
         sessionId: "sid",
         expectedContentGeneration: 1,
-        outputPath: "/tmp/b.pdf",
-        options: {
-          remove_metadata: true,
-          remove_annotations: true,
-          remove_javascript: true,
-          remove_embedded_files: true,
-          remove_hidden_layers: true,
-          unexpected: true,
+        targetPath: "/tmp/b.pdf",
+        policy: {
+          schemaVersion: "sanitization-policy-v1",
+          profile: "custom_supported_v1",
+          controls: ["incremental_revisions"],
+          expectedInspectionVersion: "sanitization-inspection-v1",
+          acknowledgements: {
+            acknowledgeSignatureInvalidation: false,
+            unexpected: true,
+          },
         },
       }),
     ).rejects.toMatchObject({
-      command: "sanitize_pdf_document",
+      command: "execute_document_sanitization",
       message: expect.stringContaining("unexpected"),
     });
 
@@ -196,7 +198,7 @@ describe("validated backend client", () => {
     ).resolves.toEqual({ changed: false });
   });
 
-  it("enforces required nested fields and rejects unknown nested signature fields", async () => {
+  it("enforces required nested fields and rejects unknown nested metadata fields", async () => {
     await expect(
       callBackend("updateSessionMetadata", {
         sessionId: "sid",
@@ -214,28 +216,20 @@ describe("validated backend client", () => {
     });
 
     await expect(
-      callBackend("signPdfPades", {
-        jobId: JOB_ID,
+      callBackend("updateSessionMetadata", {
         sessionId: "sid",
         expectedContentGeneration: 1,
-        outputPath: "/tmp/b.pdf",
-        certId: "cert",
-        pin: "secret",
-        options: {
-          reason: "Approval",
-          location: "Istanbul",
-          visual_signature: {
-            page_index: 0,
-            x: 1,
-            y: 2,
-            width: 3,
-            height: 4,
-            unsupported: true,
-          },
+        metadata: {
+          title: "Title",
+          author: "Author",
+          subject: "Subject",
+          keywords: "keywords",
+          creator: "Creator",
+          unsupported: true,
         },
       }),
     ).rejects.toMatchObject({
-      command: "sign_pdf_pades",
+      command: "update_session_metadata",
       message: expect.stringContaining("unsupported"),
     });
     expect(invokeMock).not.toHaveBeenCalled();
@@ -329,29 +323,21 @@ describe("validated backend client", () => {
   });
 
   it("does not copy sensitive payload fields onto normalized errors", async () => {
-    invokeMock.mockRejectedValueOnce("backend rejected signing");
+    invokeMock.mockRejectedValueOnce("backend rejected authentication");
 
-    const caught = await callBackend("signPdfPades", {
-      jobId: JOB_ID,
+    const caught = await callBackend("authenticateDocumentSession", {
       sessionId: "sid",
-      expectedContentGeneration: 1,
-      outputPath: "/tmp/b.pdf",
-      certId: "cert",
-      pin: "secret-pin",
-      options: {
-        reason: "Approval",
-        location: "Istanbul",
-      },
+      password: "secret-password",
     }).catch((error) => error);
 
     expect(caught).toMatchObject({
-      command: "sign_pdf_pades",
-      message: "backend rejected signing",
-      cause: "backend rejected signing",
+      command: "authenticate_document_session",
+      message: "backend rejected authentication",
+      cause: "backend rejected authentication",
     });
     expect(caught).not.toHaveProperty("payload");
-    expect(caught).not.toHaveProperty("pin");
-    expect(JSON.stringify(caught)).not.toContain("secret-pin");
+    expect(caught).not.toHaveProperty("password");
+    expect(JSON.stringify(caught)).not.toContain("secret-password");
   });
 
   it("profiles only registered commands through normal validation", async () => {

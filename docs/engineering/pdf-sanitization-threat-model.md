@@ -94,24 +94,24 @@ transform ve independent verifier acceptance tamamlanmadığını ifade eder.
 
 | category | PDF object paths / representations | detection capability | mutation/removal capability | pruning requirement | verification capability | visual impact | functional impact | current support decision | blocking behavior | evidence/tests |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `document_javascript` | Catalog `/OpenAction`, `/AA`, `/Names /JavaScript`; `/S /JavaScript`; `/JS` literal, hex, stream, indirect; `/Next` | Direct/indirect ve payload biçimleri ayrışır; destination-array negatif kontrolü var | Targeted action/name-tree edge; bütün `/Names` silinmez | Evet | Path/type, string, decoded stream, digest, raw ek scan | Yok | Automation durur | `supported_candidate` | Unresolved/remaining finding block | JS, destination ve combined Dests/JavaScript/EmbeddedFiles sibling tests |
-| `additional_actions` | Catalog/Page `/AA`; Page `/O` `/C`; annotation/widget/field `/A` `/AA`; field `/K /V /C /F`, `/CO` | Key ve action type direct/indirect görülür | Yalnız action entries; form field korunabilir | Detached action için | Independent action graph rescan | Yok | Page/form events durur | `supported_with_functional_change_candidate` | Limit/unresolved block | JS fixture, bounded walker |
-| `annotation_actions` | Annotation/Widget/Link `/A`, `/AA` | Annotation varlığı action'dan ayrı | Link korunup action kaldırılabilir; payload cleanup değildir | Evet | Annotation retained + forbidden action absent | Genelde yok | Link/automation durur | `supported_with_functional_change_candidate` | Failure block | JS/network fixtures |
-| `form_actions` | `/AcroForm`, field/widget `/A` `/AA`, `/CO` | Keystroke/validate/calculate/format fixture'da | Form action removal, all-fields removal değildir | Evet | Field inventory + action rescan | Yok | Validation/calculation durur | `supported_with_functional_change_candidate` | Unresolved field tree block | JS fixture |
+| `document_javascript` | Catalog `/OpenAction`, `/AA`, `/Names /JavaScript`; `/S /JavaScript`; `/JS` literal, hex, stream, indirect; `/Next` | Direct/indirect ve payload biçimleri ayrışır; destination-array negatif kontrolü var | Targeted action/name-tree edge; bütün `/Names` silinmez | Evet | Path/type, string, decoded stream, digest, raw ek scan | Yok | Automation durur | `supported_transform_core` | Independent verification block | JS, destination ve combined Dests/JavaScript/EmbeddedFiles sibling tests |
+| `additional_actions` | Catalog/Page `/AA`; Page `/O` `/C`; annotation/widget/field `/A` `/AA`; field `/K /V /C /F`, `/CO` | Key ve action type direct/indirect görülür | Yalnız action entries; form field korunabilir | Detached action için | Independent action graph rescan | Yok | Page/form events durur | `supported_transform_core_with_functional_change` | Independent verification block | JS fixture, bounded walker |
+| `annotation_actions` | Annotation/Widget/Link `/A`, `/AA` | Annotation varlığı action'dan ayrı | Link korunup action kaldırılabilir; payload cleanup değildir | Evet | Annotation retained + forbidden action absent | Genelde yok | Link/automation durur | `supported_transform_core_with_functional_change` | Independent verification block | JS/network fixtures |
+| `form_actions` | `/AcroForm`, field/widget `/A` `/AA`, `/CO` | Keystroke/validate/calculate/format fixture'da | Form action removal, all-fields removal değildir | Evet | Field inventory + action rescan | Yok | Validation/calculation durur | `supported_transform_core_with_functional_change` | Independent verification block | JS fixture |
 | `all_form_fields` | `/Fields`, Widget/AP/inheritance | Inventory mümkün | Appearance/inheritance güvenliği yok | Kapsamlı | Yok | Yüksek | Form kaybolur | `unsupported` | Minimum blocker değil; control execute edemez | Decision |
-| `launch_actions` | `/S /Launch`, `/F`, `/Win`, nested `/Next` | Nested/cycle içinde bulunur | Action edge targeted kaldırılabilir | Action/FileSpec | Forbidden type + reachability | Yok | Local launch durur | `supported_with_functional_change_candidate` | Failure block | network fixture |
-| `uri_actions` | `/S /URI`, Link `/A` | JS'den ayrı | URI action kalkar, Link kalabilir | Evet | `/S /URI` absent | Yok | Web link durur | `supported_with_functional_change_candidate` | Failure block | network fixture |
-| `remote_navigation_actions` | `/GoToR`, `/GoToE`, file spec, destination; local `/GoTo` ayrı | Remote/local ayrımı korunur | Targeted action edge | Evet | Type + external FileSpec scan | Yok | Remote nav durur | `supported_with_functional_change_candidate` | Failure block | network fixture |
-| `form_submission_actions` | `/SubmitForm`, `/ImportData`, URL/FileSpec | Ayrı türler deterministic | Targeted action edge | Evet | Forbidden type rescan | Yok | Submit/import durur | `supported_with_functional_change_candidate` | Failure block | network fixture |
+| `launch_actions` | `/S /Launch`, `/F`, `/Win`, nested `/Next` | Nested/cycle içinde bulunur | Action edge targeted kaldırılabilir | Action/FileSpec | Forbidden type + reachability | Yok | Local launch durur | `supported_transform_core_with_functional_change` | Independent verification block | network fixture |
+| `uri_actions` | `/S /URI`, Link `/A` | JS'den ayrı | URI action kalkar, Link kalabilir | Evet | `/S /URI` absent | Yok | Web link durur | `supported_transform_core_with_functional_change` | Independent verification block | network fixture |
+| `remote_navigation_actions` | `/GoToR`, `/GoToE`, file spec, destination; local `/GoTo` ayrı | Remote/local ayrımı korunur | Targeted action edge | Evet | Type + external FileSpec scan | Yok | Remote nav durur | `supported_transform_core_with_functional_change` | Independent verification block | network fixture |
+| `form_submission_actions` | `/SubmitForm`, `/ImportData`, URL/FileSpec | Ayrı türler deterministic | Targeted action edge | Evet | Forbidden type rescan | Yok | Submit/import durur | `supported_transform_core_with_functional_change` | Independent verification block | network fixture |
 | `rendition_actions` | `/Rendition`, Screen/media clip | Üst type görülür | Exhaustive asset graph yok | Karmaşık | Yok | Olası | Media durur | `unsupported` | Minimum blocker | unsupported fixture |
-| `embedded_files` | `/Names /EmbeddedFiles`, FileSpec, `/EF`, `/RF`, `/EmbeddedFile` | Branch/FileSpec/streams ayrı; combined sibling fixture aynı `/Names` içindedir | Bütün owner edges kaldırılınca candidate; Dests/JavaScript sibling'leri korunabilir | Zorunlu | Path/graph/decoded digest/raw ek scan | Attachment UI | Ekler kaybolur | `supported_with_functional_change_candidate` | Unresolved edge block | AF partial/complete prune ve combined-name-tree tests |
-| `associated_files` | Catalog/Page/Annotation/Structure `/AF` | Dört owner ayrı; Structure `/AF` direct ve indirect FileSpec çözer | Her owner edge ayrı; shared FileSpec object-ID dedup karakterize | Zorunlu | No reachable `/AF`/FileSpec/payload | Olası | Association kaybolur | `supported_with_functional_change_candidate` | Limit/unresolved block | `structure_element_af_resolves_direct_and_indirect_filespecs_without_duplicate_inflation`; AF complete-prune test |
-| `file_attachment_annotations` | `/Subtype /FileAttachment`, `/FS`, `/AF` | Subtype/FileSpec görülür | Subtype-specific removal; all-annotation değil | Zorunlu | Subtype/path/payload scan | İkon kaybolur | Attachment erişimi kaybolur | `supported_with_visual_change_candidate` | Failure block | AF fixture |
+| `embedded_files` | `/Names /EmbeddedFiles`, FileSpec, `/EF`, `/RF`, `/EmbeddedFile` | Branch/FileSpec/streams ayrı; combined sibling fixture aynı `/Names` içindedir | Bütün owner edges kaldırılır; Dests/JavaScript sibling'leri korunur | Zorunlu | Path/graph/decoded digest/raw ek scan | Attachment UI | Ekler kaybolur | `supported_transform_core_with_functional_change` | Independent verification block | AF partial/complete prune ve combined-name-tree tests |
+| `associated_files` | Catalog/Page/Annotation/Structure `/AF` | Dört owner ayrı; Structure `/AF` direct ve indirect FileSpec çözer | Her owner edge ayrı; shared FileSpec object-ID dedup karakterize | Zorunlu | No reachable `/AF`/FileSpec/payload | Olası | Association kaybolur | `supported_transform_core_with_functional_change` | Independent verification block | `structure_element_af_resolves_direct_and_indirect_filespecs_without_duplicate_inflation`; AF complete-prune test |
+| `file_attachment_annotations` | `/Subtype /FileAttachment`, `/FS`, `/AF` | Subtype/FileSpec görülür | Subtype-specific removal; all-annotation değil | Zorunlu | Subtype/path/payload scan | İkon kaybolur | Attachment erişimi kaybolur | `supported_transform_core_with_visual_change` | Independent verification block | AF fixture |
 | `portfolio_collection` | Catalog `/Collection`, embedded name tree | Ayrı görülür | Embedded control ile birlikte | Payload için | Collection + embedded scan | Olası | Portfolio UI kaybolur | `supported_with_functional_change_candidate` | Embedded control ile block | AF fixture |
-| `document_info` | Trailer `/Info` | Ayrı path/string | Trailer edge removal | Evet | Trailer + digest scan | Yok | Properties kaybolur | `supported_candidate` | Failure block | metadata fixture |
-| `xmp_metadata` | Catalog `/Metadata` stream | Path/type/decoded stream | Targeted owner edge | Zorunlu | Path + digest | Yok | XMP kaybolur | `supported_candidate` | Failure block | metadata fixture |
-| `page_metadata` | Page `/Metadata` | Page tree scan | Targeted page entry | Zorunlu | Every-page rescan | Yok | Page properties kaybolur | `supported_candidate` | Failure block | metadata fixture |
-| `object_metadata` | Image/Form XObject ve diğer `/Metadata` refs | Image fixture + generic bounded walker | Targeted owner entry | Zorunlu | All-object path + digest | Yok | Object properties kaybolur | `supported_candidate` | Limit/unresolved block | metadata/object-stream fixtures |
+| `document_info` | Trailer `/Info` | Ayrı path/string | Trailer edge removal | Evet | Trailer + digest scan | Yok | Properties kaybolur | `supported_transform_core` | Independent verification block | metadata fixture |
+| `xmp_metadata` | Catalog `/Metadata` stream | Path/type/decoded stream | Targeted owner edge | Zorunlu | Path + digest | Yok | XMP kaybolur | `supported_transform_core` | Independent verification block | metadata fixture |
+| `page_metadata` | Page `/Metadata` | Page tree scan | Targeted page entry | Zorunlu | Every-page rescan | Yok | Page properties kaybolur | `supported_transform_core` | Independent verification block | metadata fixture |
+| `object_metadata` | Image/Form XObject ve diğer `/Metadata` refs | Image fixture + generic bounded walker | Targeted owner entry | Zorunlu | All-object path + digest | Yok | Object properties kaybolur | `supported_transform_core` | Independent verification block | metadata/object-stream fixtures |
 | `private_application_data` | `/PieceInfo`, `/LastModified`, app-private dictionaries | Bilinen keys | Bilinen allowlist paths | Olası | Universe exhaustive değil | Yok | Round-trip data kaybı | `experimental_candidate` | Minimum dışında; seçilemez | metadata fixture |
 | `document_identifier` | Trailer `/ID` | Ayrı fact | Preserve/replace/remove teknik olarak mümkün | Hayır | Equality/absence | Yok | Identity/cache semantics | `supported_candidate` | Policy mismatch block | ID writer tests |
 | `embedded_file_metadata` | FileSpec `/F`, `/UF`, `/Desc`, `/Params`, dates | Ayrı görülür | Embedded control ile kaldırılır | Evet | FileSpec/payload absent | Yok | Name/desc kaybolur | `supported_with_functional_change_candidate` | Embedded control ile block | AF fixture |
@@ -119,7 +119,7 @@ transform ve independent verifier acceptance tamamlanmadığını ifade eder.
 | `rich_media` | RichMedia, Screen, Movie, Sound, 3D, Rendition, assets/external refs | Üst subtype ve controlled asset | Tüm relations enumerate edilmedi | Zorunlu | Yok | Yüksek | Multimedia durur | `unsupported` | Minimum blocker | unsupported fixture |
 | `optional_content` | `/OCProperties`, OCG, OCMD, marked-content refs, visibility, annotation `/OC` | OCG ve OCMD type'ları, resource refs ve layer-associated annotation ayrı görülür | `/OCProperties` removal marked content, OCMD ve annotation `/OC` izlerini kaldırmaz | Dictionary prune yetersiz | Görsel/semantic verifier yok | Yüksek | Layer semantics bozulur | `unsupported` | Minimum blocker | `optional_content_ocg_ocmd_and_annotation_oc_are_independently_detectable`; removal-insufficiency test |
 | `all_annotations` | `/Annots`, subtype/AP/payload | Inventory mümkün | Tüm subtype safety yok | Kapsamlı | Yok | Yüksek | Yorum/form/media kaybı | `unsupported` | Minimum blocker değil; active subtype kendi blocker'ı | subtype corpus |
-| `incremental_revisions` | `/Prev`, multiple classic xref, real xref-stream chain, hybrid | Raw+parser facts; latest graph ve physical previous payload ayrışır | Explicit cleanup+prune+full save | Zorunlu | Single EOF/no history/old digest/output-local decoded xref/reopen | Yok | History gider | `supported_candidate` | Proof yoksa block | classic ve xref-stream-chain full-rewrite tests |
+| `incremental_revisions` | `/Prev`, multiple classic xref, real xref-stream chain, hybrid | Raw+parser facts; latest graph ve physical previous payload ayrışır | Explicit cleanup+prune+full save | Zorunlu | Single EOF/no history/old digest/output-local decoded xref/reopen | Yok | History gider | `supported_transform_core` | Independent verification block | classic ve xref-stream-chain full-rewrite tests |
 | `encryption` | `/Encrypt`, `/ID`, handler/permissions | lopdf/PDFium credential facts | Untouched save korur; decrypt-save unencrypted; mutation preservation güvenli değil | Özel | Security semantics verifier yok | Yok | Protection değişebilir | `unsupported` | `SANITIZATION_ENCRYPTED_INPUT_UNSUPPORTED` | encryption tests |
 | `digital_signatures` | Sig field/dict, `/ByteRange`, DocMDP, FieldMDP | lopdf paths + PDFium count | Full rewrite invalidate eder | N/A | Crypto verifier yok | Olası | Certification bozulur | `unverified` | Explicit acknowledgement yoksa block | signature fixture |
 | `standard_conformance` | PDF/A, PDF/X, PDF/UA, certified, linearized | Compliance validator yok | Preservation iddia edilemez | Değişken | Yok | Değişken | Conformance kaybı | `not_applicable` | Assurance conformance iddiası taşımaz | Policy |
@@ -468,9 +468,30 @@ Production scanner visited indirect set ve global node budget ile cycle-safe ça
 direct dictionary/array/stream dictionary/reference yapılarını izler. Traversal depth,
 object/node, per-array ve per-dictionary limitleri; action-chain için ayrı depth/action
 budget; name-tree `/Kids`, `/Names`, `/Limits` için ayrı depth/shape budget vardır.
-Object/action/name-tree ve stream-dictionary geçişlerinde cancellation checkpoint
-bulunur. Runtime cancellation/timeout authority child process'i kill+wait ederek pipe/
-registry cleanup'i mevcut session-job semantiğiyle tamamlar. Limit, malformed critical
+Decoded payload incelemesi gerektiren JavaScript stream'leri stream başına 16 MiB ve
+inspection job toplamında 128 MiB decoded-byte budget'a tabidir. `limits.decodedBytes`
+mandatory decode'larda gerçekten tüketilen byte toplamıdır; checked arithmetic overflow,
+stream başına +1 ve toplam +1 durumları
+`SANITIZATION_DECODE_LIMIT_EXCEEDED` ile partial report olmadan fail-closed biter. Salt
+dictionary presence ile güvenilir saptanan metadata, attachment, XFA ve benzeri stream'ler
+sırf accounting için decode edilmez.
+
+`lopdf` 0.34 stream API'si whole-buffer decode döndürdüğünden bu limit parser'ın
+decode sırasındaki ilk allocation'ını preempt etmez. Decoded sonuç döner dönmez
+per-stream ve total budget enforce edilir; oversized payload finding veya başarı raporu
+üretemez. Parser-level DoS sınırı ayrı ephemeral process, worker address-space limiti
+ve parent timeout/kill/wait birlikteliğidir; bounded/pre-allocation decode garantisi yoktur.
+
+Production sanitization cancellation cooperative worker IPC kullanmaz. Scanner'ın
+checkpoint-capable seam'i yalnız deterministic unit test authority'sidir; production
+cancellation authority parent-owned child process registry'sinin token kontrolü,
+kill+wait/reap akışıdır. User cancellation canonical `Cancelled` outcome'a; timeout ve
+typed worker crash `Failed` outcome'a map edilir. Sanitization'a özgü real-process kabul
+testleri traversal/decode sırasında cancellation, crash, timeout, wrong-session,
+stale-generation, session-close ve wrong-owner cancellation davranışlarını; private job
+directory, child registry ve credential context cleanup'ini doğrular. Runtime
+cancellation/timeout authority child process'i kill+wait ederek pipe/registry cleanup'i
+mevcut session-job semantiğiyle tamamlar. Limit, malformed critical
 graph, unresolved reference, unknown action veya incomplete mandatory scan partial
 success üretmez; typed `SANITIZATION_*_LIMIT_EXCEEDED` veya
 `SANITIZATION_INSPECTION_FAILED` failure ile fail-closed biter.
@@ -505,7 +526,11 @@ Worker sonucu versioned ve strict `SanitizationInspectionReport` üretir:
 `schemaVersion`, `inspectionVersion`, `policySchemaVersion`, `documentFacts`, bütün
 canonical `controls`, `blockingFindings`, `warnings` ve `limits`. Rust worker üretimden
 sonra ve main-process routing öncesinde exact versions/control set/unique IDs/manifest
-parity/count/presence/blocking/cross-field/report-byte invariantlarını doğrular. Report
+parity/count/presence/blocking/cross-field/report-byte invariantlarını doğrular. Aynı
+`controlId` için birden fazla blocker reddedilir; blocker matching control'ün
+`present == true`, `findingCount > 0` sonucunu gerektirir ve
+`0 < evidenceCount <= findingCount` olmalıdır. Rust validator ve frontend normalizer aynı
+malformed wire vakalarını reddeder. Report
 en fazla 1 MiB, 10.000 summary finding, kontrol başına 8 representative evidence,
 128 blocker ve 256 warning taşır. JavaScript source, XMP/Info values, embedded bytes,
 credential, raw stream veya arbitrary file names yoktur.
@@ -528,3 +553,364 @@ Known limitation: inspection bütün PDF aktif/gizli içerik evrenini kapsama ga
 vermez; private application data experimental, conformance validation kapsam dışı,
 signature cryptographic validity incelenmez ve unsupported kategoriler execution için
 blocker kalır.
+
+## 22. 8C.3 Transform Implementation Status
+
+8C.3 private transform core uygulanmıştır; bu bir kullanıcıya yayımlama veya verified
+sanitization sonucu değildir. `sanitization-policy-v1` strict execution contract'ı
+`schemaVersion`, `profile`, canonical `controls`, strict `acknowledgements` ve
+`expectedInspectionVersion` taşır. `verified_limited_v1` registry'de
+`supported*` işaretli bütün mandatory control'leri ister;
+`custom_supported_v1` yalnız aynı allowlist'i kabul eder. Bütün profiller explicit
+`incremental_revisions` ister. Legacy broad boolean payload, unknown/duplicate/
+unsupported control, excessive control count ve unknown serde fields fail-closed'dur.
+
+Canonical `sanitization-controls/1` registry'de transform desteği verilen controls:
+`document_javascript`, `additional_actions`, `annotation_actions`, `form_actions`,
+`launch_actions`, `uri_actions`, `remote_navigation_actions`,
+`form_submission_actions`, `embedded_files`, `associated_files`,
+`file_attachment_annotations`, `document_info`, `xmp_metadata`, `page_metadata`,
+`object_metadata` ve `incremental_revisions`. Candidate/experimental/unverified/
+unsupported durumlar executable allowlist'e girmez. Özellikle XFA, Rendition/
+RichMedia, optional content, encryption, all annotations/forms, private application
+data, portfolio, document identifier ve embedded-file metadata ayrı production
+mutation iddiası taşımaz. Object-metadata scanner kapsamı nedeniyle custom policy'de
+`object_metadata`, catalog ve page scope controls ile birlikte istenir. `/ID` writer
+tarafından preserve edilir; regenerate/remove policy uygulanmaz.
+
+Internal `SanitizePdf` ephemeral worker operation'ı yalnız immutable `snapshot.pdf`,
+session-job credential context, captured content generation, policy, expected input
+digest, expected inspection digest ve sabit `sanitized-transform.pdf` adını alır.
+External target/path yoktur. Worker current snapshot üzerinde inspection'ı yeniden
+üretir; inspection/policy/control-registry version, snapshot SHA-256 ve canonical
+inspection-report SHA-256 eşleşmeden mutation başlamaz. Encrypted input
+`SANITIZATION_ENCRYPTED_INPUT_UNSUPPORTED`; unsupported blocker
+`SANITIZATION_UNSUPPORTED_CONTENT`; signed input acknowledgement yoksa
+`SANITIZATION_SIGNATURE_ACKNOWLEDGEMENT_REQUIRED` üretir. Acknowledged signed output
+signature invalidation ve certification-loss semantiğini açık warning/facts ile taşır;
+signature preservation iddiası yoktur.
+
+Mutation layer read-only scanner'dan ayrıdır. Action edges direct/indirect dictionary,
+array ve cycle-safe `/Next` graph'ında type/origin bazlı kaldırılır. Local `GoTo` ve
+destination-shaped `/OpenAction` korunur. `/A`, `/AA` ve `/Next` boş/broken container
+bırakmadan hedeflenir; field/widget dictionary'leri ve values korunur. `/Names`
+mutasyonu yalnız requested `JavaScript` veya `EmbeddedFiles` branch'ini kaldırır;
+`Dests` ve unrequested sibling'ler korunur. Embedded-file policy name-tree, `/AF`,
+FileSpec `/EF`/`/RF` ve FileAttachment owner edges'ini birlikte ele alır; shared veya
+surviving reachability lopdf pruning authority'sine bırakılır. Metadata policy Trailer
+`/Info` ve catalog/page/object `/Metadata` owner edges'ini scope bazlı kaldırır.
+
+Mutation öncesi requested inspection inventory authoritative reporttan bağlanır;
+kaldırılan JavaScript, XMP/metadata ve embedded payload için decoded/plain bytes
+SHA-256 fingerprint'i bounded evidence olarak tutulur. Raw payload reporta girmez.
+Fingerprint için açılan her `Object::Stream`, 8C.2'nin canonical 16 MiB
+`MAX_SANITIZATION_DECODED_STREAM_BYTES` limiti ve 128 MiB
+`MAX_SANITIZATION_TOTAL_DECODED_BYTES` toplam bütçesi ile account edilir. Sıra
+decode sonucu → stream-başı limit → checked total addition → total limit →
+fingerprint'tir; stream-başı +1, total +1 veya arithmetic overflow
+`SANITIZATION_DECODE_LIMIT_EXCEEDED` ile report/artifact success olmadan
+fail-closed olur. `Object::String` mevcut total payload accounting semantiğini
+korur; decoded-stream olarak yeniden sınıflandırılmaz. `lopdf` whole-buffer
+decode API verdiği için bu transform kontrolü de post-decode enforcement'tır:
+ilk allocation'ı preempt ettiği iddia edilmez, sonuç döner dönmez fingerprint
+öncesi reddedilir.
+Mutation sonunda `/Prev` ve `/XRefStm` temizlenir, `prune_objects()` ile unreachable
+graph çıkarılır, bütün surviving references için dangling-ref self-check yapılır ve
+PDF yeni private staging dosyasına baştan serialize edilir. Reopen, non-empty/size
+limit, regular-file/no-symlink, fixed-name, job-directory containment ve output digest
+kontrollerinden sonra artifact private job path'ine promote edilir. Main orchestration
+artifact SHA-256 ve size'ı worker reportundan bağımsız tekrar hesaplar.
+
+`sanitization-transform/1` report; policy/registry/inspection versions, profile,
+input/output/inspection digests, content generation, requested-control
+`removed_candidate | not_found` sonuçları, bounded path/object/fingerprint evidence,
+full-rewrite structural facts, signature warnings ve kesin
+`transformed_unverified` status'u taşır. `verifiedRemoved` veya publication assurance
+alanı yoktur. Worker structural validator kendi içindeki version/digest/control
+invariantlarını denetler; parent ayrıca report'u original validated request'e
+bağlar: exact policy schema version, profile, expected inspection version,
+input digest, inspection digest ve requested control seti eşit olmalıdır.
+Eksik, extra, duplicate veya different supported control; wrong profile ya da
+wrong request digest parent boundary'de `SANITIZATION_TRANSFORM_REPORT_MISMATCH`
+ile reddedilir. Bu correlation `verified_limited_v1` mandatory setini veya
+`custom_supported_v1` exact custom setini gevşetmez. Parent-owned worker timeout/cancel kill+wait/reap mekanizması transform,
+pruning ve serialization sırasında process'i herhangi bir noktada sonlandırabilir;
+failure/cancel generic private job cleanup ile incomplete artifact, request/response,
+credential ve child registry state'ini temizler. Main Tauri process lopdf parse,
+stream decode, mutation, pruning veya serialization yapmaz.
+
+Public `sanitize_pdf_document` hâlâ parse/I/O yapmadan `FEATURE_UNAVAILABLE` döndürür;
+internal transform/publication core Tauri invoke handler'a kayıtlı değildir. Save dialog ve
+frontend policy editor/execution workflow yoktur; 8C.5 publication yalnız internal/testable
+backend authority'sidir.
+Private artifact yalnız active `run_snapshot_job` operation closure süresince
+geçerlidir: transform worker → parent report/artifact validation → independent
+verifier aynı private artifact'ı tüketir → terminal cleanup. Successful `Completed`
+outcome transform artifact'ını bir sonraki ayrı job'a devretmez; terminal cleanup job
+directory'yi siler. Bu nedenle 8C.4 verifier aynı snapshot-job lifecycle içinde
+orchestrate edilmelidir; persistent temp retention, frontend path exposure veya cleanup
+devri yapılamaz. Feature registry kesin olarak disabled kalır.
+
+## 23. 8C.4 Independent Verification Implementation Status
+
+8C.4 bağımsız verification uygulanmıştır. `SanitizePdf` tamamlanıp parent report,
+regular-file, containment, size ve SHA-256 doğrulamasını geçtikten hemen sonra parent
+artifact digest'ini yeniden hesaplar. Ancak bu pre-verification digest gate geçerse ayrı
+bir ephemeral process `VerifySanitizedPdf` operation'ıyla başlatılır. Verifier transform
+builder'ı veya worker'ın in-memory state'ini çağırmaz; sabit
+`sanitized-transform.pdf` adını private job directory'den kendisi türetir, symlink/
+escape/non-file/empty/oversize durumlarını reddeder ve artifact'ı mutate etmez.
+Original/working/target path veya publication authority almaz. Global snapshot-job
+request'inin immutable snapshot alanı verifier semantiğinde kullanılmaz.
+
+Strict `sanitization-verification/1` report policy/registry/inspection/verifier
+versions, profile, input/transform digest'leri, requested-control results ve typed
+`passed | failed | skipped_with_reason` check'leri taşır. Mandatory checks:
+`fullRewrite`, `incrementalHistoryRemoved`, `objectGraphScan`, `removedPayloadScan`,
+`parserReopen`, `pdfiumReopen`, `pageTreeValid`, `pageCountValid`,
+`pageDimensionsValid`, `preservationChecks`, bounded `renderSmoke` ve
+`artifactUnchanged`'dır. Failed, skipped veya malformed mandatory check;
+blocker; unresolved mandatory finding; eksik/duplicate/unknown control ya da failed
+control sonucu `isVerified == true` ile birlikte kabul edilemez. Worker ve parent bu
+biconditional invariantı ayrı ayrı doğrular. Parent ayrıca transform report digest ==
+verification report digest == post-verification actual artifact digest eşitliğini
+yeniden kurar; wrong schema/verifier/policy/profile/input/transform digest ve control
+seti fail-closed reddedilir.
+
+Verifier output'u fresh lopdf parser instance ve read-only 8C.2 scanner ile yeniden
+açar. Requested controls için fresh finding count sıfır olmalıdır; action scanner
+JavaScript, Launch, URI, GoToR/GoToE, SubmitForm/ImportData, origin-specific `/A`/`/AA`
+ve bounded `/Next` zincirlerini tekrar gezer. Embedded-file verification Names/
+EmbeddedFiles, FileSpec EF/RF, EmbeddedFile streams, AF ve FileAttachment semantiğini
+8C.2 scanner ile tarar. Metadata sonucu policy'nin document Info, catalog/page/object
+Metadata scope'larıyla birebir bağlıdır. Transform report'un removed count veya
+self-check sonucu authority değildir.
+
+Transform evidence'taki JavaScript/string, decoded metadata ve embedded payload
+SHA-256 fingerprint'leri verifier tarafından output'taki nested string object'ler ve
+decoded/relevant stream'ler üzerinde tekrar aranır. Scan direct/indirect arrays,
+dictionaries, streams ve orphan serialization dahil bütün parsed objects için
+cycle-safe/bounded çalışır. Raw bytes yalnız full-rewrite yardımcı kanıtıdır; payload
+absence sonucu object graph + decoded payload scan'den gelir. Report veya error'lara
+JavaScript source, metadata values, embedded bytes, credential ya da arbitrary payload
+konmaz; yalnız safe code/control/count/path/object structural evidence taşınır.
+
+Full-rewrite verification active `/Prev` ve `/XRefStm` yokluğunu; tek PDF header,
+`startxref` ve EOF serialization'ını; resolvable current graph'ı; dangling critical
+reference yokluğunu; current xref-stream infrastructure dışında `prune_objects()` ile
+orphan/unreachable indirect object yokluğunu birlikte ister. Bu `%EOF` sayımına
+indirgenmez. Removed payload fingerprint'leri eski
+revision veya unreachable object içinde yeniden bulunursa verification başarısızdır.
+Adversarial acceptance fake transform-success + reintroduced JS/fingerprint,
+reintroduced orphan EmbeddedFile, wrong digest, appended old-revision marker, dangling
+reference ve page-count corruption vakalarını reddeder.
+
+Transform worker input graph'ından expected page count, CropBox/MediaBox dimensions,
+rotation, decoded page-content digest, named-destination count, local GoTo count,
+top-level form-field count ve outline presence facts üretir. Verifier bunları output
+graph'den bağımsız yeniden gözlemler. Named destinations, fields, outline ve page
+content daima korunmalıdır; local GoTo origin-level action removal istenmedikçe
+korunmalıdır. PDFium output'u ayrı açar; page geometry pozitif/finite olmalı ve first,
+last, varsa middle page 64-pixel target width ile bounded render smoke geçmelidir.
+PDFium parsing/rendering verifier worker içindedir, ana Tauri process PDF açmaz.
+
+Verifier 8C.2'nin object, traversal depth, raw bytes ve total decoded bytes limitlerini;
+ayrıca fingerprint/page/report collection limitlerini reuse eder. Limit nedeniyle
+mandatory observation tamamlanamazsa success üretmez. Parent-owned cancellation her
+worker phase'inde child kill+wait/reap authority'sidir; deterministic acceptance seam'i
+verifier traversal sırasında cancel, crash ve timeout davranışlarını kanıtlar. Crash,
+timeout, cancel, mandatory skip ve PDFium reopen failure publication üretmez, verified
+artifact kabul etmez, exchange/private job directory terminal lifecycle ile temizlenir
+ve session ID/content generation/state revision/dirty/working path/save target değişmez.
+
+### 23.1 8C.4.1 verifier closure
+
+Fresh output inspection'daki canonical `blockingFindings` verification authority'sidir:
+requested-control sonucu temiz olsa bile XFA, optional content, RichMedia/rendition,
+encryption veya registry'nin başka blocking kategorisi bulunursa typed mandatory
+unresolved finding ve verification blocker üretilir; `isVerified` false olur. Bu
+taxonomy verifier içinde tekrar tanımlanmaz, registry/policy değerlendirmesi reuse
+edilir. Acknowledged signature invalidation yalnız transform report'unun bu
+invalidation'ı bağladığı imzalı input akışında istisnadır; otherwise reintroduced
+signature blocker'dır.
+
+Removed-payload absence proof decoded object/string payload gözlemidir. Encoded/raw
+stream bytes yardımcı kanıt olabilir, fakat decoded scan'in yerini alamaz. Taranan
+stream decode edilemiyorsa `removedPayloadScan` failed olur; parser reopen passed
+olması veya encoded bytes içinde fingerprint bulunmaması success değildir. Decode
+accounting central 16 MiB per-stream ve 128 MiB total limitlerini decode → per-stream
+check → checked total → total-check → digest sırasıyla uygular. `lopdf` whole-buffer
+decode kullandığından bu post-decode enforcement'tır; ilk allocation'ı önlediği iddia
+edilmez.
+
+Actual artifact page count, expected input invariantinden bağımsız olarak canonical
+10,000 verification-page limitine bağlanır. Limit aşılırsa page geometry traversal ve
+PDFium first/last/middle sampling success üretemez. Transform → verifier aynı active
+snapshot-job closure içinde kalır. Publication terminal cleanup'ten önce 8C.5'te
+eklenecektir; bu aşamada external target, Save dialog veya frontend execution yoktur.
+
+Known gaps: frontend policy/execution/report workflow 8C.6'ya; feature activation 8C.7'ye
+aittir. Current source-byte-copying proof
+tek serialization, history pointers, unreachable graph, old-revision structural marker
+ve removed-payload fingerprints üzerine kuruludur; arbitrary non-sensitive byte-block
+semantic equivalence iddiası taşımaz. macOS x86_64, Windows ve Linux runtime verifier
+certification çalıştırılmamıştır.
+
+## 24. 8C.5 Atomic Publication Implementation Status
+
+8C.5 digest-bound atomic publication backend'i uygulanmıştır. Internal
+`execute_document_sanitization_core` tek immutable snapshot-job lifecycle'ında fresh
+inspection authority → `SanitizePdf` worker → ayrı `VerifySanitizedPdf` worker → main-process
+publication zincirini çalıştırır. Bu core Tauri invoke handler değildir; production Save
+dialog veya frontend execution callsite'ı açmaz. Legacy `sanitize_pdf_document` kesin olarak
+`FEATURE_UNAVAILABLE`, registry `sanitization.status == "disabled"` ve `enabled == false`
+kalır.
+
+Target preflight, Save/Save As'ın paired write lease'ine karşı generic verified-artifact
+export read lease'i altında yapılır. Original source, current working PDF ve bunların canonical
+namespace/filesystem-identity alias'ları; session private root; jobs root; directory;
+symlink/reparse-point; dangling symlink; unsupported multiple-hard-link target; missing veya
+unusable parent reddedilir. Missing target expectation canonical namespace'e; existing target
+expectation canonical namespace + filesystem identity + baseline SHA-256'a bağlanır. Shared
+path lock altında replacement'tan hemen önce expectation yeniden doğrulanır. Missing→created,
+existing→modified, same-digest/different-identity replacement ve deleted/recreated yarışları
+`SANITIZATION_TARGET_CONFLICT` ile external writer bytes'ını korur.
+
+Worker artifact yolu frontend veya caller girdisi değildir. Parent yalnız private job root
+altındaki canonical `sanitized-transform.pdf` regular file'ını kabul eder; symlink/escape veya
+başka isim reddedilir. Main process artifact'ı lopdf/PDFium ile açmaz ve semantic verification
+tekrarlamaz. Strict worker report validator schema/version, policy/profile, requested controls,
+input/transform digest, bütün mandatory checks, blockers, unresolved mandatory findings ve
+`isVerified` biconditional'ını yeniden doğrular. Publication öncesi invariant:
+
+`transform.outputDigest == verification.transformDigest == actualArtifactDigest`.
+
+Shared `document_io` verified-artifact primitive artifact'ı kopyadan hemen önce yeniden hash'ler,
+target parent içinde adjacent staged temp oluşturur, temp'i fsync eder ve staged SHA-256'yı verifier
+digest'iyle karşılaştırır. Existing target pre-delete edilmez. Platform-specific atomic replace,
+post-commit filesystem identity, post-commit target SHA-256 ve parent-directory durability
+kontrolleri redaction ile aynı generic primitive'dir; sanitization modülünde platform kodu yoktur.
+Successful report yalnız `new_committed | new_committed_durability_unconfirmed` kabul eder ve
+`published == true` ancak verifier PASS ve published target digest exact chain ile eşleştiğinde
+mümkündür.
+
+Pre-commit failure `original_preserved`/`prepared` disk truth'unu; committed fakat durability
+confirmation başarısızlığı `new_committed_durability_unconfirmed` sonucunu korur. Filesystem
+sonucu kesin değilse `indeterminate`; recovery artifact gerektiğinde `recovery_required` ile
+`recoveryPath` ve `replacementDigest` terminal failure metadata'sında taşınır. Generic job cleanup
+ordinary staged/job/snapshot/exchange/credential/child state'ini temizler, recovery artifact'ı
+silmez. `sanitization-test-support` compile-time seam'i temp create/copy/sync, staged corruption,
+replace, postcommit identity/digest, parent durability ve recovery-required sonuçlarını test eder;
+environment-variable veya default/release user switch'i yoktur.
+
+Cancellation checkpoint atomic publication başlamadan hemen öncedir. O noktadan önce cancel
+target'ı değiştirmez. Atomic boundary başladıktan sonra cooperative cancellation filesystem
+transaction'ı bölmez; committed bytes varsa `Completed` ve typed publication report döner,
+`cancelRequested` metadata'sı korunabilir. Export success/failure/conflict/cancel session ID,
+content generation, state revision, dirty, working path, save target veya active document'i
+değiştirmez ve output'u auto-open etmez. Deterministic Save As concurrency testi publication read
+lease'i bırakılmadan persistence mutation'ın ilerleyemediğini doğrular.
+
+Feature matrix: **Inspection implemented; Transform implemented; Independent verification
+implemented; Atomic publication implemented; Frontend execution workflow not yet complete;
+Feature disabled.** Runtime acceptance macOS arm64 üzerinde missing/existing happy path, exact
+four-way digest chain, artifact/staged/target TOCTOU, path/link safety, atomic fault states,
+cancellation boundary, Save As lease, cleanup ve session neutrality için PASS'tir. macOS x86_64,
+Windows ve Linux runtime publication certification çalıştırılmamıştır.
+
+## 25. 8C.6 Frontend Workflow Status
+
+8C.6 canonical frontend zincirini tamamlar:
+
+```text
+featureRuntime.sanitization
+  → sanitizationController
+  → sanitizationState
+  → SanitizationPanel
+  → platform Save adapter
+  → startSanitizationExecution
+  → execute_document_sanitization
+```
+
+Workflow açıldığında current inspection yoksa ilk adım inspection'dır. Panel safe
+document facts, finding count, inspection/removal support, beklenen görsel/işlevsel
+etki ve blocker reason gösterir; raw JavaScript, XMP, embedded bytes veya credential
+state/UI/log'a taşınmaz. Inspection metni yalnız desteklenen yapıları taradığını ve
+bütün active/hidden content'i bulma garantisi vermediğini açıkça söyler.
+
+`verified_limited_v1` control seti frontend tarafından yeniden icat edilmez; versioned
+control manifest'in bütün production-supported kontrolleridir. `custom_supported_v1`
+yalnız aynı supported subset'i seçebilir. Unsupported/unverified/experimental controls
+disabled'dır. XFA, RichMedia/rendition, optional content ve encryption blocker'ları
+Save dialog ve execution'ı engeller; acknowledgement bypass değildir. Signed input
+yalnız ayrı, default-false signature invalidation acknowledgement ile ilerler. Bu onay
+imzanın “kaldırıldığını” değil full rewrite nedeniyle imza/certification durumunun
+geçersizleşebileceğini ifade eder. Standard conformance korunması doğrulanmadığı için
+panel PDF/A, PDF/X, PDF/UA, certification veya linearization korunur iddiası taşımaz.
+
+Profile/control/acknowledgement değişimi workflow revision'ı artırır ve önceki
+execution result/request authority'sini invalid eder. Save dialog yalnız current
+session/generation inspection, geçerli supported policy, blocker yokluğu ve gerekli
+onaylardan sonra platform adapter üzerinden açılır. Cancel edilen Save dialog backend
+job başlatmaz. Execution request session ID, content generation, inspection version,
+profile, exact controls, acknowledgements ve workflow revision içeren immutable
+snapshot'tır. Backend current immutable snapshot üzerinde fresh inspection ve policy
+revalidation yaptığı için frontend raporu security authority değildir.
+
+Inspection ve execution job handle'ları ayrıdır. Session/generation/document type
+değişikliği veya controller destroy active handle'ları best-effort cancel eder ve stale
+ownership guard sonucu reddeder. Kullanıcı cancel istediğinde execution token
+geçersizleştirilmez: backend publication commit sınırını geçmiş ve valid published
+report dönmüşse UI completed disk truth'u korur. Successful export active source
+document/session/generation/dirty/revision state'ini değiştirmez ve output auto-open
+edilmez.
+
+Result presentation yalnız backend assurance'a göre `verified_limited` ile
+`verified_custom` wording'ini ayırır; requested-but-absent control `not_found` olarak
+kalır. Verification failure, target conflict, durability-unconfirmed success,
+`recovery_required` metadata ve `indeterminate` disk truth ayrı gösterilir. Legacy
+frontend broad boolean contract, implicit `_sanitized.pdf` hedefi ve source auto-replace
+akışı kaldırılmıştır. Legacy Rust `sanitize_pdf_document` fail-closed kalır; canonical
+versioned command `execute_document_sanitization`dır.
+
+Bu aşama activation değildir. `sanitization.status == "disabled"` ve
+`sanitization.enabled == false` korunur. macOS arm64 backend runtime acceptance PASS;
+macOS x86_64, Windows ve Linux runtime certification 8C.7 blocker'ıdır.
+
+## 26. 8C-7 Final Security Audit, Platform Certification ve Activation Kararı
+
+8C-7 final güvenlik denetimi, platform sertifikasyon değerlendirmesi ve aktivasyon kararı tamamlanmıştır.
+
+### 26.1 Bütünlük ve Güvenlik Denetimi Özeti
+
+1. **Mimarlık Zinciri:** Active PDF session → immutable snapshot → sanitization inspection worker → authoritative inspection report → strict versioned policy → transform worker → targeted object-tree mutation → object pruning → private full-rewrite artifact → independent verification worker → object/payload/full-rewrite verification → digest-bound atomic publication → structured execution report → frontend verified workflow zincirinin tamamının mevcut olduğu ve çalıştığı doğrulanmıştır.
+2. **Main-Process Güvenlik Sınırı:** Ana Tauri process'inin kullanıcı PDF'sini sanitization semantic work için hiçbir şekilde parse etmediği (ör. `lopdf::Document::load`, PDFium parsing, object traversal, action scan, metadata scan vb. yapılmadığı) architecture testleriyle kilitlenmiştir.
+3. **Threat Model Parity:** `docs/engineering/pdf-sanitization-threat-model.md` ile canonical `sanitization-controls-v1.json` manifesti ve backend/frontend kodu arasında 1:1 uyum sağlanmıştır.
+4. **Supported Controls (PASS):** `document_javascript`, `additional_actions`, `annotation_actions`, `form_actions`, `launch_actions`, `uri_actions`, `remote_navigation_actions`, `form_submission_actions`, `embedded_files`, `associated_files`, `file_attachment_annotations`, `document_info`, `xmp_metadata`, `page_metadata`, `object_metadata` ve `incremental_revisions` kontrollerinin inspection, targeted mutation, pruning, full rewrite, independent verification, frontend mapping ve fixture coverage adımlarının tamamı PASS olarak doğrulanmıştır.
+5. **Unsupported Controls (BLOCKER):** XFA, RichMedia/multimedia, optional content (`/OCProperties`), encryption (`SANITIZATION_ENCRYPTED_INPUT_UNSUPPORTED`), `all_annotations` ve `all_form_fields` fail-closed blocker olarak kalmış, sessizce atlanmadıkları ve UI'da yanlış temizleme garantisi vermedikleri doğrulanmıştır.
+6. **Legacy Model Temizliği:** Legacy broad boolean contract (`remove_metadata`, `remove_annotations`, `remove_javascript`, `remove_embedded_files`, `remove_hidden_layers`), otomatik `_sanitized.pdf` output türetimi ve source auto-replace akışı tamamen kaldırılmıştır. Legacy `sanitize_pdf_document` komutu `FEATURE_UNAVAILABLE` olarak fail-closed bırakılmıştır.
+7. **Bağımsız Verifier Authority:** Transform worker ve verification worker ayrı process'ler olarak ayrılmıştır. Verifier; fresh parser reopen, digest recomputation, object graph scan, removed payload fingerprint scan, full rewrite check ve PDFium reopen/render smoke testlerini zorunlu kılar. Adversarial testlerle fake transform success raporları reddedilmiştir.
+8. **Atomik Yayınlama ve Target Güvenliği:** External publication yalnız `verification.isVerified == true` şartıyla yapılmaktadır. Digest zinciri (`transform.outputDigest == verification.transformDigest == publication.publishedDigest == actual target SHA-256`) tam olarak eşleşir. Target preflight; source/working PDF, private job dizini, symlink, hardlink ve dizin hedeflerini reddeder. Target TOCTOU ve staged temp corruption durumlarında orijinal dosya korunmaktadır.
+9. **UI Güvenlik Dili ve Seam İzolasyonu:** UI wording dürüsttür ("Ön inceleme yalnız desteklenen PDF yapılarını tarar..."). "Tehdit yok", "PDF güvenli", "Belge tamamen temiz" gibi abartılı ifadeler kesinlikle kullanılmamıştır. Test/debug seam'leri release build'e sızmayacak şekilde `#[cfg(feature = "sanitization-test-support")]` altında izole edilmiştir.
+
+### 26.2 Platform Sertifikasyon Matrisi
+
+| Platform | Runtime Acceptance Durumu | Karar Notu |
+|---|---|---|
+| macOS arm64 | **PASS** | Full real-process inspection, transform, verifier, publication, target TOCTOU, fault recovery, cancellation ve session neutrality testlerinin tamamı başarıyla geçmiş ve doğrulanmıştır. |
+| macOS x86_64 | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
+| Windows | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
+| Linux | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
+
+### 26.3 Final Aktivasyon Kararı
+
+**Decision: Outcome B — DEFER ACTIVATION**
+
+* **Açıklama:** PDF Sanitization altyapısı, backend güvenlik sınırları, bağımsız verifier, atomik yayınlama zinciri ve frontend workflow'u %100 tamamlanmış, test edilmiş ve mimari olarak doğrulanmıştır. Ancak advertised platform setinin (macOS x86_64, Windows, Linux) runtime sertifikasyon testleri henüz çalıştırılmadığından, tahribat yaratma potansiyeli olan bu güvenlik özelliğinin tüm masaüstü platformlarında genel kullanıma sunulması ertelenmiştir.
+* **Feature Registry Durumu:** `sanitization.status = "disabled"`, `sanitization.enabled = false`.
+* **Warning Metni:** `"Sanitization inspection, verified execution ve frontend review workflow'u uygulanmıştır; 8C-7 platform/security aktivasyon kararı tamamlanana kadar özellik kapalıdır."`
+
+### 26.4 Final Kapanış Kararı
+
+> **8C COMPLETE — ACTIVATION DEFERRED PENDING PLATFORM CERTIFICATION — PROMPT 9 READY**
+

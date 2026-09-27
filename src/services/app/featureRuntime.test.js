@@ -22,11 +22,17 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       promoteSensitiveScanItem: vi.fn(), removeRegion: vi.fn(), clearRegions: vi.fn(),
       updatePolicy: vi.fn(), setAcknowledgement: vi.fn(), setSelectionMode: vi.fn(), newRedaction: vi.fn(),
     };
+    const sanitizationControllerMock = {
+      start: vi.fn(), destroy: vi.fn(), inspect: vi.fn(), updatePolicy: vi.fn(), setAcknowledgement: vi.fn(),
+      execute: vi.fn(), cancel: vi.fn(), cancelInspection: vi.fn(), cancelExecution: vi.fn(),
+      reconcileContext: vi.fn(), reset: vi.fn(),
+    };
 
     const createExportController = vi.fn(() => ({ exportCurrentPageImage: vi.fn() }));
     const createSearchControllerMock = vi.fn(() => searchControllerMock);
     const createSensitiveScanControllerMock = vi.fn(() => sensitiveScanControllerMock);
     const createSecureRedactionControllerMock = vi.fn(() => secureRedactionControllerMock);
+    const createSanitizationControllerMock = vi.fn(() => sanitizationControllerMock);
 
     const exportActions = {
       exportPage: vi.fn(),
@@ -47,7 +53,8 @@ describe("featureRuntime lifecycle & façade assertions", () => {
         reset: vi.fn(),
       },
       secureRedactionState: { pendingRegions: [], reset: vi.fn() },
-      ui: { openModal: vi.fn(), closeModal: vi.fn(), togglePanel: vi.fn(), setPanel: vi.fn(), panels: { sensitiveDataScan: true } },
+      sanitizationState: { reset: vi.fn() },
+      ui: { openModal: vi.fn(), closeModal: vi.fn(), togglePanel: vi.fn(), setPanel: vi.fn(), isModalOpen: vi.fn(() => true), panels: { sensitiveDataScan: true } },
       asyncPrompt: { request: vi.fn() },
       viewerRuntime: { navigation: { toggleBookMode: vi.fn(), resetZoom: vi.fn() }, render: vi.fn() },
       documentRuntime: { isPdf: true, isLoadedPdfDocument: true, activeDisplayPath: "/test.pdf", fileName: "document.pdf", openFile: vi.fn() },
@@ -60,6 +67,7 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       createSearchController: createSearchControllerMock,
       createSensitiveDataScanController: createSensitiveScanControllerMock,
       createSecureRedactionController: createSecureRedactionControllerMock,
+      createSanitizationController: createSanitizationControllerMock,
       ...overrides,
     });
 
@@ -68,6 +76,7 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       searchControllerMock,
       sensitiveScanControllerMock,
       secureRedactionControllerMock,
+      sanitizationControllerMock,
       createExportController,
     };
   }
@@ -119,6 +128,17 @@ describe("featureRuntime lifecycle & façade assertions", () => {
     runtime.secureRedaction.reconcileContext();
     expect(secureRedactionControllerMock.reconcileContext).toHaveBeenCalledTimes(1);
     expect(runtime.secureRedactionController).toBeUndefined();
+  });
+
+  it("exposes the canonical sanitization façade without a legacy transform action", () => {
+    const { runtime, sanitizationControllerMock } = setupTestRuntime();
+    expect(runtime.sanitization).toBeDefined();
+    runtime.sanitization.reconcileContext();
+    runtime.sanitization.cancelExecution();
+    expect(sanitizationControllerMock.reconcileContext).toHaveBeenCalledTimes(1);
+    expect(sanitizationControllerMock.cancelExecution).toHaveBeenCalledTimes(1);
+    expect(runtime.sanitize).toBeUndefined();
+    expect(runtime.sanitizationController).toBeUndefined();
   });
 
   it("passes pageIndex and viewerRotation to highlight façade selector and returns logical highlights", () => {

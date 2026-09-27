@@ -17,6 +17,7 @@ export function isCurrentPrepressEvent(detail, context) {
       context?.isLoadedPdfDocument &&
       detail.sessionId === context.sessionId &&
       detail.contentGeneration === context.contentGeneration &&
-      detail.pageIndex === context.physicalPageIndex,
+      detail.physicalPageIndex === context.physicalPageIndex &&
+      typeof detail.requestId === "string" && detail.requestId.length > 0,
   );
 }

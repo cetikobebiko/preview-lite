@@ -11,6 +11,8 @@ import argparse
 import hashlib
 import json
 import struct
+import sys
+import tempfile
 from pathlib import Path
 
 
@@ -452,19 +454,123 @@ def build_manifest(output: Path, generated: dict[str, bytes]) -> dict:
     }
 
 
+def verify_determinism(committed_dir: Path = ROOT, manifest_path: Path | None = None) -> bool:
+    """
+    Non-destructively verifies sanitization fixtures and manifest:
+    - Generates into an isolated tempfile.TemporaryDirectory().
+    - Compares generated PDFs and manifest against committed files on disk.
+    - Compares generated hashes and sizes against corpus-manifest.json (fail-closed).
+    - Cleans up temporary directory automatically.
+    - Never overwrites files on disk.
+    """
+    print("Verifying sanitization fixture determinism and manifest integrity (non-destructive)...")
+    all_ok = True
+    if manifest_path is None:
+        manifest_path = committed_dir.parent / "corpus-manifest.json"
+
+    if not manifest_path.is_file():
+        print(f"ERROR: Central manifest file not found at {manifest_path}")
+        return False
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            corpus_data = json.load(f)
+        corpus_fixtures = {f["id"]: f for f in corpus_data.get("fixtures", [])}
+    except Exception as e:
+        print(f"ERROR: Failed to parse corpus-manifest.json: {e}")
+        return False
+
+    with tempfile.TemporaryDirectory(prefix="sanitization_verify_") as tmpdir:
+        temp_path = Path(tmpdir)
+        generated = {name: builder() for name, builder in FIXTURES.items()}
+        for name, payload in generated.items():
+            (temp_path / name).write_bytes(payload)
+        gen_manifest = build_manifest(temp_path, generated)
+        (temp_path / "manifest.json").write_text(
+            json.dumps(gen_manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        # 1. Compare generated PDFs with committed files on disk
+        for name, payload in generated.items():
+            committed_file = committed_dir / name
+            if not committed_file.is_file():
+                print(f"ERROR: Committed file missing: {committed_file}")
+                all_ok = False
+                continue
+
+            committed_bytes = committed_file.read_bytes()
+            gen_sha = hashlib.sha256(payload).hexdigest()
+            disk_sha = hashlib.sha256(committed_bytes).hexdigest()
+            gen_len = len(payload)
+            disk_len = len(committed_bytes)
+
+            if gen_sha != disk_sha or gen_len != disk_len:
+                print(f"ERROR: Byte mismatch for {name}:")
+                print(f"  Disk:      {disk_sha} ({disk_len} bytes)")
+                print(f"  Generated: {gen_sha} ({gen_len} bytes)")
+                all_ok = False
+            else:
+                print(f"OK: {name} ({gen_len} bytes, SHA: {gen_sha[:16]}...)")
+
+            # Check central corpus manifest (fail-closed)
+            stem = name[:-4] if name.endswith(".pdf") else name
+            cid = f"sanitization-{stem}"
+            if cid not in corpus_fixtures:
+                print(f"ERROR: Central manifest fixture ID '{cid}' missing in corpus-manifest.json")
+                all_ok = False
+            else:
+                cmf = corpus_fixtures[cid]
+                if cmf.get("sha256") != gen_sha or cmf.get("byteLength") != gen_len:
+                    print(f"ERROR: Central manifest mismatch for {cid}:")
+                    print(f"  Manifest:  {cmf.get('sha256')} ({cmf.get('byteLength')} bytes)")
+                    print(f"  Generated: {gen_sha} ({gen_len} bytes)")
+                    all_ok = False
+
+        # 2. Compare feature manifest.json
+        committed_manifest_file = committed_dir / "manifest.json"
+        if not committed_manifest_file.is_file():
+            print(f"ERROR: Committed manifest.json missing in {committed_dir}")
+            all_ok = False
+        else:
+            committed_manifest_text = committed_manifest_file.read_text(encoding="utf-8")
+            generated_manifest_text = (temp_path / "manifest.json").read_text(encoding="utf-8")
+            if committed_manifest_text != generated_manifest_text:
+                print("ERROR: Feature manifest.json mismatch between generated and committed")
+                all_ok = False
+            else:
+                print("OK: sanitization/manifest.json matches generated manifest")
+
+    if all_ok:
+        print("ALL SANITIZATION VERIFICATIONS PASSED: 16 PDFs + manifest bit-for-bit identical.")
+    else:
+        print("SANITIZATION VERIFICATION FAILED.")
+    return all_ok
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=ROOT)
-    args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
-    generated = {name: builder() for name, builder in FIXTURES.items()}
-    for name, payload in generated.items():
-        (args.output / name).write_bytes(payload)
-    manifest = build_manifest(args.output, generated)
-    (args.output / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
+    parser = argparse.ArgumentParser(description="Deterministic Sanitization Fixture Generator")
+    parser.add_argument("--output", type=Path, default=ROOT, help="Output directory for generated fixtures")
+    parser.add_argument(
+        "--verify-determinism",
+        action="store_true",
+        help="Non-destructively verify generated bytes against disk and manifest",
     )
+    args = parser.parse_args()
+
+    if args.verify_determinism:
+        ok = verify_determinism(ROOT)
+        sys.exit(0 if ok else 1)
+    else:
+        args.output.mkdir(parents=True, exist_ok=True)
+        generated = {name: builder() for name, builder in FIXTURES.items()}
+        for name, payload in generated.items():
+            (args.output / name).write_bytes(payload)
+        manifest = build_manifest(args.output, generated)
+        (args.output / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

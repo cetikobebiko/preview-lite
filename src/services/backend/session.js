@@ -1,5 +1,9 @@
 import { callBackend } from "./client.js";
 import { runSessionJob } from "./sessionJob.js";
+import {
+  normalizeAccessibilityAuditReport,
+  normalizeAccessibilityStructureInspection,
+} from "../../features/accessibility/accessibilitySchemas.js";
 
 const sessionSaveInProgress = new Map();
 
@@ -124,13 +128,13 @@ export const getSessionStructureTree = (sessionId, expectedContentGeneration) =>
   callBackend("getSessionStructureTree", {
     sessionId,
     expectedContentGeneration,
-  });
+  }).then(normalizeAccessibilityStructureInspection);
 
-export const validateSessionPdfUa = (sessionId, expectedContentGeneration) =>
-  callBackend("validateSessionPdfUa", {
+export const auditSessionAccessibility = (sessionId, expectedContentGeneration) =>
+  callBackend("auditSessionAccessibility", {
     sessionId,
     expectedContentGeneration,
-  });
+  }).then(normalizeAccessibilityAuditReport);
 
 export const searchSessionPdfText = (
   sessionId,
@@ -274,21 +278,6 @@ export const updateSessionMetadata = (
     sessionId,
     expectedContentGeneration,
     metadata,
-  });
-
-export const updateSessionAltText = (
-  sessionId,
-  expectedContentGeneration,
-  objectId,
-  altText,
-  language,
-) =>
-  callBackend("updateSessionAltText", {
-    sessionId,
-    expectedContentGeneration,
-    objectId,
-    altText,
-    language,
   });
 
 export const saveDocumentSession = async (sessionId, expectedStateRevision) => {

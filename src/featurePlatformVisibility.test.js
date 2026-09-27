@@ -28,7 +28,7 @@ describe("platform-limited feature visibility", () => {
   });
 
   it("shows a platform-compatible mock disabled in development", () => {
-    const presentation = getFeaturePresentation("pades_signing", {
+    const presentation = getFeaturePresentation("visual_redaction_mask", {
       build: "development",
       platform: "macos",
     });

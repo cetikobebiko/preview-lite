@@ -299,11 +299,6 @@ export const applyRedactions = (sessionId, expectedContentGeneration, outputPath
     callBackend("applyRedactions", { jobId, sessionId, expectedContentGeneration, outputPath, redactions }),
   ).promise;
 
-export const sanitizePdfDocument = (sessionId, expectedContentGeneration, outputPath, options) =>
-  runSessionJob(sessionId, (jobId) =>
-    callBackend("sanitizePdfDocument", { jobId, sessionId, expectedContentGeneration, outputPath, options }),
-  ).promise;
-
 export const startSensitiveDataScan = (sessionId, expectedContentGeneration, patterns) => {
   const handle = runSessionJob(sessionId, (jobId) =>
     callBackend("scanSensitiveData", { jobId, sessionId, expectedContentGeneration, patterns }),

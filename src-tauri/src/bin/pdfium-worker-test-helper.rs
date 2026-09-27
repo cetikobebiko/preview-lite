@@ -1,3 +1,9 @@
+use preview_alternative_lib::a11y::{
+    AccessibilityAuditReport, AccessibilityCoverage, AccessibilityDocumentFacts,
+    AccessibilityReferenceProfile, AccessibilityStructureInspection, AccessibilitySummaryStatus,
+    AccessibilityTextState, PdfUaDeclaration, ACCESSIBILITY_AUDIT_SCHEMA_VERSION,
+    ACCESSIBILITY_AUDIT_VERSION, ACCESSIBILITY_STRUCTURE_SCHEMA_VERSION,
+};
 use preview_alternative_lib::worker::ipc::{
     decode_request, encode_response, read_payload, write_frame, WorkerCapability, WorkerFailure,
     WorkerFailureKind, WorkerResponse, WorkerResult, MAX_WORKER_REQUEST_BYTES,
@@ -20,10 +26,64 @@ fn capabilities() -> Vec<WorkerCapability> {
         WorkerCapability::GetMetadata,
         WorkerCapability::GetPageAnnotations,
         WorkerCapability::GetStructureTree,
-        WorkerCapability::ValidatePdfUa,
+        WorkerCapability::AuditAccessibility,
         WorkerCapability::Ping,
         WorkerCapability::Shutdown,
     ]
+}
+
+fn accessibility_audit_fixture() -> AccessibilityAuditReport {
+    AccessibilityAuditReport {
+        schema_version: ACCESSIBILITY_AUDIT_SCHEMA_VERSION.to_string(),
+        audit_version: ACCESSIBILITY_AUDIT_VERSION.to_string(),
+        reference_profile: AccessibilityReferenceProfile::Undetermined,
+        summary_status: AccessibilitySummaryStatus::AuditIncomplete,
+        document_facts: AccessibilityDocumentFacts {
+            header_version: Some("1.7".to_string()),
+            catalog_version: None,
+            effective_version: Some("1.7".to_string()),
+            pdfua_declaration: PdfUaDeclaration {
+                part: None,
+                revision: None,
+                state: AccessibilityTextState::Missing,
+            },
+            page_count: 1,
+            encrypted: false,
+            has_structure_tree: false,
+            has_mark_info: false,
+            has_marked_entry: false,
+            marked: false,
+            display_document_title: false,
+            document_language: AccessibilityTextState::Missing,
+            xmp_title: AccessibilityTextState::Missing,
+            info_title: AccessibilityTextState::Missing,
+        },
+        checks: Vec::new(),
+        coverage: AccessibilityCoverage {
+            implemented_check_ids: Vec::new(),
+            not_implemented_check_ids: Vec::new(),
+            incomplete_check_ids: Vec::new(),
+            machine_check_count: 0,
+            human_review_count: 0,
+            categories: Vec::new(),
+            limitations: vec!["test helper has no parsed accessibility source".to_string()],
+        },
+        human_review: Vec::new(),
+        warnings: vec!["test helper synthetic audit".to_string()],
+        truncated: false,
+    }
+}
+
+fn accessibility_structure_fixture() -> AccessibilityStructureInspection {
+    AccessibilityStructureInspection {
+        schema_version: ACCESSIBILITY_STRUCTURE_SCHEMA_VERSION.to_string(),
+        inspection_version: "bounded-structure-inspection/1".to_string(),
+        root: None,
+        findings: vec!["fixture has no structure tree".to_string()],
+        warnings: Vec::new(),
+        truncated: false,
+        limitations: Vec::new(),
+    }
 }
 
 fn main() {
@@ -119,6 +179,29 @@ fn main() {
             std::thread::sleep(Duration::from_secs(60));
             return;
         }
+        let is_audit = matches!(
+            &request.command,
+            preview_alternative_lib::worker::ipc::WorkerCommand::AuditAccessibility { .. }
+        );
+        if is_audit {
+            match mode.as_str() {
+                "hang-audit" => {
+                    std::thread::sleep(Duration::from_secs(60));
+                    return;
+                }
+                "crash-audit" => return,
+                "oversized-audit" => {
+                    let announced = u32::try_from(
+                        preview_alternative_lib::worker::ipc::MAX_WORKER_RESPONSE_BYTES + 1,
+                    )
+                    .unwrap();
+                    let _ = stdout.write_all(&announced.to_le_bytes());
+                    let _ = stdout.flush();
+                    return;
+                }
+                _ => {}
+            }
+        }
         let result = match request.command {
             preview_alternative_lib::worker::ipc::WorkerCommand::OpenDocument { .. } => {
                 Ok(WorkerResult::DocumentOpened {
@@ -139,19 +222,11 @@ fn main() {
             preview_alternative_lib::worker::ipc::WorkerCommand::GetPageAnnotations { .. } => {
                 Ok(WorkerResult::PageAnnotations(Vec::new()))
             }
-            preview_alternative_lib::worker::ipc::WorkerCommand::GetStructureTree { .. } => {
-                Err(WorkerFailure::new(
-                    WorkerFailureKind::StructureTreeUnavailable,
-                    "fixture has no structure tree",
-                ))
-            }
-            preview_alternative_lib::worker::ipc::WorkerCommand::ValidatePdfUa { .. } => Ok(
-                WorkerResult::PdfUaValidation(preview_alternative_lib::a11y::AccessibilityReport {
-                    is_tagged: false,
-                    has_document_title: false,
-                    issues: vec!["fixture is untagged".to_string()],
-                    score: 50,
-                }),
+            preview_alternative_lib::worker::ipc::WorkerCommand::GetStructureTree { .. } => Ok(
+                WorkerResult::AccessibilityStructure(accessibility_structure_fixture()),
+            ),
+            preview_alternative_lib::worker::ipc::WorkerCommand::AuditAccessibility { .. } => Ok(
+                WorkerResult::AccessibilityAudit(accessibility_audit_fixture()),
             ),
             preview_alternative_lib::worker::ipc::WorkerCommand::CloseDocument { .. } => {
                 Ok(WorkerResult::DocumentClosed)
@@ -169,7 +244,11 @@ fn main() {
             )),
         };
         let response = WorkerResponse {
-            protocol_version: WORKER_PROTOCOL_VERSION,
+            protocol_version: if mode == "wrong-version-audit" && is_audit {
+                WORKER_PROTOCOL_VERSION + 1
+            } else {
+                WORKER_PROTOCOL_VERSION
+            },
             request_id: if mode == "wrong-id-command" {
                 request.request_id + 1
             } else {

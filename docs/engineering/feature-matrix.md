@@ -96,10 +96,10 @@ değildir.
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| Basit yerel AI soru-cevap | `AiAssistantModal.svelte:34` | `ask_local_ai`; `lib.rs:476+` | `partial` | localhost Ollama HTTP çağrısı gerçek. | Ollama/model bulunabilirliği, timeout ve context boyutu doğrulanmadı. | Test yok. |
-| Semantic index ve search | AI sidebar via `pdfState.js:93,97` | `ai::{build_semantic_index,semantic_search}` | `partial` | PDFium text extraction, Ollama embedding ve in-memory vector store vardır. | Hatalı chunk parametrelerinde underflow/ilerlememe riski; bazı embedding hataları sessizce atlanır; persistence yok. | Cosine benzerlik unit testi var, unrun; entegrasyon testi yok. |
-| RAG chat streaming | `AiSidebar.svelte`; `pdfState.js:101` | `ai::query_document_rag`; `ai_chat_token/done` eventleri | `partial` | Ollama stream parse ve frontend event listener adları eşleşir. | Event teslimi/Ollama runtime çalışmadı; cancellation/backpressure doğrulanmadı. | Test yok. |
-| Selection/page summary streaming | `AiContextMenu.svelte`; `pdfState.js:105` | `ai::summarize_selection_or_page`; `ai_summary_token/done` | `partial` | Gerçek Ollama streaming yolu ve eşleşen listener vardır. | Model/runtime bağımlılığı ve hata sonlandırma davranışı doğrulanmadı. | Test yok. |
+| AI Endpoint & Consent | `AiSettingsModal.svelte` | `ai::{preview_ai_endpoint,configure_ai_endpoint,get_ai_endpoint_status,clear_ai_endpoint_config}` | `working` | Presentation-only debounced preview, authoritative backend validation, DNS pinning, 4-tier timeout, IP classification, dynamic consent reset. | Uzak HTTPS sunucu erişilebilirliğine bağlıdır. | Comprehensive security acceptance suite (`security_acceptance_tests.rs`, `endpoint_tests`, `AiSettingsModal.test.js`). |
+| Semantic index ve search | `AiSidebar.svelte` | `ai::{build_semantic_index,semantic_search}` | `working` | PDFium text extraction, Ollama embedding, atomic vector store staging & publication, canonical dimension check, lifecycle pruning. | Model boyutu ve bellek sınırına tabidir (100 MB per session, 500 MB global). | Vector store staging, dimension mismatch, lifecycle pruning testleri. |
+| RAG chat streaming | `AiSidebar.svelte` | `ai::{query_document_rag,cancel_ai_request}`; `ai_stream_event` | `working` | Connect/send race cancellation, fail-closed EOF check, single terminal delivery state machine, session generation guard. | Model yanıt üretme hızına bağlıdır. | Tokio select cancel race, single terminal delivery & stream sequence testleri. |
+| Selection/page summary streaming | `AiContextMenu.svelte` | `ai::{summarize_selection_or_page,cancel_ai_request}`; `ai_stream_event` | `working` | Selection-scoped attempt ID, connect/send race cancellation, fail-closed EOF check, single terminal delivery state machine. | Model yanıt üretme hızına bağlıdır. | Attempt ID validation, cancel race & terminal delivery testleri. |
 
 ## Redaction
 
@@ -112,7 +112,8 @@ değildir.
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| PDF Sanitization (Metadüzeltme/Temizlik) | Read-only `SanitizationInspectionPanel.svelte`; dormant legacy `SanitizationDialog.svelte` | `sanitization::inspect_document_sanitization`; legacy `redaction::sanitize_pdf_document` fail-closed | `disabled` | 8C.2 session-native immutable-snapshot inspection pipeline, ephemeral bounded object/action/name-tree worker, strict typed report, JS normalizer, Runes state ve stale-safe controller uygulanmıştır. `sanitize_pdf_document` hâlâ `FEATURE_UNAVAILABLE`; `sanitization.status == disabled`, `enabled == false`. | Transform, bağımsız verification ve atomic publication uygulanmadı. XFA, RichMedia/multimedia, optional content, encrypted input ve imza minimum-profile blocker'ıdır. Inspection bütün aktif/gizli içerikleri kapsama garantisi vermez. Legacy broad booleans ve `_sanitized.pdf` inspection hattına bağlı değildir. | Rust contract/scanner/name-tree/action/metadata/embedded/XFA/encryption/signature/cancel tests; strict frontend schema/store/controller/component tests; `sanitizationArchitecture.test.js`; 16-fixture characterization corpus. |
+| PDF Sanitization (Metadüzeltme/Temizlik) | `SanitizationPanel.svelte`; `sanitizationState.svelte.js`; `sanitizationController.js` | `inspect_document_sanitization`; canonical `execute_document_sanitization`; private `SanitizePdf` + independent `VerifySanitizedPdf` workers; legacy `sanitize_pdf_document` fail-closed | `disabled` | Inspection **implemented**; supported-control transform **implemented**; independent verification **implemented**; digest-bound atomic publication **implemented**; 8C.6 frontend workflow **implemented**. 8C-7 security audit PASS; macOS arm64 full execution acceptance PASS. **8C COMPLETE — ACTIVATION DEFERRED PENDING PLATFORM CERTIFICATION — PROMPT 9 READY**. | **Activation deferred pending platform certification.** XFA, RichMedia/rendition, optional content ve encryption blocker'dır; signature explicit invalidation acknowledgement ister. macOS x86_64/Windows/Linux runtime publication certification çalıştırılmadığından all-desktop activation ertelenmiştir. Registry `enabled: false`, `status: disabled` kalır. | State/controller/panel/schema/featureRuntime/architecture testleri; Rust transform/verifier/adversarial/full-rewrite testleri; real-process inspection→transform→verify→publish acceptance; artifact/staged/target TOCTOU; path/symlink/hardlink; atomic fault/recovery/durability; cancellation/session-neutrality. |
+
 
 Terminoloji sınırı: **8A** sensitive-data detection ve geometry foundation'dır; **8B** yalnız kullanıcının açıkça seçtiği dikdörtgen bölgeler için destructive secure-redaction export'udur; **8C** document-wide sanitization, hidden payload ve metadata cleaning kapsamıdır.
 
@@ -124,38 +125,36 @@ atomic publication kabulünden sonra mümkündür.
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| Sistem sertifikalarını listeleme | `SignatureWizardModal.svelte:34` | `signature::list_system_certificates` | `mock` | Fonksiyon sabit örnek sertifika döndürür. | Gerçek keychain/certificate store erişimi yok. | Test yok. |
-| PAdES imzalama | `SignatureWizardModal.svelte:79` | `signature::sign_pdf_pades` | `mock` | Girdi PDF'i çıktıya kopyalar. | Kriptografik imza/PAdES üretmez; başarı mesajı yanıltıcı olabilir; `_pin` anahtarı belirsiz. | Test yok. |
-| İmza doğrulama | `SignaturePanel.svelte:18` | `signature::verify_pdf_signatures` | `mock` | Hard-coded geçerli doğrulama sonucu döndürür. | Gerçek CMS/cert chain/revocation kontrolü yok; güvenlik açısından kullanılamaz. | Test yok. |
-| LTV enablement | `SignaturePanel.svelte` | `signature::enable_ltv` | `disabled` | Frontend contract session-native; mock-disabled guard korunur. | Rust typed `FEATURE_UNAVAILABLE` döndürür; DSS/OCSP/CRL veya çıktı üretmez. | Action/architecture guard testleri. |
-| Signature settings / TSA / trust store | `SignatureSettingsModal.svelte:9-38` | Backend command veya kalıcı config bağlantısı yok | `mock` | TSA URL hard-coded DigiCert değeriyle başlar, trust store yalnız local component dizisidir; save handler yalnız `alert("Settings saved!")` gösterir. | TSA credentials/trust root değişiklikleri persist veya signature backend'ine aktarılmaz; güvenlik ayarı yapılmış izlenimi verir. | Statically verified / unrun / no test. |
+| Sistem sertifikalarını listeleme | Yok (Bileşen/action kaldırıldı) | Yok (Handler silindi) | `disabled` | Mock handler ve UI tamamen silindi; `featureRegistry.js` metadata kaydı disabled. | Yok (Üretim erişimi kapatıldı). | `signatureSurface.test.js`, `signature_surface.rs` |
+| PAdES imzalama | Yok (Bileşen/action kaldırıldı) | Yok (Handler silindi) | `disabled` | Sahte imzalama UI ve komut zinciri kaldırıldı; mimari tasarım `pades-architecture-design.md`'de tanımlandı. | Yok (Üretim erişimi kapatıldı). | `signatureSurface.test.js`, `signature_surface.rs` |
+| İmza doğrulama | Yok (Bileşen/action kaldırıldı) | Yok (Handler silindi) | `disabled` | Sahte doğrulama paneli ve `is_valid: true` mockları kaldırıldı. | Yok (Üretim erişimi kapatıldı). | `signatureSurface.test.js`, `signature_surface.rs` |
+| LTV enablement | Yok (Bileşen/action kaldırıldı) | Yok (Handler silindi) | `disabled` | LTV butonu ve komutu kaldırıldı; geleceğin B-LT/B-LTA mimarisi belgelendi. | Yok (Üretim erişimi kapatıldı). | `signatureSurface.test.js`, `signature_surface.rs` |
+| Signature settings / TSA / trust store | Yok (Bileşen kaldırıldı) | Yok | `disabled` | Sahte ayar modalı ve hardcoded TSA girdileri üretimden kaldırıldı. | Yok. | `signatureSurface.test.js` |
 
 ## Accessibility / PDF-UA
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| Structure tree okuma | `A11yPanel.svelte:55` | `a11y::get_structure_tree`; `a11y.rs:92+` | `partial` | `lopdf` ile StructTreeRoot ağacı ayrıştırılır. | Karmaşık tagged PDF yapıları, parent tree ve content association doğrulanmadı. | Test yok. |
-| Alt text/language güncelleme | `A11yPanel.svelte` | `update_session_alt_text` | `disabled` | UI readonly/disabled, contract session-native. | PDFium write desteği olmadığı için typed unsupported; legacy path write bypass yoktur. | Architecture ve A11y fetch/stale testleri. |
-| PDF/UA validation | `A11yPanel.svelte:44` | `a11y::validate_pdf_ua`; `a11y.rs:186+` | `partial` | Temel tag/language/metadata heuristic kontrolleri vardır. | ISO 14289 tam doğrulayıcı değildir; “uyumlu” sonucu standart uyumu kanıtlamaz. | Test yok. |
-| Auto-Tag PDF butonu | `A11yPanel.svelte:172-175` | Backend command yok | `scaffold` | Experimental buton yalnız markup olarak bulunur; click handler veya implementasyon yoktur. | Kullanıcı etkileşimi hiçbir işlem başlatmaz. | Statically verified / unrun / no test. |
-| Reading-order backend update | `ReadingOrderOverlay.svelte` | `a11y::update_reading_order`; `a11y.rs:263` | `unreachable` | Backend command tanımlıdır. | Command handler'a kayıtlı değil; normal invoke yolu yok. | Statically verified / unrun / no test. |
-| Reading-order frontend reorder | `A11yPanel.svelte:112-120`; `TagTreeExplorer.svelte` | Backend çağrısı yapılmıyor | `mock` | Drag/reorder handler yalnız console log ve “complex in this demo” açıklamalı `alert` gösterir. | UI değişikliğin uygulandığı izlenimini verebilir; `update_reading_order` çağrılmaz ve PDF değişmez. | Statically verified / unrun / no test. |
+| Basic accessibility audit | `A11yPanel.svelte` | `audit_session_accessibility` → worker `AuditAccessibility` | `experimental` | Schema v2 structured checks/evidence/coverage/human-review; MarkInfo dictionary/entry/value ayrıdır; score ve conformance claim yoktur. | Tam PDF/UA veya WCAG doğrulaması değildir. | Adversarial `a11y` Rust tests, `A11yPanel.test.js`, schema/worker lifecycle tests. |
+| Salt-okunur structure inspection | `A11yPanel.svelte`, `TagTreeExplorer.svelte` | `get_session_structure_tree` → worker cached accessibility document | `partial` | Mixed `/K`, cycle/dangling ref, RoleMap ve temel ParentTree bounded incelenir. | Tam MCID content sequence ve PDF/UA-2 namespace semantiği incomplete. | Rust mixed/cycle/RoleMap/ParentTree tests. |
+| PDF/UA machine validation | Production UI yok | Entegrasyon yok | `disabled` | Ayrı gelecek capability olarak kayıtlıdır. | Validator/runtime/license seçimi yapılmamıştır. | Registry tests. |
+| Auto-tag ve accessibility editing | Production UI/IPC yok | Yok | `disabled` | Alt-text/raw-path/reorder komutları ve mock UI kaldırıldı. | Remediation gelecek ayrı fazdır. | Architecture/source tests. |
 
 ## Prepress / PDF-X
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| Color-space analizi | `PrepressPanel.svelte:140` | `prepress::analyze_color_spaces`; `prepress.rs:32+` | `partial` | Resource dictionary'leri inceler. | ICC bilgileri içinde hard-coded `Default Profile` vardır; nested resources ve renk yönetimi eksik olabilir. | `PrepressPanel.test.js` unrun / mock IPC. |
-| Ink coverage hesabı | `PrepressPanel.svelte:206` | `prepress::calculate_ink_coverage`; `prepress.rs:84+` | `partial` | PDFium RGB render üzerinden CMYK tahmini yapar. | ICC/device-link tabanlı gerçek baskı hesabı değildir. | `PrepressPanel.test.js` unrun / mock IPC. |
-| Separation channels | `PrepressPanel.svelte:165` | `prepress::render_separation_channels`; `prepress.rs:150+` | `partial` | Render edilmiş RGB piksellerden C/M/Y/K görselleri türetilir. | PDF separation plate/spot color render değildir; baskı doğruluğu iddia edilemez. | `PrepressPanel.test.js` unrun / mock IPC. |
-| Page boxes update | Statik frontend call-site yok | `prepress::set_page_boxes`; `prepress.rs:222` | `unreachable` | Backend implementasyonu tanımlıdır. | Handler kaydı ve UI bağlantısı yok. | Test yok. |
-| PDF/X export | `PdfXWizard.svelte:49` | `prepress::export_pdf_x`; `prepress.rs:251+` | `mock` | Version/metadata/output-intent identifier yazma yolu vardır. | ICC profile embed/renk dönüşümü/standart doğrulama yapmaz; gerçek PDF/X uygunluğu üretmez. | `PdfXWizard.test.js` unrun / mock IPC. |
+| Print resource inspection | `PrepressPanel.svelte` | `inspect_session_print_resources` → worker `InspectPrintResources` | `experimental` | Bounded/cycle-safe resource graph, basic ICC header, OutputIntent, spots, transparency/overprint, fonts and effective page boxes; `conformanceClaim: false`. | Definition observation is not content usage, print outcome, or PDF/X conformance. Encrypted structural inspection is explicitly unsupported. | Rust scanner tests, schema tests, panel lifecycle tests, architecture tests. |
+| RGB-derived coverage preview | `PrepressPanel.svelte` | `generate_session_rgb_derived_coverage_preview` → worker | `experimental` | PDFium display RGB pixels produce a deterministic threshold heatmap and channel-sum statistics with explicit approximate metadata. | Not real TAC, ink consumption, color-managed output, or RIP output. | Formula/input/metadata/schema/panel tests. |
+| RGB-derived process preview | `PrepressPanel.svelte` | `generate_session_rgb_derived_process_preview` → worker | `experimental` | Four approximate C/M/Y/K display images; visible legend and permanent warning. | Not printing plates, real separations, spot preservation, overprint simulation, or ICC transform. | Formula/input/metadata/schema/panel tests. |
+| Page-box editing | Production UI/IPC yok | Yok | `disabled` | Effective boxes are read-only inspection observations. | Editing/remediation is a separate future feature. | Negative architecture and panel tests. |
+| PDF/X export | Production UI/IPC yok | Yok | `disabled` | Registry explicitly states conversion/validation is not implemented. | Requires target policy, ICC assets/CMM, independent validator, rewrite and cross-platform packaging. | Negative source tests; future design document. |
 
 ## Plugins
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| Plugin load/unload/list/hook | `PluginManager.svelte`, `DeveloperConsole.svelte`; `pluginStore.js:16-39` | `plugins::{load_plugin,unload_plugin,get_active_plugins,trigger_plugin_hook,run_script_direct}` | `partial` | Rhai compile/run, aktif plugin store ve operation/depth limitleri vardır. | Manifest permission'ları parse edilir fakat etkili enforcement kanıtı yok; direct script runner ve fs erişimi güvenlik riski. | Operation-limit Rust unit testi var, unrun; runtime/sandbox entegrasyon testi yok. |
+| Isolated Plugin System (V1) | `PluginManagerModal.svelte`; `pluginStore.js` | `plugins::{inspect_plugin_package, install_plugin_package, grant_plugin_consent, uninstall_plugin, set_plugin_enabled, list_installed_plugins, start_plugin_execution, cancel_plugin_execution, get_plugin_execution_status}` | `experimental` (disabled) | Subprocess worker (`--run-plugin-worker`), Rhai 1.25.1 sandbox, 17-step revalidation, single consent policy version, fail-closed feature gate. | Üretimde feature gate kapalıdır (`feature_enabled = false`); yalnızca izin verilen host API'lar (`plugin_log`, `ui_notify`) çağrılabilir. | `cargo test plugins::` (44 unit/security testi); `PluginManagerModal.test.js`, `pluginStore.test.js`. |
 
 ## Batch processing
 
@@ -232,7 +231,7 @@ src/utils/textLayerUtils.test.js
 1. Görsel maskeleme redaksiyon yerine kullanılmaz (Prompt 8A'da `.review-highlight-layer` salt-görsel inceleme vurgusu olarak ayrıştırılmıştır).
 2. PAdES, signature verification ve LTV yolları mock/scaffold'dur.
 3. PDF/X export gerçek profil embed/convert/validation yapmaz.
-4. PDF/UA validation yalnız temel heuristic kontrollerdir.
+4. Tarihsel PDF/UA validation adı kaldırılmıştır; üretim yüzeyi yalnız structured Basic Accessibility Audit olarak sunulur.
 5. `apply_redactions` ve `sanitize_pdf_document` fail-closed `FEATURE_UNAVAILABLE` döndürür.
 6. Plugin permission enforcement kanıtlanmamıştır.
 7. Batch engine gerçek işleri yürütmez ve frontend status consumer'ı yoktur.

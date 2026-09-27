@@ -2,33 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FeatureUnavailableError } from "../featureActionGuard.js";
 import {
   applyRedactionsAction,
-  enableLtvAction,
-  exportPdfXAction,
-  listSystemCertificatesAction,
   mergePdfsDirectAction,
   performOcrOnPageAction,
-  sanitizePdfDocumentAction,
   scanSensitiveDataAction,
   shareExternalFileMacosAction,
   shareFileMacosAction,
-  signPdfPadesAction,
   speakTextAction,
   startSensitiveDataScanAction,
   stopSpeakingAction,
-  verifyPdfSignaturesAction,
 } from "./actions.js";
 
 const backend = vi.hoisted(() => ({
   mergePdfs: vi.fn(),
   applyRedactions: vi.fn(),
-  sanitizePdfDocument: vi.fn(),
   scanSensitiveData: vi.fn(),
   startSensitiveDataScan: vi.fn(),
-  enableLtv: vi.fn(),
-  listSystemCertificates: vi.fn(),
-  signPdfPades: vi.fn(),
-  verifyPdfSignatures: vi.fn(),
-  exportSessionPdfX: vi.fn(),
   performOcrOnPage: vi.fn(),
   shareExternalFileMacos: vi.fn(),
   shareFileMacos: vi.fn(),
@@ -41,18 +29,8 @@ vi.mock("./backend/manipulation.js", () => ({
 }));
 vi.mock("./backend/redaction.js", () => ({
   applyRedactions: backend.applyRedactions,
-  sanitizePdfDocument: backend.sanitizePdfDocument,
   scanSensitiveData: backend.scanSensitiveData,
   startSensitiveDataScan: backend.startSensitiveDataScan,
-}));
-vi.mock("./backend/signatures.js", () => ({
-  enableLtv: backend.enableLtv,
-  listSystemCertificates: backend.listSystemCertificates,
-  signPdfPades: backend.signPdfPades,
-  verifyPdfSignatures: backend.verifyPdfSignatures,
-}));
-vi.mock("./backend/prepress.js", () => ({
-  exportSessionPdfX: backend.exportSessionPdfX,
 }));
 vi.mock("./backend/platform.js", () => ({
   performOcrOnPage: backend.performOcrOnPage,
@@ -72,12 +50,6 @@ describe("feature-aware backend actions", () => {
   it.each([
     ["direct merge", () => mergePdfsDirectAction(["/a.pdf"], "/b.pdf", productionMac), backend.mergePdfs],
     ["redaction", () => applyRedactionsAction("sid", 1, "/b.pdf", [], productionMac), backend.applyRedactions],
-    ["sanitization", () => sanitizePdfDocumentAction("sid", 1, "/b.pdf", {}, productionMac), backend.sanitizePdfDocument],
-    ["PAdES certificate listing", () => listSystemCertificatesAction(productionMac), backend.listSystemCertificates],
-    ["PAdES signing", () => signPdfPadesAction("sid", 1, "/b.pdf", "cert", "pin", {}, productionMac), backend.signPdfPades],
-    ["signature verification", () => verifyPdfSignaturesAction("sid", 1, productionMac), backend.verifyPdfSignatures],
-    ["LTV", () => enableLtvAction("sid", 1, "sig", productionMac), backend.enableLtv],
-    ["PDF/X", () => exportPdfXAction("sid", 1, "/b.pdf", "PDF/X-4", "FOGRA39", productionMac), backend.exportSessionPdfX],
   ])("blocks %s before the raw service", async (_label, action, rawService) => {
     await expect(action()).rejects.toBeInstanceOf(FeatureUnavailableError);
     expect(rawService).not.toHaveBeenCalled();

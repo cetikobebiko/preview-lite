@@ -16,8 +16,9 @@ describe("prepress identity", () => {
   });
 
   it("accepts only an event owned by the active prepress triplet", () => {
-    expect(isCurrentPrepressEvent({ sessionId: "session-A", contentGeneration: 4, pageIndex: 2 }, context)).toBe(true);
-    expect(isCurrentPrepressEvent({ sessionId: "session-A", contentGeneration: 5, pageIndex: 2 }, context)).toBe(false);
-    expect(isCurrentPrepressEvent({ sessionId: "session-A", contentGeneration: 4, pageIndex: 3 }, context)).toBe(false);
+    expect(isCurrentPrepressEvent({ sessionId: "session-A", contentGeneration: 4, physicalPageIndex: 2, requestId: "request-A" }, context)).toBe(true);
+    expect(isCurrentPrepressEvent({ sessionId: "session-A", contentGeneration: 5, physicalPageIndex: 2, requestId: "request-A" }, context)).toBe(false);
+    expect(isCurrentPrepressEvent({ sessionId: "session-A", contentGeneration: 4, physicalPageIndex: 3, requestId: "request-A" }, context)).toBe(false);
+    expect(isCurrentPrepressEvent({ sessionId: "session-A", contentGeneration: 4, physicalPageIndex: 2, requestId: "" }, context)).toBe(false);
   });
 });

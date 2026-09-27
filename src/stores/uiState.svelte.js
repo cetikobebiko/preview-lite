@@ -1,5 +1,5 @@
 export function createUiState() {
-  const state = $state({ activeModal: null, panels: { sidebar: true, search: false, a11y: false, prepress: false, signature: false, sensitiveDataScan: false, secureRedaction: false, readingRuler: false }, settingsPopover: false, isDraggingFileOver: false, toast: "", error: "" });
+  const state = $state({ activeModal: null, panels: { sidebar: true, search: false, a11y: false, prepress: false, sensitiveDataScan: false, secureRedaction: false, readingRuler: false }, settingsPopover: false, isDraggingFileOver: false, toast: "", error: "" });
   const api = {
     get activeModal() { return state.activeModal; },
     openModal(type, props = {}) { state.activeModal = { type, props }; },
@@ -16,11 +16,9 @@ export function createUiState() {
   const modalNames = {
     showShortcuts: "shortcuts", showOrganizer: "page_organizer", showMergeSplit: "merge_split",
     isCmdPaletteOpen: "command_palette", isPluginManagerOpen: "plugin_manager",
-    isDeveloperConsoleOpen: "developer_console", isAiModalOpen: "ai_assistant",
+    isAiModalOpen: "ai_assistant",
     isAiSettingsOpen: "ai_settings", isBionicModalOpen: "bionic", isAnalyticsModalOpen: "analytics",
     isMetadataModalOpen: "metadata", isPasswordModalOpen: "password", isExportModalOpen: "export",
-    isSignatureWizardOpen: "signature_wizard", isSignatureSettingsOpen: "signature_settings",
-    isSanitizationDialogOpen: "sanitization", isPdfXWizardOpen: "pdf_x",
   };
   for (const [property, modal] of Object.entries(modalNames)) {
     Object.defineProperty(api, property, {
@@ -34,7 +32,6 @@ export function createUiState() {
     isSearchBarOpen: { get: () => state.panels.search, set: (value) => { state.panels.search = value; } },
     isA11yPanelOpen: { get: () => state.panels.a11y, set: (value) => { state.panels.a11y = value; } },
     isPrepressPanelOpen: { get: () => state.panels.prepress, set: (value) => { state.panels.prepress = value; } },
-    isSignaturePanelOpen: { get: () => state.panels.signature, set: (value) => { state.panels.signature = value; } },
     isSensitiveDataScanPanelOpen: { get: () => state.panels.sensitiveDataScan, set: (value) => { state.panels.sensitiveDataScan = value; } },
     isSecureRedactionPanelOpen: { get: () => state.panels.secureRedaction, set: (value) => { state.panels.secureRedaction = value; } },
     isReadingRulerActive: { get: () => state.panels.readingRuler, set: (value) => { state.panels.readingRuler = value; } },

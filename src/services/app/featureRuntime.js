@@ -11,7 +11,6 @@ import { stopSpeaking } from "../../ttsActions.js";
 import {
   mergePdfsDirectAction,
   performOcrOnPageAction,
-  sanitizePdfDocumentAction,
   shareExternalFileMacosAction,
   shareFileMacosAction,
   speakTextAction,
@@ -37,7 +36,7 @@ import { createReadingPresentationController } from "./readingPresentationContro
 import { createSearchController } from "./searchController.js";
 import { createSensitiveDataScanController } from "./sensitiveDataScanController.js";
 import { createSecureRedactionController } from "./secureRedactionController.js";
-import { createSanitizationInspectionController } from "./sanitizationInspectionController.js";
+import { createSanitizationController } from "./sanitizationController.js";
 import { createShareActionController } from "./shareActionController.js";
 import { createTtsActionController } from "./ttsActionController.js";
 
@@ -70,6 +69,7 @@ export function createFeatureRuntime({
   createSearchController: createSearch = createSearchController,
   createSensitiveDataScanController: createSensitiveScan = createSensitiveDataScanController,
   createSecureRedactionController: createSecureRedaction = createSecureRedactionController,
+  createSanitizationController: createSanitization = createSanitizationController,
 }) {
   const featureContext = getRuntimeFeatureContext();
   const featureUi = (featureId) => getFeaturePresentation(featureId, featureContext);
@@ -143,29 +143,34 @@ export function createFeatureRuntime({
         clearRegions() {}, updatePolicy() {}, setAcknowledgement() {}, setSelectionMode() {}, newRedaction() {},
       });
 
-  const sanitizationInspectionController = sanitizationState
-    ? createSanitizationInspectionController({
+  const sanitizationController = sanitizationState
+    ? createSanitization({
         state: sanitizationState,
         getContext: () => ({
+          panelOpen: !!ui.isModalOpen?.("sanitization"),
           isPdf: documentRuntime.isPdf,
           sessionId: documentSession.activeSessionId,
           contentGeneration: documentSession.contentGeneration,
+          fileName: documentRuntime.fileName,
         }),
       })
-    : Object.freeze({ start() {}, destroy() {}, inspect() {}, cancel() {}, reconcileContext() {} });
+    : Object.freeze({
+        start() {}, destroy() {}, inspect() {}, updatePolicy() {}, setAcknowledgement() {}, execute() {},
+        cancel() {}, cancelInspection() {}, cancelExecution() {}, reconcileContext() {}, reset() {},
+      });
 
   function start() {
     searchController.start();
     sensitiveScanController.start();
     secureRedactionController.start();
-    sanitizationInspectionController.start();
+    sanitizationController.start();
   }
 
   function destroy() {
     searchController.destroy();
     sensitiveScanController.destroy();
     secureRedactionController.destroy();
-    sanitizationInspectionController.destroy();
+    sanitizationController.destroy();
   }
 
   const featureRequestContext = () => ({
@@ -221,7 +226,6 @@ export function createFeatureRuntime({
     openFile: open,
     saveFile: save,
     merge: mergePdfsDirectAction,
-    sanitize: sanitizePdfDocumentAction,
     openDocument: documentRuntime.openFile,
     guard: guardFeatureAction,
     featureContext,
@@ -335,10 +339,16 @@ export function createFeatureRuntime({
     reconcileContext: secureRedactionController.reconcileContext,
   });
 
-  const sanitizationInspection = Object.freeze({
-    inspect: () => runUiAction("sanitization", sanitizationInspectionController.inspect),
-    cancel: () => runUiAction("sanitization", sanitizationInspectionController.cancel),
-    reconcileContext: sanitizationInspectionController.reconcileContext,
+  const sanitization = Object.freeze({
+    inspect: () => runUiAction("sanitization", sanitizationController.inspect),
+    updatePolicy: (patch) => runUiAction("sanitization", () => sanitizationController.updatePolicy(patch)),
+    setAcknowledgement: (name, value) => runUiAction("sanitization", () => sanitizationController.setAcknowledgement(name, value)),
+    execute: () => runUiAction("sanitization", sanitizationController.execute),
+    cancel: sanitizationController.cancel,
+    cancelInspection: sanitizationController.cancelInspection,
+    cancelExecution: sanitizationController.cancelExecution,
+    reconcileContext: sanitizationController.reconcileContext,
+    reset: sanitizationController.reset,
   });
 
   return Object.freeze({
@@ -352,7 +362,7 @@ export function createFeatureRuntime({
     scanSensitiveData: (patterns) => sensitiveScanController.scan(patterns),
     reconcileSensitiveDataContext: () => sensitiveScanController.reconcileContext(),
     secureRedaction,
-    sanitizationInspection,
+    sanitization,
     getSensitiveDataHighlightsForPage: (pageIndex, viewerRotation) =>
       selectViewportHighlights(
         sensitiveScanState?.logicalHighlightsByPage,
@@ -370,7 +380,6 @@ export function createFeatureRuntime({
     speak: tts.speakCurrentPage,
     stopSpeaking: tts.stopSpeaking,
     share: share.share,
-    sanitize: transform.sanitizeDocument,
     mergePdf: transform.mergePdf,
     exportCurrentPageImage: documentExportController.exportCurrentPageImage,
     exportPdfStructure: documentExportController.exportPdfStructure,

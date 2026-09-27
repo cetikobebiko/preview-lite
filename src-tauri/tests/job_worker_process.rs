@@ -100,7 +100,7 @@ fn sanitization_inspection_worker_returns_a_bounded_read_only_report_without_out
             "snapshot_path": snapshot,
             "credential": null,
             "command": { "InspectDocumentSanitization": {
-                "schema_version": "1.0.0",
+                "schema_version": "1.1.0",
                 "policy_schema_version": "sanitization-policy-v1",
                 "inspection_profile": "minimum-profile-inspection-v1"
             }}

@@ -14,9 +14,27 @@ tracy = ["dep:tracy-client", "dep:tracing-tracy"]
 # Explicitly opt-in integration-test authority. This feature is never enabled
 # by the production build or Tauri runtime configuration.
 secure-redaction-test-support = []
+# Compile-only real-process failure/cancellation seams for sanitization
+# acceptance tests. Never enabled by the production/Tauri build.
+sanitization-test-support = []
+# Compile-only real-process adversarial seams for plugin worker supervisor
+# acceptance tests. Never enabled by the production or release Tauri build.
+plugin-test-support = []
+
+[[bin]]
+name = "preview-alternative"
+path = "src/main.rs"
+
+[[bin]]
+name = "plugin-worker-test-helper"
+path = "src/bin/plugin-worker-test-helper.rs"
+required-features = ["plugin-test-support"]
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
+hex = "0.4"
+serde_json = "1.0"
+sha2 = "0.10"
 
 [dependencies]
 tauri = { version = "2.0.0", features = [] }
@@ -25,6 +43,7 @@ tauri-plugin-fs = "2.0.0"
 tauri-plugin-shell = "2.0.0"
 pdfium-render = "0.8"
 lopdf = "0.34"
+quick-xml = { version = "0.41", features = ["serialize"] }
 image = { version = "0.25", features = ["png", "jpeg", "webp", "bmp"] }
 
 miniz_oxide = "0.8"
@@ -71,6 +90,10 @@ windows-sys = { version = "0.61.2", features = [
 
 [dev-dependencies]
 tauri = { version = "2.0.0", features = ["test"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [profile.release]
 debug = "line-tables-only"

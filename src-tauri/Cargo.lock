@@ -3418,8 +3418,10 @@ version = "0.1.0"
 dependencies = [
  "base64 0.21.7",
  "bincode",
+ "chrono",
  "console-subscriber",
  "futures-util",
+ "hex",
  "image",
  "libc",
  "lopdf",
@@ -3427,6 +3429,7 @@ dependencies = [
  "miniz_oxide",
  "parking_lot",
  "pdfium-render",
+ "quick-xml",
  "regex",
  "reqwest 0.12.28",
  "rhai",
@@ -3621,6 +3624,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]

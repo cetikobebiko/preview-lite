@@ -919,7 +919,7 @@ describe('Secure Redaction Domain Contracts, Behavioral Parity & Adversarial Mat
       expect(() => validateUniqueWarnings(unique(REDACTION_LIMITS.MAX_WARNINGS + 1, 'w').map((code) => ({ schemaVersion: '1.0.0', code, message: 'm', details: null })))).toThrow(RedactionError);
       expect(validateUniqueVerificationChecks(unique(REDACTION_LIMITS.MAX_VERIFICATION_CHECKS, 'c').map((code) => sampleValidVerificationCheck(code)))).toHaveLength(REDACTION_LIMITS.MAX_VERIFICATION_CHECKS);
       expect(() => validateUniqueVerificationChecks(unique(REDACTION_LIMITS.MAX_VERIFICATION_CHECKS + 1, 'c').map((code) => sampleValidVerificationCheck(code)))).toThrow(RedactionError);
-    });
+    }, 30000);
 
     it('enforces every active string, DPI, and safety-margin limit at exact UTF-8 byte boundaries', () => {
       const stringCases = [

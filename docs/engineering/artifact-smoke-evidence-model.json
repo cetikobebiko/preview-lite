@@ -1,0 +1,353 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://antigravity.local/schemas/artifact-smoke-evidence-1.0.0.json",
+  "title": "ArtifactSmokeEvidence",
+  "description": "Machine-readable evidence record for exact artifact smoke tests (11I-E)",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "platform",
+    "architecture",
+    "artifactType",
+    "artifactIdentity",
+    "installResult",
+    "launchResult",
+    "runtimeResolutionResult",
+    "smokeDocumentResult",
+    "shutdownResult",
+    "externalValidationResults",
+    "overallStatus",
+    "timestamp",
+    "durationTotalMs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Evidence schema version"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["macos", "linux", "windows"],
+      "description": "Target platform"
+    },
+    "architecture": {
+      "type": "string",
+      "enum": ["arm64", "x86_64"],
+      "description": "Target architecture"
+    },
+    "artifactType": {
+      "type": "string",
+      "enum": ["MACOS_DMG", "MACOS_APP_BUNDLE", "LINUX_DEB", "WINDOWS_MSI", "WINDOWS_NSIS"],
+      "description": "Artifact class under test"
+    },
+    "artifactIdentity": {
+      "type": "object",
+      "required": ["filePath", "buildProvenance"],
+      "properties": {
+        "filePath": {
+          "type": "string",
+          "description": "Path to the artifact file under test"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 of artifact file (if computed)"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Artifact file size in bytes"
+        },
+        "buildProvenance": {
+          "type": "string",
+          "description": "Build identifier (CI run ID, local-build-timestamp, or 'unknown')"
+        }
+      },
+      "additionalProperties": false
+    },
+    "installResult": {
+      "type": "object",
+      "required": ["status", "method"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "NOT_APPLICABLE", "TOOL_UNAVAILABLE", "ARTIFACT_UNAVAILABLE"]
+        },
+        "method": {
+          "type": "string",
+          "enum": ["dmg_mount_copy", "app_bundle_direct", "deb_install", "msi_install", "nsis_install", "portable_extract", "none"]
+        },
+        "installPath": {
+          "type": "string",
+          "description": "Path where application was installed/extracted"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "launchResult": {
+      "type": "object",
+      "required": ["status", "executablePath"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "NOT_RUN"]
+        },
+        "executablePath": {
+          "type": "string",
+          "description": "Absolute path to the launched executable"
+        },
+        "pid": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "startupDurationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtimeResolutionResult": {
+      "type": "object",
+      "required": ["status", "source"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "NOT_RUN"]
+        },
+        "resolvedPath": {
+          "type": ["string", "null"],
+          "description": "Absolute path to the resolved PDFium runtime"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["packaged", "development_override", "staged_development", "unknown"],
+          "description": "How the runtime was resolved — MUST be 'packaged' for valid artifact smoke"
+        },
+        "sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 of resolved runtime (if verified)"
+        },
+        "architecture": {
+          "type": ["string", "null"],
+          "enum": ["arm64", "x86_64", "TOOL_UNAVAILABLE_OFFLINE"],
+          "description": "ELF architecture of resolved runtime (if verified)"
+        },
+        "error": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "smokeDocumentResult": {
+      "type": "object",
+      "required": ["status", "fixtureId", "fixturePath", "pageCount", "textTokensFound", "renderTest", "workerUsed", "workerSpawnMethod"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "NOT_RUN"]
+        },
+        "fixtureId": {
+          "type": "string",
+          "const": "core-release-smoke"
+        },
+        "fixturePath": {
+          "type": "string",
+          "description": "Path to the fixture used (temp workspace copy)"
+        },
+        "pageCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of pages reported by PDFium"
+        },
+        "textTokensFound": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Known text tokens successfully extracted"
+        },
+        "renderTest": {
+          "type": "object",
+          "required": ["status", "operation", "dimensions", "durationMs"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["PASS", "FAIL", "NOT_RUN"]
+            },
+            "operation": {
+              "type": "string",
+              "enum": ["thumbnail", "page_render", "none"]
+            },
+            "dimensions": {
+              "type": "string",
+              "description": "Render dimensions (e.g., '256x256')"
+            },
+            "durationMs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "workerUsed": {
+          "type": "boolean",
+          "description": "Whether production worker (--run-worker) was used"
+        },
+        "workerSpawnMethod": {
+          "type": "string",
+          "enum": ["production_ipc", "fake_helper", "direct_pdfium", "none"],
+          "description": "How PDFium operations were executed — MUST be 'production_ipc'"
+        },
+        "error": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "shutdownResult": {
+      "type": "object",
+      "required": ["status", "cleanExit", "workerCleanup", "durationMs"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "NOT_RUN"]
+        },
+        "cleanExit": {
+          "type": "boolean",
+          "description": "Main process exited cleanly (code 0)"
+        },
+        "workerCleanup": {
+          "type": "boolean",
+          "description": "Worker processes terminated"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "packageInspectionResult": {
+      "type": "object",
+      "description": "Linux DEB package metadata inspection result",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "NOT_RUN", "TOOL_UNAVAILABLE_OFFLINE"]
+        },
+        "packageName": { "type": ["string", "null"] },
+        "version": { "type": ["string", "null"] },
+        "architecture": { "type": ["string", "null"] },
+        "maintainer": { "type": ["string", "null"] },
+        "description": { "type": ["string", "null"] },
+        "error": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "installedLayout": {
+      "type": "object",
+      "description": "Linux installed application layout validation",
+      "properties": {
+        "mainExecutable": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+            "path": { "type": ["string", "null"] },
+            "error": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "worker": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+            "path": { "type": ["string", "null"] },
+            "error": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+            "path": { "type": ["string", "null"] },
+            "error": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "resourcesPath": { "type": ["string", "null"] },
+        "runtimeLibDir": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "hardeningResult": {
+      "type": "object",
+      "description": "Platform-specific required contamination hardening (e.g. Windows CWD/PATH DLL isolation). NOT_APPLICABLE where the platform does not require it.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "NOT_RUN", "NOT_APPLICABLE"]
+        },
+        "decoyDllCwd": { "type": ["string", "null"] },
+        "pathContamination": { "type": ["string", "null"] },
+        "error": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "externalValidationResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["tool", "status"],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "External validator name (e.g., 'VeraPDF')"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["PASS", "FAIL", "TOOL_UNAVAILABLE", "TOOL_UNAVAILABLE_OFFLINE", "NOT_RUN"]
+          },
+          "outputPath": {
+            "type": ["string", "null"]
+          },
+          "error": {
+            "type": ["string", "null"]
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Optional external validation results (diagnostic only)"
+    },
+    "overallStatus": {
+      "type": "string",
+      "enum": ["PASS", "FAIL"],
+      "description": "Aggregate result — PASS only if all REQUIRED checks PASS"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of evidence creation"
+    },
+    "durationTotalMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total smoke execution duration in milliseconds"
+    }
+  },
+  "additionalProperties": false
+}

@@ -195,7 +195,7 @@ runs one last best-effort pass. In-memory state is not persistent across process
 exit; any remaining instance directory is left to the existing startup orphan
 defence. Startup orphan cleanup itself is unchanged.
 
-The active-PDF macOS Share Sheet, Apple Vision page OCR, signature verification,
+The active-PDF macOS Share Sheet, Apple Vision page OCR, prepress operations,
 and other long-running exports use this snapshot boundary. External image/file
 sharing is intentionally separate as `share_external_file_macos(path)` and must
 never identify the active PDF. The process runner used by the macOS share bridge
@@ -208,24 +208,22 @@ has a bounded timeout and kills/reaps a timed-out child.
 | `detect_scanned_page` | `boundary-only` | before PDFium text extraction |
 | `run_ocr_on_page` | `boundary-only` | before PDFium render/Tesseract |
 | `export_as_searchable_pdf` | `boundary-only` | unsupported scaffold entry only |
-| `sign_pdf_pades` | `cooperative` | each scaffold copy chunk; no real PAdES implementation is added |
-| `verify_pdf_signatures` | `boundary-only` | mock verification entry only |
 | `apply_redactions` | `unavailable` | `FEATURE_UNAVAILABLE` before snapshot/parser |
 | `sanitize_pdf_document` | `unavailable` | `FEATURE_UNAVAILABLE` before snapshot/parser |
+| internal `execute_document_sanitization_core` | `cooperative → atomic disk truth` | inspection/transform/verifier and pre-publication checkpoints; no cancellation once shared verified-artifact replace begins |
 | `scan_sensitive_data` | `cooperative` | cooperative ephemeral job-worker scan |
 | `share_file_macos` | `child-process-killable` | tracked Swift child |
 | `perform_ocr_on_page` | `child-process-killable` | render boundaries plus tracked Vision child |
 | `burn_annotations_to_pdf` | `cooperative` | page/annotation loops and before save |
 | `export_session_page_to_image` | `boundary-only` | single PDFium render/encode |
 | `export_session_pages_as_images` | `cooperative` | between pages; each page render remains a boundary |
-| `export_session_pages_as_pdf_x` | `boundary-only` | existing prepress export boundary |
 | `split_session_pdf` | `cooperative` | ranges, pages, staging and publish boundaries |
 | `merge_session_pdfs` | `cooperative` | input document and page-copy loops |
 | `export_session_text_content` | `cooperative` | between pages; each text extraction remains a boundary |
 | `print_session_pdf` | `child-process-killable` | page preparation plus tracked spooler child |
-| `analyze_session_color_spaces` | `boundary-only` | existing prepress analysis boundary |
-| `calculate_session_ink_coverage` | `cooperative` | render boundaries and each bitmap scanline |
-| `render_session_separation_channels` | `boundary-only` | existing native separation render boundary |
+| `inspect_session_print_resources` | `cooperative` | bounded resource traversal and private worker cancellation marker |
+| `generate_session_rgb_derived_coverage_preview` | `cooperative` | PDFium render boundaries, bounded scanline groups, PNG encode and serialization checkpoints |
+| `generate_session_rgb_derived_process_preview` | `cooperative` | PDFium render boundaries, bounded scanline groups, between-PNG and serialization checkpoints |
 | `extract_session_pages` | `boundary-only` | existing atomic document-IO pipeline |
 | `build_semantic_index` | `cooperative` | page/chunk/request boundaries |
 
@@ -250,3 +248,41 @@ Atomic output locks use canonical path plus file identity for existing targets.
 For missing targets the key is canonical parent plus normalized filename (Windows
 namespace comparison is case-insensitive). Target existence and the baseline
 precondition are checked again while the target lock is held.
+
+## VectorStore Derived State ve Kilit Sıralaması (Prompt 9A.9)
+
+- **Session Yaşam Döngüsü**: `VectorStore` indeksleri oturum ID (`sessionId`) ve `expectedContentGeneration` ile eşleştirilir.
+- **Budama ve Temizlik**:
+  - `clear_session_derived_state()`: Oturum kapandığında veya sıfırlandığında `vector_store.remove_session(session_id)` çağrılır.
+  - `close_all_document_sessions()`: Tüm oturumlar sonlandırıldığında `vector_store.clear_all()` çağrılır.
+  - Generasyon değişiminde veya model/endpoint uyumsuzluğunda eski indeksler atomik staging ve pruning mekanizmalarıyla temizlenir.
+- **Kilit Hiyerarşisi (Lock Ordering Invariant)**: `DocumentSession` durum kilitleri hiçbir koşulda `VectorStore` RwLock'u, HTTP ağ çağrıları veya IPC worker operasyonları sırasında tutulamaz.
+
+## Plugin Subsystem & Worker Demarcation (Prompt 9B)
+
+- **Worker Ayrımı ve İzolasyon**: Eklenti alt sistemi (`PluginState`, `PluginExecutionRegistry`) ve subprocess worker süreçleri (`--run-plugin-worker`) `DocumentSession` yapısından, `SessionWorker` havuzundan ve PDFium motorundan tamamen izoledir.
+- **Sıfır Oturum / Belge Erişimi**: Plugin worker süreçlerine hiçbir oturum tanıtıcısı (`sessionId`), `generation`, dosya yolu, PDFium instance handle'ı, parola veya ham PDF baytı iletilmez.
+- **Durum Dokunulmazlığı**: Plugin worker'lar `DocumentSession` state'ini okuyamaz veya mutate edemez. Belge açılış kancalarında (`on_document_open`) yalnızca anonimleştirilmiş ve denetimli meta veriler (örn. sayfa sayısı) iletilir.
+
+## Signing and LTV Session Non-Mutation Invariant
+
+> [!NOTE]
+> **Design-Only / Future PAdES Implementation Invariant**: The signing and LTV worker pipeline described here is not yet implemented in production. The constraints below are the normative architectural invariants that **must be enforced when implemented**. No production code currently creates `SignaturePrepWorker`, `SignatureFinalizationWorker`, `SignatureVerificationWorker`, or `RevocationAndTimestampWorker` processes, nor enforces `SIGNATURE_TARGET_PROTECTED_PATH` at `target_preflight`. The signature feature surface has been removed from production (`status: disabled`); this section records the future-implementation contract.
+
+Signing (digital signature) and LTV (Long-Term Validation upgrade) operations **must never mutate the active `DocumentSession` state** when implemented. This is a normative constraint that must be enforced at the architecture level.
+
+- Signing must use an immutable snapshot (`jobs/job-<uuid>/snapshot.pdf`), not the session's `working.pdf`.
+- The signed output must be written to a user-selected external target; it must never replace `working.pdf`, `original_path`, or any session/job directory path (`SIGNATURE_TARGET_PROTECTED_PATH` must be enforced at `target_preflight` when implemented).
+- On signing completion (success or failure): `content_generation`, `state_revision`, `dirty`, and session lifecycle state must remain unchanged.
+- LTV upgrade must operate on an immutable snapshot of the signed PDF (typically an external file), not the active session working copy. No boolean toggle (`is_ltv_enabled`) must represent LTV state; each LTV upgrade must produce an independent output PDF at a separate external target.
+- If the session is closed or `content_generation` changes after a signing job starts, the job output must not be applied back; the job must reach `Cancelled` or `Failed` terminal state without publishing.
+
+For the full normative specification of these invariants, including the Worker/Job/Atomic-Publication lifecycle diagram, see `pades-architecture-design.md §6.6`.
+
+# Accessibility audit read boundary
+
+`audit_session_accessibility` and `get_session_structure_tree` are session-native,
+generation-checked document reads. They acquire the existing worker document and use
+its cached accessibility source. They do not mutate the session snapshot, dirty flag,
+state revision, content generation, working PDF, or output filesystem. See
+`basic-accessibility-audit.md` for result semantics and limits.

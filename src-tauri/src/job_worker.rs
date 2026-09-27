@@ -1,6 +1,9 @@
 use crate::annotations::RectData;
 use crate::document_session::{SessionJobContext, SessionJobOperationError};
-use crate::prepress::{ColorProfileReport, InkCoverageResult, SeparationResult};
+use crate::prepress::{
+    PrepressResultIdentity, PrintResourceInspectionReport, RgbDerivedCoveragePreview,
+    RgbDerivedProcessPreview,
+};
 use crate::redaction::SensitiveScanReport;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -14,8 +17,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
-pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 7;
+pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 9;
 pub const SECURE_REDACTION_TRANSFORM_OUTPUT_NAME: &str = "secure-redaction-transform.pdf";
+const PREPRESS_CANCELLATION_MARKER: &str = "prepress-cancel.requested";
 const MAX_JOB_REQUEST_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_JOB_RESPONSE_BYTES: u64 = 256 * 1024 * 1024;
 pub(crate) const MAX_JOB_TEXT_CHARS: usize = 32 * 1024 * 1024;
@@ -115,14 +119,22 @@ pub enum JobCommand {
         pages: Option<Vec<u32>>,
         output_name: String,
     },
-    AnalyzeColorSpaces,
-    CalculateInkCoverage {
-        page_index: u32,
-        max_limit: f32,
+    InspectPrintResources {
+        content_generation: u64,
+        physical_page_index: u32,
+        request_id: String,
+    },
+    GenerateRgbDerivedCoveragePreview {
+        content_generation: u64,
+        physical_page_index: u32,
+        request_id: String,
+        threshold_percent: f32,
         scale: f32,
     },
-    RenderSeparationChannels {
-        page_index: u32,
+    GenerateRgbDerivedProcessPreview {
+        content_generation: u64,
+        physical_page_index: u32,
+        request_id: String,
         scale: f32,
     },
     ScanSensitiveData {
@@ -159,6 +171,34 @@ pub enum JobCommand {
         schema_version: String,
         policy_schema_version: String,
         inspection_profile: String,
+        #[cfg(feature = "sanitization-test-support")]
+        #[serde(default)]
+        test_behavior: crate::sanitization_inspection::SanitizationInspectionTestBehavior,
+    },
+    /// Private transform core. The output is fixed inside the private job
+    /// directory and is intentionally not a publication path.
+    SanitizePdf {
+        content_generation: u64,
+        policy: crate::sanitization::SanitizationPolicy,
+        expected_input_digest: String,
+        expected_inspection_digest: String,
+        output_name: String,
+        #[cfg(feature = "sanitization-test-support")]
+        #[serde(default)]
+        test_behavior: crate::sanitization_transform::SanitizationTransformTestBehavior,
+    },
+    /// Private verifier core. It derives the canonical artifact path from the
+    /// job directory and never accepts a publication target.
+    VerifySanitizedPdf {
+        content_generation: u64,
+        policy: crate::sanitization::SanitizationPolicy,
+        expected_input_digest: String,
+        expected_transform_digest: String,
+        transform_report: crate::sanitization::SanitizationTransformReport,
+        output_name: String,
+        #[cfg(feature = "sanitization-test-support")]
+        #[serde(default)]
+        test_behavior: crate::sanitization_verifier::SanitizationVerificationTestBehavior,
     },
 }
 
@@ -197,14 +237,16 @@ pub enum JobResult {
     Files(Vec<PathBuf>),
     Text(String),
     PageTexts(Vec<JobPageText>),
-    ColorProfile(ColorProfileReport),
-    InkCoverage(InkCoverageResult),
-    Separations(SeparationResult),
+    PrintResourceInspection(PrintResourceInspectionReport),
+    RgbDerivedCoveragePreview(RgbDerivedCoveragePreview),
+    RgbDerivedProcessPreview(RgbDerivedProcessPreview),
     SensitiveReport(SensitiveScanReport),
     SecureRedactionPlan(crate::secure_redaction::SecureRedactionPlan),
     SecureRedactionTransform(crate::secure_redaction::SecureRedactionTransformReport),
     SecureRedactionVerification(crate::secure_redaction::SecureRedactionVerificationReport),
     SanitizationInspection(crate::sanitization::SanitizationInspectionReport),
+    SanitizationTransform(crate::sanitization::SanitizationTransformReport),
+    SanitizationVerification(crate::sanitization::SanitizationVerificationReport),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -220,7 +262,7 @@ struct JobResponse {
 }
 
 impl JobFailure {
-    fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
@@ -289,6 +331,12 @@ pub fn run_job(
     }
     #[cfg(not(test))]
     {
+        let cooperative_prepress = matches!(
+            &command,
+            JobCommand::InspectPrintResources { .. }
+                | JobCommand::GenerateRgbDerivedCoveragePreview { .. }
+                | JobCommand::GenerateRgbDerivedProcessPreview { .. }
+        );
         let exchange_id = NEXT_JOB_WORKER_EXCHANGE_ID.fetch_add(1, Ordering::Relaxed);
         let request_path = job_dir.join(format!("worker-request-{exchange_id}.json"));
         let response_path = job_dir.join(format!("worker-response-{exchange_id}.json"));
@@ -316,11 +364,20 @@ pub fn run_job(
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let status = context.child_processes.run_with_timeout(
-            &mut child,
-            _timeout,
-            &context.cancellation,
-        )?;
+        let status = if cooperative_prepress {
+            let marker = job_dir.join(PREPRESS_CANCELLATION_MARKER);
+            context.child_processes.run_with_timeout_cooperative(
+                &mut child,
+                _timeout,
+                &context.cancellation,
+                Duration::from_millis(500),
+                || create_cancellation_marker(&marker),
+            )?
+        } else {
+            context
+                .child_processes
+                .run_with_timeout(&mut child, _timeout, &context.cancellation)?
+        };
         if !status.success() {
             return Err(SessionJobOperationError::failed_with_code(
                 "SESSION_JOB_WORKER_CRASHED",
@@ -655,39 +712,76 @@ fn execute_command(
             prepare_print_pdf(snapshot_path, credential, pages.as_deref(), &output_path)?;
             Ok(JobResult::File(output_path))
         }
-        JobCommand::AnalyzeColorSpaces => {
-            let report = crate::prepress::analyze_color_spaces_with_password(
+        JobCommand::InspectPrintResources {
+            content_generation,
+            physical_page_index,
+            request_id,
+        } => {
+            let marker = job_dir.join(PREPRESS_CANCELLATION_MARKER);
+            let report = crate::prepress::inspect_print_resources(
                 snapshot_path.to_string_lossy().to_string(),
                 credential.map(str::to_string),
+                PrepressResultIdentity {
+                    session_id: authoritative_session_id.to_string(),
+                    content_generation,
+                    physical_page_index,
+                    request_id,
+                    methodology_version: crate::prepress::PRINT_INSPECTION_VERSION.to_string(),
+                },
+                crate::prepress::PrepressCancellation::marker(&marker),
             )
             .map_err(operation_failure)?;
-            Ok(JobResult::ColorProfile(report))
+            Ok(JobResult::PrintResourceInspection(report))
         }
-        JobCommand::CalculateInkCoverage {
-            page_index,
-            max_limit,
+        JobCommand::GenerateRgbDerivedCoveragePreview {
+            content_generation,
+            physical_page_index,
+            request_id,
+            threshold_percent,
             scale,
         } => {
-            let result = crate::prepress::calculate_ink_coverage_with_cancellation(
+            let marker = job_dir.join(PREPRESS_CANCELLATION_MARKER);
+            let result = crate::prepress::generate_rgb_derived_coverage_preview(
                 snapshot_path.to_string_lossy().to_string(),
-                page_index,
-                max_limit,
-                scale,
                 credential.map(str::to_string),
-                None,
+                PrepressResultIdentity {
+                    session_id: authoritative_session_id.to_string(),
+                    content_generation,
+                    physical_page_index,
+                    request_id,
+                    methodology_version: crate::prepress::RGB_PREVIEW_METHODOLOGY_VERSION
+                        .to_string(),
+                },
+                threshold_percent,
+                scale,
+                crate::prepress::PrepressCancellation::marker(&marker),
             )
             .map_err(operation_failure)?;
-            Ok(JobResult::InkCoverage(result))
+            Ok(JobResult::RgbDerivedCoveragePreview(result))
         }
-        JobCommand::RenderSeparationChannels { page_index, scale } => {
-            let result = crate::prepress::render_separation_channels_with_password(
+        JobCommand::GenerateRgbDerivedProcessPreview {
+            content_generation,
+            physical_page_index,
+            request_id,
+            scale,
+        } => {
+            let marker = job_dir.join(PREPRESS_CANCELLATION_MARKER);
+            let result = crate::prepress::generate_rgb_derived_process_preview(
                 snapshot_path.to_string_lossy().to_string(),
-                page_index,
-                scale,
                 credential.map(str::to_string),
+                PrepressResultIdentity {
+                    session_id: authoritative_session_id.to_string(),
+                    content_generation,
+                    physical_page_index,
+                    request_id,
+                    methodology_version: crate::prepress::RGB_PREVIEW_METHODOLOGY_VERSION
+                        .to_string(),
+                },
+                scale,
+                crate::prepress::PrepressCancellation::marker(&marker),
             )
             .map_err(operation_failure)?;
-            Ok(JobResult::Separations(result))
+            Ok(JobResult::RgbDerivedProcessPreview(result))
         }
         JobCommand::ScanSensitiveData { patterns } => {
             let report =
@@ -720,20 +814,20 @@ fn execute_command(
             expected_input_digest,
             expected_plan_digest,
             output_name,
-        } => execute_secure_redaction_transform(
+        } => execute_secure_redaction_transform(SecureRedactionTransformJobArgs {
             job_dir,
             snapshot_path,
             credential,
-            authoritative_job_id,
-            authoritative_session_id,
+            job_id: authoritative_job_id,
+            session_id: authoritative_session_id,
             content_generation,
             policy,
             acknowledgements,
             regions,
-            &expected_input_digest,
-            &expected_plan_digest,
-            &output_name,
-        )
+            expected_input_digest: &expected_input_digest,
+            expected_plan_digest: &expected_plan_digest,
+            output_name: &output_name,
+        })
         .map(JobResult::SecureRedactionTransform),
         JobCommand::VerifySecureRedaction {
             content_generation,
@@ -742,16 +836,18 @@ fn execute_command(
             regions,
             transform_report,
         } => crate::secure_redaction_verifier::verify_secure_redaction(
-            job_dir,
-            snapshot_path,
-            credential,
-            authoritative_job_id,
-            authoritative_session_id,
-            content_generation,
-            policy,
-            acknowledgements,
-            regions,
-            transform_report,
+            crate::secure_redaction_verifier::SecureRedactionVerificationArgs {
+                job_dir,
+                snapshot_path,
+                credential,
+                job_id: authoritative_job_id,
+                session_id: authoritative_session_id,
+                content_generation,
+                policy,
+                acknowledgements,
+                regions,
+                transform_report,
+            },
         )
         .map(JobResult::SecureRedactionVerification)
         .map_err(operation_failure),
@@ -759,32 +855,110 @@ fn execute_command(
             schema_version,
             policy_schema_version,
             inspection_profile,
-        } => crate::sanitization_inspection::inspect_snapshot(
-            snapshot_path,
-            credential,
-            &schema_version,
-            &policy_schema_version,
-            &inspection_profile,
+            #[cfg(feature = "sanitization-test-support")]
+            test_behavior,
+        } => {
+            #[cfg(not(feature = "sanitization-test-support"))]
+            let inspection = crate::sanitization_inspection::inspect_snapshot(
+                snapshot_path,
+                credential,
+                &schema_version,
+                &policy_schema_version,
+                &inspection_profile,
+            );
+            #[cfg(feature = "sanitization-test-support")]
+            let inspection = crate::sanitization_inspection::inspect_snapshot_with_test_behavior(
+                snapshot_path,
+                credential,
+                &schema_version,
+                &policy_schema_version,
+                &inspection_profile,
+                test_behavior,
+            );
+            inspection
+                .map(JobResult::SanitizationInspection)
+                .map_err(operation_failure)
+        }
+        JobCommand::SanitizePdf {
+            content_generation,
+            policy,
+            expected_input_digest,
+            expected_inspection_digest,
+            output_name,
+            #[cfg(feature = "sanitization-test-support")]
+            test_behavior,
+        } => crate::sanitization_transform::execute_transform(
+            crate::sanitization_transform::SanitizationTransformExecutionArgs {
+                job_dir,
+                snapshot_path,
+                credential,
+                content_generation,
+                policy,
+                expected_input_digest: &expected_input_digest,
+                expected_inspection_digest: &expected_inspection_digest,
+                output_name: &output_name,
+                #[cfg(feature = "sanitization-test-support")]
+                test_behavior,
+            },
         )
-        .map(JobResult::SanitizationInspection)
+        .map(JobResult::SanitizationTransform),
+        JobCommand::VerifySanitizedPdf {
+            content_generation,
+            policy,
+            expected_input_digest,
+            expected_transform_digest,
+            transform_report,
+            output_name,
+            #[cfg(feature = "sanitization-test-support")]
+            test_behavior,
+        } => crate::sanitization_verifier::verify_sanitized_pdf(
+            job_dir,
+            content_generation,
+            policy,
+            &expected_input_digest,
+            &expected_transform_digest,
+            transform_report,
+            &output_name,
+            #[cfg(feature = "sanitization-test-support")]
+            test_behavior,
+        )
+        .map(JobResult::SanitizationVerification)
         .map_err(operation_failure),
     }
 }
 
+struct SecureRedactionTransformJobArgs<'a> {
+    pub job_dir: &'a Path,
+    pub snapshot_path: &'a Path,
+    pub credential: Option<&'a str>,
+    pub job_id: &'a str,
+    pub session_id: &'a str,
+    pub content_generation: u64,
+    pub policy: crate::secure_redaction::SecureRedactionPolicy,
+    pub acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    pub regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    pub expected_input_digest: &'a str,
+    pub expected_plan_digest: &'a str,
+    pub output_name: &'a str,
+}
+
 fn execute_secure_redaction_transform(
-    job_dir: &Path,
-    snapshot_path: &Path,
-    credential: Option<&str>,
-    job_id: &str,
-    session_id: &str,
-    content_generation: u64,
-    policy: crate::secure_redaction::SecureRedactionPolicy,
-    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
-    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
-    expected_input_digest: &str,
-    expected_plan_digest: &str,
-    output_name: &str,
+    args: SecureRedactionTransformJobArgs<'_>,
 ) -> Result<crate::secure_redaction::SecureRedactionTransformReport, JobFailure> {
+    let SecureRedactionTransformJobArgs {
+        job_dir,
+        snapshot_path,
+        credential,
+        job_id,
+        session_id,
+        content_generation,
+        policy,
+        acknowledgements,
+        regions,
+        expected_input_digest,
+        expected_plan_digest,
+        output_name,
+    } = args;
     use crate::secure_redaction::{
         evaluate_secure_redaction_rebuild_geometry, make_redaction_error, PageRedactionStrategy,
         SecureRedactionErrorCode, SecureRedactionTransformEvidence, TransformPageFeatureLoss,
@@ -873,12 +1047,7 @@ fn execute_secure_redaction_transform(
         })?;
         match page_plan.strategy {
             PageRedactionStrategy::ImportUnaffectedPage => {
-                let destination = u16::try_from(output.pages().len()).map_err(|_| {
-                    job_failed(
-                        "REDACTION_RESOURCE_LIMIT_EXCEEDED",
-                        "Output page count PDFium limitini aşıyor",
-                    )
-                })?;
+                let destination = output.pages().len();
                 output
                     .pages_mut()
                     .copy_page_from_document(&source, source_index, destination)
@@ -1627,6 +1796,30 @@ fn write_worker_response(path: &Path, response: &JobResponse) -> Result<(), JobF
 }
 
 #[cfg(not(test))]
+fn create_cancellation_marker(path: &Path) -> Result<(), SessionJobOperationError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(file) => file.sync_all().map_err(|error| {
+            SessionJobOperationError::failed_with_code(
+                "SESSION_JOB_CANCELLATION_SIGNAL_FAILED",
+                format!("Prepress cancellation marker diske yazılamadı: {error}"),
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_CANCELLATION_SIGNAL_FAILED",
+            format!("Prepress cancellation marker oluşturulamadı: {error}"),
+        )),
+    }
+}
+
+#[cfg(not(test))]
 fn write_json_create_new<T: Serialize>(
     path: &Path,
     value: &T,
@@ -1809,6 +2002,30 @@ mod tests {
         } else {
             panic!("Expected ScanSensitiveData command");
         }
+    }
+
+    #[test]
+    fn protocol_v9_roundtrips_explicit_prepress_identity_without_credentials_in_arguments() {
+        let command = JobCommand::GenerateRgbDerivedCoveragePreview {
+            content_generation: 9,
+            physical_page_index: 4,
+            request_id: "preview-request".to_string(),
+            threshold_percent: 275.0,
+            scale: 1.25,
+        };
+        let json = serde_json::to_string(&command).unwrap();
+        assert!(!json.contains("credential"));
+        let decoded: JobCommand = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(decoded, JobCommand::GenerateRgbDerivedCoveragePreview {
+            content_generation: 9,
+            physical_page_index: 4,
+            ref request_id,
+            threshold_percent: 275.0,
+            scale: 1.25,
+        } if request_id == "preview-request")
+        );
+        assert_eq!(JOB_WORKER_PROTOCOL_VERSION, 9);
     }
 
     #[test]

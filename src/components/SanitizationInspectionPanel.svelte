@@ -33,6 +33,9 @@
       return "Tespit edildi — kaldırma desteği henüz yok";
     }
     return ({
+      supported: "Private transform çekirdeğinde destekleniyor",
+      supported_with_visual_change: "Görsel değişiklikle private transform desteği",
+      supported_with_functional_change: "İşlevsel değişiklikle private transform desteği",
       candidate: "Gelecekteki sınırlı profil adayı",
       candidate_with_visual_change: "Görsel değişiklik içeren aday",
       candidate_with_functional_change: "İşlevsel değişiklik içeren aday",

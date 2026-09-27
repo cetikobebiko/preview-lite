@@ -6,6 +6,12 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // B5 fail-closed hardening (§18):
+    // - no test files matched => FAIL (not silent PASS)
+    // - .only without --allowOnly => FAIL (prevents committed .only green)
+    // - aggregate must have at least one test
+    passWithNoTests: false,
+    allowOnly: false,
   },
   resolve: {
     conditions: ['browser'],

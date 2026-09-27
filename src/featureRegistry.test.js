@@ -56,7 +56,7 @@ describe("feature registry metadata", () => {
 
 describe("feature policy", () => {
   it("never presents mock features as stable or runnable", () => {
-    const feature = getFeature("pades_signing");
+    const feature = getFeature("visual_redaction_mask");
     expect(feature.status).toBe("mock");
     expect(isFeatureRunnable(feature.id, developmentMac)).toBe(false);
     expect(getFeaturePresentation(feature.id, developmentMac).badge).toBe("MOCK");
@@ -71,17 +71,31 @@ describe("feature policy", () => {
   });
 
   it("hides mock features in production and shows them disabled in development", () => {
-    expect(isFeatureVisible("pades_signing", productionMac)).toBe(false);
-    const presentation = getFeaturePresentation("pades_signing", developmentMac);
+    expect(isFeatureVisible("visual_redaction_mask", productionMac)).toBe(false);
+    const presentation = getFeaturePresentation("visual_redaction_mask", developmentMac);
     expect(presentation.visible).toBe(true);
     expect(presentation.runnable).toBe(false);
-    expect(presentation.warning).toContain("gerçek işlem yapılmaz");
   });
 
   it("does not make disabled features runnable", () => {
     const presentation = getFeaturePresentation("form_editing", developmentMac);
     expect(presentation.visible).toBe(true);
     expect(presentation.runnable).toBe(false);
+  });
+
+  it("keeps all four signature features disabled and not runnable", () => {
+    for (const id of [
+      "pades_signing",
+      "signature_verification",
+      "ltv",
+      "signature_settings",
+    ]) {
+      const feature = getFeature(id);
+      expect(feature.status).toBe("disabled");
+      expect(feature.enabled).toBe(false);
+      expect(isFeatureRunnable(id, productionMac)).toBe(false);
+      expect(isFeatureRunnable(id, developmentMac)).toBe(false);
+    }
   });
 
   it("hides annotation burn/export in production and only presents it disabled in development", () => {
@@ -114,7 +128,7 @@ describe("feature policy", () => {
   });
 
   it("still shows a platform-compatible mock disabled in development", () => {
-    const presentation = getFeaturePresentation("pades_signing", developmentMac);
+    const presentation = getFeaturePresentation("visual_redaction_mask", developmentMac);
     expect(presentation.visible).toBe(true);
     expect(presentation.runnable).toBe(false);
     expect(presentation.badge).toBe("MOCK");

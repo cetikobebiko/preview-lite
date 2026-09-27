@@ -894,19 +894,16 @@ enum SecureRedactionExecutionTestPhase {
 
 #[cfg(feature = "secure-redaction-test-support")]
 #[doc(hidden)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum SecureRedactionWorkerTestAction {
+    #[default]
     Real,
-    Fail { code: String, message: String },
+    Fail {
+        code: String,
+        message: String,
+    },
     Timeout,
     HangUntilCancelled,
-}
-
-#[cfg(feature = "secure-redaction-test-support")]
-impl Default for SecureRedactionWorkerTestAction {
-    fn default() -> Self {
-        Self::Real
-    }
 }
 
 #[cfg(feature = "secure-redaction-test-support")]
@@ -1070,7 +1067,7 @@ fn secure_redaction_target_preflight(
     target_path: &str,
     paths: &crate::document_session::SecureRedactionExportPaths,
 ) -> Result<SecureRedactionPublicationTarget, crate::document_session::DocumentSessionError> {
-    if target_path.trim().is_empty() || target_path.as_bytes().len() > 4096 {
+    if target_path.trim().is_empty() || target_path.len() > 4096 {
         return Err(crate::document_session::DocumentSessionError::new(
             "REDACTION_TARGET_INVALID",
             "Secure redaction publication target geçerli bir yol olmalıdır",
@@ -1148,6 +1145,38 @@ fn secure_redaction_operation_error(
     SessionJobOperationError::failed_with_code(code, message)
 }
 
+/// Authoritative arguments for secure redaction execution.
+#[derive(Clone)]
+pub struct SecureRedactionExecutionArgs<'a> {
+    pub job_id: String,
+    pub session_id: String,
+    pub expected_content_generation: u64,
+    pub policy: crate::secure_redaction::SecureRedactionPolicy,
+    pub acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    pub regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    pub expected_plan_digest: String,
+    pub target_path: String,
+    pub store: &'a crate::document_session::DocumentSessionStore,
+}
+
+impl<'a> std::fmt::Debug for SecureRedactionExecutionArgs<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecureRedactionExecutionArgs")
+            .field("job_id", &self.job_id)
+            .field("session_id", &self.session_id)
+            .field(
+                "expected_content_generation",
+                &self.expected_content_generation,
+            )
+            .field("policy", &self.policy)
+            .field("acknowledgements", &self.acknowledgements)
+            .field("regions", &self.regions)
+            .field("expected_plan_digest", &self.expected_plan_digest)
+            .field("target_path", &self.target_path)
+            .finish()
+    }
+}
+
 /// Executes the authoritative secure-redaction export chain. The selected
 /// target is deliberately consumed only by the main-process filesystem layer;
 /// neither worker protocol variant contains it. The Tauri command below
@@ -1155,53 +1184,34 @@ fn secure_redaction_operation_error(
 /// resolution and delegation, so acceptance tests can exercise this exact
 /// production chain without an IPC wrapper.
 pub async fn execute_secure_redaction_core(
-    job_id: String,
-    session_id: String,
-    expected_content_generation: u64,
-    policy: crate::secure_redaction::SecureRedactionPolicy,
-    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
-    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
-    expected_plan_digest: String,
-    target_path: String,
-    store: &crate::document_session::DocumentSessionStore,
+    args: SecureRedactionExecutionArgs<'_>,
 ) -> Result<
     SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
     crate::document_session::DocumentSessionError,
 > {
-    execute_secure_redaction_core_internal(
-        job_id,
-        session_id,
-        expected_content_generation,
-        policy,
-        acknowledgements,
-        regions,
-        expected_plan_digest,
-        target_path,
-        store,
-        None,
-    )
-    .await
+    execute_secure_redaction_core_internal(args, None).await
 }
 
 #[cfg(feature = "secure-redaction-test-support")]
 #[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
 pub async fn execute_secure_redaction_core_with_test_support(
-    job_id: String,
-    session_id: String,
-    expected_content_generation: u64,
-    policy: crate::secure_redaction::SecureRedactionPolicy,
-    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
-    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
-    expected_plan_digest: String,
-    target_path: String,
-    store: &crate::document_session::DocumentSessionStore,
+    args: SecureRedactionExecutionArgs<'_>,
     test_support: Option<Arc<SecureRedactionExecutionTestSupport>>,
 ) -> Result<
     SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
     crate::document_session::DocumentSessionError,
 > {
-    execute_secure_redaction_core_internal(
+    execute_secure_redaction_core_internal(args, test_support).await
+}
+
+async fn execute_secure_redaction_core_internal(
+    args: SecureRedactionExecutionArgs<'_>,
+    test_support: Option<Arc<SecureRedactionExecutionTestSupport>>,
+) -> Result<
+    SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
+    crate::document_session::DocumentSessionError,
+> {
+    let SecureRedactionExecutionArgs {
         job_id,
         session_id,
         expected_content_generation,
@@ -1211,27 +1221,7 @@ pub async fn execute_secure_redaction_core_with_test_support(
         expected_plan_digest,
         target_path,
         store,
-        test_support,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn execute_secure_redaction_core_internal(
-    job_id: String,
-    session_id: String,
-    expected_content_generation: u64,
-    policy: crate::secure_redaction::SecureRedactionPolicy,
-    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
-    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
-    expected_plan_digest: String,
-    target_path: String,
-    store: &crate::document_session::DocumentSessionStore,
-    test_support: Option<Arc<SecureRedactionExecutionTestSupport>>,
-) -> Result<
-    SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
-    crate::document_session::DocumentSessionError,
-> {
+    } = args;
     let map_op_err = |err: SessionJobOperationError| match err {
         SessionJobOperationError::Failed(f) => {
             crate::document_session::DocumentSessionError::new(f.code, f.message)
@@ -1538,8 +1528,9 @@ async fn execute_secure_redaction_core_internal(
     outcome
 }
 
-#[tauri::command]
-pub async fn execute_secure_redaction(
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteSecureRedactionPayload {
     job_id: String,
     session_id: String,
     expected_content_generation: u64,
@@ -1548,22 +1539,44 @@ pub async fn execute_secure_redaction(
     regions: Vec<crate::secure_redaction::RedactionRegionInput>,
     expected_plan_digest: String,
     target_path: String,
+}
+
+#[tauri::command]
+pub async fn execute_secure_redaction(
+    request: tauri::ipc::Request<'_>,
     store: tauri::State<'_, crate::document_session::DocumentSessionStore>,
 ) -> Result<
     SessionJobOutcome<crate::secure_redaction::SecureRedactionExecutionReport>,
     crate::document_session::DocumentSessionError,
 > {
-    execute_secure_redaction_core(
-        job_id,
-        session_id,
-        expected_content_generation,
-        policy,
-        acknowledgements,
-        regions,
-        expected_plan_digest,
-        target_path,
-        &store,
-    )
+    let payload: ExecuteSecureRedactionPayload = match request.body() {
+        tauri::ipc::InvokeBody::Json(value) => {
+            serde_json::from_value(value.clone()).map_err(|err| {
+                crate::document_session::DocumentSessionError::new(
+                    "INVALID_COMMAND_PAYLOAD",
+                    format!("Failed to parse payload: {err}"),
+                )
+            })?
+        }
+        tauri::ipc::InvokeBody::Raw(bytes) => serde_json::from_slice(bytes).map_err(|err| {
+            crate::document_session::DocumentSessionError::new(
+                "INVALID_COMMAND_PAYLOAD",
+                format!("Failed to parse payload: {err}"),
+            )
+        })?,
+    };
+
+    execute_secure_redaction_core(SecureRedactionExecutionArgs {
+        job_id: payload.job_id,
+        session_id: payload.session_id,
+        expected_content_generation: payload.expected_content_generation,
+        policy: payload.policy,
+        acknowledgements: payload.acknowledgements,
+        regions: payload.regions,
+        expected_plan_digest: payload.expected_plan_digest,
+        target_path: payload.target_path,
+        store: &store,
+    })
     .await
 }
 

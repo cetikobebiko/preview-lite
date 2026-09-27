@@ -253,7 +253,7 @@ mod macos_arm64 {
             .command_for_document(
                 &admission,
                 &key,
-                |document_id| WorkerCommand::ValidatePdfUa { document_id },
+                |document_id| WorkerCommand::AuditAccessibility { document_id },
                 CommandTimeout::DocumentRead,
                 None,
             )
@@ -261,11 +261,11 @@ mod macos_arm64 {
             .unwrap();
         assert!(matches!(
             pdf_ua,
-            WorkerResult::PdfUaValidation(report)
-                if !report.is_tagged && !report.has_document_title && report.score == 50
+            WorkerResult::AccessibilityAudit(report)
+                if !report.document_facts.has_structure_tree
         ));
 
-        let structure_error = broker
+        let structure = broker
             .command_for_document(
                 &admission,
                 &key,
@@ -274,10 +274,9 @@ mod macos_arm64 {
                 None,
             )
             .await
-            .unwrap_err();
-        assert_eq!(
-            structure_error.code,
-            "PDFIUM_WORKER_STRUCTURE_TREE_UNAVAILABLE"
+            .unwrap();
+        assert!(
+            matches!(structure, WorkerResult::AccessibilityStructure(inspection) if inspection.root.is_none())
         );
 
         for rotation in [0, 90, 180, 270] {
@@ -562,7 +561,7 @@ mod macos_arm64 {
             .command_for_document(
                 &admission,
                 &key,
-                |document_id| WorkerCommand::ValidatePdfUa { document_id },
+                |document_id| WorkerCommand::AuditAccessibility { document_id },
                 CommandTimeout::DocumentRead,
                 None,
             )
@@ -570,12 +569,102 @@ mod macos_arm64 {
             .unwrap();
         assert!(matches!(
             pdf_ua,
-            WorkerResult::PdfUaValidation(report) if !report.is_tagged
+            WorkerResult::AccessibilityAudit(report) if !report.document_facts.has_structure_tree
         ));
         drop(admission);
         let exclusive = broker.admit_exclusive(&key.session_id).await.unwrap();
         broker.invalidate_document(&exclusive, &key).await.unwrap();
         drop(exclusive);
+        broker.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn malformed_structure_is_a_successful_bounded_audit_and_close_cleans_mapping() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("malformed-structure.pdf");
+        let mut document = Document::load(fixture("minimal.pdf")).unwrap();
+        let structure_id = document.add_object(dictionary! {
+            "Type" => "StructTreeRoot",
+            "K" => Object::Reference((999, 0)),
+        });
+        let catalog_id = document
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let catalog = document
+            .get_object_mut(catalog_id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap();
+        catalog.set("StructTreeRoot", structure_id);
+        catalog.set("MarkInfo", dictionary! { "Marked" => true });
+        document.save(&path).unwrap();
+
+        let broker = broker();
+        let key = key("malformed-structure-audit");
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        broker
+            .ensure_document(
+                &admission,
+                key.clone(),
+                path.to_string_lossy().to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let audit = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::AuditAccessibility { document_id },
+                CommandTimeout::DocumentRead,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            audit,
+            WorkerResult::AccessibilityAudit(report)
+                if report.checks.iter().any(|check|
+                    check.id == "structure.integrity"
+                        && check.result == preview_alternative_lib::a11y::AccessibilityCheckResult::Fail)
+        ));
+        let structure = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::GetStructureTree { document_id },
+                CommandTimeout::DocumentRead,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            structure,
+            WorkerResult::AccessibilityStructure(inspection)
+                if inspection.root.as_ref().unwrap().children[0].association_status == "unresolved"
+        ));
+
+        drop(admission);
+        let exclusive = broker.admit_exclusive(&key.session_id).await.unwrap();
+        broker.invalidate_document(&exclusive, &key).await.unwrap();
+        drop(exclusive);
+        let read_after_close = broker.admit_read(&key, None).await.unwrap();
+        let closed = broker
+            .command_for_document(
+                &read_after_close,
+                &key,
+                |document_id| WorkerCommand::AuditAccessibility { document_id },
+                CommandTimeout::DocumentRead,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(closed.code, "PDFIUM_WORKER_PROTOCOL_ERROR");
+        drop(read_after_close);
         broker.shutdown().await.unwrap();
     }
 
@@ -639,7 +728,7 @@ mod macos_arm64 {
             .command_for_document(
                 &admission,
                 &key,
-                |document_id| WorkerCommand::ValidatePdfUa { document_id },
+                |document_id| WorkerCommand::AuditAccessibility { document_id },
                 CommandTimeout::DocumentRead,
                 None,
             )
@@ -647,7 +736,7 @@ mod macos_arm64 {
             .unwrap();
         assert!(matches!(
             pdf_ua,
-            WorkerResult::PdfUaValidation(report) if !report.is_tagged
+            WorkerResult::AccessibilityAudit(report) if !report.document_facts.has_structure_tree
         ));
 
         let outline = broker
@@ -949,6 +1038,145 @@ mod macos_arm64 {
         let exclusive = broker.admit_exclusive(&key.session_id).await.unwrap();
         broker.invalidate_document(&exclusive, &key).await.unwrap();
         drop(exclusive);
+        broker.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn release_smoke_document_opens_with_expected_page_count_and_text_tokens() {
+        let broker = broker();
+        let key = key("release-smoke-integration");
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        let (_document, page_count, protected) = broker
+            .ensure_document(
+                &admission,
+                key.clone(),
+                fixture("release-smoke.pdf"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(page_count, 2);
+        assert!(!protected);
+
+        let page_count_result = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::GetPageCount { document_id },
+                CommandTimeout::PageCount,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(page_count_result, WorkerResult::PageCount(2)));
+
+        let metadata = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::GetMetadata { document_id },
+                CommandTimeout::DocumentRead,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(metadata, WorkerResult::Metadata(_)));
+
+        let search_alpha = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::SearchText {
+                    document_id,
+                    query: "RELEASE_SMOKE_ALPHA_TOKEN".to_string(),
+                    max_results: 10,
+                },
+                CommandTimeout::Search,
+                None,
+            )
+            .await
+            .unwrap();
+        let WorkerResult::Search(results_alpha) = search_alpha else {
+            panic!("expected search results for alpha token");
+        };
+        assert_eq!(results_alpha.total_matches, 1);
+        assert_eq!(results_alpha.matches[0].page_index, 0);
+
+        let search_beta = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::SearchText {
+                    document_id,
+                    query: "RELEASE_SMOKE_BETA_TOKEN".to_string(),
+                    max_results: 10,
+                },
+                CommandTimeout::Search,
+                None,
+            )
+            .await
+            .unwrap();
+        let WorkerResult::Search(results_beta) = search_beta else {
+            panic!("expected search results for beta token");
+        };
+        assert_eq!(results_beta.total_matches, 1);
+        assert_eq!(results_beta.matches[0].page_index, 1);
+
+        drop(admission);
+        broker.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn large_page_dimensions_document_opens_with_bounded_geometry() {
+        let broker = broker();
+        let key = key("large-page-dimensions-integration");
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        let (_document, page_count, protected) = broker
+            .ensure_document(
+                &admission,
+                key.clone(),
+                fixture("large-page-dimensions.pdf"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(page_count, 1);
+        assert!(!protected);
+
+        let search = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::SearchText {
+                    document_id,
+                    query: "LARGE PAGE DIMENSIONS".to_string(),
+                    max_results: 10,
+                },
+                CommandTimeout::Search,
+                None,
+            )
+            .await
+            .unwrap();
+        let WorkerResult::Search(results) = search else {
+            panic!("expected search results for large page text");
+        };
+        assert!(results.total_matches >= 1);
+
+        let audit = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::AuditAccessibility { document_id },
+                CommandTimeout::DocumentRead,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(audit, WorkerResult::AccessibilityAudit(_)));
+
+        drop(admission);
         broker.shutdown().await.unwrap();
     }
 }

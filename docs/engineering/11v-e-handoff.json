@@ -1,0 +1,311 @@
+{
+  "schemaVersion": "1.0.0",
+  "handoffId": "11V-E",
+  "title": "Exact Artifact Smoke — Release Verification Matrix (§20)",
+  "contractRef": "docs/engineering/artifact-smoke-contract.md",
+  "owner": "11V-E",
+  "executionBoundary": "EXACT_ARTIFACT verification of real packaged artifacts; source-tree/native tests are NOT substitute evidence (contract §6/§7).",
+  "generatedFrom": [
+    "docs/engineering/artifact-smoke-contract.md",
+    "docs/engineering/test-execution-registry.json",
+    "docs/engineering/platform-support.json",
+    "src-tauri/tauri.conf.json",
+    "src-tauri/Cargo.toml",
+    "scripts/artifact-smoke-common.mjs",
+    "scripts/artifact-smoke-macos.mjs",
+    "scripts/artifact-smoke-linux.mjs",
+    "scripts/artifact-smoke-windows.mjs"
+  ],
+  "runnerIdentity": {
+    "productName": "PreviewLite",
+    "version": "0.1.0",
+    "identifier": "com.preview.lite",
+    "mainBinary": "preview-alternative",
+    "workersAreSameBinary": true,
+    "workerEntry": "--run-worker",
+    "smokeHook": "--smoke",
+    "canonicalFixtureId": "core-release-smoke",
+    "canonicalFixtureSha256": "727488fe32189a68a176ec32de5a3194d2b1e370a3fac2d5930871f45ba20611",
+    "canonicalFixtureByteLength": 4520,
+    "canonicalFixturePageCount": 2,
+    "requiredTextTokens": [
+      "RELEASE_SMOKE_ALPHA_TOKEN",
+      "RELEASE_SMOKE_BETA_TOKEN",
+      "CANONICAL VERIFICATION TARGET",
+      "PAGE_MARKER_PAGE_1",
+      "PAGE_MARKER_PAGE_2"
+    ]
+  },
+  "externalValidationPolicy": {
+    "requiredExternalValidators": false,
+    "note": "VeraPDF (PDF/UA-1, PDF/UA-2) is OptionalDiagnostic only; the machine-validation feature is disabled. Absence yields TOOL_UNAVAILABLE, never FAIL, and never blocks release. See src-tauri/src/external_validation/types.rs documented_requirements()."
+  },
+  "matrix": [
+    {
+      "artifactClass": "MACOS_DMG",
+      "runnerOs": "macos",
+      "architecture": "arm64",
+      "targetTriple": "aarch64-apple-darwin",
+      "deploymentTool": "hdiutil (attach -mountpoint <tmp>/mnt -nobrowse -readonly; cp -R <mnt>/PreviewLite.app <tmp>; detach)",
+      "installMethod": "dmg_mount_copy",
+      "privilegeRequirement": "none",
+      "displayRequirement": "none",
+      "artifactPathExpectedPattern": "PreviewLite_0.1.0_aarch64.dmg",
+      "mainExecutableExpectation": {
+        "container": "PreviewLite.app",
+        "relativePath": "Contents/MacOS/preview-alternative"
+      },
+      "workerExpectation": {
+        "spawnMethod": "production_ipc",
+        "entry": "--run-worker",
+        "note": "same packaged binary re-spawned via --run-worker; no fake helper, no direct pdfium call"
+      },
+      "runtimeExpectation": {
+        "relativePath": "Contents/Resources/lib/libpdfium.dylib",
+        "source": "packaged",
+        "knownSha256": "c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869",
+        "note": "sha256 is the platform-support.json inventoried value for the staged arm64 dylib; exact-artifact byte-identity is re-hashed at smoke time, not assumed"
+      },
+      "releaseSmokeStrategy": "mount -> copy app bundle -> interactive --smoke IPC (open, render_thumbnail p1, extract_text p1+p2, close) -> clean shutdown",
+      "requiredSmokeAssertions": [
+        "artifact_file_exists",
+        "deploy_succeeds",
+        "main_executable_present",
+        "launch_succeeds",
+        "runtime_resolves_packaged",
+        "smoke_document_opens",
+        "page_count_matches_2",
+        "text_tokens_found_at_least_3",
+        "bounded_render_succeeds",
+        "worker_production_ipc",
+        "clean_shutdown"
+      ],
+      "requiredExternalValidators": [],
+      "expectedEvidenceOutput": "macos-smoke-evidence-macos_dmg.json (ArtifactSmokeEvidence schema 1.0.0)",
+      "timeouts": {
+        "install": 60000,
+        "launch": 30000,
+        "workerSpawn": 10000,
+        "documentOpen": 15000,
+        "renderCommand": 15000,
+        "shutdown": 10000
+      },
+      "cleanupPolicy": "hdiutil detach (best-effort) -> temp workspace rmSync recursive (best-effort, failure reported)"
+    },
+    {
+      "artifactClass": "MACOS_APP_BUNDLE",
+      "runnerOs": "macos",
+      "architecture": "arm64",
+      "targetTriple": "aarch64-apple-darwin",
+      "deploymentTool": "cp -R <artifact>/PreviewLite.app <tmp>/PreviewLite.app",
+      "installMethod": "app_bundle_direct",
+      "privilegeRequirement": "none",
+      "displayRequirement": "none",
+      "artifactPathExpectedPattern": "PreviewLite.app",
+      "mainExecutableExpectation": {
+        "container": "PreviewLite.app",
+        "relativePath": "Contents/MacOS/preview-alternative"
+      },
+      "workerExpectation": {
+        "spawnMethod": "production_ipc",
+        "entry": "--run-worker",
+        "note": "same packaged binary re-spawned via --run-worker; no fake helper, no direct pdfium call"
+      },
+      "runtimeExpectation": {
+        "relativePath": "Contents/Resources/lib/libpdfium.dylib",
+        "source": "packaged",
+        "knownSha256": "c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869",
+        "note": "sha256 is the platform-support.json inventoried value for the staged arm64 dylib; exact-artifact byte-identity is re-hashed at smoke time, not assumed"
+      },
+      "releaseSmokeStrategy": "copy app bundle -> interactive --smoke IPC (open, render_thumbnail p1, extract_text p1+p2, close) -> clean shutdown",
+      "requiredSmokeAssertions": [
+        "artifact_file_exists",
+        "deploy_succeeds",
+        "main_executable_present",
+        "launch_succeeds",
+        "runtime_resolves_packaged",
+        "smoke_document_opens",
+        "page_count_matches_2",
+        "text_tokens_found_at_least_3",
+        "bounded_render_succeeds",
+        "worker_production_ipc",
+        "clean_shutdown"
+      ],
+      "requiredExternalValidators": [],
+      "expectedEvidenceOutput": "macos-smoke-evidence-macos_app_bundle.json (ArtifactSmokeEvidence schema 1.0.0)",
+      "timeouts": {
+        "install": 60000,
+        "launch": 30000,
+        "workerSpawn": 10000,
+        "documentOpen": 15000,
+        "renderCommand": 15000,
+        "shutdown": 10000
+      },
+      "cleanupPolicy": "temp workspace rmSync recursive (best-effort, failure reported)"
+    },
+    {
+      "artifactClass": "LINUX_DEB",
+      "runnerOs": "linux",
+      "architecture": "x86_64",
+      "targetTriple": "x86_64-unknown-linux-gnu",
+      "deploymentTool": "dpkg -x <artifact> <tmp>/install (extract-only; metadata via dpkg-deb -I)",
+      "installMethod": "deb_install",
+      "privilegeRequirement": "none",
+      "displayRequirement": "none",
+      "artifactPathExpectedPattern": "preview-lite_0.1.0_amd64.deb",
+      "mainExecutableExpectation": {
+        "container": "<install>/usr/bin",
+        "relativePath": "usr/bin/preview-alternative",
+        "fallbackCandidates": [
+          "usr/bin/preview-alternative",
+          "usr/local/bin/preview-alternative"
+        ]
+      },
+      "workerExpectation": {
+        "spawnMethod": "production_ipc",
+        "entry": "--run-worker",
+        "note": "same packaged binary re-spawned via --run-worker; no fake helper, no direct pdfium call"
+      },
+      "runtimeExpectation": {
+        "relativePath": "resourceDir/lib/libpdfium.so",
+        "source": "packaged",
+        "knownSha256": null,
+        "note": "sha256 UNKNOWN (platform-support.json linux runtime supplyChainStatus=INCOMPLETE). Exact-artifact runtime byte-identity must be reported from the installed layout, not claimed from staged source."
+      },
+      "releaseSmokeStrategy": "extract -> layout validation (exec/worker/runtime) -> interactive --smoke IPC (open, render_thumbnail p1, extract_text p1+p2, close) -> clean shutdown",
+      "requiredSmokeAssertions": [
+        "artifact_file_exists",
+        "deploy_succeeds",
+        "main_executable_present",
+        "launch_succeeds",
+        "runtime_resolves_packaged",
+        "smoke_document_opens",
+        "page_count_matches_2",
+        "text_tokens_found_at_least_3",
+        "bounded_render_succeeds",
+        "worker_production_ipc",
+        "clean_shutdown"
+      ],
+      "requiredExternalValidators": [],
+      "expectedEvidenceOutput": "linux-smoke-evidence-linux_deb.json (ArtifactSmokeEvidence schema 1.0.0)",
+      "timeouts": {
+        "install": 60000,
+        "launch": 30000,
+        "workerSpawn": 10000,
+        "documentOpen": 15000,
+        "renderCommand": 15000,
+        "shutdown": 10000
+      },
+      "cleanupPolicy": "remove temp extract root; temp workspace rmSync recursive (best-effort, failure reported)"
+    },
+    {
+      "artifactClass": "WINDOWS_MSI",
+      "runnerOs": "windows",
+      "architecture": "x86_64",
+      "targetTriple": "x86_64-pc-windows-msvc",
+      "deploymentTool": "msiexec /qn /i <artifact> TARGETDIR=<tmp>/install",
+      "installMethod": "msi_install",
+      "privilegeRequirement": "UNKNOWN",
+      "privilegeNote": "depends on MSI install scope (per-machine vs per-user) of the not-yet-produced artifact; not verifiable offline",
+      "displayRequirement": "none",
+      "artifactPathExpectedPattern": "PreviewLite_0.1.0_x64_en-US.msi",
+      "mainExecutableExpectation": {
+        "container": "<install dir>",
+        "relativePath": "preview-alternative.exe",
+        "search": "registry uninstall InstallLocation then preview-alternative.exe"
+      },
+      "workerExpectation": {
+        "spawnMethod": "production_ipc",
+        "entry": "--run-worker",
+        "note": "same packaged binary re-spawned via --run-worker; no fake helper, no direct pdfium call"
+      },
+      "runtimeExpectation": {
+        "relativePath": "resourceDir/lib/pdfium.dll",
+        "source": "packaged",
+        "knownSha256": null,
+        "note": "sha256 UNKNOWN (platform-support.json windows runtime supplyChainStatus=INCOMPLETE). Exact-artifact runtime byte-identity must be reported from the installed layout, not claimed from staged source."
+      },
+      "releaseSmokeStrategy": "install -> locate executable -> interactive --smoke IPC (open, render_thumbnail p1, extract_text p1+p2, close) -> hardening (CWD decoy + PATH contamination) -> uninstall",
+      "requiredSmokeAssertions": [
+        "artifact_file_exists",
+        "deploy_succeeds",
+        "main_executable_present",
+        "launch_succeeds",
+        "runtime_resolves_packaged",
+        "smoke_document_opens",
+        "page_count_matches_2",
+        "text_tokens_found_at_least_3",
+        "bounded_render_succeeds",
+        "worker_production_ipc",
+        "hardening_cwd_decoy_passes",
+        "hardening_path_contamination_passes",
+        "clean_shutdown"
+      ],
+      "requiredExternalValidators": [],
+      "expectedEvidenceOutput": "windows-smoke-evidence-windows_msi.json (ArtifactSmokeEvidence schema 1.0.0)",
+      "timeouts": {
+        "install": 60000,
+        "launch": 30000,
+        "workerSpawn": 10000,
+        "documentOpen": 15000,
+        "renderCommand": 15000,
+        "shutdown": 10000
+      },
+      "cleanupPolicy": "msiexec /qn /x <productCode> (best-effort) -> temp workspace rmSync recursive (best-effort, failure reported)"
+    },
+    {
+      "artifactClass": "WINDOWS_NSIS",
+      "runnerOs": "windows",
+      "architecture": "x86_64",
+      "targetTriple": "x86_64-pc-windows-msvc",
+      "deploymentTool": "<artifact> /S /D=<tmp>/install (silent) then/or Uninstall.exe /S",
+      "installMethod": "nsis_install",
+      "privilegeRequirement": "none",
+      "privilegeNote": "/D=<temp dir> redirects install target; no system-wide write required for the temp-prefix smoke path",
+      "displayRequirement": "none",
+      "artifactPathExpectedPattern": "PreviewLite_0.1.0_x64-setup.exe",
+      "mainExecutableExpectation": {
+        "container": "<install dir>",
+        "relativePath": "preview-alternative.exe"
+      },
+      "workerExpectation": {
+        "spawnMethod": "production_ipc",
+        "entry": "--run-worker",
+        "note": "same packaged binary re-spawned via --run-worker; no fake helper, no direct pdfium call"
+      },
+      "runtimeExpectation": {
+        "relativePath": "resourceDir/lib/pdfium.dll",
+        "source": "packaged",
+        "knownSha256": null,
+        "note": "sha256 UNKNOWN (platform-support.json windows runtime supplyChainStatus=INCOMPLETE). Exact-artifact runtime byte-identity must be reported from the installed layout, not claimed from staged source."
+      },
+      "releaseSmokeStrategy": "silent install -> locate executable -> interactive --smoke IPC (open, render_thumbnail p1, extract_text p1+p2, close) -> hardening (CWD decoy + PATH contamination) -> uninstall",
+      "requiredSmokeAssertions": [
+        "artifact_file_exists",
+        "deploy_succeeds",
+        "main_executable_present",
+        "launch_succeeds",
+        "runtime_resolves_packaged",
+        "smoke_document_opens",
+        "page_count_matches_2",
+        "text_tokens_found_at_least_3",
+        "bounded_render_succeeds",
+        "worker_production_ipc",
+        "hardening_cwd_decoy_passes",
+        "hardening_path_contamination_passes",
+        "clean_shutdown"
+      ],
+      "requiredExternalValidators": [],
+      "expectedEvidenceOutput": "windows-smoke-evidence-windows_nsis.json (ArtifactSmokeEvidence schema 1.0.0)",
+      "timeouts": {
+        "install": 60000,
+        "launch": 30000,
+        "workerSpawn": 10000,
+        "documentOpen": 15000,
+        "renderCommand": 15000,
+        "shutdown": 10000
+      },
+      "cleanupPolicy": "Uninstall.exe /S (best-effort) -> temp workspace rmSync recursive (best-effort, failure reported)"
+    }
+  ]
+}

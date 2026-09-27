@@ -36,7 +36,8 @@ describe("App state consolidation & stale guard rules", () => {
   it("delegates prepress ownership to the dedicated state factory", () => {
     expect(appSource).toMatch(/const prepress = createPrepressState\(\);/);
     expect(appSource).toMatch(/prepress\.updateContext\(getPrepressContext\(\)\)/);
-    expect(appSource).toContain('applyPrepress("applySeparations", event)');
+    expect(appSource).toContain('applyPrepress("applyProcessPreview", event)');
+    expect(appSource).toContain('applyPrepress("applyCoveragePreview", event)');
     expect(appSource).toMatch(/prepress\.payload\(state, pageIndex, getPrepressContext\(\), payloadKey\)/);
   });
 

@@ -46,6 +46,55 @@ pub(crate) enum DocumentIoStage {
     Cleanup,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DocumentIoTestFault {
+    None,
+    TempCreate,
+    CopyWrite,
+    TempSync,
+    Replace,
+    PostCommitIdentity,
+    PostCommitDigest,
+    ParentDurability,
+    RecoveryRequiredAfterCommit,
+}
+
+#[cfg(feature = "sanitization-test-support")]
+#[doc(hidden)]
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum VerifiedArtifactPublicationTestFault {
+    #[default]
+    None,
+    TempCreate,
+    CopyWrite,
+    TempSync,
+    Replace,
+    PostCommitIdentity,
+    PostCommitDigest,
+    ParentDurability,
+    RecoveryRequiredAfterCommit,
+}
+
+#[cfg(feature = "sanitization-test-support")]
+impl From<VerifiedArtifactPublicationTestFault> for DocumentIoTestFault {
+    fn from(value: VerifiedArtifactPublicationTestFault) -> Self {
+        match value {
+            VerifiedArtifactPublicationTestFault::None => Self::None,
+            VerifiedArtifactPublicationTestFault::TempCreate => Self::TempCreate,
+            VerifiedArtifactPublicationTestFault::CopyWrite => Self::CopyWrite,
+            VerifiedArtifactPublicationTestFault::TempSync => Self::TempSync,
+            VerifiedArtifactPublicationTestFault::Replace => Self::Replace,
+            VerifiedArtifactPublicationTestFault::PostCommitIdentity => Self::PostCommitIdentity,
+            VerifiedArtifactPublicationTestFault::PostCommitDigest => Self::PostCommitDigest,
+            VerifiedArtifactPublicationTestFault::ParentDurability => Self::ParentDurability,
+            VerifiedArtifactPublicationTestFault::RecoveryRequiredAfterCommit => {
+                Self::RecoveryRequiredAfterCommit
+            }
+        }
+    }
+}
+
 impl fmt::Display for DocumentIoStage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
@@ -741,6 +790,31 @@ where
     V: FnOnce(&Path, &T) -> Result<(), DocumentIoFailure>,
     P: Fn(&Path) -> Result<(), DocumentIoFailure>,
 {
+    atomic_write_with_impl(
+        operation,
+        source_paths,
+        requested_target,
+        write,
+        validate,
+        precondition,
+        DocumentIoTestFault::None,
+    )
+}
+
+fn atomic_write_with_impl<T, W, V, P>(
+    operation: &str,
+    source_paths: &[PathBuf],
+    requested_target: &Path,
+    write: W,
+    validate: V,
+    precondition: P,
+    test_fault: DocumentIoTestFault,
+) -> Result<AtomicWriteReport, DocumentIoError>
+where
+    W: FnOnce(&Path) -> Result<T, DocumentIoFailure>,
+    V: FnOnce(&Path, &T) -> Result<(), DocumentIoFailure>,
+    P: Fn(&Path) -> Result<(), DocumentIoFailure>,
+{
     let mut write = Some(write);
     let mut validate = Some(validate);
 
@@ -795,6 +869,14 @@ where
                 "Hedef parent dizini belirlenemedi",
             )
         })?;
+        if test_fault == DocumentIoTestFault::TempCreate {
+            return Err(DocumentIoError::new(
+                operation,
+                DocumentIoStage::CreateTemp,
+                CommitState::Prepared,
+                "Controlled adjacent-temp create failure",
+            ));
+        }
         let mut temp = TempOutput::create(parent).map_err(|error| {
             DocumentIoError::new(
                 operation,
@@ -804,6 +886,17 @@ where
             )
         })?;
 
+        if test_fault == DocumentIoTestFault::CopyWrite {
+            return Err(cleanup_failure(
+                &mut temp,
+                DocumentIoError::new(
+                    operation,
+                    DocumentIoStage::WritePdf,
+                    CommitState::OriginalPreserved,
+                    "Controlled verified-artifact copy failure",
+                ),
+            ));
+        }
         let expected = match write.take().expect("write closure consumed once")(temp.path()) {
             Ok(expected) => expected,
             Err(failure) => {
@@ -833,6 +926,17 @@ where
             ));
         }
 
+        if test_fault == DocumentIoTestFault::TempSync {
+            return Err(cleanup_failure(
+                &mut temp,
+                DocumentIoError::new(
+                    operation,
+                    DocumentIoStage::SyncTemp,
+                    CommitState::OriginalPreserved,
+                    "Controlled adjacent-temp sync failure",
+                ),
+            ));
+        }
         if let Err(error) = sync_temp(temp.path()) {
             return Err(cleanup_failure(
                 &mut temp,
@@ -917,6 +1021,43 @@ where
                 ),
             )
         })?;
+        if test_fault == DocumentIoTestFault::Replace {
+            return Err(cleanup_failure(
+                &mut temp,
+                DocumentIoError::new(
+                    operation,
+                    DocumentIoStage::Replace,
+                    CommitState::OriginalPreserved,
+                    "Controlled atomic replace failure",
+                )
+                .with_replacement_digest(replacement_digest),
+            ));
+        }
+
+        let controlled_recovery_path = if test_fault
+            == DocumentIoTestFault::RecoveryRequiredAfterCommit
+            && authoritative.target.snapshot.kind == SnapshotKind::RegularFile
+        {
+            let path = parent.join(format!(
+                ".antigravity-recovery-{}.pdf.bak",
+                uuid::Uuid::new_v4()
+            ));
+            fs::copy(target, &path).map_err(|error| {
+                cleanup_failure(
+                    &mut temp,
+                    DocumentIoError::new(
+                        operation,
+                        DocumentIoStage::Recover,
+                        CommitState::OriginalPreserved,
+                        format!("Controlled recovery artifact oluşturulamadı: {error}"),
+                    ),
+                )
+            })?;
+            Some(path)
+        } else {
+            None
+        };
+
         let mut outcome = atomic_replace(
             operation,
             &mut temp,
@@ -926,6 +1067,27 @@ where
         )
         .map_err(|error| error.with_replacement_digest(replacement_digest.clone()))?;
         outcome.report.committed_digest = replacement_digest.clone();
+
+        if let Some(recovery_path) = controlled_recovery_path {
+            return Err(DocumentIoError::new(
+                operation,
+                DocumentIoStage::Recover,
+                CommitState::RecoveryRequired,
+                "Controlled post-commit recovery-required classification",
+            )
+            .with_recovery_path(recovery_path)
+            .with_replacement_digest(replacement_digest));
+        }
+
+        if test_fault == DocumentIoTestFault::PostCommitIdentity {
+            return Err(DocumentIoError::new(
+                operation,
+                DocumentIoStage::PostCommitVerify,
+                CommitState::Indeterminate,
+                "Controlled post-commit identity observation failure",
+            )
+            .with_replacement_digest(replacement_digest));
+        }
 
         let committed_target = snapshot_regular_file(target, true).map_err(|detail| {
             let mut error = DocumentIoError::new(
@@ -953,6 +1115,15 @@ where
             }
             return Err(error.with_replacement_digest(replacement_digest));
         }
+        if test_fault == DocumentIoTestFault::PostCommitDigest {
+            return Err(DocumentIoError::new(
+                operation,
+                DocumentIoStage::PostCommitVerify,
+                CommitState::Indeterminate,
+                "Controlled post-commit digest observation failure",
+            )
+            .with_replacement_digest(replacement_digest));
+        }
         let committed_digest = sha256_file(target).map_err(|error| {
             let mut error = DocumentIoError::new(
                 operation,
@@ -978,7 +1149,14 @@ where
             return Err(error.with_replacement_digest(replacement_digest));
         }
 
-        match sync_parent_directory(parent) {
+        let directory_sync = if test_fault == DocumentIoTestFault::ParentDurability {
+            Err(std::io::Error::other(
+                "Controlled parent-directory durability failure",
+            ))
+        } else {
+            sync_parent_directory(parent)
+        };
+        match directory_sync {
             Ok(DirectoryDurability::Confirmed) => {
                 outcome.report.state = CommitState::NewCommitted;
                 if let Some(backup) = outcome.recovery_backup.take() {
@@ -1119,12 +1297,12 @@ pub(crate) enum TargetExpectation {
     Digest(String),
 }
 
-/// Secure-redaction publication has a stricter target contract than Save/Save
+/// Verified-artifact publication has a stricter target contract than Save/Save
 /// As. A digest alone cannot distinguish a same-content replacement from the
 /// file the user originally selected, so bind the expectation to the canonical
 /// namespace and filesystem identity captured at preflight.
 #[derive(Clone, Debug)]
-pub(crate) enum SecurePublicationTargetExpectation {
+pub(crate) enum VerifiedArtifactTargetExpectation {
     Missing {
         namespace: PathBuf,
     },
@@ -1134,6 +1312,8 @@ pub(crate) enum SecurePublicationTargetExpectation {
         digest: String,
     },
 }
+
+pub(crate) type SecurePublicationTargetExpectation = VerifiedArtifactTargetExpectation;
 
 /// Captures the canonical, hardened persistence identity used by a later
 /// publication.  Callers must retain both return values: the resolved path is
@@ -1154,15 +1334,15 @@ pub(crate) fn capture_target_expectation(
     Ok((resolved.path, expectation))
 }
 
-pub(crate) fn capture_secure_publication_target_expectation(
+pub(crate) fn capture_verified_artifact_target_expectation(
     target: &Path,
-) -> Result<(PathBuf, SecurePublicationTargetExpectation), String> {
+) -> Result<(PathBuf, VerifiedArtifactTargetExpectation), String> {
     let resolved = resolve_target(target)?;
     let expectation = match resolved.snapshot.kind {
-        SnapshotKind::Missing => SecurePublicationTargetExpectation::Missing {
+        SnapshotKind::Missing => VerifiedArtifactTargetExpectation::Missing {
             namespace: resolved.namespace.clone(),
         },
-        SnapshotKind::RegularFile => SecurePublicationTargetExpectation::Existing {
+        SnapshotKind::RegularFile => VerifiedArtifactTargetExpectation::Existing {
             namespace: resolved.namespace.clone(),
             identity: resolved.snapshot.identity.clone().ok_or_else(|| {
                 format!(
@@ -1175,6 +1355,12 @@ pub(crate) fn capture_secure_publication_target_expectation(
         },
     };
     Ok((resolved.path, expectation))
+}
+
+pub(crate) fn capture_secure_publication_target_expectation(
+    target: &Path,
+) -> Result<(PathBuf, SecurePublicationTargetExpectation), String> {
+    capture_verified_artifact_target_expectation(target)
 }
 
 /// Atomically publishes a worker artifact that was independently verified.
@@ -1190,14 +1376,50 @@ pub(crate) fn atomic_publish_prevalidated_pdf(
     expected_artifact_digest: &str,
     expectation: SecurePublicationTargetExpectation,
 ) -> Result<AtomicWriteReport, DocumentIoError> {
-    atomic_publish_prevalidated_pdf_impl(
+    atomic_publish_verified_artifact_impl(
         operation,
         source,
         target,
         verified_artifact,
         expected_artifact_digest,
         expectation,
+        "REDACTION_TARGET_CONFLICT",
+        "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH",
         false,
+        DocumentIoTestFault::None,
+    )
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PublicationErrorCodes<'a> {
+    pub conflict_code: &'a str,
+    pub digest_mismatch_code: &'a str,
+}
+
+/// Generic verified-artifact publication primitive. It deliberately performs
+/// no PDF parsing; callers own semantic verification and this boundary owns
+/// filesystem identity, digest binding, atomic replacement and disk truth.
+#[cfg_attr(any(test, feature = "sanitization-test-support"), allow(dead_code))]
+pub(crate) fn atomic_publish_verified_artifact(
+    operation: &str,
+    source: &Path,
+    target: &Path,
+    verified_artifact: &Path,
+    expected_artifact_digest: &str,
+    expectation: VerifiedArtifactTargetExpectation,
+    error_codes: PublicationErrorCodes<'_>,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    atomic_publish_verified_artifact_impl(
+        operation,
+        source,
+        target,
+        verified_artifact,
+        expected_artifact_digest,
+        expectation,
+        error_codes.conflict_code,
+        error_codes.digest_mismatch_code,
+        false,
+        DocumentIoTestFault::None,
     )
 }
 
@@ -1214,27 +1436,66 @@ pub(crate) fn atomic_publish_prevalidated_pdf_for_acceptance(
     expectation: SecurePublicationTargetExpectation,
     corrupt_staged_temp: bool,
 ) -> Result<AtomicWriteReport, DocumentIoError> {
-    atomic_publish_prevalidated_pdf_impl(
+    atomic_publish_verified_artifact_impl(
         operation,
         source,
         target,
         verified_artifact,
         expected_artifact_digest,
         expectation,
+        "REDACTION_TARGET_CONFLICT",
+        "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH",
         corrupt_staged_temp,
+        DocumentIoTestFault::None,
     )
 }
 
-fn atomic_publish_prevalidated_pdf_impl(
+#[cfg(feature = "sanitization-test-support")]
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
+pub(crate) fn atomic_publish_verified_artifact_with_fault_for_acceptance(
     operation: &str,
     source: &Path,
     target: &Path,
     verified_artifact: &Path,
     expected_artifact_digest: &str,
-    expectation: SecurePublicationTargetExpectation,
+    expectation: VerifiedArtifactTargetExpectation,
+    conflict_code: &str,
+    digest_mismatch_code: &str,
     corrupt_staged_temp: bool,
+    fault: VerifiedArtifactPublicationTestFault,
 ) -> Result<AtomicWriteReport, DocumentIoError> {
-    #[cfg(not(feature = "secure-redaction-test-support"))]
+    atomic_publish_verified_artifact_impl(
+        operation,
+        source,
+        target,
+        verified_artifact,
+        expected_artifact_digest,
+        expectation,
+        conflict_code,
+        digest_mismatch_code,
+        corrupt_staged_temp,
+        fault.into(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn atomic_publish_verified_artifact_impl(
+    operation: &str,
+    source: &Path,
+    target: &Path,
+    verified_artifact: &Path,
+    expected_artifact_digest: &str,
+    expectation: VerifiedArtifactTargetExpectation,
+    conflict_code: &str,
+    digest_mismatch_code: &str,
+    corrupt_staged_temp: bool,
+    test_fault: DocumentIoTestFault,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    #[cfg(not(any(
+        feature = "secure-redaction-test-support",
+        feature = "sanitization-test-support"
+    )))]
     let _ = corrupt_staged_temp;
     let source_path = source.to_path_buf();
     let artifact_path = verified_artifact.to_path_buf();
@@ -1242,7 +1503,10 @@ fn atomic_publish_prevalidated_pdf_impl(
     let expected_digest = expected_artifact_digest.to_string();
     let expected_artifact_digest_for_copy = expected_digest.clone();
     let expected_target = expectation.clone();
-    atomic_write_with(
+    let artifact_mismatch_before_copy = digest_mismatch_code.to_string();
+    let staged_mismatch = digest_mismatch_code.to_string();
+    let conflict = conflict_code.to_string();
+    atomic_write_with_impl(
         operation,
         &[source_path, artifact_path],
         target,
@@ -1255,16 +1519,19 @@ fn atomic_publish_prevalidated_pdf_impl(
                 ))
             })?;
             if artifact_digest != expected_artifact_digest_for_copy {
-                return Err(DocumentIoFailure::invariant(
-                    "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH: verifier sonrası artifact değişti",
-                ));
+                return Err(DocumentIoFailure::invariant(format!(
+                    "{artifact_mismatch_before_copy}: verifier sonrası artifact değişti"
+                )));
             }
             fs::copy(&artifact_for_copy, temp).map_err(|error| {
                 DocumentIoFailure::write(format!(
                     "Doğrulanmış artifact atomic temp'e kopyalanamadı: {error}"
                 ))
             })?;
-            #[cfg(feature = "secure-redaction-test-support")]
+            #[cfg(any(
+                feature = "secure-redaction-test-support",
+                feature = "sanitization-test-support"
+            ))]
             if corrupt_staged_temp {
                 use std::io::Write as _;
                 let mut staged =
@@ -1292,27 +1559,27 @@ fn atomic_publish_prevalidated_pdf_impl(
                 DocumentIoFailure::invariant(format!("Atomic temp SHA-256 okunamadı: {error}"))
             })?;
             if temp_digest != expected_digest {
-                return Err(DocumentIoFailure::invariant(
-                    "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH: staged bytes verifier digest'iyle eşleşmiyor",
-                ));
+                return Err(DocumentIoFailure::invariant(format!(
+                    "{staged_mismatch}: staged bytes verifier digest'iyle eşleşmiyor"
+                )));
             }
             Ok(())
         },
         move |resolved_target| {
             let current = resolve_target(resolved_target).map_err(DocumentIoFailure::preflight)?;
             match &expected_target {
-                SecurePublicationTargetExpectation::Missing { namespace } => {
+                VerifiedArtifactTargetExpectation::Missing { namespace } => {
                     if current.namespace != *namespace
                         || current.snapshot.kind != SnapshotKind::Missing
                     {
-                        Err(DocumentIoFailure::preflight(
-                            "REDACTION_TARGET_CONFLICT: hedef preflight sonrasında oluşturuldu",
-                        ))
+                        Err(DocumentIoFailure::preflight(format!(
+                            "{conflict}: hedef preflight sonrasında oluşturuldu"
+                        )))
                     } else {
                         Ok(())
                     }
                 }
-                SecurePublicationTargetExpectation::Existing {
+                VerifiedArtifactTargetExpectation::Existing {
                     namespace,
                     identity,
                     digest,
@@ -1320,16 +1587,16 @@ fn atomic_publish_prevalidated_pdf_impl(
                     if current.namespace != *namespace
                         || current.snapshot.kind != SnapshotKind::RegularFile
                     {
-                        return Err(DocumentIoFailure::preflight(
-                            "REDACTION_TARGET_CONFLICT: mevcut hedef publication öncesi silindi",
-                        ));
+                        return Err(DocumentIoFailure::preflight(format!(
+                            "{conflict}: mevcut hedef publication öncesi silindi"
+                        )));
                     }
                     if current.snapshot.identity.as_ref() != Some(identity)
                         || current.snapshot.links.unwrap_or(1) > 1
                     {
-                        return Err(DocumentIoFailure::preflight(
-                        "REDACTION_TARGET_CONFLICT: hedef file identity preflight baseline'ından değişti",
-                    ));
+                        return Err(DocumentIoFailure::preflight(format!(
+                            "{conflict}: hedef file identity preflight baseline'ından değişti"
+                        )));
                     }
                     let actual = sha256_file(&current.path).map_err(|error| {
                         DocumentIoFailure::preflight(format!(
@@ -1339,13 +1606,14 @@ fn atomic_publish_prevalidated_pdf_impl(
                     if &actual == digest {
                         Ok(())
                     } else {
-                        Err(DocumentIoFailure::preflight(
-                            "REDACTION_TARGET_CONFLICT: hedef preflight baseline'ından değişti",
-                        ))
+                        Err(DocumentIoFailure::preflight(format!(
+                            "{conflict}: hedef preflight baseline'ından değişti"
+                        )))
                     }
                 }
             }
         },
+        test_fault,
     )
 }
 

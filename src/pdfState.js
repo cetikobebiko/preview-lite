@@ -1,6 +1,5 @@
 import { guardFeatureAction } from "./featureActionGuard.js";
 import { getRuntimeFeatureContext } from "./featureRegistry.js";
-import * as aiBackend from "./services/backend/ai.js";
 import { burnAnnotationsToPdf as burnAnnotationsToPdfBackend } from "./services/backend/document.js";
 import * as manipulationBackend from "./services/backend/manipulation.js";
 import * as ocrBackend from "./services/backend/ocr.js";
@@ -144,25 +143,6 @@ export async function exportAsSearchablePdf(
   );
 }
 
-// ==========================================
-// AŞAMA 11: Semantik Arama ve Yapay Zeka (Local LLM)
-// ==========================================
-
-export async function buildSemanticIndex(sessionId, expectedContentGeneration, chunkSize = 500, chunkOverlap = 50, ollamaUrl = "http://127.0.0.1:11434", embedModel = "nomic-embed-text") {
-  return await aiBackend.buildSemanticIndex(sessionId, expectedContentGeneration, chunkSize, chunkOverlap, ollamaUrl, embedModel);
-}
-
-export async function semanticSearch(sessionId, expectedContentGeneration, query, topK = 3, ollamaUrl = "http://127.0.0.1:11434", embedModel = "nomic-embed-text") {
-  return await aiBackend.semanticSearch(sessionId, expectedContentGeneration, query, topK, ollamaUrl, embedModel);
-}
-
-export async function queryDocumentRag(sessionId, expectedContentGeneration, prompt, history, ollamaUrl = "http://127.0.0.1:11434", llmModel = "llama3", embedModel = "nomic-embed-text") {
-  return await aiBackend.queryDocumentRag(sessionId, expectedContentGeneration, prompt, history, ollamaUrl, llmModel, embedModel);
-}
-
-export async function summarizeSelectionOrPage(textContent, targetLength = "short", ollamaUrl = "http://127.0.0.1:11434", llmModel = "llama3") {
-  return await aiBackend.summarizeSelectionOrPage(textContent, targetLength, ollamaUrl, llmModel);
-}
 
 export async function getPageAnnotations(
   sessionId,

@@ -19,9 +19,15 @@ are released under the repository license.
 - `reorder-with-{metadata,outline,named-destination,form}.pdf`: one unsupported
   document-level feature per fixture. Reorder must reject these inputs before
   writing because PDFium page-copy does not preserve those structures.
+- `large-page-dimensions.pdf`: one 7200x7200 pt (100x100 in) page testing large
+  page dimension handling without exceeding the 14,400 pt engine safety limit.
+- `release-smoke.pdf`: two-page canonical smoke fixture with distinct text tokens,
+  page markers, vector shapes, and a self-contained Type 3 Turkish Unicode font.
 
 `generate_reorder_fixtures.py` is the deterministic, project-authored generator
-for the reorder fixtures. Tests consume only the committed PDF files.
+for the reorder fixtures.
+`generate_release_smoke.py` is the deterministic, project-authored generator
+for `release-smoke.pdf` and `large-page-dimensions.pdf`. Tests consume only the committed PDF files.
 
 The fixtures are static and require no network access or runtime PDF
 generation. Their expected structure is validated by PDFium in the test suite
@@ -38,3 +44,5 @@ SHA-256:
 - `reorder-with-metadata.pdf`: `8825c0d1abecd665c1e89f882ad811237cdbadbf7c07e1a9198600754a28af65`
 - `reorder-with-named-destination.pdf`: `241264be3211c3d50376d77f7136fd3cfa1d9f53791a2611a5475c52e667f325`
 - `reorder-with-outline.pdf`: `e2dff7f1786fac45ad65fb70bf38e7842fefda6b5550b128e33eef9c96a5fe96`
+- `large-page-dimensions.pdf`: `93cb5f67e9587658f60a1db12a5f29aecf29d6b8ec47403400d9a8f48406fa55`
+- `release-smoke.pdf`: `727488fe32189a68a176ec32de5a3194d2b1e370a3fac2d5930871f45ba20611`

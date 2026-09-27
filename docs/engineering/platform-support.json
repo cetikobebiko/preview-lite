@@ -1,0 +1,254 @@
+{
+  "schemaVersion": "1.0.0",
+  "capturedDate": "2026-08-20",
+  "pdfiumRuntimeContractVersion": "1.0.0",
+  "canonicalRuntimeManifest": "docs/engineering/platform-support.json",
+  "allowedStatuses": [
+    "verified",
+    "experimental",
+    "build_only",
+    "unsupported",
+    "not_evaluated"
+  ],
+  "pdfiumRenderVersion": "0.8.37",
+  "baseline": {
+    "headCommit": "7b82b0319a4e12c58556567f2890a2fa310961e9",
+    "headRole": "baseline_head_commit",
+    "branch": "main",
+    "workingTree": {
+      "state": "dirty",
+      "porcelainEntryCountBeforePrompt11_0Implementation": 153,
+      "modifiedEntryCount": 104,
+      "deletedEntryCount": 11,
+      "untrackedEntryCount": 38
+    },
+    "implementationFreeze": {
+      "status": "not_established",
+      "commit": null,
+      "establishmentPoint": "after_11I_G"
+    },
+    "currentBaselineVerification": {
+      "nativePlatformVerificationPerformed": false,
+      "exactArtifactVerificationPerformed": false,
+      "signingVerificationPerformed": false
+    }
+  },
+  "evidencePolicy": {
+    "dirtySnapshotResultsAreReleaseEvidence": false,
+    "historicalEvidenceIsCurrentBaselineEvidence": false,
+    "compileSuccessImpliesSupported": false,
+    "skippedRuntimeTestsImplyPass": false,
+    "publicationRequiresStatus": "verified"
+  },
+  "architectureAliases": {
+    "x86_64": ["x86_64", "amd64"],
+    "arm64": ["arm64", "aarch64"]
+  },
+  "verificationContract": {
+    "sha256Required": true,
+    "verifyBeforeUse": true,
+    "verifyBeforePackage": true,
+    "failClosedOnMismatch": true,
+    "noFallbackToUnverified": true,
+    "noNetworkDownload": true,
+    "expectedSourceIdentity": "platform-support.json runtime.provenance.upstreamUrl + sourceCommit",
+    "expectedPlatformArch": "platform+architecture strict match, alias-normalized canonical only",
+    "expectedFilename": "runtime.runtimeFileName exact, no version suffix",
+    "archiveSecurity": {
+      "rejectTraversal": true,
+      "rejectAbsolutePath": true,
+      "rejectSymlinkEscape": true,
+      "rejectUnexpectedFile": true,
+      "exactExpectedRuntimeSelection": true,
+      "tempExtraction": true,
+      "atomicPublication": true,
+      "hashVerificationBeforeUse": true
+    },
+    "compatibilityAssumption": "UNVERIFIED — pdfium-render 0.8.37 vs 152.0.7961.0 compatibility not proven by repo docs; pin is hash-based, not version-string-based"
+  },
+  "platforms": [
+    {
+      "targetTriple": "aarch64-apple-darwin",
+      "operatingSystem": "macos",
+      "architecture": "arm64",
+      "status": "not_evaluated",
+      "publicationAllowed": false,
+      "statusReason": "The runtime is present and statically inventoried, but this dirty current baseline has no Prompt 11 freeze-bound native verification or exact-artifact smoke evidence.",
+      "runtime": {
+        "id": "pdfium-macos-arm64-libpdfium.dylib-152.0.7961.0",
+        "platform": "macos",
+        "architecture": "arm64",
+        "runtimeFileName": "libpdfium.dylib",
+        "filename": "libpdfium.dylib",
+        "versionOrRevision": "152.0.7961.0",
+        "repositoryVersionLabel": "152.0.7961.0",
+        "present": true,
+        "verifiedForRelease": false,
+        "paths": [
+          "src-tauri/libpdfium.dylib",
+          "src-tauri/lib/libpdfium.dylib"
+        ],
+        "copiesByteIdentical": true,
+        "sha256": "c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869",
+        "byteLength": 7151568,
+        "binaryArchitecture": "arm64",
+        "minimumOs": "13.0",
+        "licenseReference": "src-tauri/licenses/pdfium.txt",
+        "provenance": {
+          "class": "unknown",
+          "upstreamUrl": null,
+          "sourceArtifactName": null,
+          "sourceArtifactChecksum": null,
+          "sourceCommit": null,
+          "builder": null,
+          "buildDate": null
+        },
+        "distributionClass": "bundled_with_artifact",
+        "expectedStagedPath": "src-tauri/lib/libpdfium.dylib",
+        "expectedPackagedLocation": "resourceDir/lib/libpdfium.dylib",
+        "supplyChainStatus": "PARTIAL",
+        "sourceProvenanceComplete": false
+      },
+      "currentBaselineEvidence": {
+        "sourceBuild": "not_run",
+        "nativeIntegrationTests": "not_run",
+        "workerRuntimeTests": "not_run",
+        "packagedArtifact": "not_run",
+        "exactArtifactSmoke": "not_run",
+        "requiredSigningVerification": "not_run"
+      },
+      "historicalEvidence": [
+        {
+          "source": "prompt_11_task_context",
+          "scope": "macos_arm64_source_and_native_baseline",
+          "reportedResult": "pass",
+          "currentBaselineEvidence": false,
+          "freezeBound": false
+        }
+      ]
+    },
+    {
+      "targetTriple": "x86_64-unknown-linux-gnu",
+      "operatingSystem": "linux",
+      "architecture": "x86_64",
+      "status": "not_evaluated",
+      "publicationAllowed": false,
+      "statusReason": "No verified Linux PDFium runtime is present and no build or test was run on the current dirty baseline. SHA256: UNKNOWN — SUPPLY_CHAIN STATUS: INCOMPLETE — RUNTIME_METADATA_INCOMPLETE",
+      "runtime": {
+        "id": "pdfium-linux-x86_64-libpdfium.so-UNKNOWN",
+        "platform": "linux",
+        "architecture": "x86_64",
+        "runtimeFileName": "libpdfium.so",
+        "filename": "libpdfium.so",
+        "versionOrRevision": null,
+        "repositoryVersionLabel": null,
+        "present": false,
+        "verifiedForRelease": false,
+        "paths": [],
+        "sha256": null,
+        "byteLength": null,
+        "binaryArchitecture": null,
+        "minimumOs": null,
+        "licenseReference": "src-tauri/licenses/pdfium.txt",
+        "provenance": {
+          "class": "unknown",
+          "upstreamUrl": null,
+          "sourceArtifactName": null,
+          "sourceArtifactChecksum": null,
+          "sourceCommit": null,
+          "builder": null,
+          "buildDate": null
+        },
+        "distributionClass": "bundled_with_artifact",
+        "expectedStagedPath": "src-tauri/lib/libpdfium.so",
+        "expectedPackagedLocation": "resourceDir/lib/libpdfium.so",
+        "supplyChainStatus": "INCOMPLETE",
+        "sourceProvenanceComplete": false
+      },
+      "currentBaselineEvidence": {
+        "sourceBuild": "not_run",
+        "nativeIntegrationTests": "not_run",
+        "workerRuntimeTests": "not_run",
+        "packagedArtifact": "not_run",
+        "exactArtifactSmoke": "not_run",
+        "requiredSigningVerification": "not_run"
+      },
+      "historicalEvidence": [
+        {
+          "source": "prompt_11_task_context",
+          "scope": "linux_x64_source_build_portability",
+          "reportedChecks": [
+            "npm_ci",
+            "frontend_tests",
+            "cross_platform_tests",
+            "frontend_build",
+            "svelte_check",
+            "cargo_fmt",
+            "cargo_check",
+            "strict_clippy"
+          ],
+          "reportedResult": "pass",
+          "currentBaselineEvidence": false,
+          "freezeBound": false
+        },
+        {
+          "source": "prompt_11_task_context",
+          "scope": "local_arm_to_linux_amd64_emulation_full_cargo_test",
+          "reportedResult": "runner_environment_sigkill",
+          "classification": "RUNNER_ENVIRONMENT_FAILURE",
+          "compilerOrAssertionFailure": false,
+          "canonicalNativeEvidence": false,
+          "currentBaselineEvidence": false
+        }
+      ]
+    },
+    {
+      "targetTriple": "x86_64-pc-windows-msvc",
+      "operatingSystem": "windows",
+      "architecture": "x86_64",
+      "status": "not_evaluated",
+      "publicationAllowed": false,
+      "statusReason": "No verified Windows PDFium runtime or current native/package evidence exists. SHA256: UNKNOWN — SUPPLY_CHAIN STATUS: INCOMPLETE",
+      "runtime": {
+        "id": "pdfium-windows-x86_64-pdfium.dll-UNKNOWN",
+        "platform": "windows",
+        "architecture": "x86_64",
+        "runtimeFileName": "pdfium.dll",
+        "filename": "pdfium.dll",
+        "versionOrRevision": null,
+        "repositoryVersionLabel": null,
+        "present": false,
+        "verifiedForRelease": false,
+        "paths": [],
+        "sha256": null,
+        "byteLength": null,
+        "binaryArchitecture": null,
+        "minimumOs": null,
+        "licenseReference": "src-tauri/licenses/pdfium.txt",
+        "provenance": {
+          "class": "unknown",
+          "upstreamUrl": null,
+          "sourceArtifactName": null,
+          "sourceArtifactChecksum": null,
+          "sourceCommit": null,
+          "builder": null,
+          "buildDate": null
+        },
+        "distributionClass": "bundled_with_artifact",
+        "expectedStagedPath": "src-tauri/lib/pdfium.dll",
+        "expectedPackagedLocation": "resourceDir/lib/pdfium.dll",
+        "supplyChainStatus": "INCOMPLETE",
+        "sourceProvenanceComplete": false
+      },
+      "currentBaselineEvidence": {
+        "sourceBuild": "not_run",
+        "nativeIntegrationTests": "not_run",
+        "workerRuntimeTests": "not_run",
+        "packagedArtifact": "not_run",
+        "exactArtifactSmoke": "not_run",
+        "requiredSigningVerification": "not_run"
+      },
+      "historicalEvidence": []
+    }
+  ]
+}

@@ -12,6 +12,9 @@
 </script>
 
 <div class="viewer-area" bind:this={viewerAreaRef}>
+  {#if prepress.processPreview || prepress.coveragePreview}
+    <div class="approximate-preview-legend" role="status">APPROXIMATE RGB-DERIVED PREVIEW</div>
+  {/if}
   {#if !isPdf && !viewer.activeImageSourcePath}
     <button class="drop-zone" onclick={onSelectFile} style="all: unset; display: flex; flex-direction: column; align-items: center; padding: 48px 36px; border: 1px dashed var(--border-raw); background: var(--bg-surface); text-align: center; cursor: pointer; font-family: var(--font-mono);">
       <div style="width: 56px; height: 56px; border: 1px solid var(--border-raw); color: var(--accent-industrial); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; font-weight: 700; font-size: 20px;">[+]</div>
@@ -28,7 +31,7 @@
           {#each spreads as spread (spread.join("-"))}
             <div class="book-spread-row {viewer.isBookMode ? 'book-mode' : ''}">
               {#each spread as pageIdx (pageIdx)}
-                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={viewer.pageOrder[viewer.currentPageIndex] ?? viewer.currentPageIndex} isBookMode={viewer.isBookMode} isSinglePageMode={viewer.isSinglePageMode} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={searchState.matchesByPage[pageIdx] || []} sensitiveDataHighlights={getSensitiveDataHighlights(pageIdx, viewer.rotation)} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={secureRedactionState?.pendingRegions?.filter((region) => region.pageIndex === pageIdx) ?? []} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} on:searchHighlightReady={onSearchHighlightReady} activeTool={annotation.activeTool} activeColor={annotation.activeColor} prepressHeatmap={getActivePrepressPayload(prepress.heatmap, pageIdx, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "heatmap")} prepressSeparations={getActivePrepressPayload(prepress.separations, pageIdx, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "images")} prepressChannels={prepress.channels} prepressBoxes={prepress.boxes} on:sessionSnapshot={(event) => onSessionSnapshot(event.detail)} />
+                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={viewer.pageOrder[viewer.currentPageIndex] ?? viewer.currentPageIndex} isBookMode={viewer.isBookMode} isSinglePageMode={viewer.isSinglePageMode} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={searchState.matchesByPage[pageIdx] || []} sensitiveDataHighlights={getSensitiveDataHighlights(pageIdx, viewer.rotation)} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={secureRedactionState?.pendingRegions?.filter((region) => region.pageIndex === pageIdx) ?? []} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} on:searchHighlightReady={onSearchHighlightReady} activeTool={annotation.activeTool} activeColor={annotation.activeColor} approximateCoveragePreview={getActivePrepressPayload(prepress.coveragePreview, pageIdx, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result")} approximateProcessPreview={getActivePrepressPayload(prepress.processPreview, pageIdx, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result")} approximateProcessChannels={prepress.channels} on:sessionSnapshot={(event) => onSessionSnapshot(event.detail)} />
               {/each}
             </div>
           {/each}
@@ -49,4 +52,5 @@
     margin-bottom: 24px;
     min-height: 800px;
   }
+  .approximate-preview-legend { position: sticky; top: 8px; z-index: 100; margin: 8px auto -36px; width: max-content; padding: 7px 12px; background: #f59e0b; color: #111; border: 2px solid #111; font: 800 12px var(--font-mono); pointer-events: none; }
 </style>

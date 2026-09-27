@@ -3,16 +3,8 @@ import { getRuntimeFeatureContext } from "../featureRegistry.js";
 import { mergePdfs } from "./backend/manipulation.js";
 import {
   applyRedactions,
-  sanitizePdfDocument,
   startSensitiveDataScan,
 } from "./backend/redaction.js";
-import {
-  enableLtv,
-  listSystemCertificates,
-  signPdfPades,
-  verifyPdfSignatures,
-} from "./backend/signatures.js";
-import { exportSessionPdfX } from "./backend/prepress.js";
 import {
   performOcrOnPage,
   shareExternalFileMacos,
@@ -52,24 +44,6 @@ export const applyRedactionsAction = (
     ),
   );
 
-export const sanitizePdfDocumentAction = (
-  sessionId,
-  expectedContentGeneration,
-  outputPath,
-  options,
-  context,
-) =>
-  guardFeatureAction(
-    "sanitization",
-    runtimeContext(context),
-    () => sanitizePdfDocument(
-      sessionId,
-      expectedContentGeneration,
-      outputPath,
-      options,
-    ),
-  );
-
 export const startSensitiveDataScanAction = (
   sessionId,
   expectedContentGeneration,
@@ -101,79 +75,6 @@ export const scanSensitiveDataAction = (
     return Promise.reject(error);
   }
 };
-
-export const listSystemCertificatesAction = (context) =>
-  guardFeatureAction(
-    "pades_signing",
-    runtimeContext(context),
-    () => listSystemCertificates(),
-  );
-
-export const signPdfPadesAction = (
-  sessionId,
-  expectedContentGeneration,
-  outputPath,
-  certId,
-  pin,
-  options,
-  context,
-) =>
-  guardFeatureAction(
-    "pades_signing",
-    runtimeContext(context),
-    () => signPdfPades(
-      sessionId,
-      expectedContentGeneration,
-      outputPath,
-      certId,
-      pin,
-      options,
-    ),
-  );
-
-export const verifyPdfSignaturesAction = (
-  sessionId,
-  expectedContentGeneration,
-  context,
-) =>
-  guardFeatureAction(
-    "signature_verification",
-    runtimeContext(context),
-    () => verifyPdfSignatures(sessionId, expectedContentGeneration),
-  );
-
-export const enableLtvAction = (
-  sessionId,
-  expectedContentGeneration,
-  signatureId,
-  context,
-) =>
-  guardFeatureAction(
-    "ltv",
-    runtimeContext(context),
-    () => enableLtv(sessionId, expectedContentGeneration, signatureId),
-  );
-
-export const exportPdfXAction = (
-  sessionId,
-  expectedContentGeneration,
-  targetPath,
-  standard,
-  profileName,
-  context,
-) =>
-  guardFeatureAction(
-    "pdf_x_export",
-    runtimeContext(context),
-    () => exportSessionPdfX(
-      sessionId,
-      expectedContentGeneration,
-      targetPath,
-      standard,
-      profileName,
-    ),
-  );
-
 export const speakTextAction = (text, voice, context) =>
   guardFeatureAction(
     "text_to_speech",

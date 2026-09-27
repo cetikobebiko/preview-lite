@@ -3,7 +3,7 @@
   import AnnotationHudControls from "./AnnotationHudControls.svelte";
 
   let {
-    isPdf, viewer, ui, annotation, featureUi, featureControlLabel, colorPalette, isDirty, isLoadedPdfDocument,
+    isPdf, viewer, ui, annotation, featureUi, featureControlLabel, colorPalette, isDirty,
     onFeatureAction, onGoBack, onGoForward, onPreviousPage, onNextPage, onPageInputChange,
     onRotateLeft, onRotateRight, onFlipH, onFlipV, onZoomOut, onResetZoom, onZoomIn,
     onToggleSinglePage, onToggleBookMode, onToggleDarkMode, onOpenBionic, onRunOcr,
@@ -43,23 +43,8 @@
         <button class="hud-btn {ui.isModalOpen("ai_assistant") ? 'active' : ''}" onclick={() => onFeatureAction("local_ai", () => ui.openModal("ai_assistant"))} title={featureUi("local_ai").warning} disabled={!featureUi("local_ai").runnable}>{featureControlLabel("local_ai", "AI")}</button>
       {/if}
       <button class="hud-btn {ui.isModalOpen("export") ? 'active' : ''}" onclick={() => ui.openModal("export")}>[EXPORT]</button>
-      {#if featureUi("pdf_x_export").visible}
-        <button class="hud-btn {ui.isModalOpen("pdf_x") ? 'active' : ''}" onclick={() => onFeatureAction("pdf_x_export", () => ui.openModal("pdf_x"))} disabled={!isLoadedPdfDocument || !featureUi("pdf_x_export").runnable} title={featureUi("pdf_x_export").warning}>{featureControlLabel("pdf_x_export", "PDF/X")}</button>
-      {/if}
       {#if featureUi("plugin_system").visible}
         <button class="hud-btn {ui.isModalOpen("plugin_manager") ? 'active' : ''}" onclick={() => onFeatureAction("plugin_system", () => ui.openModal("plugin_manager"))} disabled={!featureUi("plugin_system").runnable} title={featureUi("plugin_system").warning}>{featureControlLabel("plugin_system", "PLUGINS")}</button>
-      {/if}
-      {#if featureUi("signature_verification").visible}
-        <button class="hud-btn {ui.panels.signature ? 'active' : ''}" onclick={() => onFeatureAction("signature_verification", () => ui.togglePanel("signature"))} disabled={!featureUi("signature_verification").runnable} title={featureUi("signature_verification").warning}>{featureControlLabel("signature_verification", "SIG PANEL")}</button>
-      {/if}
-      {#if featureUi("pades_signing").visible}
-        <button class="hud-btn {ui.isModalOpen("signature_wizard") ? 'active' : ''}" onclick={() => onFeatureAction("pades_signing", () => ui.openModal("signature_wizard"))} disabled={!featureUi("pades_signing").runnable} title={featureUi("pades_signing").warning}>{featureControlLabel("pades_signing", "SIGN DOC")}</button>
-      {/if}
-      {#if featureUi("signature_settings").visible}
-        <button class="hud-btn {ui.isModalOpen("signature_settings") ? 'active' : ''}" onclick={() => onFeatureAction("signature_settings", () => ui.openModal("signature_settings"))} disabled={!featureUi("signature_settings").runnable} title={featureUi("signature_settings").warning}>{featureControlLabel("signature_settings", "PAdES CFG")}</button>
-      {/if}
-      {#if featureUi("plugin_system").visible}
-        <button class="hud-btn {ui.isModalOpen("developer_console") ? 'active' : ''}" onclick={() => onFeatureAction("plugin_system", () => ui.openModal("developer_console"))} disabled={!featureUi("plugin_system").runnable} title={featureUi("plugin_system").warning}>{featureControlLabel("plugin_system", "DEV CONSOLE")}</button>
       {/if}
     </div>
 

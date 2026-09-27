@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "../platform/window.js";
+import { aiController } from "./aiController.js";
 import { createApplicationLifecycleController } from "./applicationLifecycleController.js";
 import { createKeyboardController } from "./keyboardController.js";
 import { createWindowLifecycleController } from "./windowLifecycleController.js";
@@ -21,6 +22,22 @@ export function createApplicationRuntime({
   createWindowController = createWindowLifecycleController,
   createKeyboard = createKeyboardController,
 }) {
+  aiController.init({
+    getGuard: ({ targetSessionId } = {}) => {
+      return {
+        sessionId: targetSessionId || documentSession.activeSessionId,
+        contentGeneration: documentSession.contentGeneration,
+      };
+    },
+    isGuardCurrent: (guard) => {
+      if (!guard) return false;
+      return (
+        documentSession.activeSessionId === guard.sessionId &&
+        documentSession.contentGeneration === guard.contentGeneration
+      );
+    },
+  });
+
   const lifecycleController = createLifecycleController({
     viewer,
     ui,
@@ -87,6 +104,7 @@ export function createApplicationRuntime({
   function mount() {
     setMounted(true);
     featureRuntime.start();
+    void aiController.fetchEndpointStatus().catch(() => {});
     void lifecycleController.start()
       .catch((error) => console.error("Uygulama yaşam döngüsü başlatılamadı:", error));
     void windowLifecycleController.start()
@@ -97,6 +115,7 @@ export function createApplicationRuntime({
       setMounted(false);
       const closedGeneration = documentSession.contentGeneration;
       const coordinatorStop = documentRuntime.coordinator.stop();
+      aiController.dispose();
       featureRuntime.destroy();
       documentRuntime.lifecycleController.destroy();
       lifecycleController.stop();

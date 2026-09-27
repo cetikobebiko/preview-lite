@@ -25,6 +25,15 @@ mod macos_arm64 {
             .to_string()
     }
 
+    fn fixture_corpus(name: &str) -> String {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fuzz")
+            .join("corpus")
+            .join(name)
+            .to_string_lossy()
+            .to_string()
+    }
+
     #[tokio::test]
     async fn forced_worker_kill_preserves_parent_and_allows_lazy_reopen() {
         let broker = broker();
@@ -62,6 +71,18 @@ mod macos_arm64 {
         assert_eq!(reopened_page_count, 1);
         let second_epoch = broker.worker_epoch().await.unwrap();
         assert_ne!(first_epoch, second_epoch);
+
+        let audit = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::AuditAccessibility { document_id },
+                CommandTimeout::DocumentRead,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(audit, WorkerResult::AccessibilityAudit(_)));
 
         let rendered = broker
             .command_for_document(
@@ -110,6 +131,40 @@ mod macos_arm64 {
             .await
             .unwrap_err();
         assert_eq!(error.code, "DOCUMENT_SESSION_INVALID_PDF");
+        drop(admission);
+        broker.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fuzz_seed_minimal_opens_without_crash_and_returns_bounded_result() {
+        let broker = broker();
+        let key = WorkerDocumentKey {
+            session_id: "fuzz-minimal-integration".to_string(),
+            content_generation: 1,
+        };
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        let result = broker
+            .ensure_document(
+                &admission,
+                key.clone(),
+                fixture_corpus("minimal.pdf"),
+                None,
+                None,
+            )
+            .await;
+        match result {
+            Ok((_document, page_count, _protected)) => {
+                assert!(page_count >= 1);
+            }
+            Err(error) => {
+                assert!(
+                    error.code == "DOCUMENT_SESSION_INVALID_PDF"
+                        || error.code == "PDFIUM_WORKER_CRASHED",
+                    "unexpected error code: {}",
+                    error.code
+                );
+            }
+        }
         drop(admission);
         broker.shutdown().await.unwrap();
     }

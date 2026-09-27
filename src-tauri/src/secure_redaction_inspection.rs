@@ -127,7 +127,7 @@ fn inspect_document_facts(
         let mut sig_field_unknown = false;
         let mut br_unknown = false;
 
-        for (_id, object) in &lopdf_doc.objects {
+        for object in lopdf_doc.objects.values() {
             if let Object::Dictionary(dict) = object {
                 if dict.has(b"Type") {
                     if let Ok(type_obj) = dict.get(b"Type") {
@@ -463,10 +463,9 @@ fn inspect_embedded_files_with_budget(
                     .as_name()
                     .map(|n| n == b"Filespec" || n == b"F")
                     .unwrap_or(false)
+                    && dict.has(b"EF")
                 {
-                    if dict.has(b"EF") {
-                        return InspectionFactState::Present;
-                    }
+                    return InspectionFactState::Present;
                 }
             }
             if let Ok(subtype_obj) = dict.get(b"Subtype") {
@@ -474,10 +473,9 @@ fn inspect_embedded_files_with_budget(
                     .as_name()
                     .map(|n| n == b"FileAttachment")
                     .unwrap_or(false)
+                    && (dict.has(b"FS") || dict.has(b"EF"))
                 {
-                    if dict.has(b"FS") || dict.has(b"EF") {
-                        return InspectionFactState::Present;
-                    }
+                    return InspectionFactState::Present;
                 }
             }
         } else if let Object::Reference(id) = object {
@@ -948,11 +946,7 @@ fn is_valid_xref_stream_obj(sub: &[u8]) -> bool {
                         val_end += 1;
                     }
                     let val_name = &sub[val_start..val_end];
-                    if val_name == b"XRef" {
-                        return true;
-                    } else {
-                        return false;
-                    }
+                    return val_name == b"XRef";
                 } else {
                     return false;
                 }
@@ -1009,10 +1003,7 @@ pub fn resolve_inherited_box(
             let mut coords = Vec::with_capacity(4);
             for item in arr {
                 let deref_item = match item {
-                    Object::Reference(id) => match lopdf_doc.get_object(*id) {
-                        Ok(obj) => Some(obj),
-                        Err(_) => None,
-                    },
+                    Object::Reference(id) => lopdf_doc.get_object(*id).ok(),
                     _ => None,
                 };
                 let target = deref_item.unwrap_or(item);
@@ -1309,10 +1300,10 @@ fn inspect_optional_page_box(
     }
 }
 
-pub fn resolve_effective_resources<'a>(
-    lopdf_doc: &'a lopdf::Document,
+pub fn resolve_effective_resources(
+    lopdf_doc: &lopdf::Document,
     page_id: lopdf::ObjectId,
-) -> InheritedLookup<&'a lopdf::Dictionary> {
+) -> InheritedLookup<&lopdf::Dictionary> {
     let mut current_id = page_id;
     let mut visited = HashSet::new();
     let mut depth = 0;
@@ -1527,16 +1518,16 @@ fn inspect_page_facts(
                                         {
                                             transp = InspectionFactState::Present;
                                         }
-                                    } else if v.as_reference().is_ok() {
-                                        if transp == InspectionFactState::Absent {
-                                            transp = InspectionFactState::Unknown;
-                                        }
+                                    } else if v.as_reference().is_ok()
+                                        && transp == InspectionFactState::Absent
+                                    {
+                                        transp = InspectionFactState::Unknown;
                                     }
                                 }
-                            } else if egs_obj.as_reference().is_ok() {
-                                if transp == InspectionFactState::Absent {
-                                    transp = InspectionFactState::Unknown;
-                                }
+                            } else if egs_obj.as_reference().is_ok()
+                                && transp == InspectionFactState::Absent
+                            {
+                                transp = InspectionFactState::Unknown;
                             }
                         }
                         if let Ok(cs_obj) = res_dict.get(b"ColorSpace") {
@@ -1634,7 +1625,7 @@ fn inspect_page_facts(
         spot_colors,
         complex_color_spaces,
         geometry_profile: GeometryProfile::StandardEffectiveBoxV1,
-        rotation: geom.rotation.clone(),
+        rotation: geom.rotation,
     })
 }
 
@@ -1940,7 +1931,7 @@ mod tests {
         let mut sig_field_unknown = false;
         let mut br_unknown = false;
 
-        for (_id, object) in &lopdf_doc.objects {
+        for object in lopdf_doc.objects.values() {
             if let Object::Dictionary(dict) = object {
                 if dict.has(b"Type") {
                     if let Ok(type_obj) = dict.get(b"Type") {

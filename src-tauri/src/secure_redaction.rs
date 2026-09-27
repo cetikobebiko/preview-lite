@@ -139,7 +139,7 @@ pub fn validate_sha256_digest(
     field_name: &str,
 ) -> Result<(), SessionJobOperationError> {
     let trimmed = digest.trim();
-    if trimmed.len() != 64 || digest.as_bytes().len() != 64 {
+    if trimmed.len() != 64 || digest.len() != 64 {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionPlanDigestMismatch,
             format!(
@@ -188,14 +188,14 @@ pub fn validate_redaction_region_input(
     input: &RedactionRegionInput,
 ) -> Result<(), SessionJobOperationError> {
     let trimmed_id = input.id.trim();
-    if trimmed_id.is_empty() || input.id.as_bytes().len() > MAX_REGION_ID_LEN {
+    if trimmed_id.is_empty() || input.id.len() > MAX_REGION_ID_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidRegion,
             "Region ID must be non-empty, non-whitespace, and at most 128 UTF-8 bytes",
         ));
     }
     let trimmed_source = input.source.trim();
-    if trimmed_source.is_empty() || input.source.as_bytes().len() > MAX_SOURCE_LEN {
+    if trimmed_source.is_empty() || input.source.len() > MAX_SOURCE_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidRegion,
             "Region source must be non-empty, non-whitespace, and at most 256 UTF-8 bytes",
@@ -644,7 +644,7 @@ pub fn compare_canonical_redaction_regions(
 pub fn validate_canonical_redaction_region(
     region: &CanonicalRedactionRegion,
 ) -> Result<(), SessionJobOperationError> {
-    if region.region_id.trim().is_empty() || region.region_id.as_bytes().len() > MAX_REGION_ID_LEN {
+    if region.region_id.trim().is_empty() || region.region_id.len() > MAX_REGION_ID_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidRegion,
             "Canonical region_id must be non-empty and at most 128 UTF-8 bytes",
@@ -669,7 +669,7 @@ pub fn validate_canonical_redaction_region(
     let mut seen_sources = HashSet::new();
     let mut prev_source_id: Option<&String> = None;
     for id in &region.source_region_ids {
-        if id.trim().is_empty() || id.as_bytes().len() > MAX_REGION_ID_LEN {
+        if id.trim().is_empty() || id.len() > MAX_REGION_ID_LEN {
             return Err(make_redaction_error(
                 SecureRedactionErrorCode::RedactionInvalidRegion,
                 "source_region_id must be non-empty and at most 128 UTF-8 bytes",
@@ -1681,13 +1681,13 @@ pub fn validate_page_redaction_plan(
                 "Strategy rasterize_page requires at least 1 canonical region",
             ));
         }
-    } else if page_plan.strategy == PageRedactionStrategy::ImportUnaffectedPage {
-        if !page_plan.canonical_regions.is_empty() {
-            return Err(make_redaction_error(
-                SecureRedactionErrorCode::RedactionInvalidPolicy,
-                "Strategy import_unaffected_page must have exactly 0 canonical regions",
-            ));
-        }
+    } else if page_plan.strategy == PageRedactionStrategy::ImportUnaffectedPage
+        && !page_plan.canonical_regions.is_empty()
+    {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionInvalidPolicy,
+            "Strategy import_unaffected_page must have exactly 0 canonical regions",
+        ));
     }
 
     validate_page_redaction_facts(&page_plan.facts, total_pages)?;
@@ -1846,22 +1846,20 @@ pub fn validate_blocker(blocker: &RedactionBlocker) -> Result<(), SessionJobOper
             "Unsupported blocker schema_version",
         ));
     }
-    if blocker.code.trim().is_empty() || blocker.code.as_bytes().len() > MAX_BLOCKER_CODE_LEN {
+    if blocker.code.trim().is_empty() || blocker.code.len() > MAX_BLOCKER_CODE_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "Blocker code must be non-empty and at most 128 UTF-8 bytes",
         ));
     }
-    if blocker.message.trim().is_empty()
-        || blocker.message.as_bytes().len() > MAX_USER_SAFE_MESSAGE_LEN
-    {
+    if blocker.message.trim().is_empty() || blocker.message.len() > MAX_USER_SAFE_MESSAGE_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "Blocker message must be non-empty and at most 2048 UTF-8 bytes",
         ));
     }
     if let Some(details) = &blocker.details {
-        if details.as_bytes().len() > MAX_DETAILS_LEN {
+        if details.len() > MAX_DETAILS_LEN {
             return Err(make_redaction_error(
                 SecureRedactionErrorCode::RedactionResourceLimitExceeded,
                 "Blocker details exceeds 4096 UTF-8 bytes",
@@ -1878,22 +1876,20 @@ pub fn validate_warning(warning: &RedactionWarning) -> Result<(), SessionJobOper
             "Unsupported warning schema_version",
         ));
     }
-    if warning.code.trim().is_empty() || warning.code.as_bytes().len() > MAX_WARNING_CODE_LEN {
+    if warning.code.trim().is_empty() || warning.code.len() > MAX_WARNING_CODE_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "Warning code must be non-empty and at most 128 UTF-8 bytes",
         ));
     }
-    if warning.message.trim().is_empty()
-        || warning.message.as_bytes().len() > MAX_USER_SAFE_MESSAGE_LEN
-    {
+    if warning.message.trim().is_empty() || warning.message.len() > MAX_USER_SAFE_MESSAGE_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "Warning message must be non-empty and at most 2048 UTF-8 bytes",
         ));
     }
     if let Some(details) = &warning.details {
-        if details.as_bytes().len() > MAX_DETAILS_LEN {
+        if details.len() > MAX_DETAILS_LEN {
             return Err(make_redaction_error(
                 SecureRedactionErrorCode::RedactionResourceLimitExceeded,
                 "Warning details exceeds 4096 UTF-8 bytes",
@@ -1912,23 +1908,20 @@ pub fn validate_verification_check(
             "Unsupported verification check schema_version",
         ));
     }
-    if check.code.trim().is_empty() || check.code.as_bytes().len() > MAX_VERIFICATION_CHECK_CODE_LEN
-    {
+    if check.code.trim().is_empty() || check.code.len() > MAX_VERIFICATION_CHECK_CODE_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "Verification check code must be non-empty and at most 256 UTF-8 bytes",
         ));
     }
-    if check.message.trim().is_empty()
-        || check.message.as_bytes().len() > MAX_VERIFICATION_CHECK_MESSAGE_LEN
-    {
+    if check.message.trim().is_empty() || check.message.len() > MAX_VERIFICATION_CHECK_MESSAGE_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "Verification check message must be non-empty and at most 2048 UTF-8 bytes",
         ));
     }
     if let Some(details) = &check.details {
-        if details.as_bytes().len() > MAX_VERIFICATION_CHECK_DETAILS_LEN {
+        if details.len() > MAX_VERIFICATION_CHECK_DETAILS_LEN {
             return Err(make_redaction_error(
                 SecureRedactionErrorCode::RedactionResourceLimitExceeded,
                 "Verification check details exceeds 4096 UTF-8 bytes",
@@ -2028,17 +2021,13 @@ pub fn validate_publication_report(
             "Unsupported publication report schema_version",
         ));
     }
-    if report.publication_id.trim().is_empty()
-        || report.publication_id.as_bytes().len() > MAX_IDENTITY_LEN
-    {
+    if report.publication_id.trim().is_empty() || report.publication_id.len() > MAX_IDENTITY_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "publication_id must be non-empty and at most 128 UTF-8 bytes",
         ));
     }
-    if report.published_path.trim().is_empty()
-        || report.published_path.as_bytes().len() > MAX_PATH_LEN
-    {
+    if report.published_path.trim().is_empty() || report.published_path.len() > MAX_PATH_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "published_path must be non-empty and at most 4096 UTF-8 bytes",
@@ -2143,24 +2132,23 @@ pub fn evaluate_document_blockers(
             );
         }
     }
-    if facts.encryption == InspectionFactState::Present
-        || facts.encryption == InspectionFactState::Unknown
+    if (facts.encryption == InspectionFactState::Present
+        || facts.encryption == InspectionFactState::Unknown)
+        && policy.encryption_policy == EncryptionPolicy::Block
     {
-        if policy.encryption_policy == EncryptionPolicy::Block {
-            push_aggregated_blocker(
-                &mut blockers,
-                RedactionBlocker {
-                    schema_version: REDACTION_SCHEMA_VERSION.to_string(),
-                    code: "REDACTION_ENCRYPTED_INPUT_UNSUPPORTED".to_string(),
-                    message: "Encrypted inputs are unsupported in current redaction profile"
+        push_aggregated_blocker(
+            &mut blockers,
+            RedactionBlocker {
+                schema_version: REDACTION_SCHEMA_VERSION.to_string(),
+                code: "REDACTION_ENCRYPTED_INPUT_UNSUPPORTED".to_string(),
+                message: "Encrypted inputs are unsupported in current redaction profile"
+                    .to_string(),
+                details: Some(
+                    "Encryption change acknowledgement cannot bypass this policy blocker"
                         .to_string(),
-                    details: Some(
-                        "Encryption change acknowledgement cannot bypass this policy blocker"
-                            .to_string(),
-                    ),
-                },
-            );
-        }
+                ),
+            },
+        );
     }
     if (facts.signature_dictionary == InspectionFactState::Present
         || facts.signature_field == InspectionFactState::Present
@@ -2580,22 +2568,7 @@ pub fn validate_secure_redaction_plan(
         ));
     }
 
-    let expected_plan_digest = compute_plan_digest(
-        &plan.input_digest,
-        plan.content_generation,
-        &plan.policy,
-        &plan.acknowledgements,
-        &plan.acknowledgement_requirements,
-        &plan.facts,
-        &plan.page_plans,
-        &plan.canonical_regions,
-        &plan.losses,
-        &plan.blockers,
-        &plan.warnings,
-        plan.executable,
-        plan.acknowledgements_satisfied,
-        plan.ready_for_execution,
-    );
+    let expected_plan_digest = compute_plan_digest(&PlanDigestInputs::from(plan));
 
     if plan.plan_digest != expected_plan_digest {
         return Err(make_redaction_error(
@@ -2638,14 +2611,13 @@ pub fn validate_transform_report(
             ),
         ));
     }
-    if report.job_id.trim().is_empty() || report.job_id.as_bytes().len() > MAX_IDENTITY_LEN {
+    if report.job_id.trim().is_empty() || report.job_id.len() > MAX_IDENTITY_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "job_id invalid in transform report",
         ));
     }
-    if report.session_id.trim().is_empty() || report.session_id.as_bytes().len() > MAX_IDENTITY_LEN
-    {
+    if report.session_id.trim().is_empty() || report.session_id.len() > MAX_IDENTITY_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "session_id invalid in transform report",
@@ -2887,14 +2859,13 @@ pub fn validate_verification_report(
             "Unsupported secure redaction verification version",
         ));
     }
-    if report.job_id.trim().is_empty() || report.job_id.as_bytes().len() > MAX_IDENTITY_LEN {
+    if report.job_id.trim().is_empty() || report.job_id.len() > MAX_IDENTITY_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "job_id invalid in verification report",
         ));
     }
-    if report.session_id.trim().is_empty() || report.session_id.as_bytes().len() > MAX_IDENTITY_LEN
-    {
+    if report.session_id.trim().is_empty() || report.session_id.len() > MAX_IDENTITY_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "session_id invalid in verification report",
@@ -2949,14 +2920,13 @@ pub fn validate_execution_report(
             ),
         ));
     }
-    if report.job_id.trim().is_empty() || report.job_id.as_bytes().len() > MAX_IDENTITY_LEN {
+    if report.job_id.trim().is_empty() || report.job_id.len() > MAX_IDENTITY_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "job_id invalid in execution report",
         ));
     }
-    if report.session_id.trim().is_empty() || report.session_id.as_bytes().len() > MAX_IDENTITY_LEN
-    {
+    if report.session_id.trim().is_empty() || report.session_id.len() > MAX_IDENTITY_LEN {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             "session_id invalid in execution report",
@@ -3455,7 +3425,15 @@ impl CanonicalSerializer {
     pub fn new() -> Self {
         Self { bytes: Vec::new() }
     }
+}
 
+impl Default for CanonicalSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CanonicalSerializer {
     pub fn write_tag(&mut self, tag: u8) {
         self.bytes.push(tag);
     }
@@ -3935,22 +3913,61 @@ fn write_page_redaction_plan(s: &mut CanonicalSerializer, p: &PageRedactionPlan)
     s.write_field("executable", |s| s.write_bool(p.executable));
 }
 
-pub fn compute_plan_digest(
-    input_digest: &str,
-    content_generation: u64,
-    policy: &SecureRedactionPolicy,
-    acknowledgements: &RedactionAcknowledgements,
-    ack_requirements: &RedactionAcknowledgementRequirements,
-    facts: &DocumentRedactionFacts,
-    page_plans: &[PageRedactionPlan],
-    canonical_regions: &[CanonicalRedactionRegion],
-    losses: &RedactionFeatureLosses,
-    blockers: &[RedactionBlocker],
-    warnings: &[RedactionWarning],
-    executable: bool,
-    acks_satisfied: bool,
-    ready_for_execution: bool,
-) -> String {
+pub struct PlanDigestInputs<'a> {
+    pub input_digest: &'a str,
+    pub content_generation: u64,
+    pub policy: &'a SecureRedactionPolicy,
+    pub acknowledgements: &'a RedactionAcknowledgements,
+    pub ack_requirements: &'a RedactionAcknowledgementRequirements,
+    pub facts: &'a DocumentRedactionFacts,
+    pub page_plans: &'a [PageRedactionPlan],
+    pub canonical_regions: &'a [CanonicalRedactionRegion],
+    pub losses: &'a RedactionFeatureLosses,
+    pub blockers: &'a [RedactionBlocker],
+    pub warnings: &'a [RedactionWarning],
+    pub executable: bool,
+    pub acks_satisfied: bool,
+    pub ready_for_execution: bool,
+}
+
+impl<'a> From<&'a SecureRedactionPlan> for PlanDigestInputs<'a> {
+    fn from(plan: &'a SecureRedactionPlan) -> Self {
+        Self {
+            input_digest: &plan.input_digest,
+            content_generation: plan.content_generation,
+            policy: &plan.policy,
+            acknowledgements: &plan.acknowledgements,
+            ack_requirements: &plan.acknowledgement_requirements,
+            facts: &plan.facts,
+            page_plans: &plan.page_plans,
+            canonical_regions: &plan.canonical_regions,
+            losses: &plan.losses,
+            blockers: &plan.blockers,
+            warnings: &plan.warnings,
+            executable: plan.executable,
+            acks_satisfied: plan.acknowledgements_satisfied,
+            ready_for_execution: plan.ready_for_execution,
+        }
+    }
+}
+
+pub fn compute_plan_digest(inputs: &PlanDigestInputs<'_>) -> String {
+    let PlanDigestInputs {
+        input_digest,
+        content_generation,
+        policy,
+        acknowledgements,
+        ack_requirements,
+        facts,
+        page_plans,
+        canonical_regions,
+        losses,
+        blockers,
+        warnings,
+        executable,
+        acks_satisfied,
+        ready_for_execution,
+    } = *inputs;
     let mut s = CanonicalSerializer::new();
     s.write_object_start(13);
 
@@ -4474,22 +4491,22 @@ pub fn build_secure_redaction_plan(
         evaluate_acknowledgements_satisfied(&ack_requirements, &input.acknowledgements);
     let ready_for_execution = executable && acks_satisfied;
 
-    let plan_digest = compute_plan_digest(
-        &input.input_digest,
-        input.content_generation,
-        &input.policy,
-        &input.acknowledgements,
-        &ack_requirements,
-        &input.document_facts,
-        &page_plans,
-        &all_canonical_regions,
-        &doc_losses,
-        &all_blockers,
-        &warnings,
+    let plan_digest = compute_plan_digest(&PlanDigestInputs {
+        input_digest: &input.input_digest,
+        content_generation: input.content_generation,
+        policy: &input.policy,
+        acknowledgements: &input.acknowledgements,
+        ack_requirements: &ack_requirements,
+        facts: &input.document_facts,
+        page_plans: &page_plans,
+        canonical_regions: &all_canonical_regions,
+        losses: &doc_losses,
+        blockers: &all_blockers,
+        warnings: &warnings,
         executable,
         acks_satisfied,
         ready_for_execution,
-    );
+    });
 
     let plan = SecureRedactionPlan {
         schema_version: REDACTION_SCHEMA_VERSION.to_string(),
@@ -4867,22 +4884,22 @@ mod tests {
             page_actions_lost: false,
         };
 
-        let plan_digest = compute_plan_digest(
-            &"a0".repeat(32),
-            0,
-            &policy,
-            &acks,
-            &ack_reqs,
-            &doc_facts,
-            &[page_plan.clone()],
-            &canonical_regions,
-            &doc_losses,
-            &[],
-            &[],
-            true,
-            true,
-            true,
-        );
+        let plan_digest = compute_plan_digest(&PlanDigestInputs {
+            input_digest: &"a0".repeat(32),
+            content_generation: 0,
+            policy: &policy,
+            acknowledgements: &acks,
+            ack_requirements: &ack_reqs,
+            facts: &doc_facts,
+            page_plans: std::slice::from_ref(&page_plan),
+            canonical_regions: &canonical_regions,
+            losses: &doc_losses,
+            blockers: &[],
+            warnings: &[],
+            executable: true,
+            acks_satisfied: true,
+            ready_for_execution: true,
+        });
 
         SecureRedactionPlan {
             schema_version: REDACTION_SCHEMA_VERSION.to_string(),
@@ -4903,10 +4920,6 @@ mod tests {
             acknowledgements_satisfied: true,
             ready_for_execution: true,
         }
-    }
-
-    fn sample_valid_plan() -> SecureRedactionPlan {
-        canonical_wire_fixture_plan()
     }
 
     #[test]
@@ -5020,22 +5033,22 @@ mod tests {
             page_actions_lost: false,
         };
 
-        let plan_digest = compute_plan_digest(
-            &digest,
-            0,
-            &policy,
-            &acks,
-            &ack_reqs,
-            &doc_facts,
-            &[page_plan.clone()],
-            &top_regions,
-            &losses,
-            &[],
-            &[],
-            true,
-            true,
-            true,
-        );
+        let plan_digest = compute_plan_digest(&PlanDigestInputs {
+            input_digest: &digest,
+            content_generation: 0,
+            policy: &policy,
+            acknowledgements: &acks,
+            ack_requirements: &ack_reqs,
+            facts: &doc_facts,
+            page_plans: std::slice::from_ref(&page_plan),
+            canonical_regions: &top_regions,
+            losses: &losses,
+            blockers: &[],
+            warnings: &[],
+            executable: true,
+            acks_satisfied: true,
+            ready_for_execution: true,
+        });
 
         let plan = SecureRedactionPlan {
             schema_version: "1.0.0".to_string(),
@@ -5937,22 +5950,7 @@ mod tests {
             &plan.acknowledgements,
         );
         plan.ready_for_execution = plan.executable && plan.acknowledgements_satisfied;
-        plan.plan_digest = compute_plan_digest(
-            &plan.input_digest,
-            plan.content_generation,
-            &plan.policy,
-            &plan.acknowledgements,
-            &plan.acknowledgement_requirements,
-            &plan.facts,
-            &plan.page_plans,
-            &plan.canonical_regions,
-            &plan.losses,
-            &plan.blockers,
-            &plan.warnings,
-            plan.executable,
-            plan.acknowledgements_satisfied,
-            plan.ready_for_execution,
-        );
+        plan.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan));
         validate_secure_redaction_plan(&plan).unwrap();
         plan.page_plans.push(sample_valid_page_plan());
         assert!(validate_secure_redaction_plan(&plan).is_err());
@@ -5962,12 +5960,12 @@ mod tests {
     fn test_all_active_string_limits_use_exact_utf8_bytes_and_reject_one_over() {
         fn utf8_exact(limit: usize) -> String {
             let value = format!("aa{}éğ🔒", "é".repeat((limit - 10) / 2));
-            assert_eq!(value.as_bytes().len(), limit);
+            assert_eq!(value.len(), limit);
             value
         }
-        assert_eq!("ascii".chars().count(), "ascii".as_bytes().len());
+        assert_eq!("ascii".chars().count(), "ascii".len());
         for value in ["Türkçe", "é", "🔒", "aéğ🔒"] {
-            assert_ne!(value.chars().count(), value.as_bytes().len());
+            assert_ne!(value.chars().count(), value.len());
         }
         let exact_region = utf8_exact(MAX_REGION_ID_LEN);
         assert!(validate_redaction_region_input(&sample_valid_input(
@@ -6103,11 +6101,13 @@ mod tests {
         }
     }
 
+    type TransformReportMutator = Box<dyn Fn(&mut SecureRedactionTransformReport)>;
+
     #[test]
     fn test_transform_report_semantic_partition_evidence_and_size_limits() {
         assert!(validate_transform_report(&sample_populated_transform_report()).is_ok());
 
-        let mut cases: Vec<(&str, Box<dyn Fn(&mut SecureRedactionTransformReport)>)> = vec![
+        let mut cases: Vec<(&str, TransformReportMutator)> = vec![
             (
                 "duplicate affected page",
                 Box::new(|r| r.affected_pages.push(0)),
@@ -6663,106 +6663,31 @@ mod tests {
         // 1. Mutate text_selection_lost when text is present
         let mut plan1 = valid_plan.clone();
         plan1.page_plans[0].feature_losses.text_selection_lost = false;
-        plan1.plan_digest = compute_plan_digest(
-            &plan1.input_digest,
-            plan1.content_generation,
-            &plan1.policy,
-            &plan1.acknowledgements,
-            &plan1.acknowledgement_requirements,
-            &plan1.facts,
-            &plan1.page_plans,
-            &plan1.canonical_regions,
-            &plan1.losses,
-            &plan1.blockers,
-            &plan1.warnings,
-            plan1.executable,
-            plan1.acknowledgements_satisfied,
-            plan1.ready_for_execution,
-        );
+        plan1.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan1));
         assert!(validate_secure_redaction_plan(&plan1).is_err());
 
         // 2. Mismatch document losses vs page feature losses
         let mut plan2 = valid_plan.clone();
         plan2.losses.searchability_lost = false;
-        plan2.plan_digest = compute_plan_digest(
-            &plan2.input_digest,
-            plan2.content_generation,
-            &plan2.policy,
-            &plan2.acknowledgements,
-            &plan2.acknowledgement_requirements,
-            &plan2.facts,
-            &plan2.page_plans,
-            &plan2.canonical_regions,
-            &plan2.losses,
-            &plan2.blockers,
-            &plan2.warnings,
-            plan2.executable,
-            plan2.acknowledgements_satisfied,
-            plan2.ready_for_execution,
-        );
+        plan2.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan2));
         assert!(validate_secure_redaction_plan(&plan2).is_err());
 
         // 3. Mismatch acknowledgement requirements
         let mut plan3 = valid_plan.clone();
         plan3.acknowledgement_requirements.text_search_loss_required = false;
-        plan3.plan_digest = compute_plan_digest(
-            &plan3.input_digest,
-            plan3.content_generation,
-            &plan3.policy,
-            &plan3.acknowledgements,
-            &plan3.acknowledgement_requirements,
-            &plan3.facts,
-            &plan3.page_plans,
-            &plan3.canonical_regions,
-            &plan3.losses,
-            &plan3.blockers,
-            &plan3.warnings,
-            plan3.executable,
-            plan3.acknowledgements_satisfied,
-            plan3.ready_for_execution,
-        );
+        plan3.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan3));
         assert!(validate_secure_redaction_plan(&plan3).is_err());
 
         // 4. Mismatch executable = false without blocker
         let mut plan4 = valid_plan.clone();
         plan4.executable = false;
-        plan4.plan_digest = compute_plan_digest(
-            &plan4.input_digest,
-            plan4.content_generation,
-            &plan4.policy,
-            &plan4.acknowledgements,
-            &plan4.acknowledgement_requirements,
-            &plan4.facts,
-            &plan4.page_plans,
-            &plan4.canonical_regions,
-            &plan4.losses,
-            &plan4.blockers,
-            &plan4.warnings,
-            plan4.executable,
-            plan4.acknowledgements_satisfied,
-            plan4.ready_for_execution,
-        );
+        plan4.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan4));
         assert!(validate_secure_redaction_plan(&plan4).is_err());
 
         // 5. Unsorted source_region_ids
         let mut plan5 = valid_plan.clone();
         plan5.canonical_regions[0].source_region_ids = vec!["z".to_string(), "a".to_string()];
-        plan5.plan_digest = compute_plan_digest(
-            &plan5.input_digest,
-            plan5.content_generation,
-            &plan5.policy,
-            &plan5.acknowledgements,
-            &plan5.acknowledgement_requirements,
-            &plan5.facts,
-            &plan5.page_plans,
-            &plan5.canonical_regions,
-            &plan5.losses,
-            &plan5.blockers,
-            &plan5.warnings,
-            plan5.executable,
-            plan5.acknowledgements_satisfied,
-            plan5.ready_for_execution,
-        );
+        plan5.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan5));
         assert!(validate_secure_redaction_plan(&plan5).is_err());
     }
 
@@ -6777,22 +6702,7 @@ mod tests {
 
         plan.page_plans[0].canonical_regions = vec![duplicate_a.clone(), duplicate_b.clone()];
         plan.canonical_regions = vec![duplicate_a, duplicate_b];
-        plan.plan_digest = compute_plan_digest(
-            &plan.input_digest,
-            plan.content_generation,
-            &plan.policy,
-            &plan.acknowledgements,
-            &plan.acknowledgement_requirements,
-            &plan.facts,
-            &plan.page_plans,
-            &plan.canonical_regions,
-            &plan.losses,
-            &plan.blockers,
-            &plan.warnings,
-            plan.executable,
-            plan.acknowledgements_satisfied,
-            plan.ready_for_execution,
-        );
+        plan.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan));
 
         let error = validate_secure_redaction_plan(&plan).unwrap_err();
         if let crate::document_session::SessionJobOperationError::Failed(failure) = error {
@@ -6832,22 +6742,7 @@ mod tests {
         plan.page_plans[0].executable = true;
 
         // Recompute fresh digest for tampered plan
-        plan.plan_digest = compute_plan_digest(
-            &plan.input_digest,
-            plan.content_generation,
-            &plan.policy,
-            &plan.acknowledgements,
-            &plan.acknowledgement_requirements,
-            &plan.facts,
-            &plan.page_plans,
-            &plan.canonical_regions,
-            &plan.losses,
-            &plan.blockers,
-            &plan.warnings,
-            plan.executable,
-            plan.acknowledgements_satisfied,
-            plan.ready_for_execution,
-        );
+        plan.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan));
 
         assert!(validate_secure_redaction_plan(&plan).is_err());
     }
@@ -6862,22 +6757,7 @@ mod tests {
         plan.blockers.clear();
 
         // Recompute fresh digest
-        plan.plan_digest = compute_plan_digest(
-            &plan.input_digest,
-            plan.content_generation,
-            &plan.policy,
-            &plan.acknowledgements,
-            &plan.acknowledgement_requirements,
-            &plan.facts,
-            &plan.page_plans,
-            &plan.canonical_regions,
-            &plan.losses,
-            &plan.blockers,
-            &plan.warnings,
-            plan.executable,
-            plan.acknowledgements_satisfied,
-            plan.ready_for_execution,
-        );
+        plan.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan));
 
         assert!(validate_secure_redaction_plan(&plan).is_err());
     }
@@ -6892,22 +6772,7 @@ mod tests {
         plan.blockers[0].details = Some("Tampered detail text".to_string());
 
         // Recompute fresh digest
-        plan.plan_digest = compute_plan_digest(
-            &plan.input_digest,
-            plan.content_generation,
-            &plan.policy,
-            &plan.acknowledgements,
-            &plan.acknowledgement_requirements,
-            &plan.facts,
-            &plan.page_plans,
-            &plan.canonical_regions,
-            &plan.losses,
-            &plan.blockers,
-            &plan.warnings,
-            plan.executable,
-            plan.acknowledgements_satisfied,
-            plan.ready_for_execution,
-        );
+        plan.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan));
 
         assert!(validate_secure_redaction_plan(&plan).is_err());
     }
@@ -6954,22 +6819,7 @@ mod tests {
         plan.blockers[0].message = "Arbitrary altered blocker message".to_string();
 
         // Recompute fresh digest
-        plan.plan_digest = compute_plan_digest(
-            &plan.input_digest,
-            plan.content_generation,
-            &plan.policy,
-            &plan.acknowledgements,
-            &plan.acknowledgement_requirements,
-            &plan.facts,
-            &plan.page_plans,
-            &plan.canonical_regions,
-            &plan.losses,
-            &plan.blockers,
-            &plan.warnings,
-            plan.executable,
-            plan.acknowledgements_satisfied,
-            plan.ready_for_execution,
-        );
+        plan.plan_digest = compute_plan_digest(&PlanDigestInputs::from(&plan));
 
         assert!(validate_secure_redaction_plan(&plan).is_err());
     }

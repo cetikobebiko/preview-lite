@@ -206,29 +206,54 @@ mod macos_arm64 {
             annotations[0].contents.as_deref(),
             Some("Reorder fixture annotation")
         );
-        let pdf_ua =
-            document_session::validate_session_pdf_ua(opened.session_id.clone(), 1, app.state())
-                .await
-                .unwrap();
-        assert!(!pdf_ua.is_tagged);
-        assert!(!pdf_ua.has_document_title);
-        assert_eq!(pdf_ua.score, 50);
-        let structure_error =
+        let audit = document_session::audit_session_accessibility(
+            opened.session_id.clone(),
+            1,
+            app.state(),
+        )
+        .await
+        .unwrap();
+        assert!(!audit.document_facts.has_structure_tree);
+        assert!(audit.checks.iter().all(|check| !check.conformance_claim));
+        let structure =
             document_session::get_session_structure_tree(opened.session_id.clone(), 1, app.state())
                 .await
-                .unwrap_err();
-        assert_eq!(
-            structure_error.code,
-            "PDFIUM_WORKER_STRUCTURE_TREE_UNAVAILABLE"
-        );
-
-        let mutated =
-            document_session::rotate_session_page(committed.snapshot.id, 1, 0, 90, app.state())
-                .await
                 .unwrap();
+        assert!(structure.root.is_none());
+
+        let mutated = document_session::rotate_session_page(
+            committed.snapshot.id,
+            1,
+            0,
+            90,
+            app.state(),
+            app.state(),
+        )
+        .await
+        .unwrap();
         assert_eq!(mutated.content_generation, 2);
         assert!(mutated.dirty);
         assert_eq!(std::fs::read(&source_path).unwrap(), original_bytes);
+
+        let stale_audit =
+            document_session::audit_session_accessibility(mutated.id.clone(), 1, app.state())
+                .await
+                .unwrap_err();
+        assert_eq!(stale_audit.code, "STALE_GENERATION");
+        let audit_generation_two =
+            document_session::audit_session_accessibility(mutated.id.clone(), 2, app.state())
+                .await
+                .unwrap();
+        assert!(audit_generation_two
+            .checks
+            .iter()
+            .all(|check| !check.conformance_claim));
+        let after_audit =
+            document_session::get_document_session_snapshot(mutated.id.clone(), app.state())
+                .await
+                .unwrap();
+        assert_eq!(after_audit.content_generation, 2);
+        assert!(after_audit.dirty);
 
         document_session::set_active_session_render_document(
             Some(mutated.id.clone()),
@@ -423,6 +448,7 @@ mod macos_arm64 {
             1,
             9999, // invalid page index
             90,
+            app.state(),
             app.state(),
         )
         .await

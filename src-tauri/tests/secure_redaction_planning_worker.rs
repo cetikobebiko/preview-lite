@@ -189,7 +189,7 @@ fn test_rotations_fixture_geometry_extraction() {
     let rots: Vec<PageRotation> = plan
         .page_plans
         .iter()
-        .map(|p| p.geometry.rotation.clone())
+        .map(|p| p.geometry.rotation)
         .collect();
     assert_eq!(
         rots,

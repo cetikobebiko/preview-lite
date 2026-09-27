@@ -13,11 +13,11 @@
   <div class="header-actions">
     {#if isPdf}
       <button class="hud-btn {ui.panels.sidebar ? 'active' : ''}" onclick={() => ui.togglePanel("sidebar")} title="Sol Paneli Aç/Kapat (Cmd + B)">[SIDEBAR]</button>
-      {#if featureUi("pdf_ua_validation").visible}
-        <button class="hud-btn {ui.panels.a11y ? 'active' : ''}" onclick={() => onFeatureAction("pdf_ua_validation", () => ui.togglePanel("a11y"))} title={featureUi("pdf_ua_validation").warning} disabled={!featureUi("pdf_ua_validation").runnable}>{featureControlLabel("pdf_ua_validation", "A11Y")}</button>
+      {#if featureUi("basic_accessibility_audit").visible}
+        <button class="hud-btn {ui.panels.a11y ? 'active' : ''}" onclick={() => onFeatureAction("basic_accessibility_audit", () => ui.togglePanel("a11y"))} title={featureUi("basic_accessibility_audit").warning} disabled={!featureUi("basic_accessibility_audit").runnable}>{featureControlLabel("basic_accessibility_audit", "A11Y")}</button>
       {/if}
-      {#if featureUi("prepress_analysis").visible}
-        <button class="hud-btn {ui.panels.prepress ? 'active' : ''}" onclick={() => onFeatureAction("prepress_analysis", () => ui.togglePanel("prepress"))} title={featureUi("prepress_analysis").warning} disabled={!featureUi("prepress_analysis").runnable}>{featureControlLabel("prepress_analysis", "PREPRESS")}</button>
+      {#if featureUi("print_resource_inspection").visible || featureUi("rgb_derived_print_preview").visible}
+        <button class="hud-btn {ui.panels.prepress ? 'active' : ''}" onclick={() => onFeatureAction("print_resource_inspection", () => ui.togglePanel("prepress"))} title={featureUi("print_resource_inspection").warning} disabled={!featureUi("print_resource_inspection").runnable}>{featureControlLabel("print_resource_inspection", "PRINT")}</button>
       {/if}
       {#if featureUi("sensitive_data_scan").visible}
         <button class="hud-btn {ui.panels.sensitiveDataScan ? 'active' : ''}" onclick={() => onFeatureAction("sensitive_data_scan", () => ui.togglePanel("sensitiveDataScan"))} title={featureUi("sensitive_data_scan").warning} disabled={!featureUi("sensitive_data_scan").runnable}>{featureControlLabel("sensitive_data_scan", "SCAN")}</button>

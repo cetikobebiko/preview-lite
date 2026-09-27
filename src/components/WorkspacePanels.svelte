@@ -7,7 +7,7 @@
 
   let {
     isPdf, ui, viewer, documentSession, sensitiveScanState, secureRedactionState, secureRedaction, featureUi, physicalPageIndex, isLoadedPdfDocument,
-    onJump, onScanSensitiveData, onSessionSnapshot, onSeparations, onHeatmap, onChannels, onGuides, onApplyBoxes,
+    onJump, onScanSensitiveData, onSessionSnapshot, onProcessPreview, onCoveragePreview, onChannels,
   } = $props();
 </script>
 
@@ -47,11 +47,11 @@
     }}
   />
 {/if}
-{#if ui.panels.a11y && isPdf && featureUi("pdf_ua_validation").visible}
+{#if ui.panels.a11y && isPdf && featureUi("basic_accessibility_audit").visible}
   <A11yPanel sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} on:sessionSnapshot={(event) => onSessionSnapshot(event.detail)} on:close={() => ui.setPanel("a11y", false)} />
 {/if}
-{#if ui.panels.prepress && isPdf && featureUi("prepress_analysis").visible}
+{#if ui.panels.prepress && isPdf && (featureUi("print_resource_inspection").visible || featureUi("rgb_derived_print_preview").visible)}
   <div class="prepress-sidebar" style="width: 320px; border-right: 1px solid var(--border-raw); background: var(--bg-surface); flex-shrink: 0; overflow-y: auto;">
-    <PrepressPanel scale={viewer.scale} sessionId={documentSession.activeSessionId ?? ""} pageIndex={physicalPageIndex} contentGeneration={documentSession.contentGeneration} isDocumentReady={isLoadedPdfDocument} on:separationsReady={onSeparations} on:heatmapReady={onHeatmap} on:channelsChanged={onChannels} on:guidesChanged={onGuides} on:applyBoxes={onApplyBoxes} />
+    <PrepressPanel scale={viewer.scale} sessionId={documentSession.activeSessionId ?? ""} pageIndex={physicalPageIndex} contentGeneration={documentSession.contentGeneration} isDocumentReady={isLoadedPdfDocument} on:processPreviewReady={onProcessPreview} on:coveragePreviewReady={onCoveragePreview} on:channelsChanged={onChannels} />
   </div>
 {/if}

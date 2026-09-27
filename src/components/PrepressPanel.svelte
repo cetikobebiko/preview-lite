@@ -1,500 +1,191 @@
 <script>
-    import {
-        analyzeSessionColorSpaces,
-        calculateSessionInkCoverage,
-        renderSessionSeparationChannels,
-    } from "../services/backend/prepress.js";
-    import { createEventDispatcher, onDestroy } from "svelte";
-    import FeatureNotice from "./FeatureNotice.svelte";
+  import { createEventDispatcher, onDestroy } from "svelte";
+  import {
+    generateSessionRgbDerivedCoveragePreview,
+    generateSessionRgbDerivedProcessPreview,
+    inspectSessionPrintResources,
+  } from "../services/backend/prepress.js";
+  import FeatureNotice from "./FeatureNotice.svelte";
 
-    const dispatch = createEventDispatcher();
+  const dispatch = createEventDispatcher();
+  let { scale = 1.5, sessionId = "", pageIndex = -1, contentGeneration = 0, isDocumentReady = false } = $props();
+  let report = $state(null), reportError = $state(""), reportHandle = $state(null), reportRequestId = $state("");
+  let processResult = $state(null), processError = $state(""), processHandle = $state(null), processRequestId = $state("");
+  let coverageResult = $state(null), coverageError = $state(""), coverageHandle = $state(null), coverageRequestId = $state("");
+  let thresholdPercent = $state(300);
+  let channels = $state({ c: true, m: true, y: true, k: true });
+  let observedContext = $state("");
+  let destroyed = $state(false);
+  let fallbackRequestSequence = 0;
 
-    let {
-        scale = 1.5,
-        sessionId = "",
-        pageIndex = -1,
-        contentGeneration = 0,
-        isDocumentReady = false,
-        ...rest
-    } = $props();
+  const canUsePage = $derived(isDocumentReady && typeof sessionId === "string" && sessionId.length > 0 && Number.isSafeInteger(contentGeneration) && contentGeneration >= 0 && Number.isInteger(pageIndex) && pageIndex >= 0);
+  const currentPageBoxes = $derived(report?.pageBoxes?.find((entry) => entry.physicalPageIndex === pageIndex) ?? null);
 
-    let colorReport = $state(null);
-    let loadingReport = $state(false);
-    let reportError = $state(null);
+  $effect(() => {
+    const context = canUsePage ? `${sessionId}\u0000${contentGeneration}\u0000${pageIndex}` : "";
+    if (context !== observedContext) { observedContext = context; resetAll(); }
+  });
 
-    let channels = $state({ c: true, m: true, y: true, k: true });
-    let separationImages = $state(null);
-    let loadingSeparations = $state(false);
-    let separationsError = $state(null);
+  function nextRequestId(prefix) {
+    fallbackRequestSequence += 1;
+    return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${fallbackRequestSequence}`;
+  }
+  function snapshot(requestId) { return { sessionId, contentGeneration, physicalPageIndex: pageIndex, requestId }; }
+  function isCurrent(expected, currentRequestId) {
+    return !destroyed && canUsePage && expected.requestId === currentRequestId && expected.sessionId === sessionId && expected.contentGeneration === contentGeneration && expected.physicalPageIndex === pageIndex;
+  }
+  function cancelHandle(handle) { if (handle?.cancel) void handle.cancel().catch(() => {}); }
+  function clearProcess(emit = true) {
+    const clearIdentity = processResult?.identity ?? null;
+    cancelHandle(processHandle); processHandle = null; processRequestId = ""; processResult = null;
+    channels = { c: true, m: true, y: true, k: true };
+    if (emit && clearIdentity) dispatch("processPreviewReady", { ...clearIdentity, result: null });
+  }
+  function clearCoverage(emit = true) {
+    const clearIdentity = coverageResult?.identity ?? null;
+    cancelHandle(coverageHandle); coverageHandle = null; coverageRequestId = ""; coverageResult = null;
+    if (emit && clearIdentity) dispatch("coveragePreviewReady", { ...clearIdentity, result: null });
+  }
+  function resetAll() {
+    cancelHandle(reportHandle); reportHandle = null; reportRequestId = ""; report = null; reportError = "";
+    processError = ""; coverageError = ""; clearProcess(); clearCoverage();
+  }
 
-    let ticLimit = $state(300);
-    let heatmapBase64 = $state(null);
-    let loadingHeatmap = $state(false);
-    let heatmapError = $state(null);
+  async function inspectResources() {
+    if (!canUsePage) return;
+    cancelHandle(reportHandle);
+    const requestId = nextRequestId("inspection"), expected = snapshot(requestId);
+    reportRequestId = requestId; reportError = "";
+    reportHandle = inspectSessionPrintResources(sessionId, contentGeneration, pageIndex, requestId);
+    const handle = reportHandle;
+    try { const value = await handle.promise; if (isCurrent(expected, reportRequestId)) report = value; }
+    catch (error) { if (isCurrent(expected, reportRequestId)) reportError = error instanceof Error ? error.message : String(error); }
+    finally { if (isCurrent(expected, reportRequestId)) reportHandle = null; }
+  }
 
-    let boxes = $state({
-        bleed: 3.0,
-        trim: 0.0,
-    });
+  async function generateProcessPreview() {
+    if (!canUsePage) return;
+    clearCoverage(); cancelHandle(processHandle);
+    const requestId = nextRequestId("process"), expected = snapshot(requestId);
+    processRequestId = requestId; processError = "";
+    processHandle = generateSessionRgbDerivedProcessPreview(sessionId, contentGeneration, pageIndex, requestId, scale);
+    const handle = processHandle;
+    try {
+      const value = await handle.promise;
+      if (!isCurrent(expected, processRequestId)) return;
+      processResult = value; dispatch("processPreviewReady", { result: value, channels, ...expected });
+    } catch (error) { if (isCurrent(expected, processRequestId)) processError = error instanceof Error ? error.message : String(error); }
+    finally { if (isCurrent(expected, processRequestId)) processHandle = null; }
+  }
 
-    let reportRequestId = $state(0);
-    let separationsRequestId = $state(0);
-    let heatmapRequestId = $state(0);
-    let observedSessionId = $state();
-    let observedPageIndex = $state();
-    let observedContentGeneration = $state();
-    let observedDocumentReady = $state();
-    let isDestroyed = $state(false);
+  async function generateCoveragePreview() {
+    if (!canUsePage) return;
+    clearProcess(); cancelHandle(coverageHandle);
+    const requestId = nextRequestId("coverage"), expected = snapshot(requestId);
+    coverageRequestId = requestId; coverageError = "";
+    coverageHandle = generateSessionRgbDerivedCoveragePreview(sessionId, contentGeneration, pageIndex, requestId, Number(thresholdPercent), scale);
+    const handle = coverageHandle;
+    try {
+      const value = await handle.promise;
+      if (!isCurrent(expected, coverageRequestId)) return;
+      coverageResult = value; dispatch("coveragePreviewReady", { result: value, ...expected });
+    } catch (error) { if (isCurrent(expected, coverageRequestId)) coverageError = error instanceof Error ? error.message : String(error); }
+    finally { if (isCurrent(expected, coverageRequestId)) coverageHandle = null; }
+  }
 
-    let canUseDocument = $derived(
-        isDocumentReady &&
-        typeof sessionId === "string" &&
-        sessionId.length > 0
-    );
-    let canUsePage = $derived(
-        canUseDocument &&
-        Number.isInteger(pageIndex) &&
-        pageIndex >= 0
-    );
+  function toggleChannel(channel) {
+    if (!processResult) return;
+    channels = { ...channels, [channel]: !channels[channel] };
+    dispatch("channelsChanged", { channels, sessionId, contentGeneration, physicalPageIndex: pageIndex, requestId: processResult.identity.requestId });
+  }
+  const boxText = (box) => box?.coordinates ? box.coordinates.map((value) => value.toFixed(2)).join(", ") : "Yok";
 
-    $effect(() => {
-        const documentContextChanged =
-            sessionId !== observedSessionId ||
-            contentGeneration !== observedContentGeneration ||
-            isDocumentReady !== observedDocumentReady;
-        const pageContextChanged = pageIndex !== observedPageIndex;
-
-        observedSessionId = sessionId;
-        observedPageIndex = pageIndex;
-        observedContentGeneration = contentGeneration;
-        observedDocumentReady = isDocumentReady;
-
-        if (documentContextChanged) {
-            resetDocumentOperationState();
-        } else if (pageContextChanged) {
-            resetPageOperationState();
-        }
-    });
-
-    function resetDocumentOperationState() {
-        reportRequestId += 1;
-        loadingReport = false;
-        reportError = null;
-        colorReport = null;
-        resetPageOperationState();
-    }
-
-    function resetPageOperationState() {
-        separationsRequestId += 1;
-        heatmapRequestId += 1;
-        loadingSeparations = false;
-        loadingHeatmap = false;
-        separationsError = null;
-        heatmapError = null;
-        separationImages = null;
-        heatmapBase64 = null;
-        channels = { c: true, m: true, y: true, k: true };
-    }
-
-    function getDocumentSnapshot() {
-        if (!canUseDocument) return null;
-        return {
-            sessionId,
-            contentGeneration,
-        };
-    }
-
-    function getPageSnapshot() {
-        if (!canUsePage) return null;
-        return {
-            sessionId,
-            pageIndex,
-            contentGeneration,
-        };
-    }
-
-    function isCurrentDocumentRequest(requestId, snapshot) {
-        return Boolean(
-            !isDestroyed &&
-            requestId === reportRequestId &&
-            canUseDocument &&
-            sessionId === snapshot.sessionId &&
-            contentGeneration === snapshot.contentGeneration
-        );
-    }
-
-    function isCurrentPageRequest(requestId, activeRequestId, snapshot) {
-        return Boolean(
-            !isDestroyed &&
-            requestId === activeRequestId &&
-            canUsePage &&
-            sessionId === snapshot.sessionId &&
-            pageIndex === snapshot.pageIndex &&
-            contentGeneration === snapshot.contentGeneration
-        );
-    }
-
-    function errorMessage(error) {
-        return error instanceof Error ? error.message : String(error);
-    }
-
-    async function analyzeColors() {
-        const snapshot = getDocumentSnapshot();
-        if (!snapshot) return;
-
-        const requestId = ++reportRequestId;
-        loadingReport = true;
-        reportError = null;
-        try {
-            const result = await analyzeSessionColorSpaces(
-                snapshot.sessionId,
-                snapshot.contentGeneration,
-            );
-            if (!isCurrentDocumentRequest(requestId, snapshot)) return;
-            colorReport = result;
-        } catch (e) {
-            if (isCurrentDocumentRequest(requestId, snapshot)) {
-                reportError = errorMessage(e);
-                console.error("Color analysis failed:", e);
-            }
-        } finally {
-            if (isCurrentDocumentRequest(requestId, snapshot)) {
-                loadingReport = false;
-            }
-        }
-    }
-
-    async function generateSeparations() {
-        const snapshot = getPageSnapshot();
-        if (!snapshot) return;
-
-        const requestId = ++separationsRequestId;
-        loadingSeparations = true;
-        separationsError = null;
-        try {
-            const result = await renderSessionSeparationChannels(
-                snapshot.sessionId,
-                snapshot.contentGeneration,
-                snapshot.pageIndex,
-                scale,
-            );
-            if (!isCurrentPageRequest(requestId, separationsRequestId, snapshot)) return;
-
-            separationImages = result;
-            const payload = {
-                images: result,
-                channels,
-                ...snapshot,
-            };
-            dispatch("separationsReady", payload);
-        } catch (e) {
-            if (isCurrentPageRequest(requestId, separationsRequestId, snapshot)) {
-                separationsError = errorMessage(e);
-                console.error("Separations failed:", e);
-            }
-        } finally {
-            if (isCurrentPageRequest(requestId, separationsRequestId, snapshot)) {
-                loadingSeparations = false;
-            }
-        }
-    }
-
-    function toggleChannel(c) {
-        const snapshot = getPageSnapshot();
-        if (!snapshot) return;
-
-        channels = { ...channels, [c]: !channels[c] };
-        dispatch("channelsChanged", { channels, ...snapshot });
-    }
-
-    async function analyzeTic() {
-        const snapshot = getPageSnapshot();
-        if (!snapshot) return;
-
-        const requestId = ++heatmapRequestId;
-        loadingHeatmap = true;
-        heatmapError = null;
-        try {
-            const result = await calculateSessionInkCoverage(
-                snapshot.sessionId,
-                snapshot.contentGeneration,
-                snapshot.pageIndex,
-                ticLimit,
-                scale,
-            );
-            if (!isCurrentPageRequest(requestId, heatmapRequestId, snapshot)) return;
-
-            heatmapBase64 = result.heatmap_png_base64;
-            dispatch("heatmapReady", {
-                heatmap: heatmapBase64,
-                ...snapshot,
-            });
-        } catch (e) {
-            if (isCurrentPageRequest(requestId, heatmapRequestId, snapshot)) {
-                heatmapError = errorMessage(e);
-                console.error("TIC calculation failed:", e);
-            }
-        } finally {
-            if (isCurrentPageRequest(requestId, heatmapRequestId, snapshot)) {
-                loadingHeatmap = false;
-            }
-        }
-    }
-
-    function clearHeatmap() {
-        const snapshot = getPageSnapshot();
-        heatmapBase64 = null;
-        if (snapshot) {
-            dispatch("heatmapReady", { heatmap: null, ...snapshot });
-        }
-    }
-
-    function updateGuides() {
-        const snapshot = getPageSnapshot();
-        if (snapshot) {
-            dispatch("guidesChanged", { boxes, ...snapshot });
-        }
-    }
-
-    function applyBoxes() {
-        const snapshot = getPageSnapshot();
-        if (!snapshot) return;
-        // BleedBox is typically larger than TrimBox. Assuming points or mm?
-        // Let's assume mm and 1 mm = 2.83465 points
-        const mmToPt = 2.83465;
-        // In a real app we'd get the actual media box and calculate the coords.
-        // For now, dispatch an event that Export or another logic will use to apply.
-        dispatch("applyBoxes", { boxes, ...snapshot });
-    }
-
-    onDestroy(() => {
-        isDestroyed = true;
-        reportRequestId += 1;
-        separationsRequestId += 1;
-        heatmapRequestId += 1;
-    });
-
+  onDestroy(() => { destroyed = true; resetAll(); });
 </script>
 
 <div class="prepress-panel">
-    <h3>Prepress & Matbaa</h3>
-    <FeatureNotice featureId="prepress_analysis" />
-    
-    <div class="section">
-        <h4>Renk Profili Analizi</h4>
-        <button onclick={analyzeColors} disabled={loadingReport || !canUseDocument}>
-            {loadingReport ? "Analiz Ediliyor..." : "Belgeyi Analiz Et"}
-        </button>
-        {#if reportError}
-            <p class="error-msg">{reportError}</p>
-        {/if}
-        {#if colorReport}
-            <div class="report-box">
-                <p><strong>RGB Objeler:</strong> {colorReport.rgb_count}</p>
-                <p><strong>CMYK Objeler:</strong> {colorReport.cmyk_count}</p>
-                <p><strong>Gri/Spot:</strong> {colorReport.grayscale_count} / {colorReport.spot_count}</p>
-                <p class="warning" class:hidden={colorReport.rgb_count === 0}>⚠️ Tahmini analiz RGB nesneler bildirdi. Üretim kararından önce uzman araçla doğrulayın.</p>
-            </div>
-        {/if}
-    </div>
+  <h3>Print Inspection & Approximate Preview</h3>
+  <section>
+    <h4>Print Resource Inspection</h4>
+    <FeatureNotice featureId="print_resource_inspection" />
+    <button onclick={inspectResources} disabled={!canUsePage || reportHandle}>{reportHandle ? "İnceleniyor..." : "PDF kaynaklarını incele"}</button>
+    {#if reportError}<p class="error">{reportError}</p>{/if}
+    {#if report}
+      <div class="report" data-summary-status={report.summaryStatus}>
+        <p><strong>Özet:</strong> {report.summaryStatus}</p>
+        <p><strong>PDF:</strong> {report.documentFacts.pdfVersion} · {report.documentFacts.pageCount} sayfa</p>
+        <p><strong>Conformance claim:</strong> false</p>
+        <h5>Renk uzayı tanımları</h5>
+        {#if report.colorSpaces.length}<ul>{#each report.colorSpaces as item}<li>{item.family} · {item.referenceCount} referans · usage_not_checked</li>{/each}</ul>{:else}<p>Uygulanan kontrollerde tanım bulunmadı.</p>{/if}
+        <p><strong>ICC basic_header_only:</strong> {report.iccProfiles.length}</p>
+        <p><strong>OutputIntent dictionary:</strong> {report.outputIntents.length} (tam profil/PDF/X policy doğrulanmadı)</p>
+        <p><strong>Spot tanımı:</strong> {report.spotColors.length}</p>
+        <p><strong>Transparency/overprint kaynağı:</strong> {report.transparency.length}</p>
+        <p><strong>Font kaynağı:</strong> {report.fonts.length}</p>
+        <h5>Sayfa {pageIndex + 1} kutuları (PDF point, salt okunur)</h5>
+        {#if currentPageBoxes}
+          <dl class="boxes"><dt>MediaBox</dt><dd>{boxText(currentPageBoxes.mediaBox)}</dd><dt>CropBox</dt><dd>{boxText(currentPageBoxes.cropBox)}</dd><dt>BleedBox</dt><dd>{boxText(currentPageBoxes.bleedBox)}</dd><dt>TrimBox</dt><dd>{boxText(currentPageBoxes.trimBox)}</dd><dt>ArtBox</dt><dd>{boxText(currentPageBoxes.artBox)}</dd><dt>Rotate</dt><dd>{currentPageBoxes.rotationDegrees}°</dd></dl>
+        {:else}<p>Bu sayfa için kutu gözlemi yok.</p>{/if}
+        <h5>Coverage / limitations</h5>
+        <p>İncelenen: {report.coverage.inspectedAreas.join(", ")}</p>
+        <p>İncelenmeyen: {report.coverage.notInspectedAreas.join(", ")}</p>
+        {#if report.coverage.incompleteAreas.length}<p>Eksik: {report.coverage.incompleteAreas.join(", ")}</p>{/if}
+        <ul>{#each report.coverage.limitations as limitation}<li>{limitation}</li>{/each}</ul>
+      </div>
+    {/if}
+  </section>
 
-    <div class="section">
-        <h4>Renk Ayrımları (Separation)</h4>
-        <button onclick={generateSeparations} disabled={loadingSeparations || !canUsePage}>
-            {loadingSeparations ? "Hazırlanıyor..." : "Kanalları Çıkar"}
-        </button>
-        {#if separationsError}
-            <p class="error-msg">{separationsError}</p>
-        {/if}
-        
-        {#if separationImages}
-            <div class="channel-toggles">
-                <label class="channel c" class:active={channels.c}>
-                    <input type="checkbox" checked={channels.c} onchange={() => toggleChannel('c')} /> C
-                </label>
-                <label class="channel m" class:active={channels.m}>
-                    <input type="checkbox" checked={channels.m} onchange={() => toggleChannel('m')} /> M
-                </label>
-                <label class="channel y" class:active={channels.y}>
-                    <input type="checkbox" checked={channels.y} onchange={() => toggleChannel('y')} /> Y
-                </label>
-                <label class="channel k" class:active={channels.k}>
-                    <input type="checkbox" checked={channels.k} onchange={() => toggleChannel('k')} /> K
-                </label>
-            </div>
-            <p class="tip">Önizleme üzerinde aktif kanallar (Multiply modu ile) gösterilmektedir.</p>
-        {/if}
-    </div>
+  <section>
+    <h4>RGB-türevli tahmini C/M/Y/K görünümü</h4>
+    <FeatureNotice featureId="rgb_derived_print_preview" />
+    <p class="permanent-warning">Bu görsel ekran RGB render'ından türetilir. Gerçek separasyon, spot plate, ICC transform veya RIP çıktısı değildir.</p>
+    <button onclick={generateProcessPreview} disabled={!canUsePage || processHandle}>{processHandle ? "Hazırlanıyor..." : "Tahmini C/M/Y/K görünümü üret"}</button>
+    {#if processError}<p class="error">{processError}</p>{/if}
+    {#if processResult}
+      <div class="legend">APPROXIMATE RGB-DERIVED PREVIEW</div>
+      <div class="channels">{#each ["c", "m", "y", "k"] as channel}<label class:active={channels[channel]}><input type="checkbox" checked={channels[channel]} onchange={() => toggleChannel(channel)} />{channel.toUpperCase()}</label>{/each}</div>
+      <p>Methodology: {processResult.metadata.methodology}</p>
+      <p>colorManaged: false · outputIntentApplied: false · spotColorsPreserved: false</p>
+      <button class="secondary" onclick={() => clearProcess()}>Önizlemeyi kapat</button>
+    {/if}
+  </section>
 
-    <div class="section">
-        <h4>Mürekkep Yoğunluğu (TIC)</h4>
-        <div class="input-group">
-            <label for="prepress-tic-limit">Limit (%):</label>
-            <input id="prepress-tic-limit" type="number" bind:value={ticLimit} min="100" max="400" step="10" />
-        </div>
-        <div class="btn-group">
-            <button onclick={analyzeTic} disabled={loadingHeatmap || !canUsePage}>
-                {loadingHeatmap ? "Hesaplanıyor..." : "Isı Haritası Çıkar"}
-            </button>
-            {#if heatmapBase64}
-                <button class="secondary" onclick={clearHeatmap}>Temizle</button>
-            {/if}
-        </div>
-        {#if heatmapError}
-            <p class="error-msg">{heatmapError}</p>
-        {/if}
-    </div>
-
-    <div class="section">
-        <h4>Sayfa Kutuları (mm)</h4>
-        <div class="input-group">
-            <label for="prepress-bleed">Taşırma Payı (Bleed):</label>
-            <input id="prepress-bleed" type="number" bind:value={boxes.bleed} min="0" step="1" oninput={updateGuides} />
-        </div>
-        <div class="input-group">
-            <label for="prepress-trim">Kesim Payı (Trim):</label>
-            <input id="prepress-trim" type="number" bind:value={boxes.trim} min="0" step="1" oninput={updateGuides} />
-        </div>
-        <button onclick={applyBoxes} disabled={!canUsePage}>Önizleme Kılavuzlarını Güncelle</button>
-    </div>
+  <section>
+    <h4>RGB-türevli tahmini kanal toplamı</h4>
+    <p class="permanent-warning">Bu değer gerçek Total Area Coverage veya mürekkep tüketimi değildir.</p>
+    <label class="threshold">Tahmini eşik (%) <input type="number" bind:value={thresholdPercent} min="0" max="400" step="10" /></label>
+    <button onclick={generateCoveragePreview} disabled={!canUsePage || coverageHandle}>{coverageHandle ? "Hazırlanıyor..." : "Tahmini eşik ısı haritası üret"}</button>
+    {#if coverageError}<p class="error">{coverageError}</p>{/if}
+    {#if coverageResult}
+      <div class="legend">APPROXIMATE RGB-DERIVED PREVIEW</div>
+      <p>{coverageResult.pixelStatistics.pixelsAboveThreshold} / {coverageResult.pixelStatistics.totalPixels} piksel eşik üstünde</p>
+      <p>Ortalama tahmini kanal toplamı: {coverageResult.pixelStatistics.averageEstimatedChannelSumPercent.toFixed(1)}%</p>
+      <button class="secondary" onclick={() => clearCoverage()}>Önizlemeyi kapat</button>
+    {/if}
+  </section>
 </div>
 
 <style>
-    .prepress-panel {
-        padding: 16px;
-        background: #1e1e1e;
-        color: #ddd;
-        font-size: 14px;
-        height: 100%;
-        overflow-y: auto;
-    }
-    
-    h3 {
-        margin-top: 0;
-        margin-bottom: 20px;
-        color: #fff;
-        border-bottom: 1px solid #333;
-        padding-bottom: 8px;
-    }
-    
-    .section {
-        margin-bottom: 24px;
-        background: #2a2a2a;
-        padding: 12px;
-        border-radius: 6px;
-    }
-    
-    h4 {
-        margin-top: 0;
-        margin-bottom: 12px;
-        font-size: 13px;
-        color: #aaa;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    button {
-        width: 100%;
-        padding: 8px;
-        background: #007aff;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-weight: 500;
-        margin-bottom: 8px;
-    }
-    
-    button:disabled {
-        background: #444;
-        color: #888;
-        cursor: not-allowed;
-    }
-    
-    button.secondary {
-        background: #444;
-    }
-    
-    .btn-group {
-        display: flex;
-        gap: 8px;
-    }
-    
-    .report-box {
-        margin-top: 12px;
-        padding: 10px;
-        background: #1a1a1a;
-        border-radius: 4px;
-        font-size: 13px;
-    }
-    
-    .report-box p {
-        margin: 4px 0;
-    }
-    
-    .warning {
-        color: #ff9f0a;
-        margin-top: 8px !important;
-    }
-
-    .error-msg {
-        color: #ff453a;
-        margin: 8px 0;
-        font-size: 12px;
-    }
-    
-    .hidden {
-        display: none;
-    }
-    
-    .channel-toggles {
-        display: flex;
-        gap: 8px;
-        margin-top: 12px;
-    }
-    
-    .channel {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 6px;
-        border-radius: 4px;
-        cursor: pointer;
-        background: #222;
-        border: 1px solid #444;
-        font-weight: bold;
-    }
-    
-    .channel input {
-        display: none;
-    }
-    
-    .channel.active.c { background: rgba(0, 255, 255, 0.2); border-color: cyan; color: cyan; }
-    .channel.active.m { background: rgba(255, 0, 255, 0.2); border-color: magenta; color: magenta; }
-    .channel.active.y { background: rgba(255, 255, 0, 0.2); border-color: yellow; color: yellow; }
-    .channel.active.k { background: rgba(0, 0, 0, 0.5); border-color: #888; color: white; }
-    
-    .input-group {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 12px;
-    }
-    
-    .input-group input {
-        width: 60px;
-        padding: 4px 8px;
-        background: #111;
-        border: 1px solid #444;
-        color: white;
-        border-radius: 4px;
-    }
-    
-    .tip {
-        font-size: 12px;
-        color: #888;
-        margin-top: 8px;
-        font-style: italic;
-    }
+  .prepress-panel { padding: 14px; color: var(--text-primary); font-size: 12px; }
+  h3 { margin: 0 0 14px; font-size: 15px; }
+  section { margin-bottom: 14px; padding: 12px; border: 1px solid var(--border-raw); background: var(--bg-surface); }
+  h4, h5 { margin: 0 0 9px; text-transform: uppercase; letter-spacing: .04em; }
+  h5 { margin-top: 12px; font-size: 11px; color: var(--text-muted); }
+  button { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--border-raw); background: var(--accent-industrial); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--text-primary); }
+  .permanent-warning { padding: 8px; border-left: 3px solid #f59e0b; background: rgba(245,158,11,.1); color: #fbbf24; }
+  .error { color: #ff6b6b; overflow-wrap: anywhere; }
+  .legend { margin: 9px 0; padding: 6px; background: #f59e0b; color: #111; font-weight: 800; text-align: center; }
+  .report { overflow-wrap: anywhere; }
+  ul { padding-left: 18px; }
+  .boxes { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; }
+  .boxes dt { color: var(--text-muted); }
+  .boxes dd { margin: 0; font-family: var(--font-mono); }
+  .channels { display: flex; gap: 5px; }
+  .channels label { flex: 1; padding: 5px; border: 1px solid var(--border-raw); text-align: center; opacity: .5; }
+  .channels label.active { opacity: 1; border-color: var(--accent-industrial); }
+  .channels input { display: none; }
+  .threshold { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .threshold input { width: 70px; }
 </style>

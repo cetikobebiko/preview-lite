@@ -10,7 +10,7 @@ use pdfium_render::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use unicode_normalization::{char::canonical_combining_class, UnicodeNormalization};
 
 struct WorkerDocument<'a> {
@@ -30,12 +30,16 @@ const WORKER_ADDRESS_SPACE_LIMIT_BYTES: u64 = WORKER_MAX_RENDER_PEAK_BYTES + 512
 
 pub fn run_worker() {
     let diagnostics = apply_resource_limits();
-    let pdfium = crate::pdf_engine::get_pdfium().map_err(|_| {
-        WorkerFailure::new(
-            WorkerFailureKind::PdfiumUnavailable,
-            "PDFium runtime is unavailable in the worker process",
-        )
-    });
+    // Check for pre-resolved runtime path from parent process (PDFIUM_RESOLVED_PATH)
+    // This ensures main/worker parity and avoids CWD/PATH divergence.
+    let resolved_runtime_path = std::env::var_os("PDFIUM_RESOLVED_PATH").map(PathBuf::from);
+    let pdfium =
+        crate::pdf_engine::get_pdfium_with_resolved_path(resolved_runtime_path).map_err(|_| {
+            WorkerFailure::new(
+                WorkerFailureKind::PdfiumUnavailable,
+                "PDFium runtime is unavailable in the worker process",
+            )
+        });
 
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
@@ -278,18 +282,18 @@ fn handle_command<'a>(
             let accessibility = document.accessibility.as_ref().map_err(|message| {
                 WorkerFailure::new(WorkerFailureKind::PdfiumLoadError, message.clone())
             })?;
-            let tree = crate::a11y::get_structure_tree_from_document(accessibility).map_err(
+            let tree = crate::a11y::inspect_structure_tree_from_document(accessibility).map_err(
                 |message| WorkerFailure::new(WorkerFailureKind::StructureTreeUnavailable, message),
             )?;
-            Ok(WorkerResult::StructureTree(tree))
+            Ok(WorkerResult::AccessibilityStructure(tree))
         }
-        WorkerCommand::ValidatePdfUa { document_id } => {
+        WorkerCommand::AuditAccessibility { document_id } => {
             let document = get_document(documents, *document_id)?;
             let accessibility = document.accessibility.as_ref().map_err(|message| {
                 WorkerFailure::new(WorkerFailureKind::PdfiumLoadError, message.clone())
             })?;
-            Ok(WorkerResult::PdfUaValidation(
-                crate::a11y::validate_pdf_ua_document(accessibility),
+            Ok(WorkerResult::AccessibilityAudit(
+                crate::a11y::audit_accessibility_document(accessibility),
             ))
         }
     }
@@ -936,7 +940,7 @@ fn all_capabilities() -> Vec<WorkerCapability> {
         WorkerCapability::GetMetadata,
         WorkerCapability::GetPageAnnotations,
         WorkerCapability::GetStructureTree,
-        WorkerCapability::ValidatePdfUa,
+        WorkerCapability::AuditAccessibility,
         WorkerCapability::Ping,
         WorkerCapability::Shutdown,
     ]

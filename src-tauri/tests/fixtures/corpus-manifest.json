@@ -1,0 +1,1754 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpusVersion": "1.0.0",
+  "description": "Canonical PDF Fixture Corpus Manifest for Antigravity PDF Reader",
+  "generators": {
+    "py-reorder-generator": {
+      "kind": "committed_script",
+      "path": "src-tauri/tests/fixtures/pdf/generate_reorder_fixtures.py",
+      "language": "python3",
+      "dependencies": [
+        "reportlab",
+        "pypdf"
+      ],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "toolchain_unpinned",
+      "notes": "Deterministik canvas amaci (invariant=1) kaynak kod tarafindan desteklenmektedir, ancak paket surumleri repo lockfile ile sabitlenmemistir."
+    },
+    "py-redaction-generator": {
+      "kind": "committed_script",
+      "path": "src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "language": "python3",
+      "dependencies": [],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "deterministic_by_construction",
+      "notes": "Yalnizca Python standart kutuphanesini kullanir. Sabit bayt ofsetleri ve tuzlari ile deterministiktir."
+    },
+    "py-sanitization-generator": {
+      "kind": "committed_script",
+      "path": "src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "language": "python3",
+      "dependencies": [],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "deterministic_by_construction",
+      "notes": "Yalnizca Python standart kutuphanesini kullanir. Sabit FIXED_ID ile deterministiktir."
+    },
+    "py-release-smoke-generator": {
+      "kind": "committed_script",
+      "path": "src-tauri/tests/fixtures/pdf/generate_release_smoke.py",
+      "language": "python3",
+      "dependencies": [],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "deterministic_by_construction",
+      "notes": "Pure Python standard library generator for release-smoke.pdf and large-page-dimensions.pdf fixtures."
+    },
+    "pypdf-historical-method": {
+      "kind": "historical_documented_method",
+      "path": null,
+      "language": "python3 / pypdf 6.10.0",
+      "dependencies": [
+        "pypdf 6.10.0"
+      ],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "reproducibility_unverified",
+      "notes": "minimal.pdf uzerinden pypdf 6.10.0 ile uretilmistir; bayt-bayt determinizmi dogrulanmamistir."
+    }
+  },
+  "fixtures": [
+    {
+      "id": "fuzz-minimal",
+      "path": "src-tauri/fuzz/corpus/minimal.pdf",
+      "sha256": "9d8c1d4382b8d77da0504aeca4a3ff39bdf8641186b1d3ff2d5d87013a00d484",
+      "byteLength": 328,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "fuzz_seed",
+      "source": null,
+      "provenanceStatus": "missing",
+      "generatorId": null,
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "fuzz",
+        "minimal"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "fuzz",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-ai-text-rich",
+      "path": "src-tauri/tests/fixtures/pdf/ai-text-rich.pdf",
+      "sha256": "9f858642202b10dd6dbb5fd6a642ddb7762667f043aa16c635cd46615cd3893d",
+      "byteLength": 2793,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "unknown",
+      "source": null,
+      "provenanceStatus": "partial",
+      "generatorId": null,
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "ai",
+        "core"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "acceptance"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-annotations",
+      "path": "src-tauri/tests/fixtures/pdf/annotations.pdf",
+      "sha256": "43e4cbd366712cee2290f1de48c1cb1a476bed120e18bd074b62f418e9b5deda",
+      "byteLength": 470,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "project_authored",
+      "source": "Project-authored atomic I/O fixture with single Text annotation",
+      "provenanceStatus": "complete",
+      "generatorId": null,
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "annotations"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-encrypted",
+      "path": "src-tauri/tests/fixtures/pdf/encrypted.pdf",
+      "sha256": "4a07c1b65793257cf412dc5f478ea84525f07e94705bbbb084bb427cd241f28d",
+      "byteLength": 807,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "generated",
+      "source": "Generated from minimal.pdf with pypdf 6.10.0 using RC4-128 user password",
+      "provenanceStatus": "complete",
+      "generatorId": "pypdf-historical-method",
+      "generatedFrom": "src-tauri/tests/fixtures/pdf/minimal.pdf",
+      "encrypted": true,
+      "passwordReference": "test-credential:fixture-password",
+      "categories": [
+        "core",
+        "security",
+        "encrypted"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-malformed",
+      "path": "src-tauri/tests/fixtures/pdf/malformed.pdf",
+      "sha256": "8f61651fa71aa15107abeda98ffdc8724e878bb1ca0475bc23042e3ef5cef27e",
+      "byteLength": 85,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "unknown",
+      "source": null,
+      "provenanceStatus": "partial",
+      "generatorId": null,
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-minimal",
+      "path": "src-tauri/tests/fixtures/pdf/minimal.pdf",
+      "sha256": "0d509281e91d6d7cbfbcb4d16f5a205578e65765a11c59187b07b585d555b00d",
+      "byteLength": 329,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "project_authored",
+      "source": "Hand-crafted minimal 1-page PDF 1.4 baseline document",
+      "provenanceStatus": "complete",
+      "generatorId": null,
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "baseline"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-reorder-rich",
+      "path": "src-tauri/tests/fixtures/pdf/reorder-rich.pdf",
+      "sha256": "ec45cb69345f177f77c67073b7a5cb988d96276697ef34a35d0ae68eca5e492c",
+      "byteLength": 1923,
+      "pdfVersion": "1.3",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_reorder_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-reorder-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "document_structure",
+        "reorder"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-reorder-with-form",
+      "path": "src-tauri/tests/fixtures/pdf/reorder-with-form.pdf",
+      "sha256": "4f4cb184e4cf4f342b83b3675e8360254ed1f366c0bb8834cc5ff085a8ec58cf",
+      "byteLength": 4285,
+      "pdfVersion": "1.3",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_reorder_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-reorder-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "document_structure",
+        "reorder"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-reorder-with-metadata",
+      "path": "src-tauri/tests/fixtures/pdf/reorder-with-metadata.pdf",
+      "sha256": "8825c0d1abecd665c1e89f882ad811237cdbadbf7c07e1a9198600754a28af65",
+      "byteLength": 2004,
+      "pdfVersion": "1.3",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_reorder_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-reorder-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "document_structure",
+        "reorder"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-reorder-with-named-destination",
+      "path": "src-tauri/tests/fixtures/pdf/reorder-with-named-destination.pdf",
+      "sha256": "241264be3211c3d50376d77f7136fd3cfa1d9f53791a2611a5475c52e667f325",
+      "byteLength": 2152,
+      "pdfVersion": "1.3",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_reorder_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-reorder-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "document_structure",
+        "reorder"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-reorder-with-outline",
+      "path": "src-tauri/tests/fixtures/pdf/reorder-with-outline.pdf",
+      "sha256": "e2dff7f1786fac45ad65fb70bf38e7842fefda6b5550b128e33eef9c96a5fe96",
+      "byteLength": 2189,
+      "pdfVersion": "1.3",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_reorder_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-reorder-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "document_structure",
+        "reorder"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-three-distinct-pages",
+      "path": "src-tauri/tests/fixtures/pdf/three-distinct-pages.pdf",
+      "sha256": "55f8e4d2aedcfc3603c398c648d1a846e6eafe60f26e5c43c7288984f232914a",
+      "byteLength": 829,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "project_authored",
+      "source": "Project-authored 3-page fixture with distinct MediaBox dimensions (300x400, 400x500, 500x600)",
+      "provenanceStatus": "complete",
+      "generatorId": null,
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "document_structure"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit"
+      ],
+      "featureManifest": null,
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-large-page-dimensions",
+      "path": "src-tauri/tests/fixtures/pdf/large-page-dimensions.pdf",
+      "sha256": "93cb5f67e9587658f60a1db12a5f29aecf29d6b8ec47403400d9a8f48406fa55",
+      "byteLength": 680,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_release_smoke.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-release-smoke-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "document_structure"
+      ],
+      "expectedCapabilities": [
+        "large_page_dimensions"
+      ],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": "Large page dimensions (7200x7200 pt / 100x100 in) minimal test fixture.",
+      "allowEmpty": false
+    },
+    {
+      "id": "core-release-smoke",
+      "path": "src-tauri/tests/fixtures/pdf/release-smoke.pdf",
+      "sha256": "727488fe32189a68a176ec32de5a3194d2b1e370a3fac2d5930871f45ba20611",
+      "byteLength": 4520,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_release_smoke.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-release-smoke-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "release_smoke"
+      ],
+      "expectedCapabilities": [
+        "has_text",
+        "has_unicode_text",
+        "has_vector_content",
+        "multi_page"
+      ],
+      "expectedFindings": [],
+      "allowedTests": [
+        "smoke",
+        "integration",
+        "unit"
+      ],
+      "featureManifest": null,
+      "notes": "Canonical release smoke fixture with multi-page, vector graphics, and self-contained Type 3 Turkish Unicode font.",
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-acroform-widget",
+      "path": "src-tauri/tests/fixtures/redaction/acroform-widget.pdf",
+      "sha256": "42cadc768e70985c198104b348b854c5b26c49cb23856a3b76d441f0a0faed51",
+      "byteLength": 804,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-annotations-fixture",
+      "path": "src-tauri/tests/fixtures/redaction/annotations-fixture.pdf",
+      "sha256": "2829659dfb26dd4a68faf80888d91bc7a5d3d33c3a7b5c11a88d88786eaa9176",
+      "byteLength": 903,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-cropbox-mediabox-diff",
+      "path": "src-tauri/tests/fixtures/redaction/cropbox-mediabox-diff.pdf",
+      "sha256": "496ec852744fdacb2235cb3da7b4234de5777e945f9561108b13b8630071b031",
+      "byteLength": 624,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-embedded-files",
+      "path": "src-tauri/tests/fixtures/redaction/embedded-files.pdf",
+      "sha256": "26c0874f88dcef688c75c83dc4ba0c1ffa03b309c3c9ad6cb5e2bbff52515470",
+      "byteLength": 899,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-encrypted-redaction",
+      "path": "src-tauri/tests/fixtures/redaction/encrypted-redaction.pdf",
+      "sha256": "2d922b2bdad284ee55bf8b96dded1fe4173cc7da7c368635218a371fbe62d791",
+      "byteLength": 933,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": true,
+      "passwordReference": "test-credential:fixture-password",
+      "categories": [
+        "redaction",
+        "mutation",
+        "security",
+        "encrypted"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-explicit-print-boxes",
+      "path": "src-tauri/tests/fixtures/redaction/explicit-print-boxes.pdf",
+      "sha256": "80b228c33e9928226932ed5aff7ceb3ab7b41ab63fa9260ab938b1995c67e0b5",
+      "byteLength": 711,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-image-only",
+      "path": "src-tauri/tests/fixtures/redaction/image-only.pdf",
+      "sha256": "90cfc9ea441c48fe8ada88a6d22f41b17a1e782a8d354bcdbe348c9686a1ac95",
+      "byteLength": 666,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-incremental-revision",
+      "path": "src-tauri/tests/fixtures/redaction/incremental-revision.pdf",
+      "sha256": "635f8520ebe3f0617da3634eff066f2dfcfa50a8fc5ccf1861c28c6f8474861f",
+      "byteLength": 1270,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-inherited-geometry",
+      "path": "src-tauri/tests/fixtures/redaction/inherited-geometry.pdf",
+      "sha256": "99fe03032c6f17e96d210bf720c4da0d00f50e782b05785e0790f131d84e4a5e",
+      "byteLength": 627,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-inherited-resources",
+      "path": "src-tauri/tests/fixtures/redaction/inherited-resources.pdf",
+      "sha256": "23d3d1fe012940a055e325b499edd14ecdad215f71a239729d4b199715b94d6e",
+      "byteLength": 695,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-js-action",
+      "path": "src-tauri/tests/fixtures/redaction/js-action.pdf",
+      "sha256": "f8899918bb1e46c2505bb4b996fa47db93a486aee59232dd65c8c8492861bea5",
+      "byteLength": 654,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-mixed-secure-redaction-pages",
+      "path": "src-tauri/tests/fixtures/redaction/mixed-secure-redaction-pages.pdf",
+      "sha256": "c3b10284390eb8aba66dc60bfa776ba2f4d0567fe01921050fa7747e2f966d9b",
+      "byteLength": 1154,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration",
+        "acceptance"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-negative-origin",
+      "path": "src-tauri/tests/fixtures/redaction/negative-origin.pdf",
+      "sha256": "c689d40fc2b5436a3267ede469682a59f7a869e98837908057b879d9ac8c98cb",
+      "byteLength": 609,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-non-js-openaction",
+      "path": "src-tauri/tests/fixtures/redaction/non-js-openaction.pdf",
+      "sha256": "b69e36bd0bb5d46dbb9d020f92836679470bb7144ea2e20f292bc371d6fb1a01",
+      "byteLength": 657,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-nonzero-origin",
+      "path": "src-tauri/tests/fixtures/redaction/nonzero-origin.pdf",
+      "sha256": "11bb134408b14960adf5f1d6cce1629ea1e5880cd1cb81f0fdbfd985b1003c0d",
+      "byteLength": 604,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-object-stream",
+      "path": "src-tauri/tests/fixtures/redaction/object-stream.pdf",
+      "sha256": "68fb1e93556b01fd26376cd0af0955258ce1364f0d7c8bd26b0e56f7107036bb",
+      "byteLength": 686,
+      "pdfVersion": "1.5",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-rotations",
+      "path": "src-tauri/tests/fixtures/redaction/rotations.pdf",
+      "sha256": "6665e102d1ad54f8e37bed0149da640930624098794980a10ecf3846fd511628",
+      "byteLength": 1095,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-same-size-same-rotation-pages",
+      "path": "src-tauri/tests/fixtures/redaction/same-size-same-rotation-pages.pdf",
+      "sha256": "1383a62e9d5b5e981924b38c82d26fceb33bae18d8ca1a3c01e77c95271dbadc",
+      "byteLength": 677,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-signature-marked-byterange",
+      "path": "src-tauri/tests/fixtures/redaction/signature-marked-byterange.pdf",
+      "sha256": "074ae3a0d82c50097fed6d578c31bb5cef7065129a07bf9ae0b229f192eb6b35",
+      "byteLength": 921,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-simple-text",
+      "path": "src-tauri/tests/fixtures/redaction/simple-text.pdf",
+      "sha256": "2adc560d26fc60706a38061fc486d0e926dce9fa904476e991912d6ea3052af6",
+      "byteLength": 634,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration",
+        "acceptance"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-stream-literal-prev",
+      "path": "src-tauri/tests/fixtures/redaction/stream-literal-prev.pdf",
+      "sha256": "cf17386fdc31be7c9408c745d7c9e81ad499f5e1825ceae2ffaf5954bdc5800e",
+      "byteLength": 599,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-text-image",
+      "path": "src-tauri/tests/fixtures/redaction/text-image.pdf",
+      "sha256": "4ae83ed7d9478b51e4c321e6f3523a9612ca114cb68558653a7fef2a8d51f371",
+      "byteLength": 836,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-unresolved-acroform",
+      "path": "src-tauri/tests/fixtures/redaction/unresolved-acroform.pdf",
+      "sha256": "2c4b6922afbc9cc0b9e9cf14f7db71682f4aca30fb7f8529464a38e3b9bdc085",
+      "byteLength": 618,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-unresolved-resources",
+      "path": "src-tauri/tests/fixtures/redaction/unresolved-resources.pdf",
+      "sha256": "a108798a34b2236b401e027832bed744ab2d993ee98a5dc26400529bfce436c5",
+      "byteLength": 581,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-whole-object-adversarial",
+      "path": "src-tauri/tests/fixtures/redaction/whole-object-adversarial.pdf",
+      "sha256": "9abcb0b23fcf18620f4eb703f59f633258397d7fa20c49837a8023b061cb570d",
+      "byteLength": 3605,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "redaction-xfa-fixture",
+      "path": "src-tauri/tests/fixtures/redaction/xfa-fixture.pdf",
+      "sha256": "504b7e6630e15a663d5933e938237222c33823b06ef4a03c9d85c395ca28fdb3",
+      "byteLength": 751,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/redaction/generate_redaction_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-redaction-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "redaction",
+        "mutation",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/redaction/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-action-chain-network",
+      "path": "src-tauri/tests/fixtures/sanitization/action-chain-network.pdf",
+      "sha256": "75dc5c5f923605389cbeac427532840995b00a9acef65c7ca0cc294f23e5f9e0",
+      "byteLength": 1187,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-clean-minimal",
+      "path": "src-tauri/tests/fixtures/sanitization/clean-minimal.pdf",
+      "sha256": "a7302175f2dfc0e019288c5ab4f536e8f18e4f88dfa59621e198271c43cef555",
+      "byteLength": 451,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration",
+        "acceptance"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-combined-names",
+      "path": "src-tauri/tests/fixtures/sanitization/combined-names.pdf",
+      "sha256": "cd9d16018dabadda949137bb4d5a019cc3dbf41e9adca924f0e23f900b600c47",
+      "byteLength": 1086,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-dangling-critical-references",
+      "path": "src-tauri/tests/fixtures/sanitization/dangling-critical-references.pdf",
+      "sha256": "f2afe1262bab80d59ca4c0cd38d81acbb03be6de1d0f9b2fa336322eb8059a7b",
+      "byteLength": 504,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-embedded-files-af",
+      "path": "src-tauri/tests/fixtures/sanitization/embedded-files-af.pdf",
+      "sha256": "8dfb09ffbe524f78090bf3b72c9d70db1f08b8148f0bd80e0430ef64cd6662e3",
+      "byteLength": 1502,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-encrypted",
+      "path": "src-tauri/tests/fixtures/sanitization/encrypted.pdf",
+      "sha256": "3c959f1f678aeb45459f0d770583c17553fc143e7736281480de0f1d57ae622c",
+      "byteLength": 780,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": true,
+      "passwordReference": "test-credential:fixture-password",
+      "categories": [
+        "sanitization",
+        "security",
+        "encrypted"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration",
+        "acceptance"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-hybrid-xref",
+      "path": "src-tauri/tests/fixtures/sanitization/hybrid-xref.pdf",
+      "sha256": "e103c998ecd803e07f40a5c52c8e3e9fa8965166e5b4408d25cc022839fea6ff",
+      "byteLength": 937,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-incremental-revision",
+      "path": "src-tauri/tests/fixtures/sanitization/incremental-revision.pdf",
+      "sha256": "4b2d1b5222d7a9a052f5f32c710076dbaa6935dbbed23e39b64423e30234af9d",
+      "byteLength": 880,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-incremental-xref-stream-chain",
+      "path": "src-tauri/tests/fixtures/sanitization/incremental-xref-stream-chain.pdf",
+      "sha256": "1e5e54756b68600c29acb018533e4a11eb2a202f13cd81438226f34278be327c",
+      "byteLength": 939,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-javascript-actions",
+      "path": "src-tauri/tests/fixtures/sanitization/javascript-actions.pdf",
+      "sha256": "64adc4db5e4925a0ba231946eed5d7c79a9373fe28b10c46bd4fb689e5ee8c5b",
+      "byteLength": 1789,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-metadata-paths",
+      "path": "src-tauri/tests/fixtures/sanitization/metadata-paths.pdf",
+      "sha256": "9de594613615b87830567a8efbc72de3b250c692101b36be1b892922f2806002",
+      "byteLength": 1429,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-object-xref-stream",
+      "path": "src-tauri/tests/fixtures/sanitization/object-xref-stream.pdf",
+      "sha256": "4684a538c93afd5681649cf20a4054f94a051a2dbf079aa97f23cbcf36c027a5",
+      "byteLength": 597,
+      "pdfVersion": "1.5",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-openaction-destination",
+      "path": "src-tauri/tests/fixtures/sanitization/openaction-destination.pdf",
+      "sha256": "f120326e287539eb30d43fcf7abab2154588b95b546b59c18959da6d87055eb5",
+      "byteLength": 475,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-signature",
+      "path": "src-tauri/tests/fixtures/sanitization/signature.pdf",
+      "sha256": "167a04767ed7865b4af4bdfa270fb7394dfa02b00a47352790f447bab088e50b",
+      "byteLength": 938,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-unsupported-active-content",
+      "path": "src-tauri/tests/fixtures/sanitization/unsupported-active-content.pdf",
+      "sha256": "80c381773d313ce29b0fd65fb10876d53735c80a837eb5296b9421bf2d0f5547",
+      "byteLength": 2083,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration",
+        "acceptance"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "sanitization-xfa-single-stream",
+      "path": "src-tauri/tests/fixtures/sanitization/xfa-single-stream.pdf",
+      "sha256": "3ebc2988855d0885d5aa2ee150303c6fd559651586ae27f2222645221bb7a57b",
+      "byteLength": 585,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "missing",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/sanitization/generate_sanitization_fixtures.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-sanitization-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "sanitization",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
+      "notes": null,
+      "allowEmpty": false
+    }
+  ]
+}

@@ -4,9 +4,10 @@ use crate::sanitization::{
     SanitizationControlInspection, SanitizationDocumentFacts, SanitizationFindingEvidence,
     SanitizationInspectionLimits, SanitizationInspectionReport, SanitizationInspectionWarning,
     MAX_SANITIZATION_ACTION_CHAIN_DEPTH, MAX_SANITIZATION_ARRAY_ELEMENTS,
-    MAX_SANITIZATION_DICTIONARY_ENTRIES, MAX_SANITIZATION_EMBEDDED_FILES,
-    MAX_SANITIZATION_EVIDENCE_PER_CONTROL, MAX_SANITIZATION_FINDINGS,
-    MAX_SANITIZATION_NAME_TREE_DEPTH, MAX_SANITIZATION_OBJECTS, MAX_SANITIZATION_RAW_SCAN_BYTES,
+    MAX_SANITIZATION_DECODED_STREAM_BYTES, MAX_SANITIZATION_DICTIONARY_ENTRIES,
+    MAX_SANITIZATION_EMBEDDED_FILES, MAX_SANITIZATION_EVIDENCE_PER_CONTROL,
+    MAX_SANITIZATION_FINDINGS, MAX_SANITIZATION_NAME_TREE_DEPTH, MAX_SANITIZATION_OBJECTS,
+    MAX_SANITIZATION_RAW_SCAN_BYTES, MAX_SANITIZATION_TOTAL_DECODED_BYTES,
     MAX_SANITIZATION_TRAVERSAL_DEPTH, SANITIZATION_INSPECTION_PROFILE,
     SANITIZATION_INSPECTION_VERSION, SANITIZATION_POLICY_SCHEMA_VERSION,
     SANITIZATION_REPORT_SCHEMA_VERSION,
@@ -17,6 +18,34 @@ use std::path::Path;
 use std::{fs::File, io::Read};
 
 type Checkpoint<'a> = &'a dyn Fn() -> Result<(), SessionJobOperationError>;
+
+#[cfg(feature = "sanitization-test-support")]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SanitizationInspectionTestBehavior {
+    #[default]
+    Real,
+    CrashDuringTraversal,
+    HangDuringTraversal,
+    HangDuringDecode,
+}
+
+#[derive(Clone, Copy)]
+struct InspectionConfiguration {
+    decoded_stream_limit: u64,
+    total_decoded_limit: u64,
+    #[cfg(feature = "sanitization-test-support")]
+    test_behavior: SanitizationInspectionTestBehavior,
+}
+
+fn production_configuration() -> InspectionConfiguration {
+    InspectionConfiguration {
+        decoded_stream_limit: MAX_SANITIZATION_DECODED_STREAM_BYTES,
+        total_decoded_limit: MAX_SANITIZATION_TOTAL_DECODED_BYTES,
+        #[cfg(feature = "sanitization-test-support")]
+        test_behavior: SanitizationInspectionTestBehavior::Real,
+    }
+}
 
 #[derive(Default)]
 struct FindingBucket {
@@ -94,21 +123,37 @@ impl InspectionAccumulator {
 
 struct ObjectGraphScanner<'a> {
     document: &'a Document,
+    input_digest: String,
     checkpoint: Checkpoint<'a>,
     visited: HashSet<ObjectId>,
     inspected_nodes: usize,
     action_count: usize,
+    decoded_streams: HashSet<ObjectId>,
+    decoded_bytes: u64,
+    decoded_stream_limit: u64,
+    total_decoded_limit: u64,
+    #[cfg(feature = "sanitization-test-support")]
+    test_behavior: SanitizationInspectionTestBehavior,
+    #[cfg(feature = "sanitization-test-support")]
+    test_marker_path: std::path::PathBuf,
     accumulator: InspectionAccumulator,
     facts: SanitizationDocumentFacts,
+}
+
+struct ScannerStreamFlags {
+    encrypted: bool,
+    object_streams_detected: bool,
+    xref_streams_detected: bool,
 }
 
 impl<'a> ObjectGraphScanner<'a> {
     fn new(
         document: &'a Document,
+        input_digest: String,
         checkpoint: Checkpoint<'a>,
-        encrypted: bool,
-        object_streams_detected: bool,
-        xref_streams_detected: bool,
+        stream_flags: ScannerStreamFlags,
+        configuration: InspectionConfiguration,
+        #[cfg(feature = "sanitization-test-support")] test_marker_path: std::path::PathBuf,
     ) -> Result<Self, SessionJobOperationError> {
         let page_count = u32::try_from(document.get_pages().len()).map_err(|_| {
             limit_error(
@@ -116,12 +161,26 @@ impl<'a> ObjectGraphScanner<'a> {
                 "Sanitization page count sınırı aşıldı",
             )
         })?;
+        let ScannerStreamFlags {
+            encrypted,
+            object_streams_detected,
+            xref_streams_detected,
+        } = stream_flags;
         Ok(Self {
             document,
+            input_digest,
             checkpoint,
             visited: HashSet::new(),
             inspected_nodes: 0,
             action_count: 0,
+            decoded_streams: HashSet::new(),
+            decoded_bytes: 0,
+            decoded_stream_limit: configuration.decoded_stream_limit,
+            total_decoded_limit: configuration.total_decoded_limit,
+            #[cfg(feature = "sanitization-test-support")]
+            test_behavior: configuration.test_behavior,
+            #[cfg(feature = "sanitization-test-support")]
+            test_marker_path,
             accumulator: InspectionAccumulator::default(),
             facts: SanitizationDocumentFacts {
                 encrypted,
@@ -192,6 +251,9 @@ impl<'a> ObjectGraphScanner<'a> {
             schema_version: SANITIZATION_REPORT_SCHEMA_VERSION.to_string(),
             inspection_version: SANITIZATION_INSPECTION_VERSION.to_string(),
             policy_schema_version: SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
+            control_registry_version: crate::sanitization::SANITIZATION_CONTROL_REGISTRY_VERSION
+                .to_string(),
+            input_digest: self.input_digest,
             document_facts: self.facts,
             controls,
             blocking_findings,
@@ -203,7 +265,7 @@ impl<'a> ObjectGraphScanner<'a> {
                         "Sanitization visited-object sayısı dönüştürülemedi",
                     )
                 })?,
-                decoded_bytes: 0,
+                decoded_bytes: self.decoded_bytes,
                 findings: u32::try_from(self.accumulator.total_findings).map_err(|_| {
                     limit_error(
                         "SANITIZATION_LIMIT_EXCEEDED",
@@ -314,6 +376,12 @@ impl<'a> ObjectGraphScanner<'a> {
         path: &str,
         depth: usize,
     ) -> Result<(), SessionJobOperationError> {
+        #[cfg(feature = "sanitization-test-support")]
+        run_inspection_test_behavior(
+            self.test_behavior,
+            SanitizationInspectionTestPhase::Traversal,
+            &self.test_marker_path,
+        );
         (self.checkpoint)()?;
         if depth > MAX_SANITIZATION_TRAVERSAL_DEPTH {
             return Err(limit_error(
@@ -720,13 +788,18 @@ impl<'a> ObjectGraphScanner<'a> {
         }
         let identity = identity_for(object_id, path);
         match action_type {
-            b"JavaScript" => self.accumulator.add(
-                "document_javascript",
-                identity.clone(),
-                object_id,
-                path,
-                Some("JavaScript"),
-            )?,
+            b"JavaScript" => {
+                if let Ok(payload) = dictionary.get(b"JS") {
+                    self.inspect_decoded_action_payload(payload, &format!("{path}/JS"))?;
+                }
+                self.accumulator.add(
+                    "document_javascript",
+                    identity.clone(),
+                    object_id,
+                    path,
+                    Some("JavaScript"),
+                )?;
+            }
             b"Launch" => self.accumulator.add(
                 "launch_actions",
                 identity.clone(),
@@ -832,6 +905,56 @@ impl<'a> ObjectGraphScanner<'a> {
         if let Ok(next) = dictionary.get(b"Next") {
             self.scan_action_root(next, &format!("{path}/Next"), origin, depth + 1, visited)?;
         }
+        Ok(())
+    }
+
+    fn inspect_decoded_action_payload(
+        &mut self,
+        payload: &Object,
+        _path: &str,
+    ) -> Result<(), SessionJobOperationError> {
+        (self.checkpoint)()?;
+        let stream_id = reference_id(Some(payload));
+        if stream_id.is_some_and(|id| self.decoded_streams.contains(&id)) {
+            return Ok(());
+        }
+        let resolved = self
+            .resolve_object(payload)
+            .ok_or_else(|| inspection_error("JavaScript payload reference çözümlenemedi"))?;
+        let Object::Stream(stream) = resolved else {
+            return Ok(());
+        };
+
+        #[cfg(feature = "sanitization-test-support")]
+        run_inspection_test_behavior(
+            self.test_behavior,
+            SanitizationInspectionTestPhase::Decode,
+            &self.test_marker_path,
+        );
+
+        // lopdf 0.34 exposes whole-buffer decoding. The worker process and parent
+        // timeout bound parser-level failures; these checks reject the result as
+        // soon as the allocation-backed decode returns.
+        let decoded = stream
+            .get_plain_content()
+            .map_err(|_| inspection_error("JavaScript stream payload'ı decode edilemedi"))?;
+        (self.checkpoint)()?;
+        let decoded_len = u64::try_from(decoded.len())
+            .map_err(|_| decode_limit_error("Sanitization decoded stream byte sayısı taştı"))?;
+        self.account_decoded_stream(decoded_len)?;
+        if let Some(id) = stream_id {
+            self.decoded_streams.insert(id);
+        }
+        Ok(())
+    }
+
+    fn account_decoded_stream(&mut self, decoded_len: u64) -> Result<(), SessionJobOperationError> {
+        self.decoded_bytes = checked_decoded_total(
+            self.decoded_bytes,
+            decoded_len,
+            self.decoded_stream_limit,
+            self.total_decoded_limit,
+        )?;
         Ok(())
     }
 
@@ -959,16 +1082,24 @@ pub fn inspect_snapshot(
     policy_schema_version: &str,
     inspection_profile: &str,
 ) -> Result<SanitizationInspectionReport, SessionJobOperationError> {
-    inspect_snapshot_with_checkpoint(
+    inspect_snapshot_with_configuration(
         snapshot_path,
         credential,
         schema_version,
         policy_schema_version,
         inspection_profile,
-        &|| Ok(()),
+        &production_parent_enforced_cancellation,
+        production_configuration(),
     )
 }
 
+fn production_parent_enforced_cancellation() -> Result<(), SessionJobOperationError> {
+    // The production authority is the parent-owned worker process kill/wait path.
+    // No cooperative cancellation IPC is claimed inside this ephemeral worker.
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn inspect_snapshot_with_checkpoint(
     snapshot_path: &Path,
     credential: Option<&str>,
@@ -976,6 +1107,48 @@ pub(crate) fn inspect_snapshot_with_checkpoint(
     policy_schema_version: &str,
     inspection_profile: &str,
     checkpoint: Checkpoint<'_>,
+) -> Result<SanitizationInspectionReport, SessionJobOperationError> {
+    inspect_snapshot_with_configuration(
+        snapshot_path,
+        credential,
+        schema_version,
+        policy_schema_version,
+        inspection_profile,
+        checkpoint,
+        production_configuration(),
+    )
+}
+
+#[cfg(feature = "sanitization-test-support")]
+pub fn inspect_snapshot_with_test_behavior(
+    snapshot_path: &Path,
+    credential: Option<&str>,
+    schema_version: &str,
+    policy_schema_version: &str,
+    inspection_profile: &str,
+    test_behavior: SanitizationInspectionTestBehavior,
+) -> Result<SanitizationInspectionReport, SessionJobOperationError> {
+    let mut configuration = production_configuration();
+    configuration.test_behavior = test_behavior;
+    inspect_snapshot_with_configuration(
+        snapshot_path,
+        credential,
+        schema_version,
+        policy_schema_version,
+        inspection_profile,
+        &production_parent_enforced_cancellation,
+        configuration,
+    )
+}
+
+fn inspect_snapshot_with_configuration(
+    snapshot_path: &Path,
+    credential: Option<&str>,
+    schema_version: &str,
+    policy_schema_version: &str,
+    inspection_profile: &str,
+    checkpoint: Checkpoint<'_>,
+    configuration: InspectionConfiguration,
 ) -> Result<SanitizationInspectionReport, SessionJobOperationError> {
     if schema_version != SANITIZATION_REPORT_SCHEMA_VERSION
         || policy_schema_version != SANITIZATION_POLICY_SCHEMA_VERSION
@@ -986,6 +1159,8 @@ pub(crate) fn inspect_snapshot_with_checkpoint(
         ));
     }
     checkpoint()?;
+    let input_digest = crate::document_io::sha256_file(snapshot_path)
+        .map_err(|_| inspection_error("Sanitization immutable snapshot digest hesaplanamadı"))?;
     let (object_streams_detected, xref_streams_detected) =
         scan_raw_structural_markers(snapshot_path, checkpoint)?;
     let mut document = Document::load(snapshot_path)
@@ -1008,10 +1183,16 @@ pub(crate) fn inspect_snapshot_with_checkpoint(
     checkpoint()?;
     ObjectGraphScanner::new(
         &document,
+        input_digest,
         checkpoint,
-        encrypted,
-        object_streams_detected,
-        xref_streams_detected,
+        ScannerStreamFlags {
+            encrypted,
+            object_streams_detected,
+            xref_streams_detected,
+        },
+        configuration,
+        #[cfg(feature = "sanitization-test-support")]
+        snapshot_path.with_file_name("sanitization-test-phase"),
     )?
     .scan()
 }
@@ -1073,6 +1254,73 @@ fn inspection_error(message: impl Into<String>) -> SessionJobOperationError {
 
 fn limit_error(code: &'static str, message: &'static str) -> SessionJobOperationError {
     SessionJobOperationError::failed_with_code(code, message)
+}
+
+fn decode_limit_error(message: &'static str) -> SessionJobOperationError {
+    limit_error("SANITIZATION_DECODE_LIMIT_EXCEEDED", message)
+}
+
+fn checked_decoded_total(
+    current: u64,
+    decoded_len: u64,
+    per_stream_limit: u64,
+    total_limit: u64,
+) -> Result<u64, SessionJobOperationError> {
+    if decoded_len > per_stream_limit {
+        return Err(decode_limit_error(
+            "Sanitization decoded stream byte sınırı aşıldı",
+        ));
+    }
+    let total = current
+        .checked_add(decoded_len)
+        .ok_or_else(|| decode_limit_error("Sanitization total decoded byte sayısı taştı"))?;
+    if total > total_limit {
+        return Err(decode_limit_error(
+            "Sanitization total decoded byte sınırı aşıldı",
+        ));
+    }
+    Ok(total)
+}
+
+#[cfg(feature = "sanitization-test-support")]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SanitizationInspectionTestPhase {
+    Traversal,
+    Decode,
+}
+
+#[cfg(feature = "sanitization-test-support")]
+fn run_inspection_test_behavior(
+    behavior: SanitizationInspectionTestBehavior,
+    phase: SanitizationInspectionTestPhase,
+    marker_path: &Path,
+) {
+    let selected = match behavior {
+        SanitizationInspectionTestBehavior::CrashDuringTraversal
+        | SanitizationInspectionTestBehavior::HangDuringTraversal => {
+            phase == SanitizationInspectionTestPhase::Traversal
+        }
+        SanitizationInspectionTestBehavior::HangDuringDecode => {
+            phase == SanitizationInspectionTestPhase::Decode
+        }
+        SanitizationInspectionTestBehavior::Real => false,
+    };
+    if !selected {
+        return;
+    }
+    let marker = match phase {
+        SanitizationInspectionTestPhase::Traversal => b"traversal".as_slice(),
+        SanitizationInspectionTestPhase::Decode => b"decode".as_slice(),
+    };
+    let _ = std::fs::write(marker_path, marker);
+    match behavior {
+        SanitizationInspectionTestBehavior::CrashDuringTraversal => std::process::abort(),
+        SanitizationInspectionTestBehavior::HangDuringTraversal
+        | SanitizationInspectionTestBehavior::HangDuringDecode => loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        },
+        SanitizationInspectionTestBehavior::Real => {}
+    }
 }
 
 fn format_object_id(id: ObjectId) -> String {
@@ -1217,7 +1465,7 @@ fn blocking_message(control_id: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lopdf::{dictionary, Object};
+    use lopdf::{dictionary, Object, Stream};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1251,6 +1499,51 @@ mod tests {
             .iter()
             .find(|control| control.control_id == id)
             .unwrap()
+    }
+
+    fn inspect_javascript_streams(
+        payloads: &[&[u8]],
+        decoded_stream_limit: u64,
+        total_decoded_limit: u64,
+    ) -> Result<SanitizationInspectionReport, SessionJobOperationError> {
+        let directory = tempfile::tempdir().unwrap();
+        let mut document = Document::new();
+        let pages = document.add_object(
+            dictionary! { "Type" => "Pages", "Kids" => Vec::<Object>::new(), "Count" => 0 },
+        );
+        let mut additional_actions = Dictionary::new();
+        for (index, payload) in payloads.iter().enumerate() {
+            let mut stream = Stream::new(Dictionary::new(), payload.to_vec());
+            stream.compress().unwrap();
+            let stream = document.add_object(stream);
+            let action = document.add_object(dictionary! {
+                "S" => "JavaScript",
+                "JS" => Object::Reference(stream),
+            });
+            additional_actions.set(format!("T{index}"), Object::Reference(action));
+        }
+        let catalog = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages),
+            "AA" => Object::Dictionary(additional_actions),
+        });
+        document.trailer.set("Root", Object::Reference(catalog));
+        let path = directory.path().join("javascript-streams.pdf");
+        document.save(&path).unwrap();
+        inspect_snapshot_with_configuration(
+            &path,
+            None,
+            SANITIZATION_REPORT_SCHEMA_VERSION,
+            SANITIZATION_POLICY_SCHEMA_VERSION,
+            SANITIZATION_INSPECTION_PROFILE,
+            &|| Ok(()),
+            InspectionConfiguration {
+                decoded_stream_limit,
+                total_decoded_limit,
+                #[cfg(feature = "sanitization-test-support")]
+                test_behavior: SanitizationInspectionTestBehavior::Real,
+            },
+        )
     }
 
     #[test]
@@ -1363,9 +1656,8 @@ mod tests {
             SANITIZATION_INSPECTION_PROFILE,
             &|| {
                 if calls.fetch_add(1, Ordering::SeqCst) > 5 {
-                    Err(SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_CANCELLED",
-                        "controlled cancellation",
+                    Err(SessionJobOperationError::Cancelled(
+                        crate::document_session::SessionJobCancellationReason::UserRequested,
                     ))
                 } else {
                     Ok(())
@@ -1373,7 +1665,48 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(error, SessionJobOperationError::Failed(_)));
+        assert!(matches!(error, SessionJobOperationError::Cancelled(_)));
+        assert!(!matches!(error, SessionJobOperationError::Failed(_)));
+    }
+
+    #[test]
+    fn decoded_stream_limits_account_exact_boundary_and_fail_closed() {
+        let normal_payload = vec![b'A'; 32];
+        let normal = inspect_javascript_streams(&[&normal_payload], 64, 256).unwrap();
+        assert_eq!(normal.limits.decoded_bytes, 32);
+        assert!(control(&normal, "document_javascript").present);
+        assert!(!serde_json::to_string(&normal).unwrap().contains("AAAAAAAA"));
+
+        let exact_payload = vec![b'B'; 64];
+        let exact = inspect_javascript_streams(&[&exact_payload], 64, 256).unwrap();
+        assert_eq!(exact.limits.decoded_bytes, 64);
+
+        let oversized_payload = vec![b'C'; 65];
+        let error = inspect_javascript_streams(&[&oversized_payload], 64, 256).unwrap_err();
+        assert!(matches!(
+            error,
+            SessionJobOperationError::Failed(ref failure)
+                if failure.code == "SANITIZATION_DECODE_LIMIT_EXCEEDED"
+        ));
+    }
+
+    #[test]
+    fn total_decoded_stream_budget_and_overflow_fail_closed() {
+        let first = vec![b'D'; 40];
+        let second = vec![b'E'; 40];
+        let error = inspect_javascript_streams(&[&first, &second], 64, 64).unwrap_err();
+        assert!(matches!(
+            error,
+            SessionJobOperationError::Failed(ref failure)
+                if failure.code == "SANITIZATION_DECODE_LIMIT_EXCEEDED"
+        ));
+
+        let overflow = checked_decoded_total(u64::MAX - 1, 2, 2, u64::MAX).unwrap_err();
+        assert!(matches!(
+            overflow,
+            SessionJobOperationError::Failed(ref failure)
+                if failure.code == "SANITIZATION_DECODE_LIMIT_EXCEEDED"
+        ));
     }
 
     #[test]

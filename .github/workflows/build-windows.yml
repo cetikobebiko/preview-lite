@@ -17,13 +17,45 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.16.0
+          cache: npm
+
+      - name: Pin npm used by the lockfile
+        run: npm install --global npm@10.9.2
+
+      - name: Verify Node.js toolchain
+        run: node --version && npm --version
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm run test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check Svelte and TypeScript
+        run: npx --no-install svelte-check --tsconfig ./jsconfig.json
+
+      - name: Verify Rust formatting
+        run: cargo fmt --all -- --check
+        working-directory: src-tauri
+
+      - name: Check Rust targets
+        run: cargo check --locked --all-targets --all-features
+        working-directory: src-tauri
+
+      - name: Run Rust tests
+        run: cargo test --locked
+        working-directory: src-tauri
+
+      - name: Enforce strict Rust lint gate
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        working-directory: src-tauri
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0

@@ -1,90 +1,79 @@
 <script>
   import { onMount } from "svelte";
-  import { fade, fly } from "svelte/transition";
-  import { summarizeSelectionOrPage } from "../pdfState.js";
-  import { listen } from "../services/platform/events.js";
+  import { fly } from "svelte/transition";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
+  import { aiController } from "../services/app/aiController.js";
+  import { aiState } from "../stores/aiState.svelte.js";
 
   const featureContext = getRuntimeFeatureContext();
   const featurePresentation = getFeaturePresentation("local_ai", featureContext);
 
-  let selectedText = "";
-  let menuX = 0;
-  let menuY = 0;
-  let isVisible = false;
-  let aiResponse = "";
-  let isProcessing = false;
-
-  let unlistenToken = null;
-  let unlistenDone = null;
+  let selectedText = $state("");
+  let menuX = $state(0);
+  let menuY = $state(0);
+  let isVisible = $state(false);
+  let aiResponse = $state("");
+  let isProcessing = $state(false);
   let selectionTimer = null;
+  let activeHandle = null;
 
-  function handleMouseUp(e) {
-    // Biraz bekle (seçimin DOM'a tam yansıması için)
+  function cleanupActiveHandle() {
+    if (activeHandle) {
+      void activeHandle.cancel();
+      activeHandle = null;
+    }
+  }
+
+  function handleMouseUp() {
     if (selectionTimer !== null) clearTimeout(selectionTimer);
     selectionTimer = setTimeout(() => {
       selectionTimer = null;
       const selection = window.getSelection();
-      const text = selection.toString().trim();
-      
+      const text = selection ? selection.toString().trim() : "";
+
       if (text.length > 5) {
+        cleanupActiveHandle();
         selectedText = text;
         const range = selection.getRangeAt(0);
         const rect = range.getBoundingClientRect();
-        
-        // Menüyü seçimin altına hizala
+
         menuX = rect.left + window.scrollX;
         menuY = rect.bottom + window.scrollY + 10;
         isVisible = true;
         aiResponse = "";
       } else {
+        cleanupActiveHandle();
         isVisible = false;
       }
     }, 100);
   }
 
   function handleMouseDown(e) {
-    // Eğer menü içerisine tıklanmıyorsa menüyü gizle
-    if (isVisible && !e.target.closest('.ai-context-menu')) {
+    if (isVisible && !e.target.closest(".ai-context-menu")) {
+      cleanupActiveHandle();
       isVisible = false;
       aiResponse = "";
     }
   }
 
   onMount(() => {
-    let destroyed = false;
     document.addEventListener("mouseup", handleMouseUp);
     document.addEventListener("mousedown", handleMouseDown);
-    void listen("ai_summary_token", (event) => {
-      aiResponse += event.payload;
-    }).then((dispose) => { if (destroyed) dispose(); else unlistenToken = dispose; })
-      .catch((error) => console.warn("AI summary token listener kurulamadı:", error));
-    void listen("ai_summary_done", () => {
-      isProcessing = false;
-    }).then((dispose) => { if (destroyed) dispose(); else unlistenDone = dispose; })
-      .catch((error) => console.warn("AI summary completion listener kurulamadı:", error));
+
     return () => {
-      destroyed = true;
       document.removeEventListener("mouseup", handleMouseUp);
       document.removeEventListener("mousedown", handleMouseDown);
       if (selectionTimer !== null) clearTimeout(selectionTimer);
       selectionTimer = null;
-      unlistenToken?.();
-      unlistenDone?.();
-      unlistenToken = null;
-      unlistenDone = null;
+      cleanupActiveHandle();
     };
   });
 
   async function callAiAction(targetLength) {
     try {
-      return await guardFeatureAction(
-        "local_ai",
-        featureContext,
-        () => performAiAction(targetLength),
-      );
+      return await guardFeatureAction("local_ai", featureContext, () => performAiAction(targetLength));
     } catch (error) {
       if (error instanceof FeatureUnavailableError) {
         aiResponse = error.presentation?.warning || error.message;
@@ -97,30 +86,42 @@
   async function performAiAction(targetLength) {
     isProcessing = true;
     aiResponse = "";
-    let ollamaUrl = localStorage.getItem("ollamaUrl") || "http://127.0.0.1:11434";
-    let llmModel = localStorage.getItem("llmModel") || "llama3";
+    cleanupActiveHandle();
     try {
-      await summarizeSelectionOrPage(selectedText, targetLength, ollamaUrl, llmModel);
+      const handle = aiController.startSummary(selectedText, targetLength, (delta) => {
+        aiResponse += delta;
+      });
+      activeHandle = handle;
+      await handle.done;
     } catch (e) {
-      aiResponse = "Hata: " + e;
+      if (e?.code === "AI_REQUEST_CANCELLED") {
+        aiResponse += " [İptal Edildi]";
+      } else {
+        aiResponse = "Hata: " + (e?.message || e);
+      }
+    } finally {
       isProcessing = false;
+      activeHandle = null;
     }
   }
 </script>
 
 {#if isVisible}
-  <div 
-    class="ai-context-menu glass-panel" 
+  <div
+    class="ai-context-menu glass-panel"
     style="left: {menuX}px; top: {menuY}px;"
     transition:fly={{ y: -10, duration: 200 }}
   >
     <FeatureNotice featureId="local_ai" compact />
-    <p class="privacy-warning">Seçili içerik yapılandırılan AI endpoint’ine gönderilebilir.</p>
+    <p class="privacy-warning">
+      {aiState.modeLabel}: Seçili metin, özetleme/açıklama talimatı ve LLM model adı ({aiState.llmModel}) yapılandırılan endpoint'e iletilir.
+    </p>
+
     {#if !aiResponse && !isProcessing}
       <div class="actions">
-        <button on:click={() => callAiAction("short")} disabled={!featurePresentation.runnable}>✨ Özetle</button>
-        <button on:click={() => callAiAction("detailed")} disabled={!featurePresentation.runnable}>📚 Açıkla</button>
-        <button on:click={() => callAiAction("bullet")} disabled={!featurePresentation.runnable}>📝 Maddeleştir</button>
+        <button onclick={() => callAiAction("short")} disabled={!featurePresentation.runnable}>✨ Özetle</button>
+        <button onclick={() => callAiAction("detailed")} disabled={!featurePresentation.runnable}>📚 Açıkla</button>
+        <button onclick={() => callAiAction("bullet")} disabled={!featurePresentation.runnable}>📝 Maddeleştir</button>
       </div>
     {:else}
       <div class="ai-response-box">
@@ -141,11 +142,11 @@
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 8px;
     padding: 8px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     min-width: 200px;
     max-width: 350px;
   }
-  
+
   .actions {
     display: flex;
     flex-direction: column;
@@ -158,7 +159,7 @@
     line-height: 1.35;
     margin: 4px;
   }
-  
+
   .actions button {
     background: none;
     border: none;
@@ -170,11 +171,11 @@
     font-size: 13px;
     transition: background 0.2s;
   }
-  
+
   .actions button:hover {
     background: rgba(255, 255, 255, 0.1);
   }
-  
+
   .ai-response-box {
     padding: 8px;
     font-size: 13px;
@@ -183,7 +184,7 @@
     max-height: 250px;
     overflow-y: auto;
   }
-  
+
   .loader {
     font-size: 11px;
     opacity: 0.6;

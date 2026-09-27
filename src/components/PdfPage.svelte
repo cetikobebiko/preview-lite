@@ -64,10 +64,9 @@
   export let generationId = 0;
   export let documentGenerationId = 0;
 
-  export let prepressHeatmap = null;
-  export let prepressSeparations = null;
-  export let prepressChannels = { c: true, m: true, y: true, k: true };
-  export let prepressBoxes = null;
+  export let approximateCoveragePreview = null;
+  export let approximateProcessPreview = null;
+  export let approximateProcessChannels = { c: true, m: true, y: true, k: true };
   export let sensitiveDataHighlights = [];
   export let secureRedactionEnabled = false;
   export let secureRedactionSelectionMode = false;
@@ -711,7 +710,7 @@
           bind:this={canvasRef}
           class="pdf-canvas"
           aria-label="Sayfa {pageIndex + 1}"
-          style="width: 100%; height: 100%; opacity: {prepressSeparations ? 0 : 1};"
+          style="width: 100%; height: 100%; opacity: {approximateProcessPreview ? 0 : 1};"
         ></canvas>
 
         {#if secureRedactionEnabled && (secureRedactionSelectionMode || positionedPendingRedactions.length > 0)}
@@ -741,24 +740,13 @@
           </div>
         {/if}
 
-        {#if prepressHeatmap}
+        {#if approximateCoveragePreview}
           <img
-            src={`data:image/png;base64,${prepressHeatmap}`}
+            src={`data:image/png;base64,${approximateCoveragePreview.heatmapPngBase64}`}
             class="heatmap-overlay"
             style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; mix-blend-mode: multiply;"
-            alt="Heatmap"
+            alt="RGB-türevli tahmini eşik ısı haritası"
           />
-        {/if}
-
-        {#if prepressBoxes}
-          <div class="box-guides" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;">
-            {#if prepressBoxes.bleed > 0}
-              <div style="position: absolute; top: {prepressBoxes.bleed * 2.834 * lastRenderedScale}px; bottom: {prepressBoxes.bleed * 2.834 * lastRenderedScale}px; left: {prepressBoxes.bleed * 2.834 * lastRenderedScale}px; right: {prepressBoxes.bleed * 2.834 * lastRenderedScale}px; border: 1px dashed red;"></div>
-            {/if}
-            {#if prepressBoxes.trim > 0}
-              <div style="position: absolute; top: {prepressBoxes.trim * 2.834 * lastRenderedScale}px; bottom: {prepressBoxes.trim * 2.834 * lastRenderedScale}px; left: {prepressBoxes.trim * 2.834 * lastRenderedScale}px; right: {prepressBoxes.trim * 2.834 * lastRenderedScale}px; border: 1px dashed green;"></div>
-            {/if}
-          </div>
         {/if}
 
         {#if paintedRenderKey && textLayoutItems.length > 0}
@@ -840,12 +828,12 @@
             class="overlay-plane"
             style="width: {baseImgWidth}px; height: {baseImgHeight}px;"
           >
-            {#if prepressSeparations}
-              <div class="separations-container" style="position: absolute; inset: 0; transform: rotate({normalizedRotation}deg);">
-                {#if prepressChannels.c} <img src={`data:image/png;base64,${prepressSeparations.c_base64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="C"/> {/if}
-                {#if prepressChannels.m} <img src={`data:image/png;base64,${prepressSeparations.m_base64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="M"/> {/if}
-                {#if prepressChannels.y} <img src={`data:image/png;base64,${prepressSeparations.y_base64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="Y"/> {/if}
-                {#if prepressChannels.k} <img src={`data:image/png;base64,${prepressSeparations.k_base64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="K"/> {/if}
+            {#if approximateProcessPreview}
+              <div class="approximate-process-preview" style="position: absolute; inset: 0; transform: rotate({normalizedRotation}deg);">
+                {#if approximateProcessChannels.c} <img src={`data:image/png;base64,${approximateProcessPreview.cPreviewPngBase64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="Tahmini C görünümü"/> {/if}
+                {#if approximateProcessChannels.m} <img src={`data:image/png;base64,${approximateProcessPreview.mPreviewPngBase64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="Tahmini M görünümü"/> {/if}
+                {#if approximateProcessChannels.y} <img src={`data:image/png;base64,${approximateProcessPreview.yPreviewPngBase64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="Tahmini Y görünümü"/> {/if}
+                {#if approximateProcessChannels.k} <img src={`data:image/png;base64,${approximateProcessPreview.kPreviewPngBase64}`} style="position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: multiply;" alt="Tahmini K görünümü"/> {/if}
               </div>
             {/if}
 

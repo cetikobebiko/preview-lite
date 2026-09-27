@@ -2,293 +2,114 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import {
-  analyzeSessionColorSpaces,
-  calculateSessionInkCoverage,
-  renderSessionSeparationChannels,
+  generateSessionRgbDerivedCoveragePreview,
+  generateSessionRgbDerivedProcessPreview,
+  inspectSessionPrintResources,
 } from "../services/backend/prepress.js";
 import PrepressPanel from "./PrepressPanel.svelte";
 
 vi.mock("../services/backend/prepress.js", () => ({
-  analyzeSessionColorSpaces: vi.fn(),
-  calculateSessionInkCoverage: vi.fn(),
-  renderSessionSeparationChannels: vi.fn(),
+  inspectSessionPrintResources: vi.fn(),
+  generateSessionRgbDerivedCoveragePreview: vi.fn(),
+  generateSessionRgbDerivedProcessPreview: vi.fn(),
 }));
 
-function createDeferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-}
+const identity = (requestId) => ({ sessionId: "session-test-1", contentGeneration: 7, physicalPageIndex: 2, requestId, methodologyVersion: "naive-rgb-to-cmyk/1" });
+const metadata = { schemaVersion: "rgb-derived-print-preview/1", methodology: "naive-rgb-to-cmyk/1", sourceColorModel: "pdfium_display_rgb", approximate: true, colorManaged: false, outputIntentApplied: false, spotColorsPreserved: false, overprintSimulated: false, renderingIntent: "not_applied", warnings: [] };
+const report = (requestId) => ({ schemaVersion: "print-resource-inspection/1", inspectionVersion: "print-resource-inspection/1.0", identity: { ...identity(requestId), methodologyVersion: "print-resource-inspection/1.0" }, summaryStatus: "inspection_incomplete", documentFacts: { pdfVersion: "1.7", pageCount: 1, encrypted: false }, colorSpaces: [{ family: "device_cmyk", referenceCount: 1 }], iccProfiles: [], outputIntents: [], spotColors: [], transparency: [], fonts: [], pageBoxes: [{ physicalPageIndex: 2, rotationDegrees: 0, mediaBox: { coordinates: [0, 0, 100, 200] }, cropBox: { coordinates: [0, 0, 100, 200] }, bleedBox: { coordinates: null }, trimBox: { coordinates: null }, artBox: { coordinates: null } }], coverage: { inspectedAreas: ["catalog"], notInspectedAreas: ["content_stream_usage"], incompleteAreas: [], limitations: ["usage not checked"] }, warnings: [], truncated: false, conformanceClaim: false });
+const processPreview = (requestId) => ({ identity: identity(requestId), metadata, cPreviewPngBase64: "c", mPreviewPngBase64: "m", yPreviewPngBase64: "y", kPreviewPngBase64: "k" });
+const coveragePreview = (requestId) => ({ identity: identity(requestId), metadata, heatmapPngBase64: "heat", pixelStatistics: { pixelsAboveThreshold: 1, totalPixels: 2, averageEstimatedChannelSumPercent: 50 } });
 
-async function flushAsyncWork() {
-  await Promise.resolve();
-  await tick();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+function deferredHandle() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject, cancel: vi.fn().mockResolvedValue({ status: "cancel_pending" }) };
 }
-
-function renderReadyPanel(props = {}, events = {}) {
-  return render(PrepressPanel, {
-    props: {
-      sessionId: "session-test-1",
-      pageIndex: 2,
-      contentGeneration: 7,
-      isDocumentReady: true,
-      scale: 1.5,
-      ...props,
-    },
-    events,
-  });
+const resolvedHandle = (value) => ({ promise: Promise.resolve(value), cancel: vi.fn().mockResolvedValue({}) });
+function renderReady(props = {}, events = {}) {
+  return render(PrepressPanel, { props: { sessionId: "session-test-1", pageIndex: 2, contentGeneration: 7, isDocumentReady: true, scale: 1.5, ...props }, events });
 }
 
 beforeEach(() => {
-  analyzeSessionColorSpaces.mockReset();
-  calculateSessionInkCoverage.mockReset();
-  renderSessionSeparationChannels.mockReset();
+  vi.clearAllMocks();
+  let sequence = 0;
+  vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => `request-${++sequence}`);
 });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-});
-
-describe("PrepressPanel document contract", () => {
-  it("fiziksel page indexini IPC ve event payload'ında kullanır ve 5 event payload'ında (sessionId, contentGeneration, pageIndex) taşır", async () => {
-    const separationResult = {
-      c_base64: "c",
-      m_base64: "m",
-      y_base64: "y",
-      k_base64: "k",
-    };
-    renderSessionSeparationChannels.mockResolvedValue(separationResult);
-    calculateSessionInkCoverage.mockResolvedValue({ heatmap_png_base64: "heatmap_data" });
-
-    const onSeparationsReady = vi.fn();
-    const onHeatmapReady = vi.fn();
-    const onChannelsChanged = vi.fn();
-    const onGuidesChanged = vi.fn();
-    const onApplyBoxes = vi.fn();
-
-    const { getByRole } = renderReadyPanel({}, {
-      separationsReady: onSeparationsReady,
-      heatmapReady: onHeatmapReady,
-      channelsChanged: onChannelsChanged,
-      guidesChanged: onGuidesChanged,
-      applyBoxes: onApplyBoxes,
-    });
-
-    // 1. separationsReady
-    await fireEvent.click(getByRole("button", { name: "Kanalları Çıkar" }));
-    await waitFor(() => {
-      expect(renderSessionSeparationChannels).toHaveBeenCalledWith(
-        "session-test-1",
-        7,
-        2,
-        1.5,
-      );
-      expect(onSeparationsReady).toHaveBeenCalledOnce();
-    });
-
-    expect(onSeparationsReady.mock.calls[0][0].detail).toEqual({
-      images: separationResult,
-      channels: { c: true, m: true, y: true, k: true },
-      sessionId: "session-test-1",
-      pageIndex: 2,
-      contentGeneration: 7,
-    });
-
-    // 2. channelsChanged
-    const cCheckbox = getByRole("checkbox", { name: "C" });
-    await fireEvent.click(cCheckbox);
-    expect(onChannelsChanged).toHaveBeenCalledOnce();
-    expect(onChannelsChanged.mock.calls[0][0].detail).toMatchObject({
-      sessionId: "session-test-1",
-      contentGeneration: 7,
-      pageIndex: 2,
-      channels: { c: false, m: true, y: true, k: true },
-    });
-
-    // 3. heatmapReady
-    await fireEvent.click(getByRole("button", { name: "Isı Haritası Çıkar" }));
-    await waitFor(() => {
-      expect(calculateSessionInkCoverage).toHaveBeenCalledWith(
-        "session-test-1",
-        7,
-        2,
-        300,
-        1.5,
-      );
-      expect(onHeatmapReady).toHaveBeenCalledOnce();
-      expect(onHeatmapReady.mock.calls[0][0].detail).toMatchObject({
-        sessionId: "session-test-1",
-        contentGeneration: 7,
-        pageIndex: 2,
-        heatmap: "heatmap_data",
-      });
-    });
-
-    // 4. guidesChanged
-    const bleedInput = getByRole("spinbutton", { name: "Taşırma Payı (Bleed):" });
-    await fireEvent.input(bleedInput, { target: { value: "5.0" } });
-    expect(onGuidesChanged).toHaveBeenCalledOnce();
-    expect(onGuidesChanged.mock.calls[0][0].detail).toMatchObject({
-      sessionId: "session-test-1",
-      contentGeneration: 7,
-      pageIndex: 2,
-      boxes: { bleed: 5.0, trim: 0.0 },
-    });
-
-    // 5. applyBoxes
-    await fireEvent.click(getByRole("button", { name: "Önizleme Kılavuzlarını Güncelle" }));
-    expect(onApplyBoxes).toHaveBeenCalledOnce();
-    expect(onApplyBoxes.mock.calls[0][0].detail).toMatchObject({
-      sessionId: "session-test-1",
-      contentGeneration: 7,
-      pageIndex: 2,
-      boxes: { bleed: 5.0, trim: 0.0 },
-    });
+describe("Print inspection and approximate preview panel", () => {
+  it("uses honest permanent terminology and has no editable page-box controls", () => {
+    const { getByText, queryByText, queryByLabelText } = renderReady();
+    expect(getByText("Print Inspection & Approximate Preview")).toBeTruthy();
+    expect(getByText(/Gerçek separasyon, spot plate, ICC transform veya RIP çıktısı değildir/)).toBeTruthy();
+    expect(getByText(/gerçek Total Area Coverage veya mürekkep tüketimi değildir/)).toBeTruthy();
+    expect(queryByText("Renk Ayrımları (Separation)")).toBeNull();
+    expect(queryByLabelText(/Taşırma Payı|Kesim Payı/)).toBeNull();
   });
 
-  it("pageIndex -1 olduğunda sayfa IPC'lerini çağırmaz", async () => {
-    const { getByRole } = renderReadyPanel({ pageIndex: -1 });
-    const separationsButton = getByRole("button", { name: "Kanalları Çıkar" });
-    const heatmapButton = getByRole("button", { name: "Isı Haritası Çıkar" });
-
-    expect(separationsButton.disabled).toBe(true);
-    expect(heatmapButton.disabled).toBe(true);
-
-    await fireEvent.click(separationsButton);
-    await fireEvent.click(heatmapButton);
-    expect(renderSessionSeparationChannels).not.toHaveBeenCalled();
-    expect(calculateSessionInkCoverage).not.toHaveBeenCalled();
+  it("sends authoritative page identity and renders read-only inspection coverage", async () => {
+    inspectSessionPrintResources.mockImplementation((_session, _generation, _page, requestId) => resolvedHandle(report(requestId)));
+    const { getByRole, getByText } = renderReady();
+    await fireEvent.click(getByRole("button", { name: "PDF kaynaklarını incele" }));
+    await waitFor(() => expect(getByText(/device_cmyk/)).toBeTruthy());
+    expect(inspectSessionPrintResources).toHaveBeenCalledWith("session-test-1", 7, 2, "request-1");
+    expect(getByText(/Conformance claim:/).parentElement.textContent).toContain("false");
+    expect(getByText(/MediaBox/)).toBeTruthy();
+    expect(getByText(/İncelenmeyen:/)).toBeTruthy();
   });
 
-  it("App belge hazırlığını doğrulamadığında PDF uzantısı olsa bile IPC çağırmaz", async () => {
-    const { getByRole } = renderReadyPanel({ isDocumentReady: false });
-    const reportButton = getByRole("button", { name: "Belgeyi Analiz Et" });
-
-    expect(reportButton.disabled).toBe(true);
-    await fireEvent.click(reportButton);
-    expect(analyzeSessionColorSpaces).not.toHaveBeenCalled();
+  it("emits process preview with request ownership and methodology metadata", async () => {
+    generateSessionRgbDerivedProcessPreview.mockImplementation((_session, _generation, _page, requestId) => resolvedHandle(processPreview(requestId)));
+    const onReady = vi.fn();
+    const { getByRole, getAllByText } = renderReady({}, { processPreviewReady: onReady });
+    await fireEvent.click(getByRole("button", { name: "Tahmini C/M/Y/K görünümü üret" }));
+    await waitFor(() => expect(onReady.mock.calls.some(([event]) => event.detail?.result)).toBe(true));
+    expect(generateSessionRgbDerivedProcessPreview).toHaveBeenCalledWith("session-test-1", 7, 2, "request-1", 1.5);
+    const readyEvent = onReady.mock.calls.find(([event]) => event.detail?.result)[0];
+    expect(readyEvent.detail).toMatchObject({ physicalPageIndex: 2, requestId: "request-1" });
+    expect(getAllByText("APPROXIMATE RGB-DERIVED PREVIEW").length).toBeGreaterThan(0);
+    expect(getAllByText(/outputIntentApplied: false/).length).toBeGreaterThan(0);
   });
 
-  it("page değişiminde sayfa sonuçlarını, generation değişiminde belge raporunu temizler", async () => {
-    analyzeSessionColorSpaces.mockResolvedValue({
-      rgb_count: 1,
-      cmyk_count: 2,
-      grayscale_count: 3,
-      spot_count: 4,
-    });
-    renderSessionSeparationChannels.mockResolvedValue({
-      c_base64: "c",
-      m_base64: "m",
-      y_base64: "y",
-      k_base64: "k",
-    });
-    calculateSessionInkCoverage.mockResolvedValue({
-      heatmap_png_base64: "heatmap",
-    });
+  it("keeps only one approximate preview mode active", async () => {
+    generateSessionRgbDerivedProcessPreview.mockImplementation((_a, _b, _c, requestId) => resolvedHandle(processPreview(requestId)));
+    generateSessionRgbDerivedCoveragePreview.mockImplementation((_a, _b, _c, requestId) => resolvedHandle(coveragePreview(requestId)));
+    const onProcess = vi.fn(), onCoverage = vi.fn();
+    const { getByRole } = renderReady({}, { processPreviewReady: onProcess, coveragePreviewReady: onCoverage });
+    await fireEvent.click(getByRole("button", { name: "Tahmini C/M/Y/K görünümü üret" }));
+    await waitFor(() => expect(onProcess).toHaveBeenCalled());
+    await fireEvent.click(getByRole("button", { name: "Tahmini eşik ısı haritası üret" }));
+    await waitFor(() => expect(onCoverage).toHaveBeenCalled());
+    expect(onProcess.mock.calls.some(([event]) => event.detail?.result === null && event.detail.requestId === "request-1")).toBe(true);
+  });
 
-    const {
-      rerender,
-      getByRole,
-      getByText,
-      queryByRole,
-      queryByText,
-    } = renderReadyPanel();
-
-    await fireEvent.click(getByRole("button", { name: "Belgeyi Analiz Et" }));
-    await fireEvent.click(getByRole("button", { name: "Kanalları Çıkar" }));
-    await fireEvent.click(getByRole("button", { name: "Isı Haritası Çıkar" }));
-
-    await waitFor(() => {
-      expect(getByText("RGB Objeler:").parentElement.textContent).toContain("1");
-      expect(getByText(/Önizleme üzerinde aktif kanallar/)).toBeTruthy();
-      expect(getByRole("button", { name: "Temizle" })).toBeTruthy();
-    });
-
-    await rerender({
-      sessionId: "session-test-1",
-      pageIndex: 3,
-      contentGeneration: 7,
-      isDocumentReady: true,
-      scale: 1.5,
-    });
+  it("cancels and rejects stale work after a page switch", async () => {
+    const oldHandle = deferredHandle();
+    generateSessionRgbDerivedProcessPreview.mockReturnValue(oldHandle);
+    const onReady = vi.fn();
+    const { getByRole, rerender } = renderReady({}, { processPreviewReady: onReady });
+    await fireEvent.click(getByRole("button", { name: "Tahmini C/M/Y/K görünümü üret" }));
+    await rerender({ sessionId: "session-test-1", pageIndex: 3, contentGeneration: 7, isDocumentReady: true, scale: 1.5 });
     await tick();
-
-    expect(queryByText(/Önizleme üzerinde aktif kanallar/)).toBeNull();
-    expect(queryByRole("button", { name: "Temizle" })).toBeNull();
-    expect(getByText("RGB Objeler:")).toBeTruthy();
-
-    await rerender({
-      sessionId: "session-test-1",
-      pageIndex: 3,
-      contentGeneration: 8,
-      isDocumentReady: true,
-      scale: 1.5,
-    });
+    expect(oldHandle.cancel).toHaveBeenCalled();
+    oldHandle.resolve(processPreview("request-1"));
     await tick();
-    expect(queryByText("RGB Objeler:")).toBeNull();
+    expect(onReady.mock.calls.some(([event]) => event.detail?.result)).toBe(false);
   });
 
-  it("prop değişiminde loading'i temizler ve eski async sonucu ayrı request kimliğiyle düşürür", async () => {
-    const oldRequest = createDeferred();
-    const newRequest = createDeferred();
-    renderSessionSeparationChannels
-      .mockReturnValueOnce(oldRequest.promise)
-      .mockReturnValueOnce(newRequest.promise);
-
-    const onSeparationsReady = vi.fn();
-    const { rerender, getByRole, queryByText } = renderReadyPanel(
-      { pageIndex: 0 },
-      { separationsReady: onSeparationsReady },
-    );
-
-    await fireEvent.click(getByRole("button", { name: "Kanalları Çıkar" }));
-    expect(getByRole("button", { name: "Hazırlanıyor..." })).toBeTruthy();
-
-    await rerender({
-      sessionId: "session-test-1",
-      pageIndex: 1,
-      contentGeneration: 7,
-      isDocumentReady: true,
-      scale: 1.5,
-    });
-    await tick();
-    expect(getByRole("button", { name: "Kanalları Çıkar" }).disabled).toBe(false);
-
-    await fireEvent.click(getByRole("button", { name: "Kanalları Çıkar" }));
-    newRequest.resolve({ c_base64: "new" });
-
-    await waitFor(() => expect(onSeparationsReady).toHaveBeenCalledOnce());
-    expect(onSeparationsReady.mock.calls[0][0].detail.pageIndex).toBe(1);
-
-    oldRequest.resolve({ c_base64: "old" });
-    await flushAsyncWork();
-
-    expect(onSeparationsReady).toHaveBeenCalledOnce();
-    expect(queryByText("Hazırlanıyor...")).toBeNull();
+  it("does not call PDF operations before the session document is ready", async () => {
+    const { getByRole } = renderReady({ isDocumentReady: false });
+    const buttons = ["PDF kaynaklarını incele", "Tahmini C/M/Y/K görünümü üret", "Tahmini eşik ısı haritası üret"];
+    for (const name of buttons) { const button = getByRole("button", { name }); expect(button.disabled).toBe(true); await fireEvent.click(button); }
+    expect(inspectSessionPrintResources).not.toHaveBeenCalled();
+    expect(generateSessionRgbDerivedProcessPreview).not.toHaveBeenCalled();
   });
 
-  it("error state'ini belge generation değişiminde temizler", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    analyzeSessionColorSpaces.mockRejectedValue(new Error("color failed"));
-
-    const { rerender, getByRole, getByText, queryByText } = renderReadyPanel();
-    await fireEvent.click(getByRole("button", { name: "Belgeyi Analiz Et" }));
-    await waitFor(() => expect(getByText("color failed")).toBeTruthy());
-
-    await rerender({
-      sessionId: "session-test-1",
-      pageIndex: 2,
-      contentGeneration: 9,
-      isDocumentReady: true,
-      scale: 1.5,
-    });
-    await tick();
-    expect(queryByText("color failed")).toBeNull();
+  it("shows the encrypted inspection capability difference as a typed failure", async () => {
+    const error = Object.assign(new Error("Print resource inspection encrypted session snapshot girdisini desteklemiyor"), { code: "PRINT_INSPECTION_ENCRYPTED_INPUT_UNSUPPORTED" });
+    inspectSessionPrintResources.mockReturnValue({ promise: Promise.reject(error), cancel: vi.fn() });
+    const { getByRole, findByText } = renderReady();
+    await fireEvent.click(getByRole("button", { name: "PDF kaynaklarını incele" }));
+    expect(await findByText(/encrypted session snapshot/)).toBeTruthy();
   });
 });

@@ -1,0 +1,70 @@
+name: Fast local (FAST_LOCAL)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fast-local-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-local:
+    name: FAST_LOCAL (independent, no PDFium / no artifact)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: npm
+
+      - name: Pin npm used by the lockfile
+        run: npm install --global npm@10.9.2
+
+      - name: Verify Node.js toolchain
+        run: node --version && npm --version
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Validate test-execution registry
+        run: node scripts/validate-test-execution-registry.mjs
+
+      - name: Validate PDF corpus coverage
+        run: node scripts/validate-pdf-corpus-coverage.mjs
+
+      - name: Validate PDFium runtime manifest
+        run: node scripts/validate-pdfium-runtime-manifest.mjs
+
+      - name: Enforce B5 fail-closed static invariants
+        run: node scripts/verify-test-evidence.mjs
+
+      - name: Verify registry integrity (Rust)
+        run: cargo test --locked --test test_execution_registry_integrity
+        working-directory: src-tauri
+
+      - name: Run FAST_LOCAL targets and capture evidence
+        run: node scripts/collect-test-evidence.mjs --output test-evidence.json
+
+      - name: Verify runtime evidence (B5 false-green gate)
+        run: node scripts/verify-test-evidence.mjs --cargo-json test-evidence.json --vitest-json test-evidence.json

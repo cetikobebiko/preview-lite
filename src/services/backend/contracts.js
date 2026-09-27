@@ -94,12 +94,16 @@ const redactionArea = objectOf({
   height: numberType,
 });
 
-const sanitizationOptions = objectOf({
-  remove_metadata: booleanType,
-  remove_annotations: booleanType,
-  remove_javascript: booleanType,
-  remove_embedded_files: booleanType,
-  remove_hidden_layers: booleanType,
+const sanitizationAcknowledgementsWire = objectOf({
+  acknowledgeSignatureInvalidation: booleanType,
+});
+
+const sanitizationPolicyWire = objectOf({
+  schemaVersion: stringType,
+  profile: stringType,
+  controls: arrayOf(stringType),
+  acknowledgements: sanitizationAcknowledgementsWire,
+  expectedInspectionVersion: stringType,
 });
 
 const redactionAppearancePolicyWire = objectOf({
@@ -144,31 +148,6 @@ const redactionRegionInputWire = objectOf({
   normalized_top_left_rect: normalizedTopLeftRectWire,
   source: stringType,
 });
-
-const visualSignatureOptions = objectOf(
-  {
-    page_index: u32Type,
-    x: numberType,
-    y: numberType,
-    width: numberType,
-    height: numberType,
-  },
-  {
-    signature_text: nullable(stringType),
-    signature_image_base64: nullable(stringType),
-  },
-);
-
-const signatureOptions = objectOf(
-  {
-    reason: stringType,
-    location: stringType,
-  },
-  {
-    contact_info: nullable(stringType),
-    visual_signature: nullable(visualSignatureOptions),
-  },
-);
 
 const command = (name, required = {}, optional = {}, validate = null) =>
   Object.freeze({
@@ -242,33 +221,29 @@ export const CONTRACTS = Object.freeze({
       pageRange: nullable(arrayOf(u32Type)),
     },
   ),
-  analyzeSessionColorSpaces: command("analyze_session_color_spaces", {
+  inspectSessionPrintResources: command("inspect_session_print_resources", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
+    physicalPageIndex: u32Type,
+    requestId: renderIdentifierType,
   }),
-  calculateSessionInkCoverage: command("calculate_session_ink_coverage", {
+  generateSessionRgbDerivedCoveragePreview: command("generate_session_rgb_derived_coverage_preview", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
-    pageIndex: u32Type,
-    maxLimit: numberType,
+    physicalPageIndex: u32Type,
+    requestId: renderIdentifierType,
+    thresholdPercent: numberType,
     scale: numberType,
   }),
-  renderSessionSeparationChannels: command("render_session_separation_channels", {
+  generateSessionRgbDerivedProcessPreview: command("generate_session_rgb_derived_process_preview", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
-    pageIndex: u32Type,
+    physicalPageIndex: u32Type,
+    requestId: renderIdentifierType,
     scale: numberType,
-  }),
-  exportSessionPdfX: command("export_session_pages_as_pdf_x", {
-    jobId: renderIdentifierType,
-    sessionId: renderIdentifierType,
-    expectedContentGeneration: safeIntegerType,
-    standard: stringType,
-    profileName: stringType,
-    targetPath: stringType,
   }),
   extractSessionPages: command("extract_session_pages", {
     jobId: renderIdentifierType,
@@ -296,7 +271,7 @@ export const CONTRACTS = Object.freeze({
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
   }),
-  validateSessionPdfUa: command("validate_session_pdf_ua", {
+  auditSessionAccessibility: command("audit_session_accessibility", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
   }),
@@ -410,18 +385,6 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     metadata: pdfMetadata,
   }),
-  updateSessionAltText: command(
-    "update_session_alt_text",
-    {
-      sessionId: renderIdentifierType,
-      expectedContentGeneration: safeIntegerType,
-      objectId: stringType,
-    },
-    {
-      altText: nullable(stringType),
-      language: nullable(stringType),
-    },
-  ),
   saveDocumentSession: command("save_document_session", {
     sessionId: renderIdentifierType,
     expectedStateRevision: safeIntegerType,
@@ -523,79 +486,100 @@ export const CONTRACTS = Object.freeze({
     lang: stringType,
   }),
 
+  configureAiEndpoint: command("configure_ai_endpoint", {
+    url: stringType,
+    remoteApproved: booleanType,
+    privateNetworkApproved: booleanType,
+  }),
+  previewAiEndpoint: command("preview_ai_endpoint", {
+    url: stringType,
+  }),
+  getAiEndpointStatus: commandWithoutPayload("get_ai_endpoint_status"),
+  clearAiEndpointConfig: commandWithoutPayload("clear_ai_endpoint_config"),
+  cancelAiRequest: command(
+    "cancel_ai_request",
+    { requestId: stringType },
+    {
+      sessionId: nullable(renderIdentifierType),
+      expectedContentGeneration: nullable(safeIntegerType),
+      callerAttemptId: nullable(stringType),
+    },
+  ),
+
   buildSemanticIndex: command("build_semantic_index", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     chunkSize: usizeType,
     chunkOverlap: usizeType,
-    ollamaUrl: stringType,
     embedModel: stringType,
+    requestId: stringType,
   }),
   semanticSearch: command("semantic_search", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     query: stringType,
     topK: usizeType,
-    ollamaUrl: stringType,
     embedModel: stringType,
+    expectedChunkSize: usizeType,
+    expectedChunkOverlap: usizeType,
+    requestId: stringType,
   }),
   queryDocumentRag: command("query_document_rag", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     prompt: stringType,
     history: arrayOf(chatMessage),
-    ollamaUrl: stringType,
     llmModel: stringType,
     embedModel: stringType,
+    expectedChunkSize: usizeType,
+    expectedChunkOverlap: usizeType,
+    requestId: stringType,
   }),
   summarizeSelectionOrPage: command("summarize_selection_or_page", {
     textContent: stringType,
     targetLength: stringType,
-    ollamaUrl: stringType,
     llmModel: stringType,
+    requestId: stringType,
+    callerAttemptId: stringType,
   }),
 
-  getActivePlugins: commandWithoutPayload("get_active_plugins"),
-  loadPlugin: command("load_plugin", {
-    manifestPath: stringType,
+  inspectPluginPackage: command("inspect_plugin_package", {
+    packagePath: stringType,
   }),
-  unloadPlugin: command("unload_plugin", {
+  installPluginPackage: command("install_plugin_package", {
+    packagePath: stringType,
+    expectedDigest: stringType,
+  }),
+  grantPluginConsent: command("grant_plugin_consent", {
+    pluginId: stringType,
+    expectedPackageDigest: stringType,
+    expectedPermissions: arrayOf(stringType),
+  }),
+  uninstallPlugin: command("uninstall_plugin", {
     pluginId: stringType,
   }),
-  triggerPluginHook: command("trigger_plugin_hook", {
+  setPluginEnabled: command("set_plugin_enabled", {
+    pluginId: stringType,
+    enabled: booleanType,
+  }),
+  listInstalledPlugins: commandWithoutPayload("list_installed_plugins"),
+  startPluginExecution: command("start_plugin_execution", {
     pluginId: stringType,
     hookName: stringType,
-    payload: stringType,
+    payloadJson: stringType,
+    executionId: stringType,
   }),
-  runScriptDirect: command("run_script_direct", {
-    scriptContent: stringType,
+  cancelPluginExecution: command("cancel_plugin_execution", {
+    executionId: stringType,
+  }),
+  getPluginExecutionStatus: command("get_plugin_execution_status", {
+    executionId: stringType,
   }),
   addBatchJob: command("add_batch_job", {
     jobType: stringType,
     filePath: stringType,
     parameters: stringType,
-  }),
-
-  listSystemCertificates: commandWithoutPayload("list_system_certificates"),
-  signPdfPades: command("sign_pdf_pades", {
-    jobId: renderIdentifierType,
-    sessionId: renderIdentifierType,
-    expectedContentGeneration: safeIntegerType,
-    outputPath: stringType,
-    certId: stringType,
-    pin: nullable(stringType),
-    options: signatureOptions,
-  }),
-  verifyPdfSignatures: command("verify_pdf_signatures", {
-    jobId: renderIdentifierType,
-    sessionId: renderIdentifierType,
-    expectedContentGeneration: safeIntegerType,
-  }),
-  enableLtv: command("enable_ltv", {
-    sessionId: renderIdentifierType,
-    expectedContentGeneration: safeIntegerType,
-    signatureId: stringType,
   }),
 
   applyRedactions: command("apply_redactions", {
@@ -605,18 +589,18 @@ export const CONTRACTS = Object.freeze({
     outputPath: stringType,
     redactions: arrayOf(redactionArea),
   }),
-  sanitizePdfDocument: command("sanitize_pdf_document", {
-    jobId: renderIdentifierType,
-    sessionId: renderIdentifierType,
-    expectedContentGeneration: safeIntegerType,
-    outputPath: stringType,
-    options: sanitizationOptions,
-  }),
   inspectDocumentSanitization: command("inspect_document_sanitization", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     policySchemaVersion: stringType,
+  }),
+  executeDocumentSanitization: command("execute_document_sanitization", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    policy: sanitizationPolicyWire,
+    targetPath: stringType,
   }),
   scanSensitiveData: command("scan_sensitive_data", {
     jobId: renderIdentifierType,
@@ -682,19 +666,18 @@ export const PROTECTED_CONTRACT_IDS = Object.freeze([
   "applyRedactions",
   "planSecureRedaction",
   "executeSecureRedaction",
-  "sanitizePdfDocument",
   "inspectDocumentSanitization",
+  "executeDocumentSanitization",
   "scanSensitiveData",
-  "listSystemCertificates",
-  "signPdfPades",
-  "verifyPdfSignatures",
-  "enableLtv",
-  "exportPdfX",
-  "getActivePlugins",
-  "loadPlugin",
-  "unloadPlugin",
-  "triggerPluginHook",
-  "runScriptDirect",
+  "inspectPluginPackage",
+  "installPluginPackage",
+  "grantPluginConsent",
+  "uninstallPlugin",
+  "setPluginEnabled",
+  "listInstalledPlugins",
+  "startPluginExecution",
+  "cancelPluginExecution",
+  "getPluginExecutionStatus",
   "addBatchJob",
   "speakText",
   "stopSpeaking",

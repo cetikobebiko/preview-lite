@@ -1,66 +1,69 @@
 import { callBackend } from "./client.js";
 import { runSessionJob } from "./sessionJob.js";
+import {
+  validatePrintResourceInspectionReport,
+  validateRgbDerivedCoveragePreview,
+  validateRgbDerivedProcessPreview,
+} from "./prepressSchemas.js";
 
-export const analyzeSessionColorSpaces = (
+const validateHandle = (handle, validator, expected) => ({
+  ...handle,
+  promise: handle.promise.then((value) => validator(value, expected)),
+});
+
+export const inspectSessionPrintResources = (
   sessionId,
   expectedContentGeneration,
-) =>
-  runSessionJob(sessionId, (jobId) =>
-    callBackend("analyzeSessionColorSpaces", {
-      jobId,
-      sessionId,
-      expectedContentGeneration,
-    }),
-  ).promise;
+  physicalPageIndex,
+  requestId,
+) => {
+  const expected = { sessionId, contentGeneration: expectedContentGeneration, physicalPageIndex, requestId };
+  return validateHandle(runSessionJob(sessionId, (jobId) =>
+    callBackend("inspectSessionPrintResources", {
+    jobId,
+    sessionId,
+    expectedContentGeneration,
+    physicalPageIndex,
+      requestId,
+    })), validatePrintResourceInspectionReport, expected);
+};
 
-export const calculateSessionInkCoverage = (
+export const generateSessionRgbDerivedCoveragePreview = (
   sessionId,
   expectedContentGeneration,
-  pageIndex,
-  maxLimit,
+  physicalPageIndex,
+  requestId,
+  thresholdPercent,
   scale,
-) =>
-  runSessionJob(sessionId, (jobId) =>
-    callBackend("calculateSessionInkCoverage", {
-      jobId,
-      sessionId,
-      expectedContentGeneration,
-      pageIndex,
-      maxLimit,
+) => {
+  const expected = { sessionId, contentGeneration: expectedContentGeneration, physicalPageIndex, requestId };
+  return validateHandle(runSessionJob(sessionId, (jobId) =>
+    callBackend("generateSessionRgbDerivedCoveragePreview", {
+    jobId,
+    sessionId,
+    expectedContentGeneration,
+    physicalPageIndex,
+    requestId,
+    thresholdPercent,
       scale,
-    }),
-  ).promise;
+    })), validateRgbDerivedCoveragePreview, expected);
+};
 
-export const renderSessionSeparationChannels = (
+export const generateSessionRgbDerivedProcessPreview = (
   sessionId,
   expectedContentGeneration,
-  pageIndex,
+  physicalPageIndex,
+  requestId,
   scale,
-) =>
-  runSessionJob(sessionId, (jobId) =>
-    callBackend("renderSessionSeparationChannels", {
-      jobId,
-      sessionId,
-      expectedContentGeneration,
-      pageIndex,
+) => {
+  const expected = { sessionId, contentGeneration: expectedContentGeneration, physicalPageIndex, requestId };
+  return validateHandle(runSessionJob(sessionId, (jobId) =>
+    callBackend("generateSessionRgbDerivedProcessPreview", {
+    jobId,
+    sessionId,
+    expectedContentGeneration,
+    physicalPageIndex,
+    requestId,
       scale,
-    }),
-  ).promise;
-
-export const exportSessionPdfX = (
-  sessionId,
-  expectedContentGeneration,
-  targetPath,
-  standard,
-  profileName,
-) =>
-  runSessionJob(sessionId, (jobId) =>
-    callBackend("exportSessionPdfX", {
-      jobId,
-      sessionId,
-      expectedContentGeneration,
-      targetPath,
-      standard,
-      profileName,
-    }),
-  ).promise;
+    })), validateRgbDerivedProcessPreview, expected);
+};

@@ -343,12 +343,18 @@ pub(crate) struct SessionEntry {
     pub(crate) state: Mutex<DocumentSession>,
 }
 
-/// Holds the session operation read lease from secure-redaction target
+/// Holds the session operation read lease from verified-artifact target
 /// preflight through publication. Save and Save As use the corresponding write
 /// lease, so they cannot change persistence identity while this guard exists.
-pub(crate) struct SecureRedactionExportGuard {
-    pub(crate) paths: SecureRedactionExportPaths,
+pub(crate) struct VerifiedArtifactExportGuard {
+    pub(crate) paths: VerifiedArtifactExportPaths,
     _operation_lease: OwnedRwLockReadGuard<()>,
+}
+
+pub(crate) type SecureRedactionExportGuard = VerifiedArtifactExportGuard;
+
+pub(crate) struct SessionPublicationGuard {
+    pub(crate) _operation_lease: OwnedRwLockReadGuard<()>,
 }
 
 struct WorkerReadContext {
@@ -488,6 +494,7 @@ impl SessionJobFailure {
 pub enum SessionJobCancellationReason {
     UserRequested,
     Shutdown,
+    Timeout,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -605,6 +612,79 @@ impl<T> SessionJobOutcome<T> {
                 cancellation,
                 cleanup,
             },
+        }
+    }
+
+    pub fn map_to_failed<U>(
+        self,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> SessionJobOutcome<U> {
+        let (job_id, session_id, content_generation, cleanup) = match self {
+            Self::Completed {
+                job_id,
+                session_id,
+                content_generation,
+                cleanup,
+                ..
+            } => (job_id, session_id, content_generation, cleanup),
+            Self::Failed {
+                job_id,
+                session_id,
+                content_generation,
+                cleanup,
+                ..
+            } => (job_id, session_id, content_generation, cleanup),
+            Self::Cancelled {
+                job_id,
+                session_id,
+                content_generation,
+                cleanup,
+                ..
+            } => (job_id, session_id, content_generation, cleanup),
+        };
+        SessionJobOutcome::Failed {
+            job_id,
+            session_id,
+            content_generation,
+            error: SessionJobFailure::new(code, message),
+            cleanup,
+        }
+    }
+
+    pub fn map_to_cancelled<U>(
+        self,
+        cancellation: SessionJobCancellationReason,
+    ) -> SessionJobOutcome<U> {
+        let (job_id, session_id, content_generation, cleanup) = match self {
+            Self::Completed {
+                job_id,
+                session_id,
+                content_generation,
+                cleanup,
+                ..
+            } => (job_id, session_id, content_generation, cleanup),
+            Self::Failed {
+                job_id,
+                session_id,
+                content_generation,
+                cleanup,
+                ..
+            } => (job_id, session_id, content_generation, cleanup),
+            Self::Cancelled {
+                job_id,
+                session_id,
+                content_generation,
+                cleanup,
+                ..
+            } => (job_id, session_id, content_generation, cleanup),
+        };
+        SessionJobOutcome::Cancelled {
+            job_id,
+            session_id,
+            content_generation,
+            cancellation,
+            cleanup,
         }
     }
 }
@@ -2700,6 +2780,18 @@ impl SessionJobCancellationCheckpoint {
         self.token.is_cancelled()
     }
 
+    pub fn token(&self) -> &CancellationToken {
+        &self.token
+    }
+
+    pub fn reason(&self) -> Arc<Mutex<Option<SessionJobCancellationReason>>> {
+        Arc::clone(&self.reason)
+    }
+
+    pub fn cancellation_reason(&self) -> Option<SessionJobCancellationReason> {
+        *self.reason.lock()
+    }
+
     pub fn check_cancelled(&self) -> Result<(), SessionJobOperationError> {
         if self.token.is_cancelled() {
             return Err(SessionJobOperationError::Cancelled(
@@ -2837,6 +2929,60 @@ impl SessionJobChildProcessOwner {
                 ));
             }
             std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[cfg(not(test))]
+    pub(crate) fn run_with_timeout_cooperative(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancellation: &SessionJobCancellationCheckpoint,
+        cancellation_grace: Duration,
+        signal_cancellation: impl FnOnce() -> Result<(), SessionJobOperationError>,
+    ) -> Result<ExitStatus, SessionJobOperationError> {
+        cancellation.check_cancelled()?;
+        let child = command.spawn().map_err(|error| {
+            SessionJobOperationError::failed(format!("Platform süreci başlatılamadı: {error}"))
+        })?;
+        let child_guard = SessionJobChildRegistrationGuard::register(self, child);
+        let deadline = std::time::Instant::now() + timeout;
+        let mut cancellation_deadline = None;
+        let mut signal_cancellation = Some(signal_cancellation);
+        loop {
+            if cancellation.is_cancel_requested() && cancellation_deadline.is_none() {
+                if let Some(signal) = signal_cancellation.take() {
+                    signal()?;
+                }
+                cancellation_deadline = Some(std::time::Instant::now() + cancellation_grace);
+            }
+            if let Some(status) = child_guard.try_wait().map_err(|error| {
+                SessionJobOperationError::failed(format!("Platform süreci izlenemedi: {error}"))
+            })? {
+                if cancellation_deadline.is_some() {
+                    return Err(SessionJobOperationError::Cancelled(
+                        cancellation
+                            .reason
+                            .lock()
+                            .unwrap_or(SessionJobCancellationReason::UserRequested),
+                    ));
+                }
+                return Ok(status);
+            }
+            if cancellation_deadline.is_some_and(|value| std::time::Instant::now() >= value) {
+                return Err(SessionJobOperationError::Cancelled(
+                    cancellation
+                        .reason
+                        .lock()
+                        .unwrap_or(SessionJobCancellationReason::UserRequested),
+                ));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(SessionJobOperationError::failed(
+                    "Platform süreci zaman aşımına uğradı",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -3017,12 +3163,14 @@ pub struct SessionJobContext {
 /// IPC DTO: it never crosses the frontend boundary.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
-pub struct SecureRedactionExportPaths {
+pub struct VerifiedArtifactExportPaths {
     pub original_path: PathBuf,
     pub working_path: PathBuf,
     pub session_dir: PathBuf,
     pub jobs_root: PathBuf,
 }
+
+pub type SecureRedactionExportPaths = VerifiedArtifactExportPaths;
 
 impl SessionJobContext {
     pub(crate) fn detached(
@@ -3132,9 +3280,13 @@ pub struct CandidateRenderProbe {
 pub struct DocumentSessionError {
     pub code: String,
     pub message: String,
-    pub commit_state: Option<String>,
-    pub recovery_path: Option<String>,
-    pub replacement_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_state: Option<Box<str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_path: Option<Box<str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement_digest: Option<Box<str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<Box<DocumentSessionSnapshot>>,
 }
 
@@ -3168,12 +3320,12 @@ impl DocumentSessionError {
         Self {
             code: code.to_string(),
             message: error.to_string(),
-            commit_state: Some(error.state.to_string()),
+            commit_state: Some(error.state.to_string().into_boxed_str()),
             recovery_path: error
                 .recovery_path
                 .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
-            replacement_digest: error.replacement_digest.clone(),
+                .map(|path| path.to_string_lossy().to_string().into_boxed_str()),
+            replacement_digest: error.replacement_digest.as_deref().map(Box::from),
             snapshot: None,
         }
     }
@@ -3189,9 +3341,9 @@ impl DocumentSessionError {
                 "Dosya diske commit edildi ancak session publication authority doğrulanamadı; target={} digest={}",
                 target.display(), report.committed_digest
             ),
-            commit_state: Some("committed_but_session_refresh_failed".to_string()),
+            commit_state: Some(Box::from("committed_but_session_refresh_failed")),
             recovery_path: None,
-            replacement_digest: Some(report.committed_digest.clone()),
+            replacement_digest: Some(Box::from(report.committed_digest.as_str())),
             snapshot: Some(Box::new(snapshot)),
         }
     }
@@ -3476,6 +3628,8 @@ struct InstanceManifest {
     application_identifier: String,
 }
 
+type SecureRedactionSaveLeaseTestHook = Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>;
+
 pub struct DocumentSessionStore {
     pub memory_limit: usize,
     pub temp_root: PathBuf,
@@ -3498,7 +3652,7 @@ pub struct DocumentSessionStore {
     search_cancellations: Mutex<HashMap<String, (u64, CancellationToken)>>,
     mutation_transaction_manager: Arc<MutationTransactionManager>,
     shutdown_admission_closed: AtomicBool,
-    secure_redaction_save_lease_test_hook: Mutex<Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>>,
+    secure_redaction_save_lease_test_hook: Mutex<SecureRedactionSaveLeaseTestHook>,
     #[cfg(test)]
     snapshot_worker_panic_jobs: Mutex<HashSet<Uuid>>,
     #[cfg(test)]
@@ -5310,17 +5464,17 @@ impl DocumentSessionStore {
         Ok((record, working_path, _lease))
     }
 
-    pub(crate) async fn acquire_secure_redaction_export_guard(
+    pub(crate) async fn acquire_verified_artifact_export_guard(
         &self,
         session_id: &str,
         expected_generation: u64,
-    ) -> Result<SecureRedactionExportGuard, DocumentSessionError> {
+    ) -> Result<VerifiedArtifactExportGuard, DocumentSessionError> {
         let entry = self.entry(session_id)?;
         let operation_lease = entry.operation.clone().read_owned().await;
         let state = entry.state.lock();
         session_read_path(&state, Some(expected_generation))?;
-        Ok(SecureRedactionExportGuard {
-            paths: SecureRedactionExportPaths {
+        Ok(VerifiedArtifactExportGuard {
+            paths: VerifiedArtifactExportPaths {
                 original_path: state.save_target_path.clone(),
                 working_path: state.working_path.clone(),
                 session_dir: state.session_dir.clone(),
@@ -5330,6 +5484,38 @@ impl DocumentSessionStore {
         })
     }
 
+    pub(crate) async fn acquire_current_generation_publication_guard(
+        &self,
+        session_id: &str,
+        expected_generation: u64,
+    ) -> Result<SessionPublicationGuard, DocumentSessionError> {
+        let entry = self.entry(session_id)?;
+        let operation_lease = entry.operation.clone().read_owned().await;
+        let state = entry.state.lock();
+        if state.content_generation != expected_generation {
+            return Err(DocumentSessionError::new(
+                "AI_INDEX_OUTDATED",
+                format!(
+                    "Session generation mismatch: expected {}, current {}",
+                    expected_generation, state.content_generation
+                ),
+            ));
+        }
+        session_read_path(&state, Some(expected_generation))?;
+        Ok(SessionPublicationGuard {
+            _operation_lease: operation_lease,
+        })
+    }
+
+    pub(crate) async fn acquire_secure_redaction_export_guard(
+        &self,
+        session_id: &str,
+        expected_generation: u64,
+    ) -> Result<SecureRedactionExportGuard, DocumentSessionError> {
+        self.acquire_verified_artifact_export_guard(session_id, expected_generation)
+            .await
+    }
+
     #[doc(hidden)]
     pub fn secure_redaction_export_paths_for_acceptance(
         &self,
@@ -5337,7 +5523,7 @@ impl DocumentSessionStore {
     ) -> Result<SecureRedactionExportPaths, DocumentSessionError> {
         let entry = self.entry(session_id)?;
         let state = entry.state.lock();
-        Ok(SecureRedactionExportPaths {
+        Ok(VerifiedArtifactExportPaths {
             original_path: state.save_target_path.clone(),
             working_path: state.working_path.clone(),
             session_dir: state.session_dir.clone(),
@@ -5351,6 +5537,14 @@ impl DocumentSessionStore {
         hook: Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>,
     ) {
         *self.secure_redaction_save_lease_test_hook.lock() = hook;
+    }
+
+    #[doc(hidden)]
+    pub fn set_verified_artifact_save_lease_test_hook(
+        &self,
+        hook: Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>,
+    ) {
+        self.set_secure_redaction_save_lease_test_hook(hook);
     }
 
     pub async fn run_snapshot_job<T, F>(
@@ -5387,6 +5581,10 @@ impl DocumentSessionStore {
         } else {
             let job_dir = job.job_dir.clone();
             let snapshot_path = job.snapshot_path.clone();
+            let cancellation_checkpoint = SessionJobCancellationCheckpoint {
+                token: job.cancellation_token.clone(),
+                reason: Arc::clone(&job.cancellation_reason),
+            };
             match tauri::async_runtime::spawn_blocking(move || {
                 if force_snapshot_worker_panic {
                     panic!("controlled snapshot worker panic");
@@ -5397,14 +5595,12 @@ impl DocumentSessionStore {
                         error.message,
                     ))
                 })?;
-                copy_with_digest(&working_path, &snapshot_path)
-                    .map(|_| ())
-                    .map_err(|error| {
-                        SessionJobOperationError::Failed(SessionJobFailure::new(
-                            error.code,
-                            error.message,
-                        ))
-                    })
+                copy_with_digest_cancellable(
+                    &working_path,
+                    &snapshot_path,
+                    &cancellation_checkpoint,
+                )
+                .map(|_| ())
             })
             .await
             {
@@ -5510,7 +5706,7 @@ impl DocumentSessionStore {
         Ok(terminal)
     }
 
-    async fn cancel_job(
+    pub(crate) async fn cancel_job(
         &self,
         session_id: &str,
         job_id: &str,
@@ -7642,6 +7838,7 @@ pub async fn probe_candidate_render(
 pub async fn recover_document_session(
     session_id: String,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
     let entry = store.entry(&session_id)?;
     let _lease = entry.operation.clone().write_owned().await;
@@ -7715,14 +7912,19 @@ pub async fn recover_document_session(
             format!("Recovery PDF hash edilemedi: {error}"),
         )
     })?;
-    let mut state = entry.state.lock();
-    state.working_digest = Some(digest);
-    state.dirty = true;
-    state.lifecycle = SessionLifecycle::Open;
-    state.health_warning = Some("RECOVERED_CONTENT_REVALIDATED".to_string());
-    bump_generation(&mut state)?;
-    bump_revision(&mut state)?;
-    Ok(snapshot(&state))
+    let snap = {
+        let mut state = entry.state.lock();
+        state.working_digest = Some(digest);
+        state.dirty = true;
+        state.lifecycle = SessionLifecycle::Open;
+        state.health_warning = Some("RECOVERED_CONTENT_REVALIDATED".to_string());
+        bump_generation(&mut state)?;
+        bump_revision(&mut state)?;
+        snapshot(&state)
+    };
+    drop(_lease);
+    vector_store.prune_generation(&snap.id, snap.content_generation);
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -7834,22 +8036,6 @@ pub async fn export_session_pages_as_images(
             },
         )
         .await
-}
-
-#[tauri::command]
-pub async fn export_session_pages_as_pdf_x(
-    _job_id: String,
-    _session_id: String,
-    _expected_content_generation: u64,
-    _standard: String,
-    _profile_name: String,
-    _target_path: String,
-    _store: State<'_, DocumentSessionStore>,
-) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
-    Err(DocumentSessionError::new(
-        "FEATURE_UNAVAILABLE",
-        "PDF/X export mock-disabled durumdadır",
-    ))
 }
 
 #[tauri::command]
@@ -8031,12 +8217,15 @@ pub async fn print_session_pdf(
 }
 
 #[tauri::command]
-pub async fn analyze_session_color_spaces(
+pub async fn inspect_session_print_resources(
     job_id: String,
     session_id: String,
     expected_content_generation: u64,
+    physical_page_index: u32,
+    request_id: String,
     store: State<'_, DocumentSessionStore>,
-) -> Result<SessionJobOutcome<crate::prepress::ColorProfileReport>, DocumentSessionError> {
+) -> Result<SessionJobOutcome<crate::prepress::PrintResourceInspectionReport>, DocumentSessionError>
+{
     store
         .run_snapshot_job(
             &job_id,
@@ -8044,13 +8233,17 @@ pub async fn analyze_session_color_spaces(
             expected_content_generation,
             move |context| match crate::job_worker::run_job(
                 &context,
-                crate::job_worker::JobCommand::AnalyzeColorSpaces,
+                crate::job_worker::JobCommand::InspectPrintResources {
+                    content_generation: expected_content_generation,
+                    physical_page_index,
+                    request_id,
+                },
                 Duration::from_secs(120),
             )? {
-                crate::job_worker::JobResult::ColorProfile(report) => Ok(report),
+                crate::job_worker::JobResult::PrintResourceInspection(report) => Ok(report),
                 _ => Err(SessionJobOperationError::failed_with_code(
                     "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                    "Prepress analysis worker beklenmeyen sonuç döndürdü",
+                    "Print resource inspection worker beklenmeyen sonuç döndürdü",
                 )),
             },
         )
@@ -8058,15 +8251,17 @@ pub async fn analyze_session_color_spaces(
 }
 
 #[tauri::command]
-pub async fn calculate_session_ink_coverage(
+#[allow(clippy::too_many_arguments)] // Flat Tauri IPC boundary includes job/session/page ownership plus preview controls.
+pub async fn generate_session_rgb_derived_coverage_preview(
     job_id: String,
     session_id: String,
     expected_content_generation: u64,
-    page_index: u32,
-    max_limit: f32,
+    physical_page_index: u32,
+    request_id: String,
+    threshold_percent: f32,
     scale: f32,
     store: State<'_, DocumentSessionStore>,
-) -> Result<SessionJobOutcome<crate::prepress::InkCoverageResult>, DocumentSessionError> {
+) -> Result<SessionJobOutcome<crate::prepress::RgbDerivedCoveragePreview>, DocumentSessionError> {
     store
         .run_snapshot_job(
             &job_id,
@@ -8076,17 +8271,19 @@ pub async fn calculate_session_ink_coverage(
                 context.cancellation.check_cancelled()?;
                 match crate::job_worker::run_job(
                     &context,
-                    crate::job_worker::JobCommand::CalculateInkCoverage {
-                        page_index,
-                        max_limit,
+                    crate::job_worker::JobCommand::GenerateRgbDerivedCoveragePreview {
+                        content_generation: expected_content_generation,
+                        physical_page_index,
+                        request_id,
+                        threshold_percent,
                         scale,
                     },
                     Duration::from_secs(240),
                 )? {
-                    crate::job_worker::JobResult::InkCoverage(result) => Ok(result),
+                    crate::job_worker::JobResult::RgbDerivedCoveragePreview(result) => Ok(result),
                     _ => Err(SessionJobOperationError::failed_with_code(
                         "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Ink coverage worker beklenmeyen sonuç döndürdü",
+                        "RGB-derived coverage preview worker beklenmeyen sonuç döndürdü",
                     )),
                 }
             },
@@ -8095,14 +8292,15 @@ pub async fn calculate_session_ink_coverage(
 }
 
 #[tauri::command]
-pub async fn render_session_separation_channels(
+pub async fn generate_session_rgb_derived_process_preview(
     job_id: String,
     session_id: String,
     expected_content_generation: u64,
-    page_index: u32,
+    physical_page_index: u32,
+    request_id: String,
     scale: f32,
     store: State<'_, DocumentSessionStore>,
-) -> Result<SessionJobOutcome<crate::prepress::SeparationResult>, DocumentSessionError> {
+) -> Result<SessionJobOutcome<crate::prepress::RgbDerivedProcessPreview>, DocumentSessionError> {
     store
         .run_snapshot_job(
             &job_id,
@@ -8110,13 +8308,18 @@ pub async fn render_session_separation_channels(
             expected_content_generation,
             move |context| match crate::job_worker::run_job(
                 &context,
-                crate::job_worker::JobCommand::RenderSeparationChannels { page_index, scale },
+                crate::job_worker::JobCommand::GenerateRgbDerivedProcessPreview {
+                    content_generation: expected_content_generation,
+                    physical_page_index,
+                    request_id,
+                    scale,
+                },
                 Duration::from_secs(300),
             )? {
-                crate::job_worker::JobResult::Separations(result) => Ok(result),
+                crate::job_worker::JobResult::RgbDerivedProcessPreview(result) => Ok(result),
                 _ => Err(SessionJobOperationError::failed_with_code(
                     "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                    "Separation worker beklenmeyen sonuç döndürdü",
+                    "RGB-derived process preview worker beklenmeyen sonuç döndürdü",
                 )),
             },
         )
@@ -8338,7 +8541,7 @@ pub async fn get_session_structure_tree(
     session_id: String,
     expected_content_generation: u64,
     store: State<'_, DocumentSessionStore>,
-) -> Result<crate::a11y::TagNode, DocumentSessionError> {
+) -> Result<crate::a11y::AccessibilityStructureInspection, DocumentSessionError> {
     let context = store
         .acquire_worker_read(&session_id, expected_content_generation, false, None)
         .await?;
@@ -8354,7 +8557,7 @@ pub async fn get_session_structure_tree(
         .await
         .map_err(DocumentSessionError::from)?
     {
-        WorkerResult::StructureTree(tree) => Ok(tree),
+        WorkerResult::AccessibilityStructure(tree) => Ok(tree),
         _ => Err(DocumentSessionError::new(
             "PDFIUM_WORKER_PROTOCOL_ERROR",
             "Structure tree beklenmeyen worker cevabı aldı",
@@ -8363,11 +8566,11 @@ pub async fn get_session_structure_tree(
 }
 
 #[tauri::command]
-pub async fn validate_session_pdf_ua(
+pub async fn audit_session_accessibility(
     session_id: String,
     expected_content_generation: u64,
     store: State<'_, DocumentSessionStore>,
-) -> Result<crate::a11y::AccessibilityReport, DocumentSessionError> {
+) -> Result<crate::a11y::AccessibilityAuditReport, DocumentSessionError> {
     let context = store
         .acquire_worker_read(&session_id, expected_content_generation, false, None)
         .await?;
@@ -8376,17 +8579,17 @@ pub async fn validate_session_pdf_ua(
         .command_for_document(
             &context._admission,
             &context.key,
-            |document_id| WorkerCommand::ValidatePdfUa { document_id },
+            |document_id| WorkerCommand::AuditAccessibility { document_id },
             CommandTimeout::DocumentRead,
             None,
         )
         .await
         .map_err(DocumentSessionError::from)?
     {
-        WorkerResult::PdfUaValidation(report) => Ok(report),
+        WorkerResult::AccessibilityAudit(report) => Ok(report),
         _ => Err(DocumentSessionError::new(
             "PDFIUM_WORKER_PROTOCOL_ERROR",
-            "PDF/UA validation beklenmeyen worker cevabı aldı",
+            "Accessibility audit beklenmeyen worker cevabı aldı",
         )),
     }
 }
@@ -8812,8 +9015,9 @@ pub async fn rotate_session_page(
     page_index: u32,
     degrees: i32,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    store
+    let snapshot = store
         .mutate_isolated(
             session_id,
             expected_content_generation,
@@ -8822,7 +9026,9 @@ pub async fn rotate_session_page(
                 degrees,
             },
         )
-        .await
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -8831,14 +9037,17 @@ pub async fn delete_session_pages(
     expected_content_generation: u64,
     page_indices: Vec<u32>,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    store
+    let snapshot = store
         .mutate_isolated(
             session_id,
             expected_content_generation,
             MutationRecipe::DeletePages { page_indices },
         )
-        .await
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -8847,8 +9056,9 @@ pub async fn reorder_session_pages(
     expected_content_generation: u64,
     new_order: Vec<u32>,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    store
+    let snapshot = store
         .mutate_isolated(
             session_id,
             expected_content_generation,
@@ -8856,7 +9066,9 @@ pub async fn reorder_session_pages(
                 page_order: new_order,
             },
         )
-        .await
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -8867,8 +9079,9 @@ pub async fn insert_session_blank_page(
     width: f32,
     height: f32,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    store
+    let snapshot = store
         .mutate_isolated(
             session_id,
             expected_content_generation,
@@ -8878,7 +9091,9 @@ pub async fn insert_session_blank_page(
                 height,
             },
         )
-        .await
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -8893,8 +9108,9 @@ pub async fn add_session_annotation(
     color: String,
     contents: Option<String>,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    store
+    let snapshot = store
         .mutate_isolated(
             session_id,
             expected_content_generation,
@@ -8906,7 +9122,9 @@ pub async fn add_session_annotation(
                 contents,
             },
         )
-        .await
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -8916,8 +9134,9 @@ pub async fn delete_session_annotation(
     page_index: u32,
     annot_id: String,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    store
+    let snapshot = store
         .mutate_isolated(
             session_id,
             expected_content_generation,
@@ -8926,7 +9145,9 @@ pub async fn delete_session_annotation(
                 annot_id,
             },
         )
-        .await
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -8941,23 +9162,6 @@ pub async fn update_session_metadata(
         &session_id,
         expected_content_generation,
         "PDFium metadata yazma desteği sunmamaktadır; işlem desteklenmiyor",
-    )
-}
-
-#[tauri::command]
-pub async fn update_session_alt_text(
-    session_id: String,
-    expected_content_generation: u64,
-    _object_id: String,
-    _alt_text: Option<String>,
-    _language: Option<String>,
-    store: State<'_, DocumentSessionStore>,
-) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    reject_unsupported_session_write(
-        &store,
-        &session_id,
-        expected_content_generation,
-        "PDFium alt-text yazma desteği sunmamaktadır; işlem desteklenmiyor",
     )
 }
 
@@ -10697,7 +10901,7 @@ pub async fn close_all_document_sessions(
     store.close_all().await?;
     search_cache.0.lock().clear();
     layout_cache.0.lock().clear();
-    vector_store.0.write().clear();
+    vector_store.clear_all();
     Ok(())
 }
 
@@ -10709,11 +10913,12 @@ fn clear_session_derived_state(
 ) {
     search_cache.0.lock().clear();
     layout_cache.0.lock().clear();
+    vector_store.remove_session(session_id);
     let prefix = format!("session:{session_id}:");
     vector_store
         .0
         .write()
-        .retain(|key, _| !key.starts_with(&prefix));
+        .retain(|key, _| key != session_id && !key.starts_with(&prefix));
 }
 
 fn find_transition_authority(
@@ -11178,6 +11383,70 @@ fn copy_with_digest(source: &Path, target: &Path) -> Result<String, DocumentSess
             format!("Working copy fsync başarısız: {error}"),
         )
     })?;
+    drop(target_file);
+    drop(source_file);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn copy_with_digest_cancellable(
+    source: &Path,
+    target: &Path,
+    cancellation: &SessionJobCancellationCheckpoint,
+) -> Result<String, SessionJobOperationError> {
+    cancellation.check_cancelled()?;
+    let mut source_file = File::open(source).map_err(|error| {
+        SessionJobOperationError::failed_with_code(
+            "DOCUMENT_SESSION_SOURCE_OPEN_FAILED",
+            format!("Kaynak açılamadı: {error}"),
+        )
+    })?;
+    let mut target_file = create_secure_file(target)
+        .map_err(|error| SessionJobOperationError::failed_with_code(error.code, error.message))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        if let Err(e) = cancellation.check_cancelled() {
+            drop(target_file);
+            let _ = std::fs::remove_file(target);
+            return Err(e);
+        }
+        let read = match source_file.read(&mut buffer) {
+            Ok(n) => n,
+            Err(error) => {
+                drop(target_file);
+                let _ = std::fs::remove_file(target);
+                return Err(SessionJobOperationError::failed_with_code(
+                    "DOCUMENT_SESSION_COPY_FAILED",
+                    format!("Kaynak okunamadı: {error}"),
+                ));
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        if let Err(error) = target_file.write_all(&buffer[..read]) {
+            drop(target_file);
+            let _ = std::fs::remove_file(target);
+            return Err(SessionJobOperationError::failed_with_code(
+                "DOCUMENT_SESSION_COPY_FAILED",
+                format!("Working copy yazılamadı: {error}"),
+            ));
+        }
+        hasher.update(&buffer[..read]);
+    }
+    if let Err(e) = cancellation.check_cancelled() {
+        drop(target_file);
+        let _ = std::fs::remove_file(target);
+        return Err(e);
+    }
+    if let Err(error) = target_file.sync_all() {
+        drop(target_file);
+        let _ = std::fs::remove_file(target);
+        return Err(SessionJobOperationError::failed_with_code(
+            "DOCUMENT_SESSION_COPY_SYNC_FAILED",
+            format!("Working copy fsync başarısız: {error}"),
+        ));
+    }
     drop(target_file);
     drop(source_file);
     Ok(format!("{:x}", hasher.finalize()))
@@ -11769,6 +12038,43 @@ fn windows_acl_last_error(api: &str) -> DocumentSessionError {
 }
 
 #[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct TestDocumentSessionFixture {
+    pub session_id: String,
+    pub content_generation: u64,
+}
+
+#[cfg(test)]
+pub(crate) fn open_test_session(
+    store: &DocumentSessionStore,
+    original: &std::path::Path,
+) -> TestDocumentSessionFixture {
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let session_dir = store
+        .instance_dir
+        .join("sessions")
+        .join(format!("session-{session_id}"));
+    create_secure_dir(&session_dir).unwrap();
+    let working_path = session_dir.join("working.pdf");
+    let digest = copy_source_consistent(original, &working_path).unwrap();
+    let result = store.insert_candidate(
+        original.to_path_buf(),
+        working_path,
+        session_dir,
+        digest,
+        false,
+    );
+    let entry = store.entry(&result.session_id).unwrap();
+    let mut state = entry.state.lock();
+    state.lifecycle = SessionLifecycle::Open;
+    let actual_generation = state.content_generation;
+    TestDocumentSessionFixture {
+        session_id: result.session_id,
+        content_generation: actual_generation,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::document_io::DocumentIoStage;
@@ -11781,24 +12087,7 @@ mod tests {
     }
 
     fn open_test_session(store: &DocumentSessionStore, original: &Path) -> String {
-        let session_id = Uuid::new_v4().to_string();
-        let session_dir = store
-            .instance_dir
-            .join("sessions")
-            .join(format!("session-{session_id}"));
-        create_secure_dir(&session_dir).unwrap();
-        let working_path = session_dir.join("working.pdf");
-        let digest = copy_source_consistent(original, &working_path).unwrap();
-        let result = store.insert_candidate(
-            original.to_path_buf(),
-            working_path,
-            session_dir,
-            digest,
-            false,
-        );
-        let entry = store.entry(&result.session_id).unwrap();
-        entry.state.lock().lifecycle = SessionLifecycle::Open;
-        result.session_id
+        super::open_test_session(store, original).session_id
     }
 
     fn attach_test_transition(
@@ -12128,6 +12417,8 @@ mod tests {
             .manage(crate::ai::VectorStore(parking_lot::RwLock::new(
                 HashMap::new(),
             )))
+            .manage(crate::ai::endpoint::AiEndpointStore::new())
+            .manage(crate::ai::request_registry::AiRequestRegistry::new())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap()
     }
@@ -13485,50 +13776,110 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn encrypted_ink_coverage_and_separation_use_snapshot_credential() {
+    async fn print_resource_inspection_runs_in_session_job_worker_with_authoritative_identity() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("inspection.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+        let expected_session_id = session_id.clone();
+        let outcome = store
+            .run_snapshot_job(
+                &Uuid::new_v4().to_string(),
+                &session_id,
+                1,
+                move |context| match crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::InspectPrintResources {
+                        content_generation: 1,
+                        physical_page_index: 0,
+                        request_id: "inspection-worker-request".to_string(),
+                    },
+                    Duration::from_secs(30),
+                )? {
+                    crate::job_worker::JobResult::PrintResourceInspection(report) => {
+                        assert_eq!(report.identity.session_id, expected_session_id);
+                        assert_eq!(report.identity.content_generation, 1);
+                        assert_eq!(report.identity.physical_page_index, 0);
+                        assert_eq!(report.identity.request_id, "inspection-worker-request");
+                        assert!(!report.conformance_claim);
+                        Ok(())
+                    }
+                    _ => Err(SessionJobOperationError::failed(
+                        "unexpected inspection result",
+                    )),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(outcome, SessionJobOutcome::Completed { .. }));
+        assert!(store.job_registry.lock().active.is_empty());
+    }
+
+    #[tokio::test]
+    async fn encrypted_rgb_derived_previews_use_snapshot_credential() {
         let documents = tempfile::tempdir().unwrap();
         let store = DocumentSessionStore::initialize().unwrap();
         let session_id = open_encrypted_test_session(&store, &documents);
 
-        let ink = store
+        let coverage = store
             .run_snapshot_job(
                 &Uuid::new_v4().to_string(),
                 &session_id,
                 1,
-                move |context| {
-                    crate::prepress::calculate_ink_coverage_with_cancellation(
-                        context.snapshot_path.to_string_lossy().to_string(),
-                        0,
-                        300.0,
-                        0.25,
-                        context.credential.map(SessionJobCredential::into_inner),
-                        Some(&context.cancellation),
-                    )
-                    .map(|_| ())
+                move |context| match crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::GenerateRgbDerivedCoveragePreview {
+                        content_generation: 1,
+                        physical_page_index: 0,
+                        request_id: "coverage-request".to_string(),
+                        threshold_percent: 300.0,
+                        scale: 0.25,
+                    },
+                    Duration::from_secs(30),
+                )? {
+                    crate::job_worker::JobResult::RgbDerivedCoveragePreview(result) => {
+                        assert!(result.metadata.approximate);
+                        assert!(!result.metadata.color_managed);
+                        Ok(())
+                    }
+                    _ => Err(SessionJobOperationError::failed(
+                        "unexpected preview result",
+                    )),
                 },
             )
             .await
             .unwrap();
-        assert!(matches!(ink, SessionJobOutcome::Completed { .. }));
+        assert!(matches!(coverage, SessionJobOutcome::Completed { .. }));
 
-        let separation = store
+        let process = store
             .run_snapshot_job(
                 &Uuid::new_v4().to_string(),
                 &session_id,
                 1,
-                move |context| {
-                    crate::prepress::render_separation_channels_with_password(
-                        context.snapshot_path.to_string_lossy().to_string(),
-                        0,
-                        0.25,
-                        context.credential.map(SessionJobCredential::into_inner),
-                    )
-                    .map(|_| ())
+                move |context| match crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::GenerateRgbDerivedProcessPreview {
+                        content_generation: 1,
+                        physical_page_index: 0,
+                        request_id: "process-request".to_string(),
+                        scale: 0.25,
+                    },
+                    Duration::from_secs(30),
+                )? {
+                    crate::job_worker::JobResult::RgbDerivedProcessPreview(result) => {
+                        assert!(!result.metadata.output_intent_applied);
+                        assert!(!result.metadata.spot_colors_preserved);
+                        Ok(())
+                    }
+                    _ => Err(SessionJobOperationError::failed(
+                        "unexpected preview result",
+                    )),
                 },
             )
             .await
             .unwrap();
-        assert!(matches!(separation, SessionJobOutcome::Completed { .. }));
+        assert!(matches!(process, SessionJobOutcome::Completed { .. }));
         assert!(store.job_registry.lock().active.is_empty());
     }
 
@@ -13538,48 +13889,36 @@ mod tests {
         let store = DocumentSessionStore::initialize().unwrap();
         let session_id = open_encrypted_test_session(&store, &documents);
 
-        let color = store
+        let inspection = store
             .run_snapshot_job(
                 &Uuid::new_v4().to_string(),
                 &session_id,
                 1,
                 move |context| {
-                    crate::prepress::analyze_color_spaces_with_password(
-                        context.snapshot_path.to_string_lossy().to_string(),
-                        context.credential.map(SessionJobCredential::into_inner),
+                    crate::job_worker::run_job(
+                        &context,
+                        crate::job_worker::JobCommand::InspectPrintResources {
+                            content_generation: 1,
+                            physical_page_index: 0,
+                            request_id: "inspection-request".to_string(),
+                        },
+                        Duration::from_secs(30),
                     )
                     .map(|_| ())
                 },
             )
             .await
             .unwrap();
-        let serialized = serde_json::to_string(&color).unwrap();
+        let serialized = serde_json::to_string(&inspection).unwrap();
         assert!(matches!(
-            color,
+            inspection,
             SessionJobOutcome::Failed {
                 error: SessionJobFailure { ref code, .. },
                 ..
-            } if code == "SESSION_JOB_ENCRYPTED_INPUT_UNSUPPORTED"
+            } if code == "PRINT_INSPECTION_ENCRYPTED_INPUT_UNSUPPORTED"
         ));
         assert!(!serialized.contains("fixture-password"));
         assert!(!serialized.contains(&store.instance_dir.to_string_lossy().to_string()));
-        assert!(store.job_registry.lock().active.is_empty());
-    }
-
-    #[tokio::test]
-    async fn signature_verification_command_helper_fails_before_snapshot_creation() {
-        let documents = tempfile::tempdir().unwrap();
-        let original = documents.path().join("snapshot-source.pdf");
-        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
-        let store = DocumentSessionStore::initialize().unwrap();
-        let session_id = open_test_session(&store, &original);
-        let job_id = Uuid::new_v4().to_string();
-
-        let error =
-            crate::signature::verify_pdf_signatures_for_session(&store, &job_id, &session_id, 0)
-                .await
-                .unwrap_err();
-        assert_eq!(error.code, "FEATURE_UNAVAILABLE");
         assert!(store.job_registry.lock().active.is_empty());
     }
 
@@ -13639,7 +13978,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_metadata_and_alt_text_writes_preserve_session_state() {
+    fn unsupported_metadata_write_preserves_session_state() {
         let documents = tempfile::tempdir().unwrap();
         let original = documents.path().join("snapshot-source.pdf");
         fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
@@ -13647,15 +13986,14 @@ mod tests {
         let session_id = open_test_session(&store, &original);
         let before = snapshot(&store.entry(&session_id).unwrap().state.lock());
 
-        for message in ["metadata unsupported", "alt-text unsupported"] {
-            let error =
-                reject_unsupported_session_write(&store, &session_id, 1, message).unwrap_err();
-            assert_eq!(error.code, "UNSUPPORTED_PDFIUM_CAPABILITY");
-            let after = snapshot(&store.entry(&session_id).unwrap().state.lock());
-            assert_eq!(after.dirty, before.dirty);
-            assert_eq!(after.content_generation, before.content_generation);
-            assert_eq!(after.state_revision, before.state_revision);
-        }
+        let error =
+            reject_unsupported_session_write(&store, &session_id, 1, "metadata unsupported")
+                .unwrap_err();
+        assert_eq!(error.code, "UNSUPPORTED_PDFIUM_CAPABILITY");
+        let after = snapshot(&store.entry(&session_id).unwrap().state.lock());
+        assert_eq!(after.dirty, before.dirty);
+        assert_eq!(after.content_generation, before.content_generation);
+        assert_eq!(after.state_revision, before.state_revision);
     }
 
     #[tokio::test]
@@ -15413,8 +15751,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn candidate_ready_public_commands_reject_mutation_save_job_ocr_export_ai_and_signature()
-    {
+    async fn candidate_ready_public_commands_reject_mutation_save_job_ocr_export_and_ai() {
         let documents = tempfile::tempdir().unwrap();
         let original = documents.path().join("candidate.pdf");
         fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
@@ -15434,6 +15771,7 @@ mod tests {
             0,
             90,
             app.state::<DocumentSessionStore>(),
+            app.state::<crate::ai::VectorStore>(),
         )
         .await
         .unwrap_err();
@@ -15470,18 +15808,12 @@ mod tests {
             1,
             128,
             16,
-            "http://127.0.0.1:11434".to_string(),
             "test".to_string(),
+            format!("req_{}", Uuid::new_v4()),
             app.state::<DocumentSessionStore>(),
             app.state::<crate::ai::VectorStore>(),
-        )
-        .await
-        .unwrap_err();
-        let signature = crate::signature::verify_pdf_signatures(
-            Uuid::new_v4().to_string(),
-            session_id,
-            1,
-            app.state::<DocumentSessionStore>(),
+            app.state::<crate::ai::endpoint::AiEndpointStore>(),
+            app.state::<crate::ai::request_registry::AiRequestRegistry>(),
         )
         .await
         .unwrap_err();
@@ -15489,7 +15821,6 @@ mod tests {
         for error in [mutation, save, export, ocr, ai] {
             assert_eq!(error.code, "DOCUMENT_SESSION_INVALID_STATE");
         }
-        assert_eq!(signature.code, "FEATURE_UNAVAILABLE");
     }
 
     #[test]

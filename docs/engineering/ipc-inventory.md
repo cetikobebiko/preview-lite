@@ -47,15 +47,17 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 
 | Command | Rust istemci parametreleri | Tanım / koşul | Handler | Statik frontend call-site |
 |---|---|---|:---:|---|
-| `get_structure_tree` | `file_path: String` | `src-tauri/src/a11y.rs:92`, pub sync | evet | `src/components/A11yPanel.svelte:55` |
-| `update_alt_text` | `file_path: String; object_id_str: String; alt_text: Option<String>; language: Option<String>; target_path: String` | `src-tauri/src/a11y.rs:144`, pub sync | evet | `src/components/A11yPanel.svelte:98` |
-| `validate_pdf_ua` | `file_path: String` | `src-tauri/src/a11y.rs:186`, pub sync | evet | `src/components/A11yPanel.svelte:44` |
-| `update_reading_order` | `file_path: String; parent_id_str: String; ordered_child_ids: Vec<String>; target_path: String` | `src-tauri/src/a11y.rs:263`, pub sync | **hayır** | — |
-| `build_semantic_index` | `file_path: String; chunk_size: usize; chunk_overlap: usize; ollama_url: String; embed_model: String` | `src-tauri/src/ai.rs:67`, pub async | evet | `src/pdfState.js:93` |
-| `semantic_search` | `file_path: String; query: String; top_k: usize; ollama_url: String; embed_model: String` | `src-tauri/src/ai.rs:130`, pub async | evet | `src/pdfState.js:97` |
-| `query_document_rag` | `file_path: String; prompt: String; history: Vec<ChatMessage>; ollama_url: String; llm_model: String; embed_model: String` | `src-tauri/src/ai.rs:170`, pub async | evet | `src/pdfState.js:101` |
-| `summarize_selection_or_page` | `text_content: String; target_length: String; ollama_url: String; llm_model: String` | `src-tauri/src/ai.rs:245`, pub async | evet | `src/pdfState.js:105` |
-| `get_page_annotations` | `file_path: String; page_index: u32` | `src-tauri/src/annotations.rs:54`, pub sync | evet | `src/pdfState.js:110` |
+| `get_session_structure_tree` | `session_id: String; expected_content_generation: u64` | `src-tauri/src/document_session.rs`, pub async | evet | `src/components/A11yPanel.svelte` through `session.js` |
+| `audit_session_accessibility` | `session_id: String; expected_content_generation: u64` | `src-tauri/src/document_session.rs`, pub async | evet | `src/components/A11yPanel.svelte` through `session.js` |
+| `build_semantic_index` | `job_id: String; session_id: String; expected_content_generation: u64; chunk_size: usize; chunk_overlap: usize; embed_model: String; request_id: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:39` |
+| `semantic_search` | `session_id: String; expected_content_generation: u64; query: String; top_k: usize; embed_model: String; expected_chunk_size: usize; expected_chunk_overlap: usize; request_id: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:60` |
+| `query_document_rag` | `session_id: String; expected_content_generation: u64; prompt: String; history: Vec<ChatMessage>; llm_model: String; embed_model: String; expected_chunk_size: usize; expected_chunk_overlap: usize; request_id: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:82` |
+| `summarize_selection_or_page` | `text_content: String; target_length: String; llm_model: String; request_id: String; caller_attempt_id: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:101` |
+| `configure_ai_endpoint` | `url: String; remote_approved: bool; private_network_approved: bool` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:7` |
+| `preview_ai_endpoint` | `url: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:14` |
+| `get_ai_endpoint_status` | — | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:19` |
+| `clear_ai_endpoint_config` | — | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:21` |
+| `cancel_ai_request` | `request_id: String; session_id: Option<String>; expected_content_generation: Option<u64>; caller_attempt_id: Option<String>` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:23` |
 | `add_annotation` | `file_path: String; page_index: u32; annot_type: String; rect: RectData; color: String; contents: Option<String>` | `src-tauri/src/annotations.rs:104`, pub sync | evet | `src/pdfState.js:119` |
 | `delete_annotation` | `file_path: String; page_index: u32; annot_id: String` | `src-tauri/src/annotations.rs:167`, pub sync | evet | `src/pdfState.js:128` |
 | `save_pdf_with_annotations` | `file_path: String; output_path: String` | `src-tauri/src/annotations.rs:199`, pub sync | evet | `src/pdfState.js:137` |
@@ -71,7 +73,6 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `stop_speaking` | — | `src-tauri/src/lib.rs:353/360`, private sync, platform `cfg` | evet | `src/App.svelte:1182,1468` |
 | `share_file_macos` | macOS `file_path: String`; diğer platform `_file_path: String` | `src-tauri/src/lib.rs:371/400`, private sync, platform `cfg` | evet | `src/App.svelte:1209` |
 | `perform_ocr_on_page` | macOS `path: String; page_index: u32`; diğer platform `_path: String; _page_index: u32` | `src-tauri/src/lib.rs:407/463`, private async/sync, platform `cfg` | evet | `src/App.svelte:1147,1193,1220` |
-| `ask_local_ai` | `model: Option<String>; prompt: String; context: String` | `src-tauri/src/lib.rs:476`, private sync | evet | `src/components/AiAssistantModal.svelte:34` |
 | `extract_pages` | `source_path: String; page_indices: Vec<u32>; target_path: String` | `src-tauri/src/lib.rs:513`, private sync | evet | `src/App.svelte:1428` |
 | `read_image_file` | `path: String; rotation: i32; flip_h: bool; flip_v: bool` | `src-tauri/src/lib.rs:549`, private sync | evet | `src/App.svelte:979` |
 | `convert_and_save_image` | `source_path: String; target_path: String; format: String; rotation: i32; flip_h: bool; flip_v: bool` | `src-tauri/src/lib.rs:572`, private sync | evet | `src/App.svelte:1917` |
@@ -99,27 +100,25 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `get_pdf_outline` | `file_path: String` | `src-tauri/src/pdf_engine/mod.rs:507`, pub async | evet | `src/App.svelte:871`; `src/components/Sidebar.svelte:24` |
 | `clear_search_cache` | `_path: Option<String>` | `src-tauri/src/pdf_engine/mod.rs:533`, pub sync | evet | — |
 | `search_pdf_text` | `path: String; query: String` | `src-tauri/src/pdf_engine/mod.rs:543`, pub async | evet | `src/pdfState.js:161` |
-| `get_page_text_layout` | `file_path: String; page_index: u32` | `src-tauri/src/pdf_engine/mod.rs:748`, pub async | evet | `src/components/PdfPage.svelte:278` |
-| `load_plugin` | `manifest_path: String` | `src-tauri/src/plugins.rs:53`, pub sync | evet | `src/pluginStore.js:24` |
-| `unload_plugin` | `plugin_id: String` | `src-tauri/src/plugins.rs:89`, pub sync | evet | `src/pluginStore.js:30` |
-| `get_active_plugins` | — | `src-tauri/src/plugins.rs:102`, pub sync | evet | `src/pluginStore.js:16` |
-| `trigger_plugin_hook` | `plugin_id: String; hook_name: String; payload: String` | `src-tauri/src/plugins.rs:115`, pub sync | evet | `src/pluginStore.js:35` |
-| `run_script_direct` | `script_content: String` | `src-tauri/src/plugins.rs:143`, pub sync | evet | `src/pluginStore.js:39` |
-| `analyze_color_spaces` | `file_path: String` | `src-tauri/src/prepress.rs:32`, pub sync | evet | `src/components/PrepressPanel.svelte:140` |
-| `calculate_ink_coverage` | `file_path: String; page_index: u32; max_limit: f32; scale: f32` | `src-tauri/src/prepress.rs:84`, pub sync | evet | `src/components/PrepressPanel.svelte:206` |
-| `render_separation_channels` | `file_path: String; page_index: u32; scale: f32` | `src-tauri/src/prepress.rs:150`, pub async | evet | `src/components/PrepressPanel.svelte:165` |
-| `set_page_boxes` | `source_path: String; target_path: String; page_index: u32; boxes: PageBoxes` | `src-tauri/src/prepress.rs:222`, pub sync | **hayır** | — |
-| `export_pdf_x` | `source_path: String; target_path: String; standard: String; profile_name: String` | `src-tauri/src/prepress.rs:251`, pub sync | evet | `src/components/PdfXWizard.svelte:49` |
+| `inspect_plugin_package` | `package_path: String` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `install_plugin_package` | `package_path: String; expected_digest: String` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `grant_plugin_consent` | `plugin_id: String; expected_package_digest: String; expected_permissions: Vec<String>` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `uninstall_plugin` | `plugin_id: String` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `set_plugin_enabled` | `plugin_id: String; enabled: bool` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `list_installed_plugins` | — | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `start_plugin_execution` | `plugin_id: String; hook_name: String; payload_json: String; execution_id: String` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `cancel_plugin_execution` | `execution_id: String` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `get_plugin_execution_status` | `execution_id: String` | `src-tauri/src/plugins/mod.rs`, pub async | evet | `src/pluginStore.js` |
+| `inspect_session_print_resources` | `job_id; session_id; expected_content_generation; physical_page_index; request_id` | `document_session.rs` → isolated worker | evet | `PrepressPanel.svelte` |
+| `generate_session_rgb_derived_coverage_preview` | identity + `threshold_percent; scale` | `document_session.rs` → isolated worker | evet | `PrepressPanel.svelte` |
+| `generate_session_rgb_derived_process_preview` | identity + `scale` | `document_session.rs` → isolated worker | evet | `PrepressPanel.svelte` |
 | `apply_redactions` | `job_id: String; session_id: String; expected_content_generation: u64; output_path: String; redactions: Vec<RedactionArea>` | `src-tauri/src/redaction.rs`, session-job | **hayır** | Legacy command parse/snapshot öncesi fail-closed `FEATURE_UNAVAILABLE`; secure pipeline'a alias değildir. |
 | `plan_secure_redaction` | `job_id; session_id; expected_content_generation; policy; acknowledgements; regions` | `src-tauri/src/redaction.rs`, session-job + isolated planner worker | `src/services/app/secureRedactionController.js` | Canonical 8B planning operation; feature disabled olduğu için production UI runnable değildir. |
 | `execute_secure_redaction` | `job_id; session_id; expected_content_generation; policy; acknowledgements; regions; expected_plan_digest; target_path` | `src-tauri/src/redaction.rs`, session-job + isolated transform/verifier workers | `src/services/app/secureRedactionController.js` | Canonical 8B secure export operation; feature disabled olduğu için production UI runnable değildir. |
-| `sanitize_pdf_document` | `job_id: String; session_id: String; expected_content_generation: u64; output_path: String; options: SanitizationOptions` | `src-tauri/src/redaction.rs`, dormant legacy contract | **hayır** | 8C.2 sonrasında da parse/snapshot/worker/I/O öncesi fail-closed `FEATURE_UNAVAILABLE`. Broad boolean options ve `output_path` versioned inspection/policy authority'si değildir. |
-| `inspect_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy_schema_version: String` | `src-tauri/src/sanitization.rs`, immutable session snapshot + ephemeral `InspectDocumentSanitization` worker | Feature-disabled inspection controller | Read-only typed `SessionJobOutcome<SanitizationInspectionReport>`; raw input/working/snapshot path, credential, output ve target kabul etmez. Transform/output/publication yapmaz. |
+| `sanitize_pdf_document` | `job_id: String; session_id: String; expected_content_generation: u64; output_path: String; options: SanitizationOptions` | `src-tauri/src/redaction.rs`, dormant legacy contract | **hayır** | 8C.3 sonrasında da parse/snapshot/worker/I/O öncesi fail-closed `FEATURE_UNAVAILABLE`. Broad boolean options ve `output_path` versioned policy authority'si değildir. |
+| `inspect_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy_schema_version: String` | `src-tauri/src/sanitization.rs`, immutable session snapshot + ephemeral `InspectDocumentSanitization` worker | Feature-disabled canonical controller | Read-only typed `SessionJobOutcome<SanitizationInspectionReport>`; input digest + registry version bağlıdır; raw input/working/snapshot path, credential, output ve target kabul etmez. |
+| `execute_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy: SanitizationPolicy; target_path: String` | `src-tauri/src/sanitization_publication.rs` | Feature-disabled canonical controller only | Versioned supported-control policy ve explicit target alır; raw input/working/snapshot path veya legacy boolean option kabul etmez. Actual immutable snapshot üzerinde inspection/policy revalidation → private transform worker → independent verifier worker → mandatory digest gate → target TOCTOU preflight → atomic publication uygular. Typed commit/recovery metadata `SessionJobOutcome` failure surface'ında korunur. |
 | `scan_sensitive_data` | `job_id: String; session_id: String; expected_content_generation: u64; patterns: Vec<String>` | `src-tauri/src/redaction.rs`, session-job (Job-Worker Protocol v3) | evet | `src/services/backend/redaction.js` (`startSensitiveDataScanAction` → cancellable handle → job worker protocol v3) |
-| `list_system_certificates` | — | `src-tauri/src/signature.rs:48`, pub async | evet | `src/components/SignatureWizardModal.svelte:34` |
-| `sign_pdf_pades` | `input_path: String; output_path: String; cert_id: String; _pin: String; options: SignatureOptions` | `src-tauri/src/signature.rs:71`, pub async | evet | `src/components/SignatureWizardModal.svelte:79` |
-| `verify_pdf_signatures` | `file_path: String` | `src-tauri/src/signature.rs:101`, pub async | evet | `src/components/SignaturePanel.svelte:18` |
-| `enable_ltv` | `file_path: String; signature_id: String` | `src-tauri/src/signature.rs:135`, pub async | evet | `src/components/SignaturePanel.svelte:30` |
 
 ## Eşleşme sınıfları
 
@@ -137,13 +136,6 @@ listesinde bulunur.
 `src/ipc_profiler.js` herhangi bir command adını dinamik olarak alabilir; ancak
 repository taramasında bu wrapper'ın bir consumer'ı bulunmadı. Bu nedenle iki
 command dinamik wrapper'a varsayımsal olarak atanmadı.
-
-### Tanımlı fakat handler'a kayıtlı olmayan
-
-- `a11y::update_reading_order` — `src-tauri/src/a11y.rs:263`
-- `prepress::set_page_boxes` — `src-tauri/src/prepress.rs:222`
-
-Bu iki command normal Tauri `invoke` yolu üzerinden erişilemez.
 
 ### Handler'da olup tanımı çözülemeyen
 
@@ -179,22 +171,15 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/App.svelte:1810` | `merge_pdfs` | `{ pdfPaths, targetPath }` |
 | `src/App.svelte:1834` | `reorder_pdf_pages` | `{ sourcePath, pageOrder, targetPath }` |
 | `src/App.svelte:1917` | `convert_and_save_image` | `{ sourcePath, targetPath, format, rotation, flipH, flipV }` |
-| `src/components/A11yPanel.svelte:44` | `validate_pdf_ua` | `{ filePath }` |
-| `src/components/A11yPanel.svelte:55` | `get_structure_tree` | `{ filePath }` |
-| `src/components/A11yPanel.svelte:98` | `update_alt_text` | `{ filePath, objectIdStr, altText, language, targetPath }` |
-| `src/components/AiAssistantModal.svelte:34` | `ask_local_ai` | `{ model, prompt, context }` |
+| `src/components/A11yPanel.svelte` | `audit_session_accessibility` | `{ sessionId, expectedContentGeneration }` |
+| `src/components/A11yPanel.svelte` | `get_session_structure_tree` | `{ sessionId, expectedContentGeneration }` |
 | `src/components/PageOrganizer.svelte:94` | `render_thumbnail` | `{ path, pageIndex, targetWidth }` |
 | `src/components/PdfPage.svelte:278` | `get_page_text_layout` | `{ filePath, pageIndex }` |
 | `src/components/PdfPage.svelte:354` | `render_page` | `{ path, pageIndex, scale, rotation }` |
-| `src/components/PdfXWizard.svelte:49` | `export_pdf_x` | `{ sourcePath, targetPath, standard, profileName }` |
-| `src/components/PrepressPanel.svelte:140` | `analyze_color_spaces` | `{ filePath }` |
-| `src/components/PrepressPanel.svelte:165` | `render_separation_channels` | `{ filePath, pageIndex, scale }` |
-| `src/components/PrepressPanel.svelte:206` | `calculate_ink_coverage` | `{ filePath, pageIndex, maxLimit, scale }` |
+| `src/services/backend/prepress.js` | `inspect_session_print_resources` | `{ jobId, sessionId, expectedContentGeneration, physicalPageIndex, requestId }` |
+| `src/services/backend/prepress.js` | `generate_session_rgb_derived_process_preview` | `{ jobId, sessionId, expectedContentGeneration, physicalPageIndex, requestId, scale }` |
+| `src/services/backend/prepress.js` | `generate_session_rgb_derived_coverage_preview` | `{ jobId, sessionId, expectedContentGeneration, physicalPageIndex, requestId, thresholdPercent, scale }` |
 | `src/components/Sidebar.svelte:24` | `get_pdf_outline` | `{ filePath }` |
-| `src/components/SignaturePanel.svelte:18` | `verify_pdf_signatures` | `{ filePath }` |
-| `src/components/SignaturePanel.svelte:30` | `enable_ltv` | `{ filePath, signatureId }` |
-| `src/components/SignatureWizardModal.svelte:34` | `list_system_certificates` | — |
-| `src/components/SignatureWizardModal.svelte:79` | `sign_pdf_pades` | `{ inputPath, outputPath, certId, pin, options }` |
 | `src/components/Thumbnail.svelte:34` | `render_pdf_thumbnail` | `{ filePath, pageIndex }` |
 | `src/components/ThumbnailItem.svelte:96` | `render_thumbnail` | `{ path, pageIndex, targetWidth }` |
 | `src/ipc_profiler.js:12` | dinamik `cmd` | `args` |
@@ -211,12 +196,15 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/pdfState.js:64` | `detect_scanned_page` | `{ filePath, pageIndex }` |
 | `src/pdfState.js:73` | `get_available_ocr_languages` | — |
 | `src/pdfState.js:81` | `run_ocr_on_page` | `{ filePath, pageIndex, lang }` |
-| `src/pdfState.js:85` | `export_as_searchable_pdf` | `{ filePath, outputPath, lang }` |
-| `src/pdfState.js:93` | `build_semantic_index` | `{ filePath, chunkSize, chunkOverlap, ollamaUrl, embedModel }` |
-| `src/pdfState.js:97` | `semantic_search` | `{ filePath, query, topK, ollamaUrl, embedModel }` |
-| `src/pdfState.js:101` | `query_document_rag` | `{ filePath, prompt, history, ollamaUrl, llmModel, embedModel }` |
-| `src/pdfState.js:105` | `summarize_selection_or_page` | `{ textContent, targetLength, ollamaUrl, llmModel }` |
-| `src/pdfState.js:110` | `get_page_annotations` | `{ filePath, pageIndex }` |
+| `src/services/backend/ai.js:7` | `configure_ai_endpoint` | `{ url, remoteApproved, privateNetworkApproved }` |
+| `src/services/backend/ai.js:14` | `preview_ai_endpoint` | `{ url }` |
+| `src/services/backend/ai.js:19` | `get_ai_endpoint_status` | — |
+| `src/services/backend/ai.js:21` | `clear_ai_endpoint_config` | — |
+| `src/services/backend/ai.js:23` | `cancel_ai_request` | `{ requestId, sessionId, expectedContentGeneration, callerAttemptId }` |
+| `src/services/backend/ai.js:39` | `build_semantic_index` | `{ jobId, sessionId, expectedContentGeneration, chunkSize, chunkOverlap, embedModel, requestId }` |
+| `src/services/backend/ai.js:60` | `semantic_search` | `{ sessionId, expectedContentGeneration, query, topK, embedModel, expectedChunkSize, expectedChunkOverlap, requestId }` |
+| `src/services/backend/ai.js:82` | `query_document_rag` | `{ sessionId, expectedContentGeneration, prompt, history, llmModel, embedModel, expectedChunkSize, expectedChunkOverlap, requestId }` |
+| `src/services/backend/ai.js:101` | `summarize_selection_or_page` | `{ textContent, targetLength, llmModel, requestId, callerAttemptId }` |
 | `src/pdfState.js:119` | `add_annotation` | `{ filePath, pageIndex, annotType, rect, color, contents }` |
 | `src/pdfState.js:128` | `delete_annotation` | `{ filePath, pageIndex, annotId }` |
 | `src/pdfState.js:137` | `save_pdf_with_annotations` | `{ filePath, outputPath }` |
@@ -226,12 +214,16 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/pdfState.js:192` | `print_pdf` | `{ filePath, pageRange }` |
 | `src/pdfState.js:201` | `export_pages_as_images` | `{ filePath, pages, outputDir, format, dpi }` |
 | `src/pdfState.js:210` | `export_text_content` | `{ filePath, pages, format }` |
-| `src/pluginStore.js:16` | `get_active_plugins` | — |
-| `src/pluginStore.js:24` | `load_plugin` | `{ manifestPath }` |
-| `src/pluginStore.js:30` | `unload_plugin` | `{ pluginId }` |
-| `src/pluginStore.js:35` | `trigger_plugin_hook` | `{ pluginId, hookName, payload }` |
-| `src/pluginStore.js:39` | `run_script_direct` | `{ scriptContent }` |
-| `src/pluginStore.js:43` | `add_batch_job` | `{ jobType, filePath, parameters }` |
+| `src/pluginStore.js` | `inspect_plugin_package` | `{ packagePath }` |
+| `src/pluginStore.js` | `install_plugin_package` | `{ packagePath, expectedDigest }` |
+| `src/pluginStore.js` | `grant_plugin_consent` | `{ pluginId, expectedPackageDigest, expectedPermissions }` |
+| `src/pluginStore.js` | `uninstall_plugin` | `{ pluginId }` |
+| `src/pluginStore.js` | `set_plugin_enabled` | `{ pluginId, enabled }` |
+| `src/pluginStore.js` | `list_installed_plugins` | — |
+| `src/pluginStore.js` | `start_plugin_execution` | `{ pluginId, hookName, payloadJson, executionId }` |
+| `src/pluginStore.js` | `cancel_plugin_execution` | `{ executionId }` |
+| `src/pluginStore.js` | `get_plugin_execution_status` | `{ executionId }` |
+| `src/pluginStore.js` | `add_batch_job` | `{ jobType, filePath, parameters }` |
 
 `src/configManager.js` Tauri fs pluginini doğrudan kullanır, command invoke etmez.
 `src/annotationsStore.js` yalnızca frontend store'dur. `src/ipc_profiler.js`
@@ -266,7 +258,6 @@ anahtarı gönderir:
 - `get_form_fields`: `_file_path`
 - `update_form_field`: `_file_path`, `_field_id`, `_value`
 - `export_as_searchable_pdf`: `_file_path`, `_output_path`, `_lang`
-- `sign_pdf_pades`: `_pin`
 - non-macOS platform stub'larındaki `_source_pdf_path`, `_voice`, `_file_path`,
   `_path`, `_page_index`
 
@@ -292,18 +283,33 @@ Event'ler command sayılarına dahil edilmemiştir.
 
 | Event | Producer | Payload | Consumer | Eşleşme | Test |
 |---|---|---|---|---|---|
-| `ai_chat_token` | `src-tauri/src/ai.rs:227` | string token | `src/components/AiSidebar.svelte:30` | eşleşiyor | Runtime test edilmedi |
-| `ai_chat_done` | `src-tauri/src/ai.rs:230` | boş string | `src/components/AiSidebar.svelte:41` | eşleşiyor | Runtime test edilmedi |
-| `ai_summary_token` | `src-tauri/src/ai.rs:280` | string token | `src/components/AiContextMenu.svelte:51` | eşleşiyor | Runtime test edilmedi |
-| `ai_summary_done` | `src-tauri/src/ai.rs:282` | boş string | `src/components/AiContextMenu.svelte:55` | eşleşiyor | Runtime test edilmedi |
+| `ai_stream_event` | `src-tauri/src/ai/stream_parser.rs` | `AiStreamEvent` (schema v1) | `src/services/app/aiController.js` | Tam uyumlu (Canonical) | Security Acceptance suite (`security_acceptance_tests.rs`, `aiController.test.js`) |
 | `batch_job_status` | `src-tauri/src/batch.rs:40,49` | `JobStatus` object | Consumer bulunmadı | **backend-only** | Test yok / runtime çalışmadı |
 | `tauri://drag-drop` | Tauri sistem event'i | frontend `.paths` okur | `src/App.svelte:658` | Sistem producer'ı bekleniyor | Runtime test edilmedi |
 
-AI streaming producer/consumer adları eşleşir. Ancak Ollama bağlantısı ve Tauri
-event teslimi çalıştırılmadığı için uçtan uca başarı kanıtı değildir.
-`batch_job_status` için frontend listener yoktur; ayrıca `addBatchJob` wrapper'ının
-consumer'ı bulunmadığından batch akışı normal UI yolundan erişilebilir
-sayılmamıştır.
+### AI Streaming Event Sözleşmesi (`ai_stream_event`)
+Prompt 9A kapsamında eski global eventler (`ai_chat_token`, `ai_chat_done`, `ai_summary_token`, `ai_summary_done`) tamamen kaldırılmış ve yerini request-scoped, yapılandırılmış tekil event kanalı almıştır:
+
+* **Sözleşme Alanları (Schema v1)**:
+  - `schemaVersion: number` (1)
+  - `requestId: string` (`req_<uuid_v4>`)
+  - `operation: string` (`"chat"` | `"summary"`)
+  - `sessionId?: string` (Session-bound RAG işlemleri için)
+  - `contentGeneration?: number` (Belge nesil koruması)
+  - `endpointFingerprint: string` (Onaylanmış endpoint bağıntısı)
+  - `sequence: number` (İstek başına kesin monoton artan sayaç, `1..5000`)
+  - `kind: "started" | "delta" | "completed" | "failed" | "cancelled"`
+  - `delta?: string` (Metin parçası)
+  - `result?: any` (Tamamlanma sonucu)
+  - `error?: { code: string, message: string }`
+  - `terminal: boolean` (Sonlandırıcı event bayrağı)
+
+* **Garanti Edilen Semantik & Güvenlik İlkeleri**:
+  - **Kesin Monoton Sıralama**: `sequence` düşüş veya tekrar durumlarında frontend `AI_STREAM_SEQUENCE_ERROR` ile fail-closed olur.
+  - **Tekil Terminal Teslimat**: `TerminalDeliveryState` durum makinesi (`Pending -> Delivering -> Delivered`) ile yalnızca tek bir terminal event iletilir; terminal sonrası yeni event üretilmez/kabul edilmez.
+  - **Cross-Request İzolasyonu**: Frontend ve backend istekleri `requestId` ile ayrıştırır; eski veya farklı isteğe ait parçalar hedefe karışamaz.
+  - **Session/Generation Stale Koruması**: Oturum veya belge jenerasyonu değiştiğinde eski isteğe ait stream verileri frontend controller seviyesinde elenir.
+  - **İptal & Dinleyici Temizliği**: `cancel_ai_request` çağrıldığında backend ağ future'ını sonlandırıp `cancelled` terminal eventi iletir; `aiController.dispose()` listener aboneliğini temizler.
 
 ## Yapılandırma ve platform erişilebilirliği
 
@@ -346,3 +352,17 @@ frontend-generated `jobId`. Their terminal response is
 contain `jobId`, `sessionId`, captured `contentGeneration`, and cleanup status.
 `cancel_session_job` requires `{ sessionId, jobId }`. Cleanup retry/deferred
 warnings are path-free and do not replace the operation result.
+
+## AI Subsystem IPC Envanteri (Prompt 9A.11)
+
+| Command | Payload | Result | Açıklama |
+|---|---|---|---|
+| `preview_ai_endpoint` | `{ url: string }` | `AiEndpointProfile` | Presentation-only endpoint URL doğrulama ve sınıflandırma |
+| `configure_ai_endpoint` | `{ url: string, remoteApproved: boolean, privateNetworkApproved: boolean }` | `AiEndpointProfile` | Authoritative endpoint doğrulama, DNS sabitleme, yetkilendirme ve kaydetme |
+| `get_ai_endpoint_status` | none | `AiEndpointProfile` | Aktif endpoint profilini döndürür |
+| `clear_ai_endpoint_config` | none | `AiEndpointProfile` | Yapılandırmayı temizler ve loopback varsayılanına döner |
+| `cancel_ai_request` | `{ requestId: string, sessionId?: string, expectedContentGeneration?: number, callerAttemptId?: string }` | `()` | AI isteğini atomik olarak iptal eder |
+| `build_semantic_index` | `{ jobId: string, sessionId: string, expectedContentGeneration: number, chunkSize: number, chunkOverlap: number, embedModel: string, requestId: string }` | `SessionJobOutcome<()>` | Belge metnini parçalayıp embedding vektörlerini staging üzerinden atomik derler |
+| `semantic_search` | `{ sessionId: string, expectedContentGeneration: number, query: string, topK: number, embedModel: string, expectedChunkSize: number, expectedChunkOverlap: number, requestId: string }` | `Vec<SearchResultChunk>` | Belge vektör indeksinde kosinüs benzerliği araması |
+| `query_document_rag` | `{ sessionId: string, expectedContentGeneration: number, prompt: string, history: Vec<ChatMessage>, llmModel: string, embedModel: string, expectedChunkSize: number, expectedChunkOverlap: number, requestId: string }` | `()` (Stream) | Belge bağlamlı akışlı sohbet yanıtı üretir |
+| `summarize_selection_or_page` | `{ textContent: string, targetLength: string, llmModel: string, requestId: string, callerAttemptId: string }` | `()` (Stream) | Metin seçimi veya sayfa özetini akışlı üretir |

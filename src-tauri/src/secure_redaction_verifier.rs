@@ -578,19 +578,35 @@ fn canonical_page_lists(plan: &SecureRedactionPlan) -> (Vec<u32>, Vec<u32>) {
     (affected, unaffected)
 }
 
+pub struct SecureRedactionVerificationArgs<'a> {
+    pub job_dir: &'a Path,
+    pub snapshot_path: &'a Path,
+    pub credential: Option<&'a str>,
+    pub job_id: &'a str,
+    pub session_id: &'a str,
+    pub content_generation: u64,
+    pub policy: crate::secure_redaction::SecureRedactionPolicy,
+    pub acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
+    pub regions: Vec<crate::secure_redaction::RedactionRegionInput>,
+    pub transform_report: SecureRedactionTransformReport,
+}
+
 /// Verifies an artifact without depending on the transform worker's in-memory state.
 pub fn verify_secure_redaction(
-    job_dir: &Path,
-    snapshot_path: &Path,
-    credential: Option<&str>,
-    job_id: &str,
-    session_id: &str,
-    content_generation: u64,
-    policy: crate::secure_redaction::SecureRedactionPolicy,
-    acknowledgements: crate::secure_redaction::RedactionAcknowledgements,
-    regions: Vec<crate::secure_redaction::RedactionRegionInput>,
-    transform_report: SecureRedactionTransformReport,
+    args: SecureRedactionVerificationArgs<'_>,
 ) -> Result<SecureRedactionVerificationReport, SessionJobOperationError> {
+    let SecureRedactionVerificationArgs {
+        job_dir,
+        snapshot_path,
+        credential,
+        job_id,
+        session_id,
+        content_generation,
+        policy,
+        acknowledgements,
+        regions,
+        transform_report,
+    } = args;
     crate::secure_redaction::validate_transform_report(&transform_report)?;
     let artifact = artifact_path(job_dir)?;
     let initial_digest = crate::document_io::sha256_file(&artifact)
@@ -949,7 +965,7 @@ pub fn verify_secure_redaction(
                         w,
                         h,
                     )?;
-                    verify_opaque_black_overwrite(&embedded, &[embedded_rect.clone()]).map_err(|error| {
+                    verify_opaque_black_overwrite(&embedded, std::slice::from_ref(&embedded_rect)).map_err(|error| {
                             verification_error(format!(
                                 "observation=embedded_raster coverage failed for page_index {}, canonical_region_id {}, source_region_ids [{}]: {}",
                                 page_plan.page_index,
@@ -979,7 +995,7 @@ pub fn verify_secure_redaction(
                             error,
                         ))
                     })?;
-                    verify_opaque_black_overwrite(&output_buffer, &[output_rect.clone()])
+                    verify_opaque_black_overwrite(&output_buffer, std::slice::from_ref(&output_rect))
                         .map_err(|error| {
                             verification_error(format!(
                                 "observation=reopened_render coverage failed for page_index {}, canonical_region_id {}, source_region_ids [{}], canonical_pdf_rect ({}, {}, {}, {}), mapped_output_device_rect ({}, {}, {}, {}), rotation {:?}: {}",

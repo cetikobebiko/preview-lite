@@ -45,6 +45,7 @@ describe("UI feature wiring source contracts", () => {
   const featureRuntimeSource = readSource("src/services/app/featureRuntime.js");
   const applicationRuntimeSource = readSource("src/services/app/applicationRuntime.js");
   const commandRouterSource = readSource("src/services/app/commandActionRouter.js");
+  const appModalHostSource = readSource("src/components/AppModalHost.svelte");
 
   it("guards keyboard shortcuts and command selection before state changes", () => {
     expect(applicationRuntimeSource).toContain('featureRuntime.runUiAction("command_palette"');
@@ -91,20 +92,20 @@ describe("UI feature wiring source contracts", () => {
   });
 
   it("gates nested mock and disabled modal mounts and their action handlers", () => {
-    expect(viewerHudSource).toContain('{#if featureUi("pades_signing").visible}');
-    expect(viewerHudSource).toContain('{#if featureUi("pdf_x_export").visible}');
-    expect(viewerHudSource).toContain('{#if featureUi("signature_settings").visible}');
+    expect(viewerHudSource).not.toContain('featureUi("pdf_x_export")');
+    expect(viewerHudSource).not.toContain('featureUi("pades_signing")');
+    expect(viewerHudSource).not.toContain('featureUi("signature_verification")');
+    expect(viewerHudSource).not.toContain('featureUi("signature_settings")');
 
-    for (const [file, featureId] of [
-      ["src/components/PdfXWizard.svelte", "pdf_x_export"],
-      ["src/components/SignatureWizardModal.svelte", "pades_signing"],
-      ["src/components/SanitizationDialog.svelte", "sanitization"],
-    ]) {
-      const source = readSource(file);
-      expect(source).toContain("guardFeatureAction");
-      expect(source).toContain(featureId);
-      expect(source).toContain("disabled=");
-    }
+    expect(appModalHostSource).not.toContain("SignaturePanel");
+    expect(appModalHostSource).not.toContain("SignatureWizardModal");
+    expect(appModalHostSource).not.toContain("SignatureSettingsModal");
+
+    expect(appModalHostSource).not.toContain("PdfXWizard");
+    const sanitizationPanel = readSource("src/components/SanitizationPanel.svelte");
+    expect(appModalHostSource).toContain('runnable={featureUi("sanitization").runnable}');
+    expect(sanitizationPanel).toContain("disabled={!runnable");
+    expect(sanitizationPanel).not.toContain("callBackend");
   });
 
   it("does not mount disabled page overlays from stale local UI state", () => {

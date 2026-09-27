@@ -123,7 +123,7 @@
     documentRuntime.isPdf;
     documentSession.activeSessionId;
     documentSession.contentGeneration;
-    untrack(() => featureRuntime.sanitizationInspection?.reconcileContext?.());
+    untrack(() => featureRuntime.sanitization?.reconcileContext?.());
   });
 
   $effect(() => {
@@ -170,8 +170,9 @@
   sessionId={documentSession.activeSessionId ?? ""}
   contentGeneration={documentSession.contentGeneration}
   displayPath={documentRuntime.activeDisplayPath}
+  {sanitizationState}
+  sanitization={featureRuntime.sanitization}
   onCommandSelect={featureRuntime.commandRouter.handleEvent}
-  onSanitize={(event) => featureRuntime.sanitize(event.detail)}
 />
 
 <main class="app-container">
@@ -211,11 +212,9 @@
       onScanSensitiveData={featureRuntime.scanSensitiveData}
       secureRedaction={featureRuntime.secureRedaction}
       onSessionSnapshot={documentRuntime.applyBackendSessionSnapshot}
-      onSeparations={(event) => applyPrepress("applySeparations", event)}
-      onHeatmap={(event) => applyPrepress("applyHeatmap", event)}
+      onProcessPreview={(event) => applyPrepress("applyProcessPreview", event)}
+      onCoveragePreview={(event) => applyPrepress("applyCoveragePreview", event)}
       onChannels={(event) => applyPrepress("applyChannels", event)}
-      onGuides={(event) => applyPrepress("applyBoxes", event)}
-      onApplyBoxes={(event) => applyPrepress("applyBoxes", event)}
     />
 
     <ViewerShell
@@ -264,9 +263,5 @@
     onPasswordSubmit={documentRuntime.lifecycleController.submitPassword}
     onPasswordCancel={documentRuntime.lifecycleController.cancelPassword}
     {asyncPrompt}
-    featureUi={featureRuntime.featureUi}
-    sessionId={documentSession.activeSessionId ?? ""}
-    contentGeneration={documentSession.contentGeneration}
-    isLoadedPdfDocument={documentRuntime.isLoadedPdfDocument}
   />
 </main>

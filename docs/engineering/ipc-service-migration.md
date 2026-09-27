@@ -8,7 +8,7 @@ because an internal Rust helper/handler exists.
 
 - Render requests use `sessionId` and `contentGeneration`; render-session state
   contains no path or `documentId` alias.
-- Read, mutation, OCR, signature, prepress, export, and PDF-share adapters use
+- Read, mutation, OCR, prepress, export, and PDF-share adapters use
   session identity with the appropriate expected generation/revision.
 - PrepressPanel, the search coordinator, and annotation burn-in stale guards use
   captured session/generation identity rather than display paths.
@@ -16,7 +16,7 @@ because an internal Rust helper/handler exists.
   remain path-native.
 - Active-PDF share and independent external-file share are separate commands.
 - Metadata/alt-text write bypasses and unused legacy frontend facades were
-  removed; LTV remains session-native and mock-disabled.
+  removed; legacy mock signature/PAdES commands and contracts were purged in Gate 1 / Prompt 10A.
 - `client.js` remains the only frontend Tauri `invoke` import.
 
 Date: 2026-07-25
@@ -78,14 +78,13 @@ only with a canonical backend service and inventory entry; the current authority
 | `manipulation.js` | 8 | `rotate_page`, `delete_pages`, `insert_blank_page`, `merge_pdfs`, `split_pdf`, `get_form_fields`, `update_form_field`, `reorder_pages` |
 | `annotations.js` | 4 | `get_page_annotations`, `add_annotation`, `delete_annotation`, `save_pdf_with_annotations` |
 | `ocr.js` | 4 | `detect_scanned_page`, `get_available_ocr_languages`, `run_ocr_on_page`, `export_as_searchable_pdf` |
-| `ai.js` | 5 | `ask_local_ai`, `build_semantic_index`, `semantic_search`, `query_document_rag`, `summarize_selection_or_page` |
-| `plugins.js` | 6 | `get_active_plugins`, `load_plugin`, `unload_plugin`, `trigger_plugin_hook`, `run_script_direct`, `add_batch_job` |
-| `signatures.js` | 4 | `list_system_certificates`, `sign_pdf_pades`, `verify_pdf_signatures`, `enable_ltv` |
+| `ai.js` | 9 | `configure_ai_endpoint`, `preview_ai_endpoint`, `get_ai_endpoint_status`, `clear_ai_endpoint_config`, `cancel_ai_request`, `build_semantic_index`, `semantic_search`, `query_document_rag`, `summarize_selection_or_page` |
+| `plugins.js` | 10 | `inspect_plugin_package`, `install_plugin_package`, `grant_plugin_consent`, `uninstall_plugin`, `set_plugin_enabled`, `list_installed_plugins`, `start_plugin_execution`, `cancel_plugin_execution`, `get_plugin_execution_status`, `add_batch_job` |
 | `redaction.js` | 3 | `apply_redactions`, `sanitize_pdf_document`, `scan_sensitive_data` |
-| `accessibility.js` | 3 | `get_structure_tree`, `update_alt_text`, `validate_pdf_ua` |
+| `session.js` accessibility reads | 2 | `get_session_structure_tree`, `audit_session_accessibility` |
 | `prepress.js` | 4 | `analyze_color_spaces`, `calculate_ink_coverage`, `render_separation_channels`, `export_pdf_x` |
 | `platform.js` | 5 | `trigger_continuity_camera_scan`, `speak_text`, `stop_speaking`, `share_file_macos`, `perform_ocr_on_page` |
-| **Total** | **66** | **66 static frontend commands** |
+| `signatures.js` *(kaldırıldı)* | 0 | *Gate 1 / Prompt 10A kapsamında mock komutlar ve wrapper silindi* |
 
 8C.2 adds `sanitization.js` with the single
 `inspect_document_sanitization` session-job command. It accepts only job/session/
@@ -93,6 +92,33 @@ content-generation/policy-version identity, strictly normalizes the typed report
 is reachable from `sanitizationInspectionController.js` only under the disabled
 sanitization feature guard. It does not replace the dormant transform wrapper and
 does not accept an input/output/target path.
+
+8C.3 adds no new public command. `SanitizePdf` is a private job-worker protocol
+variant used only by backend orchestration: immutable snapshot, captured generation,
+strict versioned policy, input/inspection digests and a fixed internal output name are
+its entire authority. It cannot accept a target path, return a private absolute path
+to the frontend or publish the artifact. `sanitize_pdf_document` remains unavailable.
+
+8C.4 also adds no public command or frontend service. `VerifySanitizedPdf` is a
+second private job-worker protocol variant started only after the transform process
+terminates and the parent recomputes the fixed artifact digest. It receives strict
+policy/digest/report authority and the allowlisted internal artifact name, performs
+fresh parser/PDFium verification without mutation, and returns a private strict
+verification report. It accepts no target path and performs no publication.
+
+8C.5 originally added no public command or frontend service. Internal
+`execute_document_sanitization_core` consumes the same private transform/verifier worker
+protocols, performs strict parent validation, and hands only verified bytes to the shared
+`document_io` atomic-publication primitive. The external target remains main-process-only;
+neither worker protocol learns it.
+
+8C.6 adds the strict `execute_document_sanitization` public command and the canonical
+`sanitization.js` execution wrapper. The payload is job/session/content-generation
+identity, versioned `SanitizationPolicy` and user-selected `targetPath`; it has no raw
+input/working/snapshot path and no legacy broad boolean options. Only
+`sanitizationController.js` consumes the wrapper. The component calls the controller,
+and Save dialog access remains behind the platform adapter. The feature registry is
+still disabled, so this command is not production-user-runnable before 8C.7.
 
 `index.js` is deliberately a narrow, safe barrel. Protected raw wrappers are
 not re-exported. The following paths remain reachable only through existing
@@ -105,7 +131,7 @@ feature-aware compatibility adapters (`pdfState.js`, `pluginStore.js`,
 - searchable PDF export
 - redaction application and sanitization
 - sensitive-data scan
-- PAdES certificate listing/signing, signature verification, and LTV
+- PAdES certificate listing/signing, signature verification, and LTV (kaldırıldı; mock handlers and contracts purged in Gate 1 / Prompt 10A)
 - PDF/X export
 - plugin and batch commands
 - platform-limited continuity, speech, share, and Vision OCR commands
@@ -125,8 +151,8 @@ not make a disabled or mock feature runnable.
 
 Nested field names were taken from the actual Serde structs, not inferred from
 the top-level Tauri conversion. This includes `PdfMetadata`, `RectData`,
-`RedactionArea`, `SanitizationOptions`, `ChatMessage`, `SignatureOptions`, and
-`VisualSignatureOptions`. The local Tauri macro source also confirms that its
+`RedactionArea`, `SanitizationOptions`, and `ChatMessage` (historical mock models
+`SignatureOptions` and `VisualSignatureOptions` were purged during Gate 1). The local Tauri macro source also confirms that its
 default command argument policy applies lower camel case conversion; leading
 underscores in unused Rust argument identifiers are separators in that
 conversion.
@@ -174,10 +200,7 @@ Handler-registered but without a static frontend consumer:
 - `render_pdf_page`
 - `clear_search_cache`
 
-Defined in Rust but not registered in `generate_handler!`:
-
-- `update_reading_order`
-- `set_page_boxes`
+No raw-path prepress mutation helper is defined or registered.
 
 There is no frontend command missing from the handler list. Event names are not
 commands and are not included in these counts.
@@ -436,3 +459,14 @@ Tauri commands directly.
 `commit_candidate_activation` dispatch is a frontend linearization fence.
 Transport failure is reconciled from backend active-session authority rather
 than by replaying the activation token.
+
+## AI Subsystem IPC Migration (Prompt 9A.9)
+
+AI subsystem commands have been migrated to the canonical typed backend client (`src/services/backend/ai.js` and `src/services/backend/contracts.js`):
+- `previewAiEndpoint`: Raw presentation-only endpoint classification contract.
+- `configureAiEndpoint`: Authoritative configuration with remote/private approval parameters.
+- `getAiEndpointStatus` & `clearAiEndpointConfig`: Zero-payload configuration commands.
+- `cancelAiRequest`: Request cancellation scoped to session generation or selection attempt ID.
+- `buildSemanticIndex`: Typed `SessionJobOutcome` wrapper preserving document session isolation.
+- `semanticSearch`: Document vector similarity search with structured chunks.
+- `queryDocumentRag` & `summarizeSelectionOrPage`: Session/attempt scoped ndjson streaming with structured `ai_stream_event` listener.

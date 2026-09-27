@@ -18,7 +18,7 @@ describe("FeatureNotice presentation wiring", () => {
   });
 
   it("does not render a production mock notice because the feature is hidden", () => {
-    const presentation = getFeaturePresentation("pades_signing", {
+    const presentation = getFeaturePresentation("visual_redaction_mask", {
       build: "production",
       platform: "macos",
     });
@@ -28,7 +28,7 @@ describe("FeatureNotice presentation wiring", () => {
   });
 
   it("presents a disabled developer mock with an explicit no-operation warning", () => {
-    const presentation = getFeaturePresentation("pades_signing", {
+    const presentation = getFeaturePresentation("visual_redaction_mask", {
       build: "development",
       platform: "macos",
     });
@@ -40,12 +40,12 @@ describe("FeatureNotice presentation wiring", () => {
   });
 
   it("presents experimental status and warning copy", () => {
-    const presentation = getFeaturePresentation("prepress_analysis", {
+    const presentation = getFeaturePresentation("rgb_derived_print_preview", {
       build: "production",
       platform: "macos",
     });
 
     expect(presentation.badge).toBe("EXPERIMENTAL");
-    expect(presentation.warning).toContain("tahmini analizlerdir");
+    expect(presentation.warning).toContain("Ekran RGB render'ından");
   });
 });

@@ -55,5 +55,7 @@ fn production_pdfium_entry_points_are_type_checked_but_not_executed_here() {
             Some(TargetExpectation::Digest("unreachable".to_string())),
             None,
         );
+        #[cfg(feature = "secure-redaction-test-support")]
+        let _ = document_io::atomic_publish_prevalidated_pdf_for_acceptance;
     }
 }

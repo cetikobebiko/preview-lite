@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{self, Read, Write};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 2;
+pub const WORKER_PROTOCOL_VERSION: u16 = 3;
 pub const MAX_WORKER_REQUEST_BYTES: usize = 64 * 1024;
 pub const MAX_WORKER_RESPONSE_BYTES: usize =
     crate::pdf_engine::render_service::MAX_RENDER_BYTES + 64 * 1024;
@@ -53,7 +53,7 @@ pub enum WorkerCapability {
     GetMetadata,
     GetPageAnnotations,
     GetStructureTree,
-    ValidatePdfUa,
+    AuditAccessibility,
     Ping,
     Shutdown,
 }
@@ -112,7 +112,7 @@ pub enum WorkerCommand {
     GetStructureTree {
         document_id: u64,
     },
-    ValidatePdfUa {
+    AuditAccessibility {
         document_id: u64,
     },
     Ping,
@@ -158,8 +158,8 @@ pub enum WorkerResult {
     Outline(Vec<crate::OutlineNode>),
     Metadata(crate::PdfMetadata),
     PageAnnotations(Vec<crate::annotations::AnnotationData>),
-    StructureTree(crate::a11y::TagNode),
-    PdfUaValidation(crate::a11y::AccessibilityReport),
+    AccessibilityStructure(crate::a11y::AccessibilityStructureInspection),
+    AccessibilityAudit(crate::a11y::AccessibilityAuditReport),
     Pong,
     ShutdownComplete,
 }
@@ -364,7 +364,7 @@ mod tests {
                 page_index: 2,
             },
             WorkerCommand::GetStructureTree { document_id: 7 },
-            WorkerCommand::ValidatePdfUa { document_id: 7 },
+            WorkerCommand::AuditAccessibility { document_id: 7 },
         ];
         for (index, command) in commands.into_iter().enumerate() {
             let request = WorkerRequest {

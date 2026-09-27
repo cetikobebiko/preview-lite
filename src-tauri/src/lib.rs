@@ -13,6 +13,7 @@ pub mod document_io;
 pub mod document_session;
 pub mod error;
 pub mod export;
+pub mod external_validation;
 pub mod job_worker;
 pub mod manipulation;
 pub mod ocr;
@@ -22,11 +23,13 @@ pub mod prepress;
 pub mod redaction;
 pub mod sanitization;
 pub mod sanitization_inspection;
+pub mod sanitization_publication;
+pub mod sanitization_transform;
+pub mod sanitization_verifier;
 pub mod secure_redaction;
 pub mod secure_redaction_inspection;
 pub mod secure_redaction_raster;
 pub mod secure_redaction_verifier;
-pub mod signature;
 pub mod worker;
 
 use pdf_engine::render_page_rgba;
@@ -911,6 +914,448 @@ async fn burn_annotations_to_pdf(
         .await
 }
 
+pub fn run_smoke() {
+    use crate::worker::ipc::{
+        decode_response, encode_request, read_payload, write_frame, WorkerCommand,
+        WorkerCredential, WorkerRenderTarget, WorkerRequest, WorkerResponse, WorkerResult,
+        MAX_WORKER_RESPONSE_BYTES, WORKER_PROTOCOL_VERSION,
+    };
+    use std::io::{self, BufRead, Write};
+
+    // Smoke must exercise the production worker architecture: the main `--smoke`
+    // process spawns the real PDFium worker (`--run-worker`) and routes every
+    // operation through the worker IPC protocol, rather than loading PDFium
+    // in-process. This keeps the hook on the same production backend path that
+    // the application uses (contract §8/§10/§11/§16).
+
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("SMOKE_ERROR: worker executable could not be resolved: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut command = std::process::Command::new(&executable);
+    command
+        .arg("--run-worker")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit());
+
+    // Propagate the pre-resolved absolute runtime path for main/worker parity.
+    // This prevents the worker from diverging to CWD/PATH/system runtime sources.
+    if let Ok(resolved) = crate::pdf_engine::resolve_runtime_path() {
+        command.env("PDFIUM_RESOLVED_PATH", resolved);
+    } else if let Some(path) = std::env::var_os("PDFIUM_PATH") {
+        command.env("PDFIUM_PATH", path);
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!("SMOKE_ERROR: failed to spawn PDFium worker: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    let mut worker_stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            eprintln!("SMOKE_ERROR: worker stdin pipe unavailable");
+            let _ = child.kill();
+            std::process::exit(1);
+        }
+    };
+    let mut worker_stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            eprintln!("SMOKE_ERROR: worker stdout pipe unavailable");
+            let _ = child.kill();
+            std::process::exit(1);
+        }
+    };
+
+    fn send_request(
+        request: &WorkerRequest,
+        writer: &mut std::process::ChildStdin,
+    ) -> Result<(), String> {
+        let frame =
+            encode_request(request).map_err(|error| format!("request encode failed: {error}"))?;
+        write_frame(writer, &frame).map_err(|error| format!("request write failed: {error}"))
+    }
+
+    fn recv_response(reader: &mut std::process::ChildStdout) -> Result<WorkerResponse, String> {
+        let payload = read_payload(reader, MAX_WORKER_RESPONSE_BYTES)
+            .map_err(|error| format!("response read failed: {error}"))?;
+        decode_response(&payload).map_err(|error| format!("response decode failed: {error}"))
+    }
+
+    // Handshake: prove the worker actually initialized PDFium (real runtime,
+    // real worker process). If the worker reports `ready == false`, the smoke
+    // must fail closed rather than degrade to a direct in-process fallback.
+    let hello = WorkerRequest {
+        protocol_version: WORKER_PROTOCOL_VERSION,
+        request_id: 0,
+        command: WorkerCommand::Hello,
+    };
+    if let Err(error) = send_request(&hello, &mut worker_stdin) {
+        eprintln!("SMOKE_ERROR: {error}");
+        let _ = child.kill();
+        std::process::exit(1);
+    }
+    let ready = match recv_response(&mut worker_stdout) {
+        Ok(response) => match response.result {
+            Ok(WorkerResult::Hello { ready, .. }) => ready,
+            _ => {
+                eprintln!("SMOKE_ERROR: worker handshake returned an unexpected response");
+                let _ = child.kill();
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("SMOKE_ERROR: {error}");
+            let _ = child.kill();
+            std::process::exit(1);
+        }
+    };
+    if !ready {
+        eprintln!("SMOKE_ERROR: PDFium runtime is unavailable in the worker process");
+        let _ = child.kill();
+        std::process::exit(1);
+    }
+
+    let mut next_request_id = 1u64;
+    let mut document_id: Option<u64> = None;
+
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let bytes = match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(error) => {
+                eprintln!("SMOKE_ERROR: stdin read failed: {error}");
+                break;
+            }
+        };
+        let _ = bytes;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let cmd: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("SMOKE_ERROR: invalid JSON: {error}");
+                continue;
+            }
+        };
+
+        let cmd_type = cmd.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+        let req_id = cmd.get("id").cloned();
+
+        match cmd_type {
+            "open" => {
+                let path = cmd.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let credential = match cmd.get("password").and_then(|v| v.as_str()) {
+                    Some(password) => match WorkerCredential::new(password.to_string()) {
+                        Ok(credential) => Some(credential),
+                        Err(error) => {
+                            let response = serde_json::json!({
+                                "id": req_id,
+                                "status": "error",
+                                "error": error.message
+                            });
+                            writeln!(writer, "{response}").ok();
+                            writer.flush().ok();
+                            continue;
+                        }
+                    },
+                    None => None,
+                };
+
+                let request = WorkerRequest {
+                    protocol_version: WORKER_PROTOCOL_VERSION,
+                    request_id: next_request_id,
+                    command: WorkerCommand::OpenDocument {
+                        path: path.to_string(),
+                        credential,
+                    },
+                };
+                next_request_id += 1;
+
+                let response = send_request(&request, &mut worker_stdin)
+                    .and_then(|()| recv_response(&mut worker_stdout));
+                match response {
+                    Ok(WorkerResponse {
+                        result:
+                            Ok(WorkerResult::DocumentOpened {
+                                document_id: id,
+                                page_count,
+                                ..
+                            }),
+                        ..
+                    }) => {
+                        document_id = Some(id);
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "ok",
+                            "page_count": page_count
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Ok(WorkerResponse {
+                        result: Err(failure),
+                        ..
+                    }) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": failure.message
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Ok(_) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": "unexpected worker response for open"
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Err(error) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": error
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                }
+            }
+            "render_thumbnail" => {
+                let page_index = cmd.get("page_index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let scale = cmd.get("scale").and_then(|v| v.as_f64()).unwrap_or(0.25);
+                let Some(id) = document_id else {
+                    let response = serde_json::json!({
+                        "id": req_id,
+                        "status": "error",
+                        "error": "no open document"
+                    });
+                    writeln!(writer, "{response}").ok();
+                    writer.flush().ok();
+                    continue;
+                };
+
+                let request = WorkerRequest {
+                    protocol_version: WORKER_PROTOCOL_VERSION,
+                    request_id: next_request_id,
+                    command: WorkerCommand::RenderPage {
+                        document_id: id,
+                        page_index,
+                        target: WorkerRenderTarget::Scale(scale),
+                        rotation: 0,
+                    },
+                };
+                next_request_id += 1;
+
+                let response = send_request(&request, &mut worker_stdin)
+                    .and_then(|()| recv_response(&mut worker_stdout));
+                match response {
+                    Ok(WorkerResponse {
+                        result:
+                            Ok(WorkerResult::PageRendered {
+                                width,
+                                height,
+                                data,
+                            }),
+                        ..
+                    }) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "ok",
+                            "width": width,
+                            "height": height,
+                            "data_len": data.len()
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Ok(WorkerResponse {
+                        result: Err(failure),
+                        ..
+                    }) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": failure.message
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Ok(_) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": "unexpected worker response for render"
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Err(error) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": error
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                }
+            }
+            "extract_text" => {
+                let page_index = cmd.get("page_index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let Some(id) = document_id else {
+                    let response = serde_json::json!({
+                        "id": req_id,
+                        "status": "error",
+                        "error": "no open document"
+                    });
+                    writeln!(writer, "{response}").ok();
+                    writer.flush().ok();
+                    continue;
+                };
+
+                let request = WorkerRequest {
+                    protocol_version: WORKER_PROTOCOL_VERSION,
+                    request_id: next_request_id,
+                    command: WorkerCommand::GetPageTextLayout {
+                        document_id: id,
+                        page_index,
+                    },
+                };
+                next_request_id += 1;
+
+                let response = send_request(&request, &mut worker_stdin)
+                    .and_then(|()| recv_response(&mut worker_stdout));
+                match response {
+                    Ok(WorkerResponse {
+                        result: Ok(WorkerResult::TextLayout(items)),
+                        ..
+                    }) => {
+                        let text = items
+                            .iter()
+                            .map(|item| item.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "ok",
+                            "text": text
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Ok(WorkerResponse {
+                        result: Err(failure),
+                        ..
+                    }) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": failure.message
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Ok(_) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": "unexpected worker response for text"
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                    Err(error) => {
+                        let response = serde_json::json!({
+                            "id": req_id,
+                            "status": "error",
+                            "error": error
+                        });
+                        writeln!(writer, "{response}").ok();
+                        writer.flush().ok();
+                    }
+                }
+            }
+            "close" | "shutdown" => {
+                let response = serde_json::json!({
+                    "id": req_id,
+                    "status": "ok"
+                });
+                writeln!(writer, "{response}").ok();
+                writer.flush().ok();
+                break;
+            }
+            "ping" => {
+                let request = WorkerRequest {
+                    protocol_version: WORKER_PROTOCOL_VERSION,
+                    request_id: next_request_id,
+                    command: WorkerCommand::Ping,
+                };
+                next_request_id += 1;
+                let response = send_request(&request, &mut worker_stdin)
+                    .and_then(|()| recv_response(&mut worker_stdout));
+                let status = match response {
+                    Ok(WorkerResponse {
+                        result: Ok(WorkerResult::Pong),
+                        ..
+                    }) => "ok",
+                    _ => "error",
+                };
+                let response = serde_json::json!({
+                    "id": req_id,
+                    "status": status
+                });
+                writeln!(writer, "{response}").ok();
+                writer.flush().ok();
+            }
+            _ => {
+                let response = serde_json::json!({
+                    "id": req_id,
+                    "status": "error",
+                    "error": format!("unknown command: {cmd_type}")
+                });
+                writeln!(writer, "{response}").ok();
+                writer.flush().ok();
+            }
+        }
+    }
+
+    // Graceful worker shutdown: request Shutdown, drain the reply, close the
+    // input pipe, and reap the child so the smoke ends with a clean teardown.
+    let shutdown = WorkerRequest {
+        protocol_version: WORKER_PROTOCOL_VERSION,
+        request_id: next_request_id,
+        command: WorkerCommand::Shutdown,
+    };
+    let _ = send_request(&shutdown, &mut worker_stdin);
+    let _ = recv_response(&mut worker_stdout);
+    drop(worker_stdin);
+    let _ = child.wait();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tracing_subscriber::prelude::*;
@@ -964,8 +1409,11 @@ pub fn run() {
                 .start_job_reaper();
 
             if let Ok(resource_dir) = app.path().resource_dir() {
-                let lib_path = resource_dir.join("lib");
-                std::env::set_var("PDFIUM_PATH", lib_path);
+                let runtime_path = resource_dir
+                    .join("lib")
+                    .join(crate::pdf_engine::runtime_metadata::RUNTIME_FILENAME);
+                std::env::set_var("PDFIUM_PATH", &runtime_path);
+                std::env::set_var("TAURI_RESOURCE_DIR", &resource_dir);
             }
 
             tauri::async_runtime::spawn(async move {
@@ -985,6 +1433,8 @@ pub fn run() {
             std::sync::atomic::AtomicU64::new(0),
         )))
         .manage(ai::VectorStore(parking_lot::RwLock::new(HashMap::new())))
+        .manage(ai::endpoint::AiEndpointStore::new())
+        .manage(ai::request_registry::AiRequestRegistry::new())
         .manage(ActiveRenderTasks(parking_lot::Mutex::new(HashMap::new())))
         .manage(AppShutdownToken(shutdown_token))
         .manage(AppShutdownCoordinator(std::sync::atomic::AtomicBool::new(
@@ -1010,10 +1460,9 @@ pub fn run() {
             document_session::export_session_pages_as_images,
             document_session::export_session_text_content,
             document_session::print_session_pdf,
-            document_session::analyze_session_color_spaces,
-            document_session::calculate_session_ink_coverage,
-            document_session::render_session_separation_channels,
-            document_session::export_session_pages_as_pdf_x,
+            document_session::inspect_session_print_resources,
+            document_session::generate_session_rgb_derived_coverage_preview,
+            document_session::generate_session_rgb_derived_process_preview,
             document_session::extract_session_pages,
             document_session::split_session_pdf,
             document_session::discard_candidate_session,
@@ -1021,7 +1470,7 @@ pub fn run() {
             document_session::get_session_pdf_outline,
             document_session::get_session_pdf_metadata,
             document_session::get_session_structure_tree,
-            document_session::validate_session_pdf_ua,
+            document_session::audit_session_accessibility,
             document_session::get_session_page_annotations,
             document_session::search_session_pdf_text,
             document_session::get_session_page_text_layout,
@@ -1036,7 +1485,6 @@ pub fn run() {
             document_session::add_session_annotation,
             document_session::delete_session_annotation,
             document_session::update_session_metadata,
-            document_session::update_session_alt_text,
             document_session::save_document_session,
             document_session::save_document_session_as,
             document_session::begin_session_transition,
@@ -1051,7 +1499,6 @@ pub fn run() {
             ocr::get_available_ocr_languages,
             ocr::run_ocr_on_page,
             perform_ocr_on_page,
-            signature::verify_pdf_signatures,
             share_file_macos,
             share_external_file_macos,
             trigger_continuity_camera_scan,
@@ -1059,23 +1506,30 @@ pub fn run() {
             convert_and_save_image,
             speak_text,
             stop_speaking,
-            signature::list_system_certificates,
             document_session::merge_session_pdfs,
-            plugins::load_plugin,
-            plugins::unload_plugin,
-            plugins::get_active_plugins,
-            plugins::trigger_plugin_hook,
-            plugins::run_script_direct,
+            plugins::inspect_plugin_package,
+            plugins::install_plugin_package,
+            plugins::grant_plugin_consent,
+            plugins::uninstall_plugin,
+            plugins::set_plugin_enabled,
+            plugins::list_installed_plugins,
+            plugins::start_plugin_execution,
+            plugins::cancel_plugin_execution,
+            plugins::get_plugin_execution_status,
             batch::add_batch_job,
-            signature::sign_pdf_pades,
-            signature::enable_ltv,
             redaction::apply_redactions,
             redaction::plan_secure_redaction,
             redaction::execute_secure_redaction,
             redaction::sanitize_pdf_document,
             sanitization::inspect_document_sanitization,
+            sanitization_publication::execute_document_sanitization,
             redaction::scan_sensitive_data,
             ocr::export_as_searchable_pdf,
+            ai::configure_ai_endpoint,
+            ai::preview_ai_endpoint,
+            ai::get_ai_endpoint_status,
+            ai::clear_ai_endpoint_config,
+            ai::cancel_ai_request,
             ai::build_semantic_index,
             ai::semantic_search,
             ai::query_document_rag,

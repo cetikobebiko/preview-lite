@@ -1,6 +1,7 @@
 use lopdf::{Document, Object};
 use pdfium_render::prelude::*;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

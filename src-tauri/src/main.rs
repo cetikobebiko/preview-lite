@@ -14,5 +14,13 @@ fn main() {
         preview_alternative_lib::worker::run_worker();
         return;
     }
+    if std::env::args().any(|arg| arg == "--run-plugin-worker") {
+        preview_alternative_lib::plugins::worker::run_plugin_worker();
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--smoke") {
+        preview_alternative_lib::run_smoke();
+        return;
+    }
     preview_alternative_lib::run();
 }

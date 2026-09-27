@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -122,7 +122,7 @@ describe("backend service boundaries", () => {
       "get_session_pdf_outline",
       "get_session_pdf_metadata",
       "get_session_structure_tree",
-      "validate_session_pdf_ua",
+      "audit_session_accessibility",
       "get_session_page_annotations",
       "render_session_page",
       "render_session_thumbnail",
@@ -260,8 +260,6 @@ describe("backend service boundaries", () => {
       "detectScannedPage",
       "runOcrOnPage",
       "performOcrOnPage",
-      "verifyPdfSignatures",
-      "enableLtv",
       "shareFileMacos",
     ]) {
       const required = Object.keys(CONTRACTS[key].payload.required);
@@ -335,20 +333,18 @@ describe("backend service boundaries", () => {
     expect(handlerRegistry).not.toMatch(/\bshare_session_macos\b/);
   });
 
-  it("keeps unsupported metadata and alt-text writes session-native without legacy bypasses", () => {
+  it("keeps unsupported metadata writes session-native and removes accessibility write bypasses", () => {
     const handlerRegistry = readFileSync(rustLibPath, "utf8");
     const sessionSource = readFileSync(
       resolve(rustSourceRoot, "document_session.rs"),
       "utf8",
     );
     expect(handlerRegistry).toMatch(/document_session::update_session_metadata/);
-    expect(handlerRegistry).toMatch(/document_session::update_session_alt_text/);
+    expect(handlerRegistry).not.toMatch(/document_session::update_session_alt_text/);
     expect(handlerRegistry).not.toMatch(/^\s*set_pdf_metadata\s*,/m);
     expect(handlerRegistry).not.toMatch(/^\s*update_alt_text\s*,/m);
-    for (const handler of [
-      "update_session_metadata",
-      "update_session_alt_text",
-    ]) {
+    expect(sessionSource).not.toMatch(/fn update_session_alt_text/);
+    for (const handler of ["update_session_metadata"]) {
       const start = sessionSource.indexOf(`fn ${handler}`);
       const body = sessionSource.slice(start, start + 900);
       expect(start).toBeGreaterThanOrEqual(0);
@@ -392,19 +388,14 @@ describe("backend service boundaries", () => {
     }
   });
 
-  it("keeps signature verification and LTV behind their mock-disabled feature guards", () => {
-    const signaturePanelSource = readFileSync(
-      resolve(sourceRoot, "components/SignaturePanel.svelte"),
-      "utf8",
-    );
-    expect(signaturePanelSource).toMatch(
-      /guardFeatureAction\('signature_verification'/,
-    );
-    expect(signaturePanelSource).toMatch(/guardFeatureAction\('ltv'/);
-    expect(signaturePanelSource).toMatch(
-      /disabled=\{!ltvPresentation\.runnable\}/,
-    );
-    expect(signaturePanelSource).toMatch(/LTV unavailable · MOCK/);
+  it("ensures no signature UI components remain in the component tree", () => {
+    for (const file of [
+      "components/SignaturePanel.svelte",
+      "components/SignatureWizardModal.svelte",
+      "components/SignatureSettingsModal.svelte",
+    ]) {
+      expect(existsSync(resolve(sourceRoot, file))).toBe(false);
+    }
   });
 
   it("isolates every active snapshot PDF job from the Tauri process", () => {
@@ -434,9 +425,9 @@ describe("backend service boundaries", () => {
       [sources.documentSession, "export_session_pages_as_images"],
       [sources.documentSession, "export_session_text_content"],
       [sources.documentSession, "print_session_pdf"],
-      [sources.documentSession, "analyze_session_color_spaces"],
-      [sources.documentSession, "calculate_session_ink_coverage"],
-      [sources.documentSession, "render_session_separation_channels"],
+      [sources.documentSession, "inspect_session_print_resources"],
+      [sources.documentSession, "generate_session_rgb_derived_coverage_preview"],
+      [sources.documentSession, "generate_session_rgb_derived_process_preview"],
       [sources.documentSession, "split_session_pdf"],
       [sources.documentSession, "merge_session_pdfs"],
       [sources.documentSession, "extract_session_pages"],
@@ -593,14 +584,11 @@ describe("backend service boundaries", () => {
     expect(scanBody).toContain("JobCommand::ScanSensitiveData");
 
     const cases = [
-      [readFileSync(resolve(rustSourceRoot, "signature.rs"), "utf8"), "sign_pdf_pades"],
-      [readFileSync(resolve(rustSourceRoot, "signature.rs"), "utf8"), "verify_pdf_signatures"],
       [redactionSource, "apply_redactions"],
       [redactionSource, "sanitize_pdf_document"],
       [redactionSource, "apply_redactions_unavailable"],
       [redactionSource, "sanitize_pdf_document_unavailable"],
       [readFileSync(resolve(rustSourceRoot, "ocr.rs"), "utf8"), "export_as_searchable_pdf"],
-      [readFileSync(documentSessionPath, "utf8"), "export_session_pages_as_pdf_x"],
     ];
     for (const [source, functionName] of cases) {
       const body = rustFunctionBody(source, functionName);
@@ -619,6 +607,8 @@ describe("backend service boundaries", () => {
     }
 
     const handlerRegistry = readFileSync(rustLibPath, "utf8");
+    expect(handlerRegistry).not.toContain("export_session_pages_as_pdf_x");
+    expect(readFileSync(documentSessionPath, "utf8")).not.toContain("export_session_pages_as_pdf_x");
     expect(handlerRegistry).not.toMatch(/^\s*burn_annotations_to_pdf\s*,/m);
     expect(handlerRegistry).not.toMatch(/^\s*manipulation::merge_pdfs\s*,/m);
   });
@@ -774,5 +764,30 @@ describe("backend service boundaries", () => {
     );
     expect(redactionSource).not.toMatch(/std::env::(?:var|var_os)\(/);
     expect(workerSource).not.toContain("WHOLE_OBJECT_DESTROY_PROBE");
+  });
+
+  it("CLOSURE-3: locks absence of TLS certificate/hostname verification bypass in production AI code", () => {
+    const aiFiles = rustSourceFiles(resolve(rustSourceRoot, "ai"));
+    const forbiddenTlsPatterns = [
+      "danger_accept_invalid_certs",
+      "danger_accept_invalid_hostnames",
+      "accept_invalid_certs",
+      "accept_invalid_hostnames",
+      "min_tls_version",
+      "tls_built_in_root_certs(false)",
+    ];
+
+    for (const file of aiFiles) {
+      const isTestFile = file.includes("test") || file.includes("mock");
+      if (!isTestFile) {
+        const content = readFileSync(file, "utf8");
+        for (const pattern of forbiddenTlsPatterns) {
+          expect(
+            content,
+            `Production AI file ${relative(rustSourceRoot, file)} must not contain TLS bypass pattern: ${pattern}`,
+          ).not.toContain(pattern);
+        }
+      }
+    }
   });
 });

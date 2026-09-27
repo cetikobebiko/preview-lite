@@ -3,73 +3,161 @@ import { guardFeatureAction } from './featureActionGuard.js';
 import { getRuntimeFeatureContext } from './featureRegistry.js';
 import {
   addBatchJob as addBatchJobBackend,
-  getActivePlugins,
-  loadPlugin as loadPluginBackend,
-  runScriptDirect as runScriptDirectBackend,
-  triggerPluginHook as triggerPluginHookBackend,
-  unloadPlugin as unloadPluginBackend,
+  cancelPluginExecution as cancelPluginExecutionBackend,
+  getPluginExecutionStatus as getPluginExecutionStatusBackend,
+  grantPluginConsent as grantPluginConsentBackend,
+  inspectPluginPackage as inspectPluginPackageBackend,
+  installPluginPackage as installPluginPackageBackend,
+  listInstalledPlugins as listInstalledPluginsBackend,
+  setPluginEnabled as setPluginEnabledBackend,
+  startPluginExecution as startPluginExecutionBackend,
+  uninstallPlugin as uninstallPluginBackend,
 } from './services/backend/plugins.js';
 
 // Yüklü eklentilerin listesi
-export const activePlugins = writable([]);
+export const installedPlugins = writable([]);
+export const activePlugins = installedPlugins; // Alias for backward compatibility
+
+// En son incelenen aday paket (Inspect/Review)
+export const inspectionCandidate = writable(null);
+
+// Aktif yürütmelerin durum haritası: { [executionId]: PluginExecutionStatus }
+export const activeExecutions = writable({});
 
 // Dinamik Slotlar (Eklentilerin UI enjeksiyonları)
-// Örn: { "toolbar": [{ id: "btn1", label: "My Btn", hook: "on_my_btn" }] }
 export const dynamicSlots = writable({
   toolbar: [],
   contextMenu: [],
 });
 
-export async function refreshPlugins() {
+export async function refreshInstalledPlugins() {
   return await guardFeatureAction(
     'plugin_system',
     getRuntimeFeatureContext(),
     async () => {
-      const plugins = await getActivePlugins();
-      activePlugins.set(plugins);
+      const plugins = await listInstalledPluginsBackend();
+      installedPlugins.set(plugins);
       return plugins;
     },
   );
 }
 
-export async function loadPlugin(manifestPath) {
+export async function inspectPlugin(packagePath) {
   return await guardFeatureAction(
     'plugin_system',
     getRuntimeFeatureContext(),
     async () => {
-      const result = await loadPluginBackend(manifestPath);
-      const plugins = await getActivePlugins();
-      activePlugins.set(plugins);
+      const result = await inspectPluginPackageBackend(packagePath);
+      const candidateWithMeta = {
+        ...result,
+        package_path: packagePath,
+      };
+      inspectionCandidate.set(candidateWithMeta);
+      return candidateWithMeta;
+    },
+  );
+}
+
+export async function grantConsent(pluginId, expectedPackageDigest, expectedPermissions) {
+  return await guardFeatureAction(
+    'plugin_system',
+    getRuntimeFeatureContext(),
+    async () => {
+      const result = await grantPluginConsentBackend(pluginId, expectedPackageDigest, expectedPermissions);
+      await refreshInstalledPlugins();
       return result;
     },
   );
 }
 
-export async function unloadPlugin(pluginId) {
+export async function installPlugin(packagePath, expectedDigest) {
   return await guardFeatureAction(
     'plugin_system',
     getRuntimeFeatureContext(),
     async () => {
-      await unloadPluginBackend(pluginId);
-      const plugins = await getActivePlugins();
-      activePlugins.set(plugins);
+      const result = await installPluginPackageBackend(packagePath, expectedDigest);
+      inspectionCandidate.set(null);
+      await refreshInstalledPlugins();
+      return result;
     },
   );
 }
 
-export async function triggerPluginHook(pluginId, hookName, payload = "") {
+export async function uninstallPlugin(pluginId) {
   return await guardFeatureAction(
     'plugin_system',
     getRuntimeFeatureContext(),
-    () => triggerPluginHookBackend(pluginId, hookName, payload),
+    async () => {
+      await uninstallPluginBackend(pluginId);
+      await refreshInstalledPlugins();
+    },
   );
 }
 
-export async function runScriptDirect(scriptContent) {
+export async function togglePluginEnabled(pluginId, enabled) {
   return await guardFeatureAction(
     'plugin_system',
     getRuntimeFeatureContext(),
-    () => runScriptDirectBackend(scriptContent),
+    async () => {
+      const result = await setPluginEnabledBackend(pluginId, enabled);
+      await refreshInstalledPlugins();
+      return result;
+    },
+  );
+}
+
+export async function startPluginHook(pluginId, hookName, payloadJson = "{}") {
+  return await guardFeatureAction(
+    'plugin_system',
+    getRuntimeFeatureContext(),
+    async () => {
+      const executionId = crypto.randomUUID();
+      const startResult = await startPluginExecutionBackend(
+        pluginId,
+        hookName,
+        payloadJson,
+        executionId,
+      );
+
+      activeExecutions.update((prev) => ({
+        ...prev,
+        [executionId]: {
+          execution_id: executionId,
+          plugin_id: pluginId,
+          hook_name: hookName,
+          state: "RUNNING",
+          result_json: null,
+          error: null,
+        },
+      }));
+
+      return startResult;
+    },
+  );
+}
+
+export async function cancelPlugin(executionId) {
+  return await guardFeatureAction(
+    'plugin_system',
+    getRuntimeFeatureContext(),
+    async () => {
+      await cancelPluginExecutionBackend(executionId);
+    },
+  );
+}
+
+export async function pollExecutionStatus(executionId) {
+  return await guardFeatureAction(
+    'plugin_system',
+    getRuntimeFeatureContext(),
+    async () => {
+      const status = await getPluginExecutionStatusBackend(executionId);
+      activeExecutions.update((prev) => ({
+        ...prev,
+        [executionId]: status,
+      }));
+      return status;
+    },
   );
 }
 

@@ -1,0 +1,766 @@
+{
+  "schemaVersion": "1.0.0",
+  "description": "Canonical Test Execution Registry — FAST_LOCAL / NATIVE_PLATFORM / EXACT_ARTIFACT execution class mapping for Antigravity PDF Reader",
+  "generatedFrom": {
+    "manifestPath": "src-tauri/tests/fixtures/corpus-manifest.json",
+    "coveragePath": "docs/engineering/pdf-corpus-coverage.json",
+    "platformSupportPath": "docs/engineering/platform-support.json"
+  },
+  "executionClasses": [
+    "FAST_LOCAL",
+    "NATIVE_PLATFORM",
+    "EXACT_ARTIFACT"
+  ],
+  "platformVocabulary": [
+    "any",
+    "macos",
+    "linux",
+    "windows"
+  ],
+  "targets": [
+    {
+      "id": "rust:crash_tests",
+      "target": "src-tauri/tests/crash_tests.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-minimal",
+        "core-malformed",
+        "fuzz-minimal"
+      ],
+      "syntheticInputs": [],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 3,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "on_macos_aarch64": 3
+      },
+      "notes": "#[cfg(all(target_os=\"macos\", target_arch=\"aarch64\"))] — default 0 tests, B5 fail-closed: NOT_APPLICABLE off-host, not PASS"
+    },
+    {
+      "id": "rust:document_io_fs",
+      "target": "src-tauri/tests/document_io_fs.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 26,
+      "expectedTestPresence": "exact",
+      "notes": "PDFium-independent atomic filesystem and replace semantics; compiles isolated document_io module (25 unit tests) + 1 integration typecheck test."
+    },
+    {
+      "id": "rust:document_io_pdfium",
+      "target": "src-tauri/tests/document_io_pdfium.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-reorder-rich",
+        "core-reorder-with-metadata",
+        "core-reorder-with-outline",
+        "core-reorder-with-named-destination",
+        "core-reorder-with-form"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 2,
+      "expectedTestPresence": "exact"
+    },
+    {
+      "id": "rust:fixture_manifest_integrity",
+      "target": "src-tauri/tests/fixture_manifest_integrity.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 28,
+      "expectedTestPresence": "at_least_one"
+    },
+    {
+      "id": "rust:job_worker_process",
+      "target": "src-tauri/tests/job_worker_process.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-minimal",
+        "redaction-cropbox-mediabox-diff",
+        "redaction-negative-origin",
+        "redaction-rotations",
+        "redaction-simple-text",
+        "sanitization-unsupported-active-content"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir",
+        "synthetic_lopdf_document"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "job_worker_executable"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 22,
+      "expectedTestPresence": "at_least_one"
+    },
+    {
+      "id": "rust:pdf_corpus_coverage",
+      "target": "src-tauri/tests/pdf_corpus_coverage.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 6,
+      "expectedTestPresence": "at_least_one"
+    },
+    {
+      "id": "rust:plugin_worker_process",
+      "target": "src-tauri/tests/plugin_worker_process.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_tempdir",
+        "synthetic_rhai_script"
+      ],
+      "nativeRequirements": [
+        "plugin_worker_executable"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 5,
+      "expectedTestPresence": "exact"
+    },
+    {
+      "id": "rust:plugin_worker_supervisor",
+      "target": "src-tauri/tests/plugin_worker_supervisor.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "plugin_worker_test_helper_executable"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 13,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 1,
+        "with_plugin_test_support": 13
+      },
+      "notes": "Default cargo test runs 1 noop; --features plugin-test-support runs 12 adversarial + 1 noop envelope. Zero-test risk if feature filtered."
+    },
+    {
+      "id": "rust:redaction_fixtures_and_capabilities",
+      "target": "src-tauri/tests/redaction_fixtures_and_capabilities.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "redaction-simple-text",
+        "redaction-image-only",
+        "redaction-annotations-fixture",
+        "redaction-acroform-widget",
+        "redaction-rotations",
+        "redaction-cropbox-mediabox-diff",
+        "redaction-xfa-fixture",
+        "redaction-signature-marked-byterange",
+        "redaction-object-stream",
+        "redaction-incremental-revision"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir",
+        "synthetic_lopdf_document"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 14,
+      "expectedTestPresence": "at_least_one"
+    },
+    {
+      "id": "rust:sanitization_capabilities",
+      "target": "src-tauri/tests/sanitization_capabilities.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "sanitization-clean-minimal",
+        "sanitization-javascript-actions",
+        "sanitization-embedded-files-af",
+        "sanitization-encrypted",
+        "sanitization-hybrid-xref",
+        "sanitization-incremental-revision",
+        "sanitization-unsupported-active-content",
+        "sanitization-xfa-single-stream"
+      ],
+      "syntheticInputs": [
+        "synthetic_lopdf_document",
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 25,
+      "expectedTestPresence": "at_least_one"
+    },
+    {
+      "id": "rust:sanitization_inspection_acceptance",
+      "target": "src-tauri/tests/sanitization_inspection_acceptance.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "sanitization-clean-minimal",
+        "sanitization-encrypted",
+        "sanitization-unsupported-active-content"
+      ],
+      "syntheticInputs": [
+        "synthetic_lopdf_document",
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64",
+        "sanitization_test_support_feature"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 10,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "with_sanitization_test_support_on_macos_aarch64": 10
+      },
+      "notes": "#![cfg(feature = \"sanitization-test-support\")] + #[cfg(all(target_os=\"macos\", target_arch=\"aarch64\"))] — default cargo test yields 0 tests (PASS masquerade risk)"
+    },
+    {
+      "id": "rust:sanitization_publication_acceptance",
+      "target": "src-tauri/tests/sanitization_publication_acceptance.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "sanitization-clean-minimal"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64",
+        "sanitization_test_support_feature"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 9,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "with_sanitization_test_support_on_macos_aarch64": 9
+      },
+      "notes": "#![cfg(feature = \"sanitization-test-support\")] + cfg(macos aarch64) — zero-test risk"
+    },
+    {
+      "id": "rust:secure_redaction_execution_acceptance",
+      "target": "src-tauri/tests/secure_redaction_execution_acceptance.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "redaction-simple-text",
+        "redaction-mixed-secure-redaction-pages"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64",
+        "secure_redaction_test_support_feature"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 11,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "with_secure_redaction_test_support_on_macos_aarch64": 11
+      },
+      "notes": "#![cfg(feature = \"secure-redaction-test-support\")] + cfg(macos aarch64) — zero-test risk"
+    },
+    {
+      "id": "rust:secure_redaction_planning_worker",
+      "target": "src-tauri/tests/secure_redaction_planning_worker.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "redaction-simple-text",
+        "redaction-cropbox-mediabox-diff",
+        "redaction-rotations",
+        "redaction-incremental-revision"
+      ],
+      "syntheticInputs": [
+        "synthetic_lopdf_document",
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 28,
+      "expectedTestPresence": "at_least_one"
+    },
+    {
+      "id": "rust:secure_redaction_raster_pure",
+      "target": "src-tauri/tests/secure_redaction_raster_pure.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_geometry"
+      ],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 28,
+      "expectedTestPresence": "exact",
+      "notes": "Pure geometry/merge/overwrite/raster buffer primitives without PDFium runtime — B2 split from mixed aggregate (28 pure extracted, 40 native retained)."
+    },
+    {
+      "id": "rust:secure_redaction_raster_primitives",
+      "target": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "redaction-simple-text",
+        "redaction-rotations",
+        "redaction-cropbox-mediabox-diff",
+        "redaction-negative-origin",
+        "redaction-nonzero-origin",
+        "redaction-annotations-fixture",
+        "redaction-acroform-widget",
+        "redaction-same-size-same-rotation-pages",
+        "redaction-encrypted-redaction",
+        "redaction-signature-marked-byterange",
+        "redaction-xfa-fixture",
+        "redaction-text-image",
+        "redaction-image-only"
+      ],
+      "syntheticInputs": [
+        "synthetic_geometry"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 40,
+      "expectedTestPresence": "at_least_one",
+      "notes": "NATIVE retained: mapping/render/raster-payload/plan-immutability with PDFium runtime (40 tests) — B2 split."
+    },
+    {
+      "id": "rust:session_worker_integration",
+      "target": "src-tauri/tests/session_worker_integration.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-reorder-rich",
+        "core-encrypted",
+        "core-minimal"
+      ],
+      "syntheticInputs": [],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 2,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "on_macos_aarch64": 2
+      },
+      "notes": "#[cfg(all(target_os=\"macos\", target_arch=\"aarch64\"))] — default yields 0 tests"
+    },
+    {
+      "id": "rust:signature_surface",
+      "target": "src-tauri/tests/signature_surface.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 2,
+      "expectedTestPresence": "exact"
+    },
+    {
+      "id": "rust:test_execution_registry_integrity",
+      "target": "src-tauri/tests/test_execution_registry_integrity.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 6,
+      "expectedTestPresence": "exact",
+      "notes": "Integrity validator test suite for test execution registry, corpus manifest bindings, and B5 fail-closed invariants."
+    },
+    {
+      "id": "rust:whole_object_backend_characterization",
+      "target": "src-tauri/tests/whole_object_backend_characterization.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "redaction-simple-text",
+        "redaction-image-only",
+        "redaction-whole-object-adversarial"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 8,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "on_macos": 8,
+        "default_non_macos": 6
+      },
+      "notes": "#[cfg(target_os=\"macos\")] guards 2 tests; non-macos yields 6 — platform-conditioned count"
+    },
+    {
+      "id": "rust:worker_broker_process",
+      "target": "src-tauri/tests/worker_broker_process.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_fake_pdf_path"
+      ],
+      "nativeRequirements": [
+        "pdfium_worker_test_helper_executable"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 19,
+      "expectedTestPresence": "exact",
+      "notes": "Fake worker via CARGO_BIN_EXE_pdfium-worker-test-helper; realWorker=false canonical (see test-execution-architecture.md §5)"
+    },
+    {
+      "id": "rust:worker_pdfium_integration",
+      "target": "src-tauri/tests/worker_pdfium_integration.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-reorder-rich",
+        "core-encrypted",
+        "core-minimal",
+        "core-reorder-with-metadata",
+        "core-reorder-with-outline",
+        "core-release-smoke",
+        "core-large-page-dimensions"
+      ],
+      "syntheticInputs": [
+        "synthetic_type3_unicode_lopdf"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 8,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "on_macos_aarch64": 8
+      },
+      "notes": "#[cfg(all(target_os=\"macos\", target_arch=\"aarch64\"))] — default 0 tests"
+    },
+    {
+      "id": "js:vitest",
+      "target": "src",
+      "language": "js",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_jsdom",
+        "synthetic_canvas",
+        "synthetic_store_state"
+      ],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 99,
+      "expectedTestPresence": "at_least_one",
+      "notes": "Aggregate of 99 *.test.js files under src (vitest jsdom, vi.mock tauri). Invocation: npm run test. Sub-target js:cross-platform is alias for src/crossPlatformBuildArchitecture.test.js."
+    },
+    {
+      "id": "rust:b4_integration_gaps",
+      "target": "src-tauri/tests/b4_integration_gaps.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-release-smoke",
+        "core-ai-text-rich",
+        "core-reorder-rich",
+        "core-minimal",
+        "core-three-distinct-pages",
+        "core-encrypted"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 6,
+      "expectedTestPresence": "at_least_one",
+      "notes": "B4 gap closure: viewer/search unicode, local AI unicode, reorder/atomic persistence, encrypted search (all PDFium, NATIVE deferred)"
+    },
+    {
+      "id": "rust:artifact_smoke_mac",
+      "target": "src-tauri/tests/artifact_smoke_mac.rs",
+      "language": "rust",
+      "executionClass": "EXACT_ARTIFACT",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-release-smoke"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64"
+      ],
+      "artifactRequirement": {
+        "kind": "MACOS_DMG|MACOS_APP_BUNDLE"
+      },
+      "expectedTestCount": 1,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "with_artifact_macos": 1
+      },
+      "notes": "Exact artifact smoke for macOS .dmg/.app — requires ARTIFACT_SMOKE_MACOS_PATH env var. Uses production worker (--run-worker) via packaged binary."
+    },
+    {
+      "id": "rust:artifact_smoke_linux",
+      "target": "src-tauri/tests/artifact_smoke_linux.rs",
+      "language": "rust",
+      "executionClass": "EXACT_ARTIFACT",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "linux"
+      ],
+      "fixtureIds": [
+        "core-release-smoke"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable"
+      ],
+      "artifactRequirement": {
+        "kind": "LINUX_DEB"
+      },
+      "expectedTestCount": 1,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "with_artifact_linux": 1
+      },
+      "notes": "Exact artifact smoke for Linux .deb — requires ARTIFACT_SMOKE_LINUX_PATH env var. Uses production worker (--run-worker) via packaged binary."
+    },
+    {
+      "id": "rust:artifact_smoke_windows",
+      "target": "src-tauri/tests/artifact_smoke_windows.rs",
+      "language": "rust",
+      "executionClass": "EXACT_ARTIFACT",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "windows"
+      ],
+      "fixtureIds": [
+        "core-release-smoke"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable"
+      ],
+      "artifactRequirement": {
+        "kind": "WINDOWS_MSI|WINDOWS_NSIS"
+      },
+      "expectedTestCount": 2,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "with_artifact_windows": 2
+      },
+      "notes": "Exact artifact smoke for Windows .msi/.nsis (2 tests: execution and evidence structure) — requires ARTIFACT_SMOKE_WINDOWS_PATH env var. Uses production worker (--run-worker) via packaged binary."
+    }
+  ],
+  "summary": {
+    "totalTargets": 27,
+    "byExecutionClass": {
+      "FAST_LOCAL": 10,
+      "NATIVE_PLATFORM": 14,
+      "EXACT_ARTIFACT": 3
+    },
+    "pdfiumRuntimeRequired": 17,
+    "realWorkerRequired": 10,
+    "exactArtifactRequired": 3
+  }
+}

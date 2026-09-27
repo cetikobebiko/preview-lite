@@ -1234,7 +1234,7 @@ fn test_prompt_8b_3_5_manifest_parity_and_constants_match() {
     let limits = &manifest["limits"];
     assert_eq!(
         limits["maxPixelsPerAffectedPage"].as_u64().unwrap(),
-        MAX_PIXELS_PER_PAGE as u64
+        MAX_PIXELS_PER_PAGE
     );
     assert_eq!(
         limits["maxTotalEstimatedAffectedPixels"].as_u64().unwrap(),

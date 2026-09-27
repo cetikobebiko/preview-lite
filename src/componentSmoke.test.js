@@ -71,6 +71,35 @@ vi.mock("./services/platform/events.js", () => ({
   listen: vi.fn(async () => vi.fn()),
 }));
 
+vi.mock("./services/backend/ai.js", () => ({
+  configureAiEndpoint: vi.fn(async (url) => ({
+    policy_version: 1,
+    mode: "Loopback",
+    scheme: "http",
+    canonical_host: "127.0.0.1",
+    effective_port: 11434,
+    canonical_origin: url || "http://127.0.0.1:11434",
+    endpoint_fingerprint: "mock_fp",
+    created_at_ms: Date.now(),
+  })),
+  getAiEndpointStatus: vi.fn(async () => ({
+    policy_version: 1,
+    mode: "Loopback",
+    scheme: "http",
+    canonical_host: "127.0.0.1",
+    effective_port: 11434,
+    canonical_origin: "http://127.0.0.1:11434",
+    endpoint_fingerprint: "mock_fp",
+    created_at_ms: Date.now(),
+  })),
+  clearAiEndpointConfig: vi.fn(),
+  cancelAiRequest: vi.fn(),
+  buildSemanticIndex: vi.fn(),
+  semanticSearch: vi.fn(),
+  queryDocumentRag: vi.fn(),
+  summarizeSelectionOrPage: vi.fn(),
+}));
+
 import App from "./App.svelte";
 import AppHeader from "./components/AppHeader.svelte";
 import AppModalHost from "./components/AppModalHost.svelte";
@@ -183,9 +212,12 @@ describe("7R.6 component smoke behavior", () => {
 
   it("loads all persisted AI settings when the typed settings modal opens", () => {
     vi.stubGlobal("localStorage", createMemoryStorage({
-      ollamaUrl: "http://127.0.0.1:22444",
-      llmModel: "qwen3:8b",
-      embedModel: "mxbai-embed-large",
+      ai_settings_v1: JSON.stringify({
+        schemaVersion: 1,
+        endpointDraft: "http://127.0.0.1:22444",
+        llmModel: "qwen3:8b",
+        embedModel: "mxbai-embed-large",
+      }),
     }));
     const ui = createUiState();
     ui.openModal("ai_settings");
@@ -209,9 +241,10 @@ describe("7R.6 component smoke behavior", () => {
     await fireEvent.input(view.getByLabelText("Embedding Modeli (Semantik Arama)"), { target: { value: "snowflake-arctic-embed" } });
     await fireEvent.click(view.getByRole("button", { name: "Kaydet" }));
 
-    expect(storage.setItem).toHaveBeenCalledWith("ollamaUrl", "http://127.0.0.1:33444");
-    expect(storage.setItem).toHaveBeenCalledWith("llmModel", "gemma3:12b");
-    expect(storage.setItem).toHaveBeenCalledWith("embedModel", "snowflake-arctic-embed");
+    expect(storage.setItem).toHaveBeenCalledWith(
+      "ai_settings_v1",
+      expect.stringContaining('"endpointDraft":"http://127.0.0.1:33444"'),
+    );
     expect(ui.activeModal).toBeNull();
 
     storage.getItem.mockClear();
@@ -220,9 +253,6 @@ describe("7R.6 component smoke behavior", () => {
 
     expect(view.getByText("Yapay Zeka (Ollama)")).toBeTruthy();
     expect(ui.activeModal?.type).toBe("ai_assistant");
-    expect(storage.getItem).toHaveBeenCalledWith("ollamaUrl");
-    expect(storage.getItem).toHaveBeenCalledWith("llmModel");
-    expect(storage.getItem).toHaveBeenCalledWith("embedModel");
   });
 
   it("closes AI settings without changing persisted values when cancelled", async () => {

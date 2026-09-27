@@ -13,7 +13,7 @@ PDFium work in the `--run-worker` process:
 - `get_session_pdf_metadata`
 - `get_session_page_annotations`
 - `get_session_structure_tree`
-- `validate_session_pdf_ua`
+- `audit_session_accessibility`
 - `render_session_page`
 - `render_session_thumbnail`
 - `get_session_page_text_layout`
@@ -46,13 +46,43 @@ The active job-worker commands cover:
 - recovery snapshot validation and normal session-job snapshot validation;
 - sensitive-data scanning.
 
-Sanitization remains disabled for transform/publication, but its read-only
+Sanitization remains feature-disabled, but its read-only
 `inspect_document_sanitization` command now uses an immutable session snapshot and the ephemeral
 `InspectDocumentSanitization` job worker. The Tauri process validates/routs the typed report and
-does not parse the PDF. Legacy `sanitize_pdf_document`, signature/PAdES execution,
-searchable-PDF export, and PDF/X export remain mock/disabled and return `FEATURE_UNAVAILABLE`
-before their transformation paths run. The obsolete raw
+does not parse the PDF. JavaScript stream payloads that require decoding are accounted against
+per-stream and total decoded-byte budgets after lopdf's whole-buffer decode returns; the parser
+allocation itself is bounded by process isolation, address-space limits, and the parent timeout,
+not by a cooperative bounded-decode API. Sanitization cancellation is parent-enforced process
+kill + wait/reap; there is no production worker-side cooperative cancellation IPC. Legacy
+8C.3 additionally provides a private `SanitizePdf` ephemeral operation. It receives only the
+immutable snapshot, versioned policy/digest authority and a fixed internal output name; lopdf
+targeted mutation, pruning, fingerprints and full serialization remain inside the worker. The
+main process only validates the typed report, its exact requested policy/profile/control-set
+correlation, and private artifact size/digest/containment. Transform fingerprinting reuses the
+sanitization per-stream and total decoded-byte limits after lopdf's whole-buffer decode returns;
+this is post-decode enforcement, not a streaming pre-allocation claim. The artifact is valid
+only inside the active snapshot-job closure. 8C.4 now starts a distinct `VerifySanitizedPdf`
+ephemeral process after a parent-side pre-verification digest gate. That process derives only the
+fixed private artifact name, performs a fresh lopdf/object-graph/fingerprint/full-rewrite scan,
+reopens and smoke-renders with PDFium, checks page/document preservation facts, and recomputes the
+artifact digest without mutation. The parent revalidates the strict report and transform/verifier/
+actual digest equality before accepting an internal verified candidate. Neither worker operation
+is registered as a public Tauri command or receives a target. 8C.5's internal main-process core
+may publish only that verified artifact through the shared adjacent-temp/atomic-replace
+`document_io` boundary before terminal cleanup; it performs no lopdf/PDFium reopen. The legacy
+`sanitize_pdf_document`, searchable-PDF export, and PDF/X export return `FEATURE_UNAVAILABLE`
+before their transformation paths run, while legacy mock signature/PAdES handlers have been completely
+removed from Tauri command registration. The obsolete raw
 annotation-burn and raw merge handlers are not registered.
+
+Verifier closure: the fresh 8C.2 scanner's registry-derived blocking findings are mandatory
+verification evidence, including unsupported XFA, optional content, rich-media/rendition and
+encryption categories. Decoded payload absence is authoritative: an undecodable scanned stream
+fails the mandatory payload check and raw/encoded bytes cannot turn it into a pass. The verifier
+reuses the 16 MiB per-stream and 128 MiB total decoded-byte limits after lopdf's whole-buffer
+decode, and separately bounds actual parsed/PDFium output page count to 10,000 before page
+invariants or render sampling proceed. These private transform→verify steps remain in one active
+snapshot-job lifecycle; publication is still absent and must be inserted before terminal cleanup.
 
 The job flow is:
 
@@ -74,7 +104,7 @@ address-space resource ceiling as the viewer worker. Request and response files 
 mode `0600` on Unix, and live only in the private session-job directory. Credentials are never
 placed in process arguments or logs.
 
-Each invocation gets an independent process, timeout, cancellation checkpoint, resource limit,
+Each invocation gets an independent process, timeout, parent-enforced cancellation, resource limit,
 and child ownership record. A long OCR or prepress operation therefore cannot block viewer
 rendering, and a job crash does not invalidate open viewer-worker document handles.
 
@@ -145,7 +175,14 @@ are distinct from frontend render request IDs.
 
 Commands are `Hello`, `OpenDocument`, `CloseDocument`, `CloseAllDocuments`, `GetPageCount`,
 `RenderPage`, `RenderThumbnail`, `GetPageTextLayout`, `SearchText`, `GetOutline`, `GetMetadata`,
-`GetPageAnnotations`, `GetStructureTree`, `ValidatePdfUa`, `Ping`, and `Shutdown`.
+`GetPageAnnotations`, `GetStructureTree`, `AuditAccessibility`, `Ping`, and `Shutdown`.
+
+Worker protocol version 3 returns `AccessibilityStructure` and `AccessibilityAudit`.
+Both read the cached worker-owned accessibility document; no active PDF is reopened
+in the main Tauri process. Audit traversal adds bounded structure, RoleMap, ParentTree,
+XMP, evidence, report-size, visited-object, and cooperative-time limits. Malformed
+structure remains a successful bounded audit report; source/load, timeout, crash,
+protocol and response-size failures remain typed worker-operation errors.
 
 ## Framing and message limits
 
@@ -435,3 +472,45 @@ with PDFium in the Tauri process. Legacy raw-path mutation helpers still contain
 implementation because ephemeral workers call those pure helpers, but those raw handlers are not
 registered. Test-only validation branches may execute PDFium in-process so filesystem transaction
 tests can compile as standalone modules; production builds select the worker branch.
+
+## Plugin Subsystem Demarcation (Prompt 9B)
+
+The isolated Rhai plugin worker (`--run-plugin-worker`) is completely distinct and isolated from the PDFium session worker (`--run-worker`) and job worker (`--run-job-worker`):
+- **No PDFium Linkage**: Plugin subprocesses never initialize or invoke PDFium, nor do they access PDFium dynamic library symbols.
+- **No IPC Cross-Talk**: There is no IPC channel between plugin workers and PDFium workers. All plugin coordination is handled exclusively by the Tauri host supervisor under strict capability-gated boundaries.
+- **Immutable Boundaries**: PDF text extraction and rendering remain the exclusive authority of PDFium workers; plugins cannot intercept, modify, or inject PDFium calls.
+
+## Signature Architecture Worker Demarcation
+
+> [!NOTE]
+> **Design-Only / Future Architecture**: The signature worker processes described in this section (`SignatureInspectionWorker`, `SignaturePrepWorker`, `SignatureFinalizationWorker`, `SignatureVerificationWorker`, `RevocationAndTimestampWorker`) and the `SigningBroker` component **do not exist in the current production codebase**. The signature feature surface has been completely removed (`status: disabled`). This section documents the normative future PAdES implementation architecture. No production `--run-job-worker` process currently receives a signature command, and no platform key store is currently accessed via the signing path.
+
+When the PAdES signing feature is implemented, dedicated ephemeral `--run-job-worker` processes should be used for signature operations, completely separate from the long-lived viewer worker (`--run-worker`) and plugin worker (`--run-plugin-worker`). Signature workers must not be registered as Tauri commands and must not receive user-facing session handles.
+
+### Signature Worker Responsibilities (Future Design)
+
+| Worker | Input | Responsibilities | Security Boundary |
+|---|---|---|---|
+| **`SignatureInspectionWorker`** | Immutable snapshot PDF path | Signature discovery, ByteRange validation, CMS parsing, offline cryptographic verification | Network: forbidden; no file writes; no private key access |
+| **`SignaturePrepWorker`** | Immutable snapshot PDF path + signature configuration | Incremental update allocation; ByteRange & `/Contents` placeholder creation; SignedAttributes DER construction; digest calculation | Network: forbidden; no private key access; writes only to private job staging directory |
+| **`SignatureFinalizationWorker`** | Staged PDF path + DER CMS SignedData | Inject CMS bytes into placeholder; finalize incremental revision EOF | Network: forbidden; no private key access |
+| **`SignatureVerificationWorker`** | Staged/output PDF path | Independent fresh reopen; ByteRange gap verification; CMS cryptographic check; pre-publication gate | Network: forbidden; read-only; fails publication if any check fails |
+| **`RevocationAndTimestampWorker`** | SHA-256 imprint hash or X.509 certificate identity only | RFC 3161 TSA requests; OCSP/CRL revocation evidence collection | Document content and filename: never exposed; only Prompt 9 network policy HTTP/HTTPS allowed; max 100 KB response body |
+
+### Native Signing Broker (Main Process) — Future Design
+
+The `SigningBroker` is intended to run in the Tauri main process and will be the **only** component with platform key store access when implemented:
+
+- Must receive `{ jobId, requestNonce, signingDigest, byteRange, expiresAt }` from `SignaturePrepWorker`.
+- Must validate `requestNonce`, `jobId`, and `expiresAt` (replay and TTL protection).
+- Must call `sign_digest(signingDigest, algorithm)` through the `SigningKeyHandle` trait (platform API: `SecKeyCreateSignature` on macOS / NCrypt on Windows).
+- Must return the signed value for CMS `SignedData` construction.
+- Must **never** receive raw PDF bytes, file paths, or document content.
+- Must **never** pass private key material to any worker.
+
+### Worker Boundary Invariants (Must Be Enforced When Implemented)
+
+- No signature worker must be registered as a public Tauri command or return worker document IDs to the frontend.
+- Private key material must never cross the main process → worker boundary in either direction.
+- All signature worker I/O must use private job directories (`jobs/job-<uuid>/`); output must be published only after `SignatureVerificationWorker` passes.
+- Session `content_generation` and `state_revision` must never be modified by any signature worker. See `document-session.md § Signing and LTV Session Non-Mutation Invariant` and `pades-architecture-design.md §6.6`.

@@ -1,6 +1,7 @@
 use preview_alternative_lib::pdf_engine::subprocess_manager::{
-    PdfiumWorkerBroker, WorkerDocumentKey, WorkerLauncher,
+    CommandTimeout, PdfiumWorkerBroker, WorkerDocumentKey, WorkerLauncher,
 };
+use preview_alternative_lib::worker::ipc::{WorkerCommand, WorkerResult};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -32,6 +33,29 @@ async fn open_with_mode(mode: &str) -> Result<PdfiumWorkerBroker, String> {
         .map_err(|error| error.code.to_string())?;
     drop(admission);
     Ok(broker)
+}
+
+async fn audit_with_mode(mode: &str, timeout: CommandTimeout) -> Result<WorkerResult, String> {
+    let broker = PdfiumWorkerBroker::with_launcher(Ok(helper_launcher(mode)));
+    let key = key(mode);
+    let admission = broker
+        .admit_read(&key, None)
+        .await
+        .map_err(|error| error.code.to_string())?;
+    broker
+        .ensure_document(&admission, key.clone(), "fake.pdf".to_string(), None, None)
+        .await
+        .map_err(|error| error.code.to_string())?;
+    broker
+        .command_for_document(
+            &admission,
+            &key,
+            |document_id| WorkerCommand::AuditAccessibility { document_id },
+            timeout,
+            None,
+        )
+        .await
+        .map_err(|error| error.code.to_string())
 }
 
 #[tokio::test]
@@ -75,6 +99,39 @@ async fn malformed_and_oversized_handshake_frames_are_rejected() {
     assert_eq!(partial, "PDFIUM_WORKER_CRASHED");
     let oversized = open_with_mode("oversized-hello").await.err().unwrap();
     assert_eq!(oversized, "PDFIUM_WORKER_MESSAGE_TOO_LARGE");
+}
+
+#[tokio::test]
+async fn accessibility_audit_protocol_oversize_crash_and_timeout_are_typed() {
+    let normal = audit_with_mode("normal", CommandTimeout::DocumentRead)
+        .await
+        .unwrap();
+    assert!(matches!(normal, WorkerResult::AccessibilityAudit(_)));
+
+    for (mode, timeout, expected) in [
+        (
+            "wrong-version-audit",
+            CommandTimeout::DocumentRead,
+            "PDFIUM_WORKER_PROTOCOL_MISMATCH",
+        ),
+        (
+            "oversized-audit",
+            CommandTimeout::DocumentRead,
+            "PDFIUM_WORKER_MESSAGE_TOO_LARGE",
+        ),
+        (
+            "crash-audit",
+            CommandTimeout::DocumentRead,
+            "PDFIUM_WORKER_CRASHED",
+        ),
+        (
+            "hang-audit",
+            CommandTimeout::CloseDocument,
+            "PDFIUM_WORKER_TIMEOUT",
+        ),
+    ] {
+        assert_eq!(audit_with_mode(mode, timeout).await.unwrap_err(), expected);
+    }
 }
 
 #[tokio::test]

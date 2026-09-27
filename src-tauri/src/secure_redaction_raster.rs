@@ -99,7 +99,7 @@ pub fn calculate_raster_dimensions(
     geom: &CanonicalPageGeometry,
     dpi: u32,
 ) -> Result<(u32, u32), crate::document_session::SessionJobOperationError> {
-    if dpi < MIN_RASTER_DPI || dpi > MAX_RASTER_DPI {
+    if !(MIN_RASTER_DPI..=MAX_RASTER_DPI).contains(&dpi) {
         return Err(make_redaction_error(
             SecureRedactionErrorCode::RedactionInvalidPolicy,
             format!(
