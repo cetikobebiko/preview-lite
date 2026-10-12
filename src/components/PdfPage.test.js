@@ -819,6 +819,22 @@ describe("PdfPage render cancellation", () => {
   });
 });
 
+describe("PdfPage render buffer", () => {
+  it("prefetches 1.5 viewport heights above and below", () => {
+    const options = [];
+    globalThis.IntersectionObserver = class IntersectionObserverMock {
+      constructor(_callback, observerOptions) {
+        options.push(observerOptions);
+      }
+      observe() {}
+      disconnect() {}
+    };
+    renderPdfPage({ props: { sessionId: "test-document", pageIndex: 0, documentGenerationId: 1 } });
+
+    expect(options.map((option) => option.rootMargin)).toContain("150% 0px 150% 0px");
+  });
+});
+
 describe("PdfPage visibility reporting", () => {
   it("reports the newest intersection ratio and zero when hidden or destroyed", async () => {
     const callbacks = [];
