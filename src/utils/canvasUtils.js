@@ -5,12 +5,19 @@ export function transformRgbaBuffer(data, colorMode = "normal") {
     throw new Error("Geçersiz görüntü piksel verisi.");
   }
 
-  const pixels = new Uint8ClampedArray(data);
   const normalizedMode = SUPPORTED_COLOR_MODES.has(colorMode) ? colorMode : "normal";
 
   if (normalizedMode === "normal") {
-    return pixels;
+    // Typed arrays (binary IPC frames) are wrapped without copying the pixels.
+    if (data instanceof Uint8ClampedArray) return data;
+    if (data instanceof Uint8Array) {
+      return new Uint8ClampedArray(data.buffer, data.byteOffset, data.length);
+    }
+    return new Uint8ClampedArray(data);
   }
+
+  // Color modes transform a single copy so the source buffer stays untouched.
+  const pixels = new Uint8ClampedArray(data);
 
   for (let index = 0; index < pixels.length; index += 4) {
     const red = pixels[index];

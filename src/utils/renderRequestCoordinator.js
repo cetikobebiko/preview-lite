@@ -53,9 +53,9 @@ export function createRenderRequestCoordinator({
   let active = null;
   let destroyed = false;
 
-  function cancelSnapshot(snapshot) {
+  function cancelSnapshot(snapshot, reason) {
     try {
-      Promise.resolve(cancel?.(snapshot)).catch(() => {
+      Promise.resolve(cancel?.(snapshot, reason)).catch(() => {
         console.warn("Render cancellation IPC failed.");
       });
     } catch {
@@ -63,17 +63,21 @@ export function createRenderRequestCoordinator({
     }
   }
 
-  function invalidate(snapshot, { notifyBackend = true } = {}) {
+  // `reason` is diagnostic only: the backend logs it to its worker metrics.
+  function invalidate(
+    snapshot,
+    { notifyBackend = true, reason = "unspecified" } = {},
+  ) {
     if (!active || active.snapshot.requestId !== snapshot.requestId) return false;
     clearTimeout(active.timeoutId);
     active = null;
-    if (notifyBackend) cancelSnapshot(snapshot);
+    if (notifyBackend) cancelSnapshot(snapshot, reason);
     return true;
   }
 
   function begin(baseSnapshot) {
     if (destroyed) throw new Error("render_component_destroyed");
-    if (active) invalidate(active.snapshot);
+    if (active) invalidate(active.snapshot, { reason: "superseded" });
 
     const snapshot = Object.freeze({
       ...baseSnapshot,
@@ -86,7 +90,7 @@ export function createRenderRequestCoordinator({
       rejectTimeout = reject;
     });
     const timeoutId = setTimeout(() => {
-      if (!invalidate(snapshot)) return;
+      if (!invalidate(snapshot, { reason: "timeout" })) return;
       rejectTimeout(new Error("render_timeout"));
     }, timeoutMs);
     active = { snapshot, timeoutId };
@@ -118,13 +122,13 @@ export function createRenderRequestCoordinator({
 
   function destroy() {
     destroyed = true;
-    if (active) invalidate(active.snapshot);
+    if (active) invalidate(active.snapshot, { reason: "destroy" });
   }
 
   return Object.freeze({
     begin,
-    cancelActive() {
-      return active ? invalidate(active.snapshot) : false;
+    cancelActive(reason = "unspecified") {
+      return active ? invalidate(active.snapshot, { reason }) : false;
     },
     destroy,
     invalidate,

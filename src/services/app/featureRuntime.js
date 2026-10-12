@@ -18,6 +18,7 @@ import {
 } from "../actions.js";
 import {
   exportSessionPageToImage,
+  exportSessionTextContent,
   extractSessionPages,
   searchSessionPdfText,
 } from "../backend/session.js";
@@ -28,6 +29,7 @@ import {
 import { selectViewportHighlights } from "../../utils/pdfGeometry.js";
 import { open, save } from "../platform/dialogs.js";
 import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
+import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
 import { createCommandActionRouter } from "./commandActionRouter.js";
 import { createDocumentExportController } from "./documentExportController.js";
 import { createDocumentTransformController } from "./documentTransformController.js";
@@ -177,7 +179,9 @@ export function createFeatureRuntime({
     isPdf: documentRuntime.isPdf,
     sessionId: documentSession.activeSessionId,
     contentGeneration: documentSession.contentGeneration,
-    pageIndex: viewer.currentPageIndex,
+    // Backend commands take physical page indices; labels use the display position.
+    pageIndex: toPhysicalPageIndex(viewer.pageOrder, viewer.currentPageIndex),
+    displayPageIndex: viewer.currentPageIndex,
     imagePath: viewer.activeImageSourcePath,
     viewer,
     ui,
@@ -190,7 +194,7 @@ export function createFeatureRuntime({
     featureContext,
     reportUnavailable,
     onToast,
-    present: (pageIndex, text) => globalThis.alert?.(`Sayfa ${pageIndex + 1} OCR Sonucu:\n\n${text}`),
+    present: (displayPageIndex, text) => globalThis.alert?.(`Sayfa ${displayPageIndex + 1} OCR Sonucu:\n\n${text}`),
   });
   const share = createShareActionController({
     getContext: featureRequestContext,
@@ -203,6 +207,7 @@ export function createFeatureRuntime({
   });
   const tts = createTtsActionController({
     getContext: featureRequestContext,
+    extractText: exportSessionTextContent,
     performOcr: performOcrOnPageAction,
     speak: speakTextAction,
     stop: stopSpeaking,
@@ -213,6 +218,7 @@ export function createFeatureRuntime({
   });
   const reading = createReadingPresentationController({
     getContext: featureRequestContext,
+    extractText: exportSessionTextContent,
     performOcr: performOcrOnPageAction,
     featureContext,
     onToast,
@@ -240,7 +246,8 @@ export function createFeatureRuntime({
       sessionId: documentSession.activeSessionId,
       contentGeneration: documentSession.contentGeneration,
       imagePath: viewer.activeImageSourcePath,
-      pageIndex: viewer.currentPageIndex,
+      pageIndex: toPhysicalPageIndex(viewer.pageOrder, viewer.currentPageIndex),
+      displayPageIndex: viewer.currentPageIndex,
       pageOrder: viewer.pageOrder,
       fileName: documentRuntime.fileName,
       annotations: Object.values(annotation.annotationsMap).flat(),

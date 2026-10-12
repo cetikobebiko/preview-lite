@@ -9,6 +9,11 @@
     requireActiveRenderSession,
   } from "../services/renderSession.js";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
+  import { createVisibilityDwell } from "../utils/visibilityDwell.js";
+  import {
+    pageFailureMessage,
+    pageFailureRegistry,
+  } from "../services/pageFailureRegistry.js";
   import {
     createRenderRequestCoordinator,
     isExpectedRenderCancellation,
@@ -19,20 +24,22 @@
     sessionId = "",
     contentGeneration = 0,
     pageIndex = 0,
+    pageNumber = undefined,
     isActive = false,
     onSelect = () => {},
   } = $props();
 
+  const displayedPageNumber = $derived(pageNumber ?? pageIndex + 1);
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
   const coordinator = createRenderRequestCoordinator({
     scope: "sidebar_thumbnail",
-    cancel: (request) => cancelRenderRequest({
+    cancel: (request, reason) => cancelRenderRequest({
       sessionId: request.sessionId,
       pageIndex: request.pageIndex,
       contentGeneration: request.contentGeneration,
       requestId: request.requestId,
       scope: request.scope,
-    }),
+    }, reason),
   });
 
   let container = $state();
@@ -42,6 +49,22 @@
   let loadedKey = $state("");
   let observedSourceKey = $state("");
   let mounted = $state(false);
+  // A worker-safety failure keeps the page from being requested again until
+  // a retry in the viewer clears it or the generation changes.
+  const failureCode = $derived(($pageFailureRegistry, pageFailureRegistry.failure({
+    sessionId,
+    contentGeneration,
+    pageIndex,
+    surface: "thumbnail",
+  })));
+  let wasBlocked = false;
+  $effect(() => {
+    const blocked = Boolean(failureCode);
+    if (wasBlocked && !blocked && mounted && isVisible && !loading) {
+      visibilityDwell.enter();
+    }
+    wasBlocked = blocked;
+  });
 
   function measuredTargetWidth() {
     const cssWidth = container?.getBoundingClientRect?.().width || container?.clientWidth || 0;
@@ -49,6 +72,19 @@
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     return Math.max(1, Math.min(16_384, Math.round(cssWidth * dpr)));
   }
+
+  const visibilityDwell = createVisibilityDwell({
+    onDwell: () => {
+      if (
+        mounted &&
+        isVisible &&
+        !loading &&
+        loadedKey !== `${sessionId}:${contentGeneration}:${pageIndex}`
+      ) {
+        void loadThumbnail();
+      }
+    },
+  });
 
   function releaseCanvas() {
     if (!canvas) return;
@@ -66,9 +102,10 @@
         !loading &&
         loadedKey !== `${sessionId}:${contentGeneration}:${pageIndex}`
       ) {
-        void loadThumbnail();
+        visibilityDwell.enter();
       } else if (!isVisible) {
-        coordinator.cancelActive();
+        visibilityDwell.leave();
+        coordinator.cancelActive("viewport_exit");
         loadedKey = "";
         releaseCanvas();
       }
@@ -76,7 +113,7 @@
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
       if (isVisible && loadedKey && !loading) {
         loadedKey = "";
-        coordinator.cancelActive();
+        coordinator.cancelActive("rerender");
         void loadThumbnail();
       }
     });
@@ -86,6 +123,7 @@
     }
     return () => {
       mounted = false;
+      visibilityDwell.destroy();
       observer.disconnect();
       resizeObserver?.disconnect();
       coordinator.destroy();
@@ -98,7 +136,7 @@
     if (!mounted || observedSourceKey === nextKey) return;
     observedSourceKey = nextKey;
     queueMicrotask(() => {
-      coordinator.cancelActive();
+      coordinator.cancelActive("rerender");
       loadedKey = "";
       releaseCanvas();
       if (isVisible) void loadThumbnail();
@@ -108,6 +146,8 @@
   async function loadThumbnail() {
     const targetWidth = measuredTargetWidth();
     if (!mounted || !isVisible || !canvas || targetWidth <= 0) return;
+    const source = { sessionId, contentGeneration, pageIndex, surface: "thumbnail" };
+    if (pageFailureRegistry.failure(source)) return;
     loading = true;
     let requestSnapshot;
     try {
@@ -140,6 +180,7 @@
       paintBufferToCanvas(canvas, rendered);
       loadedKey = `${sessionId}:${contentGeneration}:${pageIndex}`;
     } catch (err) {
+      pageFailureRegistry.record(source, err);
       if (!isExpectedRenderCancellation(err)) {
         console.error("Thumbnail load error", err);
       }
@@ -160,13 +201,17 @@
   role="button"
   tabindex="0"
 >
-  <canvas bind:this={canvas} aria-label="Page {pageIndex + 1}"></canvas>
+  <canvas bind:this={canvas} aria-label="Page {displayedPageNumber}"></canvas>
   {#if !loadedKey}
-    <div class="placeholder">
-      <span>{pageIndex + 1}</span>
+    <div
+      class="placeholder"
+      class:failed={Boolean(failureCode)}
+      title={failureCode ? pageFailureMessage(failureCode, pageIndex) : undefined}
+    >
+      <span>{failureCode ? "!" : displayedPageNumber}</span>
     </div>
   {/if}
-  <div class="page-label">{pageIndex + 1}</div>
+  <div class="page-label">{displayedPageNumber}</div>
 </div>
 
 <style>
@@ -205,6 +250,9 @@
     font-size: 18px;
     font-weight: bold;
     background: #2a2a2a;
+  }
+  .placeholder.failed {
+    color: #ef4444;
   }
   .page-label {
     position: absolute;

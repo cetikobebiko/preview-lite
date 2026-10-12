@@ -4,6 +4,8 @@ import {
   isExpectedRenderCancellation,
   validateRenderResponse,
 } from "./renderRequestCoordinator.js";
+import { decodeRenderFrame } from "../services/backend/renderFrame.js";
+import { encodeRenderFrame } from "../services/backend/renderFrameTestUtils.js";
 
 function deferred() {
   let resolve;
@@ -52,7 +54,7 @@ describe("render request coordinator", () => {
     const newRequest = coordinator.begin(baseRequest(0)).snapshot;
 
     expect(cancel).toHaveBeenCalledOnce();
-    expect(cancel).toHaveBeenCalledWith(oldRequest);
+    expect(cancel).toHaveBeenCalledWith(oldRequest, "superseded");
     expect(coordinator.isCurrent(oldRequest)).toBe(false);
     expect(coordinator.isCurrent(newRequest)).toBe(true);
   });
@@ -97,10 +99,32 @@ describe("render request coordinator", () => {
     await vi.advanceTimersByTimeAsync(50);
 
     await timeoutAssertion;
-    expect(cancel).toHaveBeenCalledWith(request.snapshot);
+    expect(cancel).toHaveBeenCalledWith(request.snapshot, "timeout");
     expect(coordinator.isCurrent(request.snapshot)).toBe(false);
     render.reject(new Error("late backend failure"));
     await Promise.resolve();
+  });
+
+  it("forwards the cancellation reason and defaults it to unspecified", () => {
+    const cancel = vi.fn();
+    const coordinator = createRenderRequestCoordinator({
+      scope: "main_page",
+      cancel,
+      idFactory: (() => {
+        let next = 0;
+        return () => `request-${++next}`;
+      })(),
+    });
+
+    const first = coordinator.begin(baseRequest(1)).snapshot;
+    expect(coordinator.cancelActive("viewport_exit")).toBe(true);
+    expect(cancel).toHaveBeenLastCalledWith(first, "viewport_exit");
+
+    const second = coordinator.begin(baseRequest(1)).snapshot;
+    expect(coordinator.cancelActive()).toBe(true);
+    expect(cancel).toHaveBeenLastCalledWith(second, "unspecified");
+    expect(coordinator.cancelActive("zoom")).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(2);
   });
 
   it("cancels the exact active request on component destroy", () => {
@@ -114,7 +138,7 @@ describe("render request coordinator", () => {
 
     coordinator.destroy();
 
-    expect(cancel).toHaveBeenCalledWith(request);
+    expect(cancel).toHaveBeenCalledWith(request, "destroy");
     expect(coordinator.isCurrent(request)).toBe(false);
     expect(() => coordinator.begin(baseRequest(4))).toThrow(
       "render_component_destroyed",
@@ -148,6 +172,41 @@ describe("render request coordinator", () => {
         request,
       ),
     ).toThrow("render_invalid_rgba_payload");
+  });
+
+  it("applies the same stale-result checks to decoded binary frames", () => {
+    const request = {
+      ...baseRequest(2),
+      scope: "main_page",
+      requestId: "current",
+    };
+    const decoded = (overrides) =>
+      decodeRenderFrame(
+        encodeRenderFrame({
+          width: 1,
+          height: 1,
+          data: new Uint8Array(4),
+          pageIndex: request.pageIndex,
+          generation: request.contentGeneration,
+          requestId: request.requestId,
+          ...overrides,
+        }),
+      );
+
+    expect(validateRenderResponse(decoded({}), request)).toMatchObject({
+      requestId: "current",
+      generation: 3,
+      pageIndex: 2,
+    });
+    for (const stale of [
+      { requestId: "superseded" },
+      { generation: 2 },
+      { pageIndex: 1 },
+    ]) {
+      expect(() => validateRenderResponse(decoded(stale), request)).toThrow(
+        "render_invalid_response_metadata",
+      );
+    }
   });
 
   it("classifies cancellation separately from real render failures", () => {

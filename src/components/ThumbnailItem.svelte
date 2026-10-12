@@ -14,6 +14,7 @@
     validateRenderResponse,
   } from "../utils/renderRequestCoordinator.js";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
+  import { createVisibilityDwell } from "../utils/visibilityDwell.js";
 
   let {
     sessionId = "",
@@ -42,13 +43,13 @@
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
   const renderCoordinator = createRenderRequestCoordinator({
     scope: "organizer_thumbnail",
-    cancel: (request) => cancelRenderRequest({
+    cancel: (request, reason) => cancelRenderRequest({
       sessionId: request.sessionId,
       pageIndex: request.pageIndex,
       contentGeneration: request.contentGeneration,
       requestId: request.requestId,
       scope: request.scope,
-    }),
+    }, reason),
   });
 
   function releaseCanvasBackingStore(canvas = canvasRef) {
@@ -57,8 +58,16 @@
     canvas.height = 0;
   }
 
-  function invalidateThumbnail() {
-    renderCoordinator.cancelActive();
+  const visibilityDwell = createVisibilityDwell({
+    onDwell: () => {
+      if (isMounted && isIntersecting && !isLoaded && !isLoading) {
+        void loadThumbnail();
+      }
+    },
+  });
+
+  function invalidateThumbnail(reason) {
+    renderCoordinator.cancelActive(reason);
     thumbnailRequest += 1;
     isLoaded = false;
     isLoading = false;
@@ -75,12 +84,12 @@
           entries.forEach((entry) => {
             isIntersecting = entry.isIntersecting;
             if (isIntersecting && !isLoaded && !isLoading) {
-              void loadThumbnail();
-            } else if (
-              !isIntersecting &&
-              (isLoaded || isLoading || canvasRef?.width || canvasRef?.height)
-            ) {
-              invalidateThumbnail();
+              visibilityDwell.enter();
+            } else if (!isIntersecting) {
+              visibilityDwell.leave();
+              if (isLoaded || isLoading || canvasRef?.width || canvasRef?.height) {
+                invalidateThumbnail("viewport_exit");
+              }
             }
           });
         },
@@ -97,7 +106,8 @@
   onDestroy(() => {
     isMounted = false;
     isIntersecting = false;
-    invalidateThumbnail();
+    visibilityDwell.destroy();
+    invalidateThumbnail("destroy");
     renderCoordinator.destroy();
     if (observer) {
       if (containerRef) observer.unobserve(containerRef);
@@ -161,7 +171,7 @@
     const nextSourceKey = `${sessionId}:${contentGeneration}:${pageIndex}`;
     if (isMounted && sourceKey !== nextSourceKey) {
       sourceKey = nextSourceKey;
-      invalidateThumbnail();
+      invalidateThumbnail("rerender");
       if (!usesIntersectionObserver || isIntersecting) {
         void loadThumbnail();
       }

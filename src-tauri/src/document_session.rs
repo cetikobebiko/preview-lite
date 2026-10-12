@@ -12,16 +12,12 @@ use crate::document_io::{
 use crate::job_worker::{JobCommand, JobResult, MutationRecipe};
 #[cfg(test)]
 use crate::manipulation;
-use crate::pdf_engine::render_service::{
-    RenderRequestIdentity, RenderResponse, RenderScope, RenderService,
-};
+use crate::pdf_engine::render_service::{RenderRequestIdentity, RenderScope, RenderService};
 use crate::pdf_engine::subprocess_manager::{
     BrokerError, CommandTimeout, PdfiumWorkerBroker, WorkerAdmissionPermit, WorkerDocumentKey,
 };
 use crate::pdf_engine::with_pdfium;
-use crate::worker::ipc::{
-    WorkerCommand, WorkerRenderTarget, WorkerResult, MAX_WORKER_SEARCH_RESULTS,
-};
+use crate::worker::ipc::{WorkerCommand, WorkerRenderTarget, WorkerResult};
 use crate::{
     ActiveRenderTasks, ActiveSearchId, PasswordCache, PdfMetadata, SearchCache, SearchResult,
     TextLayoutCache, TextLayoutData,
@@ -362,6 +358,20 @@ struct WorkerReadContext {
     _lease: OwnedRwLockReadGuard<()>,
     key: WorkerDocumentKey,
     page_count: u32,
+}
+
+impl crate::pdf_engine::subprocess_manager::WorkerReadLease for WorkerReadContext {
+    fn admission(&self) -> &WorkerAdmissionPermit {
+        &self._admission
+    }
+
+    fn document_key(&self) -> &WorkerDocumentKey {
+        &self.key
+    }
+
+    fn page_count(&self) -> u32 {
+        self.page_count
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3605,7 +3615,10 @@ impl std::error::Error for DocumentSessionError {}
 impl From<String> for DocumentSessionError {
     fn from(message: String) -> Self {
         if let Some((code, detail)) = message.split_once(": ") {
-            if code.starts_with("PDFIUM_WORKER_") || code == "PDFIUM_DOCUMENT_QUARANTINED" {
+            if code.starts_with("PDFIUM_WORKER_")
+                || code == "PDFIUM_DOCUMENT_QUARANTINED"
+                || code == "PDFIUM_PAGE_QUARANTINED"
+            {
                 return Self::new(code, detail);
             }
         }
@@ -3946,6 +3959,35 @@ impl DocumentSessionStore {
             key,
             page_count,
         })
+    }
+
+    /// Lifts a page quarantine on an explicit user retry. It never opens the
+    /// document; the next read reopens it through the usual worker path.
+    async fn release_worker_page_quarantine(
+        &self,
+        session_id: &str,
+        expected_generation: u64,
+        page_index: u32,
+    ) -> Result<bool, DocumentSessionError> {
+        let key = WorkerDocumentKey {
+            session_id: session_id.to_string(),
+            content_generation: expected_generation,
+        };
+        let admission = self
+            .worker_broker
+            .admit_read(&key, None)
+            .await
+            .map_err(DocumentSessionError::from)?;
+        let entry = self.entry(session_id)?;
+        let _lease = entry.operation.clone().read_owned().await;
+        {
+            let state = entry.state.lock();
+            session_read_path(&state, Some(expected_generation))?;
+        }
+        self.worker_broker
+            .release_page_quarantine(&admission, &key, page_index)
+            .await
+            .map_err(DocumentSessionError::from)
     }
 
     async fn invalidate_failed_worker_read(&self, context: WorkerReadContext) {
@@ -8476,6 +8518,37 @@ pub async fn get_session_page_count(
     Ok(context.page_count)
 }
 
+/// Display sizes (PDF points, page `/Rotate` applied) of every page in one
+/// worker round trip, so the viewer can size unrendered pages before render.
+#[tauri::command]
+pub async fn get_session_page_sizes(
+    session_id: String,
+    expected_content_generation: u64,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<Vec<crate::worker::ipc::WorkerPageSize>, DocumentSessionError> {
+    let context = store
+        .acquire_worker_read(&session_id, expected_content_generation, false, None)
+        .await?;
+    match store
+        .worker_broker
+        .command_for_document(
+            &context._admission,
+            &context.key,
+            |document_id| WorkerCommand::GetPageSizes { document_id },
+            CommandTimeout::DocumentRead,
+            None,
+        )
+        .await
+        .map_err(DocumentSessionError::from)?
+    {
+        WorkerResult::PageSizes(sizes) => Ok(sizes),
+        _ => Err(DocumentSessionError::new(
+            "PDFIUM_WORKER_PROTOCOL_ERROR",
+            "Sayfa boyutları beklenmeyen worker cevabı aldı",
+        )),
+    }
+}
+
 #[tauri::command]
 pub async fn get_session_pdf_outline(
     session_id: String,
@@ -8662,35 +8735,31 @@ pub async fn search_session_pdf_text(
         if let Some((_previous_id, previous)) =
             active.insert(session_id.clone(), (search_id, cancellation.clone()))
         {
+            tracing::debug!(
+                target: crate::pdf_engine::subprocess_manager::WORKER_METRICS_TARGET,
+                event = "search_cancel",
+                trigger = "search_superseded",
+            );
             previous.cancel();
         }
     }
-    let context = store
-        .acquire_worker_read(
-            &session_id,
-            expected_content_generation,
-            false,
-            Some(&cancellation),
+    let store_ref = store.inner();
+    let result = store
+        .worker_broker
+        .search_text_in_chunks(
+            || {
+                store_ref.acquire_worker_read(
+                    &session_id,
+                    expected_content_generation,
+                    false,
+                    Some(&cancellation),
+                )
+            },
+            &query,
+            crate::pdf_engine::subprocess_manager::VIEWER_SEARCH_CHUNK_POLICY,
+            &cancellation,
         )
         .await;
-    let result = match context {
-        Ok(context) => store
-            .worker_broker
-            .command_for_document(
-                &context._admission,
-                &context.key,
-                |document_id| WorkerCommand::SearchText {
-                    document_id,
-                    query,
-                    max_results: u32::try_from(MAX_WORKER_SEARCH_RESULTS).unwrap_or(u32::MAX),
-                },
-                CommandTimeout::Search,
-                Some(&cancellation),
-            )
-            .await
-            .map_err(DocumentSessionError::from),
-        Err(error) => Err(error),
-    };
     {
         let mut active = store.search_cancellations.lock();
         if active
@@ -8701,13 +8770,7 @@ pub async fn search_session_pdf_text(
         }
     }
     let result = match result {
-        Ok(WorkerResult::Search(result)) => result,
-        Ok(_) => {
-            return Err(DocumentSessionError::new(
-                "PDFIUM_WORKER_PROTOCOL_ERROR",
-                "Search beklenmeyen worker cevabı aldı",
-            ))
-        }
+        Ok(result) => result,
         Err(error) if error.code == "PDFIUM_WORKER_CANCELLED" => SearchResult {
             matches: Vec::new(),
             is_cancelled: true,
@@ -8743,6 +8806,11 @@ pub async fn get_session_page_text_layout(
     {
         let mut tasks = active_tasks.0.lock();
         if let Some(previous) = tasks.insert(task_id.clone(), cancellation.clone()) {
+            tracing::debug!(
+                target: crate::pdf_engine::subprocess_manager::WORKER_METRICS_TARGET,
+                event = "text_layout_cancel",
+                trigger = "text_layout_superseded",
+            );
             previous.cancel();
         }
     }
@@ -8785,6 +8853,21 @@ pub async fn get_session_page_text_layout(
     Ok(layouts)
 }
 
+/// Explicit user retry for a page the worker broker quarantined after repeated
+/// timeouts. Returns whether a quarantine was lifted. Document-level
+/// quarantine and the document timeout ceiling are not affected.
+#[tauri::command]
+pub async fn retry_session_page(
+    session_id: String,
+    expected_content_generation: u64,
+    page_index: u32,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<bool, DocumentSessionError> {
+    store
+        .release_worker_page_quarantine(&session_id, expected_content_generation, page_index)
+        .await
+}
+
 #[tauri::command]
 // Tauri IPC contract intentionally exposes each frontend field as a top-level argument.
 #[allow(clippy::too_many_arguments)]
@@ -8798,7 +8881,7 @@ pub async fn render_session_page(
     store: State<'_, DocumentSessionStore>,
     password_cache: State<'_, PasswordCache>,
     render_service: State<'_, RenderService>,
-) -> Result<RenderResponse, DocumentSessionError> {
+) -> Result<tauri::ipc::Response, DocumentSessionError> {
     crate::pdf_engine::validate_scale(scale).map_err(DocumentSessionError::from)?;
     crate::pdf_engine::validate_rotation(rotation).map_err(DocumentSessionError::from)?;
     let identity = RenderRequestIdentity {
@@ -8858,6 +8941,8 @@ pub async fn render_session_page(
         },
     )
     .await
+    .and_then(|response| crate::pdf_engine::render_wire::encode_render_frame(&response))
+    .map(tauri::ipc::Response::new)
     .map_err(DocumentSessionError::from)
 }
 
@@ -8874,7 +8959,7 @@ pub async fn render_session_thumbnail(
     store: State<'_, DocumentSessionStore>,
     password_cache: State<'_, PasswordCache>,
     render_service: State<'_, RenderService>,
-) -> Result<RenderResponse, DocumentSessionError> {
+) -> Result<tauri::ipc::Response, DocumentSessionError> {
     if scope == RenderScope::MainPage {
         return Err(DocumentSessionError::new(
             "PDFIUM_WORKER_INVALID_RENDER",
@@ -8930,6 +9015,8 @@ pub async fn render_session_thumbnail(
         },
     )
     .await
+    .and_then(|response| crate::pdf_engine::render_wire::encode_render_frame(&response))
+    .map(tauri::ipc::Response::new)
     .map_err(DocumentSessionError::from)
 }
 
@@ -8990,13 +9077,14 @@ pub async fn cancel_session_render_request(
     content_generation: u64,
     request_id: String,
     scope: RenderScope,
+    reason: Option<crate::pdf_engine::render_service::RenderCancelReason>,
     store: State<'_, DocumentSessionStore>,
     render_service: State<'_, RenderService>,
 ) -> Result<crate::pdf_engine::RenderCancellationResult, DocumentSessionError> {
     let entry = store.entry(&session_id)?;
     let _lease = entry.operation.clone().read_owned().await;
     session_read_path(&entry.state.lock(), Some(content_generation))?;
-    crate::pdf_engine::cancel_render_request(
+    let result = crate::pdf_engine::cancel_render_request(
         format!("session:{session_id}"),
         session_id,
         page_index,
@@ -9005,7 +9093,18 @@ pub async fn cancel_session_render_request(
         scope,
         render_service,
     )
-    .map_err(DocumentSessionError::from)
+    .map_err(DocumentSessionError::from)?;
+    tracing::debug!(
+        target: crate::pdf_engine::subprocess_manager::WORKER_METRICS_TARGET,
+        event = "render_cancel",
+        trigger = "explicit",
+        reason = reason
+            .unwrap_or(crate::pdf_engine::render_service::RenderCancelReason::Unspecified)
+            .label(),
+        scope = scope.label(),
+        matched_active_request = result.cancelled,
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -12080,6 +12179,17 @@ mod tests {
     use crate::document_io::DocumentIoStage;
     use tauri::Manager;
 
+    #[test]
+    fn worker_quarantine_codes_survive_render_error_strings() {
+        for code in ["PDFIUM_DOCUMENT_QUARANTINED", "PDFIUM_PAGE_QUARANTINED"] {
+            let error = DocumentSessionError::from(format!("{code}: detail"));
+            assert_eq!(error.code, code);
+            assert_eq!(error.message, "detail");
+        }
+        let error = DocumentSessionError::from("render_cancelled".to_string());
+        assert_eq!(error.code, "DOCUMENT_SESSION_PDF_ENGINE_ERROR");
+    }
+
     fn fixture_path(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/pdf")
@@ -13696,8 +13806,34 @@ mod tests {
         let job_id = Uuid::new_v4().to_string();
 
         let result =
-            crate::ocr::detect_scanned_page_for_session(&store, &job_id, &session_id, 1, 0).await;
-        assert!(result.is_ok());
+            crate::ocr::detect_scanned_pages_for_session(&store, &job_id, &session_id, 1).await;
+        assert!(matches!(
+            result,
+            Ok(SessionJobOutcome::Completed { ref value, .. }) if !value.is_empty()
+        ));
+        assert!(store.job_registry.lock().active.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ocr_detection_returns_one_flag_per_page_from_a_single_job() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("three-distinct-pages.pdf");
+        fs::copy(fixture_path("three-distinct-pages.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+
+        let outcome = crate::ocr::detect_scanned_pages_for_session(
+            &store,
+            &Uuid::new_v4().to_string(),
+            &session_id,
+            1,
+        )
+        .await
+        .unwrap();
+        match outcome {
+            SessionJobOutcome::Completed { value, .. } => assert_eq!(value.len(), 3),
+            other => panic!("unexpected outcome: {other:?}"),
+        }
         assert!(store.job_registry.lock().active.is_empty());
     }
 
@@ -15793,11 +15929,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        let ocr = crate::ocr::detect_scanned_page(
+        let ocr = crate::ocr::detect_scanned_pages(
             Uuid::new_v4().to_string(),
             session_id.clone(),
             1,
-            0,
             app.state::<DocumentSessionStore>(),
         )
         .await

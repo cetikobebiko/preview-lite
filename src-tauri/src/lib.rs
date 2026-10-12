@@ -30,6 +30,7 @@ pub mod secure_redaction;
 pub mod secure_redaction_inspection;
 pub mod secure_redaction_raster;
 pub mod secure_redaction_verifier;
+pub mod tts;
 pub mod worker;
 
 use pdf_engine::render_page_rgba;
@@ -207,68 +208,7 @@ fn trigger_continuity_camera_scan(_source_pdf_path: String) -> Result<String, St
     Err("FEATURE_UNAVAILABLE: iPhone Süreklilik Kamerası sadece macOS platformunda desteklenmektedir.".to_string())
 }
 
-// 2. Yerel Metin Okuma (Text-to-Speech)
-#[cfg(target_os = "macos")]
-#[tauri::command]
-fn speak_text(text: String, voice: Option<String>) -> Result<(), String> {
-    if text.trim().is_empty() {
-        return Err("Okunacak metin yok".to_string());
-    }
-
-    let selected_voice = voice.unwrap_or_else(|| "Yelda".to_string());
-
-    let _ = stop_speaking();
-
-    std::process::Command::new("say")
-        .arg("-v")
-        .arg(selected_voice)
-        .arg(&text)
-        .spawn()
-        .map_err(|e| format!("Seslendirme başlatılamadı: {}", e))?;
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-fn speak_text(text: String, _voice: Option<String>) -> Result<(), String> {
-    if text.trim().is_empty() {
-        return Err("Okunacak metin yok".to_string());
-    }
-    // Windows / Linux Fallback using PowerShell SAPI
-    #[cfg(target_os = "windows")]
-    {
-        let ps_cmd = format!("Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak('{}')", text.replace('\'', "''"));
-        let _ = std::process::Command::new("powershell")
-            .arg("-Command")
-            .arg(ps_cmd)
-            .spawn();
-        return Ok(());
-    }
-    #[cfg(not(target_os = "windows"))]
-    Err("Metin okuma platformunuzda desteklenmiyor.".to_string())
-}
-
-#[cfg(target_os = "macos")]
-#[tauri::command]
-fn stop_speaking() -> Result<(), String> {
-    let _ = std::process::Command::new("killall").arg("say").output();
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-fn stop_speaking() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .arg("/F")
-            .arg("/IM")
-            .arg("powershell.exe")
-            .output();
-    }
-    Ok(())
-}
+// 2. Yerel Metin Okuma (Text-to-Speech): bkz. `tts` modülü.
 
 // 3. macOS Paylaşım Menüsü (Share Sheet)
 #[cfg(target_os = "macos")]
@@ -575,19 +515,71 @@ fn apply_image_transformations(
     img
 }
 
-#[tauri::command]
-fn read_image_file(
-    path: String,
+/// `read_image_file` frames reuse `render-frame/1`; the page index, generation
+/// and request ID are fixed placeholders because an image is not a session.
+const IMAGE_FRAME_REQUEST_ID: &str = "read_image_file";
+
+/// User images share the PDF render bounds: at most 16384 px per side and
+/// 256 MiB for both the decoder buffer and the RGBA output.
+const MAX_IMAGE_DIMENSION: u32 = pdf_engine::render_service::MAX_PIXEL_DIMENSION;
+const MAX_IMAGE_BYTES: u64 = pdf_engine::render_service::MAX_RENDER_BYTES as u64;
+
+fn image_too_large_error() -> String {
+    format!(
+        "Görsel çok büyük: en fazla {0}×{0} piksel ve {1} MiB çözümlenmiş veri desteklenir.",
+        MAX_IMAGE_DIMENSION,
+        MAX_IMAGE_BYTES / (1024 * 1024)
+    )
+}
+
+/// `image::open` with explicit limits; sizes are checked from the header
+/// before any pixel buffer is allocated.
+fn open_bounded_image(path: &str, error_prefix: &str) -> Result<image::DynamicImage, String> {
+    use image::ImageDecoder;
+
+    let map_error = |e: image::ImageError| match e {
+        image::ImageError::Limits(_) => image_too_large_error(),
+        e => format!("{}: {}", error_prefix, e),
+    };
+    let mut reader =
+        image::ImageReader::open(path).map_err(|e| format!("{}: {}", error_prefix, e))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_IMAGE_BYTES);
+    reader.limits(limits);
+    let decoder = reader.into_decoder().map_err(map_error)?;
+    let (width, height) = decoder.dimensions();
+    let rgba_bytes = u64::from(width) * u64::from(height) * 4;
+    if decoder.total_bytes() > MAX_IMAGE_BYTES || rgba_bytes > MAX_IMAGE_BYTES {
+        return Err(image_too_large_error());
+    }
+    image::DynamicImage::from_decoder(decoder).map_err(map_error)
+}
+
+/// Runs image decode/encode off the async runtime threads.
+async fn run_image_job<T, F>(job: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(job)
+        .await
+        .map_err(|e| format!("Görsel işlemi tamamlanamadı: {}", e))?
+}
+
+fn decode_image_rgba(
+    path: &str,
     rotation: i32,
     flip_h: bool,
     flip_v: bool,
 ) -> Result<RenderedPage, String> {
-    let p = Path::new(&path);
+    let p = Path::new(path);
     if !p.exists() {
         return Err(format!("Görsel dosyası bulunamadı: {}", path));
     }
 
-    let loaded_img = image::open(&path).map_err(|e| format!("Görsel okunamadı: {}", e))?;
+    let loaded_img = open_bounded_image(path, "Görsel okunamadı")?;
     let transformed = apply_image_transformations(loaded_img, rotation, flip_h, flip_v);
     let rgba = transformed.to_rgba8();
 
@@ -598,27 +590,51 @@ fn read_image_file(
     })
 }
 
+fn encode_image_frame(image: RenderedPage) -> Result<Vec<u8>, String> {
+    pdf_engine::render_wire::encode_render_frame(&pdf_engine::render_service::RenderResponse {
+        width: image.width,
+        height: image.height,
+        data: std::sync::Arc::new(image.data),
+        page_index: 0,
+        generation: 0,
+        request_id: IMAGE_FRAME_REQUEST_ID.to_string(),
+    })
+}
+
 #[tauri::command]
-fn convert_and_save_image(
-    source_path: String,
-    target_path: String,
-    format: String,
+async fn read_image_file(
+    path: String,
+    rotation: i32,
+    flip_h: bool,
+    flip_v: bool,
+) -> Result<tauri::ipc::Response, String> {
+    run_image_job(move || {
+        decode_image_rgba(&path, rotation, flip_h, flip_v).and_then(encode_image_frame)
+    })
+    .await
+    .map(tauri::ipc::Response::new)
+}
+
+fn convert_image_file(
+    source_path: &str,
+    target_path: &str,
+    format: &str,
     rotation: i32,
     flip_h: bool,
     flip_v: bool,
 ) -> Result<(), String> {
-    let p = Path::new(&source_path);
+    let p = Path::new(source_path);
     if !p.exists() {
         return Err(format!("Kaynak dosya bulunamadı: {}", source_path));
     }
 
-    let loaded_img = image::open(&source_path).map_err(|e| format!("Görsel açılamadı: {}", e))?;
+    let loaded_img = open_bounded_image(source_path, "Görsel açılamadı")?;
     let transformed = apply_image_transformations(loaded_img, rotation, flip_h, flip_v);
 
     let target_format = format.to_lowercase();
 
     if target_format == "pdf" {
-        return save_image_as_pdf(&transformed, &target_path);
+        return save_image_as_pdf(&transformed, target_path);
     }
 
     let img_format = match target_format.as_str() {
@@ -630,10 +646,32 @@ fn convert_and_save_image(
     };
 
     transformed
-        .save_with_format(&target_path, img_format)
+        .save_with_format(target_path, img_format)
         .map_err(|e| format!("Görsel kaydetme hatası: {}", e))?;
 
     Ok(())
+}
+
+#[tauri::command]
+async fn convert_and_save_image(
+    source_path: String,
+    target_path: String,
+    format: String,
+    rotation: i32,
+    flip_h: bool,
+    flip_v: bool,
+) -> Result<(), String> {
+    run_image_job(move || {
+        convert_image_file(
+            &source_path,
+            &target_path,
+            &format,
+            rotation,
+            flip_h,
+            flip_v,
+        )
+    })
+    .await
 }
 
 fn save_image_as_pdf(img: &image::DynamicImage, target_path: &str) -> Result<(), String> {
@@ -1447,6 +1485,7 @@ pub fn run() {
         .manage(pdfium_worker_broker)
         .manage(document_sessions)
         .manage(plugins::PluginState::new())
+        .manage(tts::SpeechController::new())
         .manage(batch_queue)
         .invoke_handler(tauri::generate_handler![
             document_session::open_document_session,
@@ -1467,6 +1506,7 @@ pub fn run() {
             document_session::split_session_pdf,
             document_session::discard_candidate_session,
             document_session::get_session_page_count,
+            document_session::get_session_page_sizes,
             document_session::get_session_pdf_outline,
             document_session::get_session_pdf_metadata,
             document_session::get_session_structure_tree,
@@ -1474,6 +1514,7 @@ pub fn run() {
             document_session::get_session_page_annotations,
             document_session::search_session_pdf_text,
             document_session::get_session_page_text_layout,
+            document_session::retry_session_page,
             document_session::render_session_page,
             document_session::render_session_thumbnail,
             document_session::set_active_session_render_document,
@@ -1495,7 +1536,7 @@ pub fn run() {
             document_session::commit_candidate_activation,
             document_session::rollback_candidate_activation,
             document_session::close_all_document_sessions,
-            ocr::detect_scanned_page,
+            ocr::detect_scanned_pages,
             ocr::get_available_ocr_languages,
             ocr::run_ocr_on_page,
             perform_ocr_on_page,
@@ -1504,8 +1545,8 @@ pub fn run() {
             trigger_continuity_camera_scan,
             read_image_file,
             convert_and_save_image,
-            speak_text,
-            stop_speaking,
+            tts::speak_text,
+            tts::stop_speaking,
             document_session::merge_session_pdfs,
             plugins::inspect_plugin_package,
             plugins::install_plugin_package,
@@ -1606,6 +1647,258 @@ mod tests {
             std::time::Duration::from_millis(10),
         );
         assert!(timeout.unwrap_err().contains("zaman aşımı"));
+    }
+
+    fn image_frame_bytes(response: tauri::ipc::Response) -> Vec<u8> {
+        use tauri::ipc::{InvokeResponseBody, IpcResponse};
+        match response.body().unwrap() {
+            InvokeResponseBody::Raw(bytes) => bytes,
+            InvokeResponseBody::Json(json) => panic!("image returned JSON: {json:.64}"),
+        }
+    }
+
+    /// 2x3 PNG whose pixels encode their own (x, y) position.
+    fn write_test_png(directory: &Path) -> std::path::PathBuf {
+        let path = directory.join("source.png");
+        image::RgbaImage::from_fn(2, 3, |x, y| {
+            image::Rgba([x as u8 * 100, y as u8 * 50, 7, 255])
+        })
+        .save_with_format(&path, image::ImageFormat::Png)
+        .unwrap();
+        path
+    }
+
+    fn pixel(x: u8, y: u8) -> [u8; 4] {
+        [x * 100, y * 50, 7, 255]
+    }
+
+    #[tokio::test]
+    async fn read_image_file_frame_matches_previous_rgba_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_test_png(directory.path());
+        let path = path.to_str().unwrap().to_string();
+
+        let frame = image_frame_bytes(
+            read_image_file(path.clone(), 0, false, false)
+                .await
+                .unwrap(),
+        );
+        let decoded = pdf_engine::render_wire::decode_render_frame(&frame).unwrap();
+        assert_eq!((decoded.width, decoded.height), (2, 3));
+        assert_eq!((decoded.page_index, decoded.generation), (0, 0));
+        assert_eq!(decoded.request_id, IMAGE_FRAME_REQUEST_ID);
+        let expected: Vec<u8> = [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)]
+            .into_iter()
+            .flat_map(|(x, y)| pixel(x, y))
+            .collect();
+        assert_eq!(*decoded.data, expected);
+
+        // rotate90 then fliph: a 3x2 image whose rows read the source columns top-down.
+        let frame = image_frame_bytes(
+            read_image_file(path.clone(), 450, true, false)
+                .await
+                .unwrap(),
+        );
+        let decoded = pdf_engine::render_wire::decode_render_frame(&frame).unwrap();
+        assert_eq!((decoded.width, decoded.height), (3, 2));
+        let expected: Vec<u8> = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+            .into_iter()
+            .flat_map(|(x, y)| pixel(x, y))
+            .collect();
+        assert_eq!(*decoded.data, expected);
+
+        let previous = decode_image_rgba(&path, 450, true, false).unwrap();
+        assert_eq!(
+            (previous.width, previous.height, previous.data),
+            (3, 2, expected)
+        );
+    }
+
+    #[tokio::test]
+    async fn read_image_file_reports_missing_and_corrupt_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing.png");
+        let error = read_image_file(missing.to_str().unwrap().to_string(), 0, false, false)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.starts_with("Görsel dosyası bulunamadı"), "{error}");
+
+        let corrupt = directory.path().join("corrupt.png");
+        std::fs::write(&corrupt, b"\x89PNG\r\n\x1a\nnot really a png").unwrap();
+        let error = read_image_file(corrupt.to_str().unwrap().to_string(), 0, false, false)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.starts_with("Görsel okunamadı"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn convert_and_save_image_output_matches_sync_conversion() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = write_test_png(directory.path());
+        let source = source.to_str().unwrap().to_string();
+        for format in ["png", "bmp", "pdf"] {
+            let async_target = directory.path().join(format!("async.{format}"));
+            let sync_target = directory.path().join(format!("sync.{format}"));
+            convert_and_save_image(
+                source.clone(),
+                async_target.to_str().unwrap().to_string(),
+                format.to_uppercase(),
+                90,
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+            convert_image_file(
+                &source,
+                sync_target.to_str().unwrap(),
+                format,
+                90,
+                false,
+                true,
+            )
+            .unwrap();
+            assert_eq!(
+                std::fs::read(&async_target).unwrap(),
+                std::fs::read(&sync_target).unwrap(),
+                "{format}"
+            );
+        }
+        let reopened = image::open(directory.path().join("async.png"))
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(reopened.dimensions(), (3, 2));
+    }
+
+    #[tokio::test]
+    async fn convert_and_save_image_reports_errors_without_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let corrupt = directory.path().join("corrupt.png");
+        std::fs::write(&corrupt, b"not an image").unwrap();
+        let target = directory.path().join("out.png");
+        let error = convert_and_save_image(
+            corrupt.to_str().unwrap().to_string(),
+            target.to_str().unwrap().to_string(),
+            "png".to_string(),
+            0,
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.starts_with("Görsel açılamadı"), "{error}");
+        assert!(!target.exists());
+
+        let source = write_test_png(directory.path());
+        let error = convert_and_save_image(
+            source.to_str().unwrap().to_string(),
+            target.to_str().unwrap().to_string(),
+            "tiff".to_string(),
+            0,
+            false,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "Desteklenmeyen format: tiff");
+        assert!(!target.exists());
+    }
+
+    /// Header-only 24-bit BMP: the decoder reports these dimensions without
+    /// any pixel data being present or allocated.
+    fn write_bmp_header(path: &Path, width: i32, height: i32) {
+        let mut header = Vec::with_capacity(54);
+        header.extend_from_slice(b"BM");
+        header.extend_from_slice(&54u32.to_le_bytes()); // file size (header only)
+        header.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        header.extend_from_slice(&54u32.to_le_bytes()); // pixel data offset
+        header.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER size
+        header.extend_from_slice(&width.to_le_bytes());
+        header.extend_from_slice(&height.to_le_bytes());
+        header.extend_from_slice(&1u16.to_le_bytes()); // planes
+        header.extend_from_slice(&24u16.to_le_bytes()); // bits per pixel
+        header.extend_from_slice(&[0; 24]); // BI_RGB, sizes, resolution, palette
+        std::fs::write(path, header).unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversized_images_are_rejected_before_decoding() {
+        let directory = tempfile::tempdir().unwrap();
+        // Too wide: 16385 px exceeds the per-side limit.
+        let wide = directory.path().join("wide.bmp");
+        write_bmp_header(&wide, MAX_IMAGE_DIMENSION as i32 + 1, 1);
+        // Within both side limits and the 24-bit decoder buffer (~192 MiB),
+        // but the RGBA output (16384 × 4097 × 4 bytes) exceeds 256 MiB.
+        let rgba_heavy = directory.path().join("rgba-heavy.bmp");
+        write_bmp_header(&rgba_heavy, MAX_IMAGE_DIMENSION as i32, 4097);
+        const { assert!(16_384u64 * 4097 * 3 <= MAX_IMAGE_BYTES) };
+        const { assert!(16_384u64 * 4097 * 4 > MAX_IMAGE_BYTES) };
+
+        for source in [&wide, &rgba_heavy] {
+            let source = source.to_str().unwrap().to_string();
+            let error = read_image_file(source.clone(), 0, false, false)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(error, image_too_large_error(), "{source}");
+
+            let target = directory.path().join("out.png");
+            let error = convert_and_save_image(
+                source.clone(),
+                target.to_str().unwrap().to_string(),
+                "png".to_string(),
+                0,
+                false,
+                false,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error, image_too_large_error(), "{source}");
+            assert!(!target.exists());
+        }
+        assert!(image_too_large_error().contains("16384×16384"));
+        assert!(image_too_large_error().contains("256 MiB"));
+    }
+
+    #[test]
+    fn images_at_the_side_limit_still_decode() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("edge.png");
+        image::GrayImage::new(MAX_IMAGE_DIMENSION, 1)
+            .save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
+        let decoded = decode_image_rgba(path.to_str().unwrap(), 0, false, false).unwrap();
+        assert_eq!((decoded.width, decoded.height), (MAX_IMAGE_DIMENSION, 1));
+        assert_eq!(decoded.data.len(), MAX_IMAGE_DIMENSION as usize * 4);
+    }
+
+    /// On a current-thread runtime the job can only observe the signal if it
+    /// runs on a separate blocking thread while the runtime thread keeps going.
+    #[tokio::test(flavor = "current_thread")]
+    async fn image_jobs_do_not_block_the_async_runtime_thread() {
+        let runtime_thread = std::thread::current().id();
+        let (signal_tx, signal_rx) = std::sync::mpsc::channel::<()>();
+        let job = tokio::spawn(run_image_job(move || {
+            if std::thread::current().id() == runtime_thread {
+                return Err("job ran on the runtime thread".to_string());
+            }
+            signal_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .map_err(|_| "runtime thread was blocked".to_string())
+        }));
+        tokio::task::yield_now().await;
+        signal_tx.send(()).unwrap();
+        job.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn image_job_panics_become_errors() {
+        let error = run_image_job::<(), _>(|| panic!("decoder panic"))
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("Görsel işlemi tamamlanamadı"), "{error}");
     }
 
     #[cfg(target_os = "macos")]

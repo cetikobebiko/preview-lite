@@ -7,7 +7,7 @@ export function createOcrActionController({ getContext, runOcr, guard, featureCo
   }
   async function execute() {
     const context = getContext();
-    if (!context.isPdf || !context.sessionId) { onToast("Bağımsız görseller için OCR bu sürümde desteklenmiyor."); return; }
+    if (!context.isPdf || !context.sessionId || context.pageIndex < 0) { onToast("Bağımsız görseller için OCR bu sürümde desteklenmiyor."); return; }
     const { sessionId, contentGeneration, pageIndex, viewer } = context;
     onToast("Apple Vision OCR çalıştırılıyor...");
     try {
@@ -15,8 +15,9 @@ export function createOcrActionController({ getContext, runOcr, guard, featureCo
       const current = getContext();
       if (current.sessionId !== sessionId || current.contentGeneration !== contentGeneration) return;
       viewer.documentTextContext = text;
+      viewer.documentTextPageIndex = pageIndex;
       onToast("OCR tamamlandı! Metin taptaze tanındı.");
-      present(pageIndex, text);
+      present(context.displayPageIndex, text);
     } catch (error) { console.error("OCR hatası:", error); onToast("OCR yürütülemedi: " + error); }
   }
   return Object.freeze({ run });

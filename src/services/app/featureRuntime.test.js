@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFeatureRuntime } from "./featureRuntime.js";
+import { createDocumentScopedStateReconciler } from "./documentScopedState.js";
+import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
+import { createAnnotationState } from "../../stores/annotationState.svelte.js";
 
 describe("featureRuntime lifecycle & façade assertions", () => {
   function setupTestRuntime(overrides = {}) {
@@ -163,5 +166,40 @@ describe("featureRuntime lifecycle & façade assertions", () => {
     expect(typeof runtime.scanSensitiveData).toBe("function");
     expect(typeof runtime.reconcileSensitiveDataContext).toBe("function");
     expect(typeof runtime.getSensitiveDataHighlightsForPage).toBe("function");
+  });
+
+  it("never hands drawings from a previously open document to burn-in or notes export", () => {
+    const annotation = createAnnotationState();
+    const viewer = { activeImageSourcePath: "", currentPageIndex: 0, pageOrder: [0], rotation: 0, flipH: false, flipV: false, documentTextContext: "", bionicText: "" };
+    const documentSession = { activeSessionId: null, contentGeneration: 0 };
+    let exportContext;
+    setupTestRuntime({
+      annotation, viewer, documentSession,
+      createExportController: vi.fn(({ getContext }) => { exportContext = getContext; return { exportCurrentPageImage: vi.fn() }; }),
+    });
+    const reconciler = createDocumentScopedStateReconciler({ viewer, annotation, bindHighlightSession: vi.fn() });
+
+    viewer.activeImageSourcePath = "/scan.png";
+    reconciler.reconcile({ sessionId: null, contentGeneration: 0, imagePath: "/scan.png" });
+    annotation.annotationsMap = { 0: [{ page_index: 0, tool_type: "text", text: "görsel notu", color: "#fff" }] };
+    expect(exportContext().annotations).toHaveLength(1);
+
+    viewer.activeImageSourcePath = "";
+    documentSession.activeSessionId = "pdf-b";
+    documentSession.contentGeneration = 1;
+    reconciler.reconcile({ sessionId: "pdf-b", contentGeneration: 1, imagePath: "" });
+
+    expect(exportContext().sessionId).toBe("pdf-b");
+    expect(exportContext().annotations).toEqual([]);
+    expect(buildAnnotationMarkdown({ fileName: "b.pdf", annotationsMap: annotation.annotationsMap }).totalNotes).toBe(0);
+  });
+
+  it("passes the physical page to page-level backend exports while keeping the displayed number", () => {
+    let exportContext;
+    setupTestRuntime({
+      viewer: { activeImageSourcePath: "", currentPageIndex: 0, pageOrder: [2, 0, 1], rotation: 0, flipH: false, flipV: false },
+      createExportController: vi.fn(({ getContext }) => { exportContext = getContext; return { exportCurrentPageImage: vi.fn() }; }),
+    });
+    expect(exportContext()).toMatchObject({ pageIndex: 2, displayPageIndex: 0 });
   });
 });

@@ -119,6 +119,7 @@ describe("backend service boundaries", () => {
       "authenticate_document_session",
       "probe_candidate_render",
       "get_session_page_count",
+      "get_session_page_sizes",
       "get_session_pdf_outline",
       "get_session_pdf_metadata",
       "get_session_structure_tree",
@@ -257,7 +258,7 @@ describe("backend service boundaries", () => {
 
   it("uses session identity for PDF OCR, signature verification and PDF share while isolating external share", () => {
     for (const key of [
-      "detectScannedPage",
+      "detectScannedPages",
       "runOcrOnPage",
       "performOcrOnPage",
       "shareFileMacos",
@@ -324,7 +325,8 @@ describe("backend service boundaries", () => {
 
   it("registers existing session-native OCR names and separate external-file share", () => {
     const handlerRegistry = readFileSync(rustLibPath, "utf8");
-    expect(handlerRegistry).toMatch(/ocr::detect_scanned_page/);
+    expect(handlerRegistry).toMatch(/ocr::detect_scanned_pages\b/);
+    expect(handlerRegistry).not.toMatch(/ocr::detect_scanned_page\b/);
     expect(handlerRegistry).toMatch(/ocr::run_ocr_on_page/);
     expect(handlerRegistry).toMatch(/\bperform_ocr_on_page\b/);
     expect(handlerRegistry).toMatch(/\bshare_file_macos\b/);
@@ -431,7 +433,7 @@ describe("backend service boundaries", () => {
       [sources.documentSession, "split_session_pdf"],
       [sources.documentSession, "merge_session_pdfs"],
       [sources.documentSession, "extract_session_pages"],
-      [sources.ocr, "detect_scanned_page_for_session"],
+      [sources.ocr, "detect_scanned_pages_for_session"],
       [sources.ocr, "run_ocr_on_page_for_session"],
       [sources.ai, "extract_semantic_page_texts"],
       [sources.redaction, "scan_sensitive_data"],

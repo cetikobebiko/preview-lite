@@ -1,8 +1,9 @@
 use crate::pdf_engine::render_service::{checked_rgba_len, MAX_PIXEL_DIMENSION, MAX_SCALE};
 use crate::worker::ipc::{
     decode_request, encode_response, read_payload, write_frame, WorkerCapability, WorkerCommand,
-    WorkerDiagnostic, WorkerFailure, WorkerFailureKind, WorkerRenderTarget, WorkerRequest,
-    WorkerResponse, WorkerResult, MAX_WORKER_QUERY_CHARS, MAX_WORKER_REQUEST_BYTES,
+    WorkerDiagnostic, WorkerFailure, WorkerFailureKind, WorkerPageSize, WorkerRenderTarget,
+    WorkerRequest, WorkerResponse, WorkerResult, WorkerSearchChunk, MAX_WORKER_QUERY_CHARS,
+    MAX_WORKER_REQUEST_BYTES, MAX_WORKER_SEARCH_CHUNK_BUDGET_MS, MAX_WORKER_SEARCH_CHUNK_PAGES,
     MAX_WORKER_SEARCH_RESULTS, MAX_WORKER_TEXT_ITEMS, WORKER_PROTOCOL_VERSION,
 };
 use crate::{BoundingBox, SearchMatch, SearchResult, TextLayoutData};
@@ -11,6 +12,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use unicode_normalization::{char::canonical_combining_class, UnicodeNormalization};
 
 struct WorkerDocument<'a> {
@@ -257,9 +259,60 @@ fn handle_command<'a>(
                 limit,
             )?))
         }
+        WorkerCommand::SearchTextPages {
+            document_id,
+            query,
+            start_page,
+            max_pages,
+            time_budget_ms,
+            max_results,
+            first_match_index,
+        } => {
+            validate_query(query)?;
+            if *max_pages == 0
+                || *max_pages > MAX_WORKER_SEARCH_CHUNK_PAGES
+                || *time_budget_ms == 0
+                || *time_budget_ms > MAX_WORKER_SEARCH_CHUNK_BUDGET_MS
+            {
+                return Err(WorkerFailure::new(
+                    WorkerFailureKind::InvalidInput,
+                    "Search chunk bounds are outside the worker limits",
+                ));
+            }
+            let document = get_document(documents, *document_id)?;
+            let requested_limit = usize::try_from(*max_results).unwrap_or(usize::MAX);
+            let first_match_index = usize::try_from(*first_match_index).map_err(|_| {
+                WorkerFailure::new(
+                    WorkerFailureKind::InvalidInput,
+                    "Search chunk match index exceeds the platform limit",
+                )
+            })?;
+            let range = search_page_range(
+                &document.document,
+                query,
+                PageRangeBounds {
+                    start_page: *start_page,
+                    max_pages: *max_pages,
+                    time_budget: Some(Duration::from_millis(u64::from(*time_budget_ms))),
+                },
+                requested_limit.min(MAX_WORKER_SEARCH_RESULTS),
+                first_match_index,
+            )?;
+            Ok(WorkerResult::SearchChunk(WorkerSearchChunk {
+                matches: range.matches,
+                total_matches: range.total_matches,
+                next_page: range.next_page,
+            }))
+        }
         WorkerCommand::GetOutline { document_id } => {
             let document = get_document(documents, *document_id)?;
             Ok(WorkerResult::Outline(extract_outline(&document.document)?))
+        }
+        WorkerCommand::GetPageSizes { document_id } => {
+            let document = get_document(documents, *document_id)?;
+            Ok(WorkerResult::PageSizes(extract_page_sizes(
+                &document.document,
+            )?))
         }
         WorkerCommand::GetMetadata { document_id } => {
             let document = get_document(documents, *document_id)?;
@@ -488,10 +541,14 @@ fn render_page(
             ))
         }
     };
+    // FPDF_REVERSE_BYTE_ORDER makes PDFium write straight RGBA, so the bitmap
+    // buffer is the wire payload as-is. The clear fill (FPDFBitmap_FillRect)
+    // ignores that flag; white is channel-symmetric, so it stays correct.
     let config = PdfRenderConfig::new()
         .set_target_width(target_width as i32)
         .rotate(pdf_rotation, true)
-        .set_clear_color(PdfColor::WHITE);
+        .set_clear_color(PdfColor::WHITE)
+        .set_reverse_byte_order(true);
     let bitmap = page.render_with_config(&config).map_err(|_| {
         WorkerFailure::new(
             WorkerFailureKind::PdfiumRenderError,
@@ -502,19 +559,12 @@ fn render_page(
     let height = bitmap.height() as u32;
     let expected = checked_rgba_len(width, height)
         .map_err(|message| WorkerFailure::new(WorkerFailureKind::PdfiumRenderError, message))?;
-    let bgra = bitmap.as_raw_bytes();
-    if bgra.len() != expected {
+    let rgba = bitmap.as_raw_bytes();
+    if rgba.len() != expected {
         return Err(WorkerFailure::new(
             WorkerFailureKind::PdfiumRenderError,
             "PDFium returned an invalid bitmap buffer",
         ));
-    }
-    let mut rgba = vec![0u8; expected];
-    for (source, target) in bgra.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
-        target[0] = source[2];
-        target[1] = source[1];
-        target[2] = source[0];
-        target[3] = source[3];
     }
     Ok(WorkerResult::PageRendered {
         width,
@@ -665,90 +715,172 @@ fn search_document(
             total_matches: 0,
         });
     }
-    let query_characters = query.chars().collect::<Vec<_>>();
-    let (query_normalized, _) = normalize_search_characters(&query_characters);
-    if query_normalized.is_empty() {
-        return Ok(SearchResult {
-            matches: Vec::new(),
-            is_cancelled: false,
-            total_matches: 0,
-        });
+    let range = search_page_range(
+        document,
+        query,
+        PageRangeBounds {
+            start_page: 0,
+            max_pages: u32::MAX,
+            time_budget: None,
+        },
+        limit,
+        0,
+    )?;
+    Ok(SearchResult {
+        matches: range.matches,
+        is_cancelled: false,
+        total_matches: range.total_matches,
+    })
+}
+
+struct PageRangeBounds {
+    start_page: u32,
+    max_pages: u32,
+    time_budget: Option<Duration>,
+}
+
+struct PageRangeSearch {
+    matches: Vec<SearchMatch>,
+    total_matches: usize,
+    next_page: Option<u32>,
+}
+
+/// Matches never span pages, so searching consecutive page ranges and
+/// concatenating them yields exactly the whole-document result.
+fn search_page_range(
+    document: &PdfDocument<'_>,
+    query: &str,
+    bounds: PageRangeBounds,
+    limit: usize,
+    first_match_index: usize,
+) -> Result<PageRangeSearch, WorkerFailure> {
+    let started = Instant::now();
+    let page_count = u32::from(document.pages().len());
+    if bounds.start_page > page_count {
+        return Err(WorkerFailure::new(
+            WorkerFailureKind::InvalidPageIndex,
+            "Search start page is outside the document",
+        ));
     }
     let mut matches = Vec::new();
     let mut total_matches = 0usize;
+    let query_characters = query.chars().collect::<Vec<_>>();
+    let (query_normalized, _) = normalize_search_characters(&query_characters);
+    if query_normalized.is_empty() {
+        return Ok(PageRangeSearch {
+            matches,
+            total_matches,
+            next_page: None,
+        });
+    }
 
-    for page_index in 0..u32::from(document.pages().len()) {
-        let page = get_page(document, page_index)?;
-        let Ok(text_page) = page.text() else {
-            continue;
-        };
-        let page_width = page.width().value;
-        let page_height = page.height().value;
-        if !page_width.is_finite()
-            || !page_height.is_finite()
-            || page_width <= 0.0
-            || page_height <= 0.0
+    let mut page_index = bounds.start_page;
+    let mut scanned_pages = 0u32;
+    while page_index < page_count {
+        if scanned_pages >= bounds.max_pages
+            || bounds
+                .time_budget
+                .is_some_and(|budget| scanned_pages > 0 && started.elapsed() >= budget)
         {
+            return Ok(PageRangeSearch {
+                matches,
+                total_matches,
+                next_page: Some(page_index),
+            });
+        }
+        search_page(
+            document,
+            page_index,
+            &query_normalized,
+            limit,
+            first_match_index,
+            &mut matches,
+            &mut total_matches,
+        )?;
+        page_index += 1;
+        scanned_pages += 1;
+    }
+    Ok(PageRangeSearch {
+        matches,
+        total_matches,
+        next_page: None,
+    })
+}
+
+fn search_page(
+    document: &PdfDocument<'_>,
+    page_index: u32,
+    query_normalized: &[char],
+    limit: usize,
+    first_match_index: usize,
+    matches: &mut Vec<SearchMatch>,
+    total_matches: &mut usize,
+) -> Result<(), WorkerFailure> {
+    let page = get_page(document, page_index)?;
+    let Ok(text_page) = page.text() else {
+        return Ok(());
+    };
+    let page_width = page.width().value;
+    let page_height = page.height().value;
+    if !page_width.is_finite()
+        || !page_height.is_finite()
+        || page_width <= 0.0
+        || page_height <= 0.0
+    {
+        return Ok(());
+    }
+    let characters = text_page.chars();
+    let original: Vec<_> = characters.iter().collect();
+    if original.is_empty() {
+        return Ok(());
+    }
+    let original_characters = original
+        .iter()
+        .map(|character| character.unicode_char().unwrap_or(' '))
+        .collect::<Vec<_>>();
+    let (normalized, normalized_to_original) = normalize_search_characters(&original_characters);
+    if normalized.len() < query_normalized.len() {
+        return Ok(());
+    }
+
+    let mut start = 0usize;
+    while start + query_normalized.len() <= normalized.len() {
+        if normalized[start..start + query_normalized.len()] != *query_normalized {
+            start += 1;
             continue;
         }
-        let characters = text_page.chars();
-        let original: Vec<_> = characters.iter().collect();
-        if original.is_empty() {
+        let original_start = normalized_to_original[start].0;
+        let original_end = normalized_to_original[start + query_normalized.len() - 1].1;
+        *total_matches = total_matches.saturating_add(1);
+        if matches.len() >= limit {
+            start += query_normalized.len().max(1);
             continue;
         }
-        let original_characters = original
+
+        let snippet_start = original_start.saturating_sub(40);
+        let snippet_end = (original_end + 41).min(original.len());
+        let snippet = original[snippet_start..snippet_end]
             .iter()
             .map(|character| character.unicode_char().unwrap_or(' '))
-            .collect::<Vec<_>>();
-        let (normalized, normalized_to_original) =
-            normalize_search_characters(&original_characters);
-        if normalized.len() < query_normalized.len() {
-            continue;
-        }
-
-        let mut start = 0usize;
-        while start + query_normalized.len() <= normalized.len() {
-            if normalized[start..start + query_normalized.len()] != query_normalized {
-                start += 1;
-                continue;
-            }
-            let original_start = normalized_to_original[start].0;
-            let original_end = normalized_to_original[start + query_normalized.len() - 1].1;
-            total_matches = total_matches.saturating_add(1);
-            if matches.len() >= limit {
-                start += query_normalized.len().max(1);
-                continue;
-            }
-
-            let snippet_start = original_start.saturating_sub(40);
-            let snippet_end = (original_end + 41).min(original.len());
-            let snippet = original[snippet_start..snippet_end]
-                .iter()
-                .map(|character| character.unicode_char().unwrap_or(' '))
-                .collect::<String>()
-                .replace('\n', " ")
-                .replace('\r', "");
-            let rects = search_rects(
-                &original,
-                original_start,
-                original_end,
-                page_width,
-                page_height,
-            );
-            matches.push(SearchMatch {
-                global_match_index: total_matches - 1,
-                page_index,
-                rects,
-                snippet,
-            });
-            start += query_normalized.len().max(1);
-        }
+            .collect::<String>()
+            .replace('\n', " ")
+            .replace('\r', "");
+        let rects = search_rects(
+            &original,
+            original_start,
+            original_end,
+            page_width,
+            page_height,
+        );
+        matches.push(SearchMatch {
+            global_match_index: first_match_index.saturating_add(*total_matches - 1),
+            page_index,
+            rects,
+            snippet,
+        });
+        start += query_normalized.len().max(1);
     }
-    Ok(SearchResult {
-        matches,
-        is_cancelled: false,
-        total_matches,
-    })
+    Ok(())
 }
 
 fn normalize_search_characters(characters: &[char]) -> (Vec<char>, Vec<(usize, usize)>) {
@@ -926,6 +1058,34 @@ fn validate_query(query: &str) -> Result<(), WorkerFailure> {
     Ok(())
 }
 
+fn extract_page_sizes(document: &PdfDocument<'_>) -> Result<Vec<WorkerPageSize>, WorkerFailure> {
+    let pages = document.pages();
+    (0..pages.len())
+        .map(|index| {
+            let size = pages.page_size(index).map_err(|_| {
+                WorkerFailure::new(
+                    WorkerFailureKind::PdfiumLoadError,
+                    "PDFium could not read the page size",
+                )
+            })?;
+            let (width, height) = (size.width().value, size.height().value);
+            Ok(
+                if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+                    WorkerPageSize {
+                        width_pt: width,
+                        height_pt: height,
+                    }
+                } else {
+                    WorkerPageSize {
+                        width_pt: 0.0,
+                        height_pt: 0.0,
+                    }
+                },
+            )
+        })
+        .collect()
+}
+
 fn all_capabilities() -> Vec<WorkerCapability> {
     vec![
         WorkerCapability::OpenDocument,
@@ -936,6 +1096,7 @@ fn all_capabilities() -> Vec<WorkerCapability> {
         WorkerCapability::RenderThumbnail,
         WorkerCapability::GetPageTextLayout,
         WorkerCapability::SearchText,
+        WorkerCapability::SearchTextPages,
         WorkerCapability::GetOutline,
         WorkerCapability::GetMetadata,
         WorkerCapability::GetPageAnnotations,
@@ -943,6 +1104,7 @@ fn all_capabilities() -> Vec<WorkerCapability> {
         WorkerCapability::AuditAccessibility,
         WorkerCapability::Ping,
         WorkerCapability::Shutdown,
+        WorkerCapability::GetPageSizes,
     ]
 }
 
@@ -1051,5 +1213,162 @@ mod tests {
             normalize("FIRST\nSECOND"),
             vec!['f', 'i', 'r', 's', 't', '\n', 's', 'e', 'c', 'o', 'n', 'd']
         );
+    }
+
+    /// Writes an A4 text page with a few filled and stroked vector paths, the
+    /// render-baseline workload shared with `worker_pdfium_integration.rs`.
+    fn write_a4_text_pdf(path: &std::path::Path) {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Document, Object, Stream, StringFormat};
+
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let font_id = document.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let mut operations = vec![
+            Operation::new("rg", vec![0.85.into(), 0.2.into(), 0.2.into()]),
+            Operation::new("re", vec![40.into(), 760.into(), 515.into(), 40.into()]),
+            Operation::new("f", vec![]),
+            Operation::new("RG", vec![0.1.into(), 0.3.into(), 0.8.into()]),
+            Operation::new("w", vec![2.into()]),
+            Operation::new("m", vec![40.into(), 60.into()]),
+            Operation::new(
+                "c",
+                vec![
+                    200.into(),
+                    160.into(),
+                    400.into(),
+                    0.into(),
+                    555.into(),
+                    90.into(),
+                ],
+            ),
+            Operation::new("S", vec![]),
+            Operation::new("rg", vec![0.into(), 0.into(), 0.into()]),
+        ];
+        for line in 0..60i64 {
+            operations.extend([
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), 10.into()]),
+                Operation::new("Td", vec![40.into(), (740 - line * 11).into()]),
+                Operation::new(
+                    "Tj",
+                    vec![Object::String(
+                        format!(
+                            "{line:02} The quick brown fox jumps over the lazy dog; render baseline text line."
+                        )
+                        .into_bytes(),
+                        StringFormat::Literal,
+                    )],
+                ),
+                Operation::new("ET", vec![]),
+            ]);
+        }
+        let content_id = document.add_object(Stream::new(
+            dictionary! {},
+            Content { operations }.encode().unwrap(),
+        ));
+        let page_id = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font_id } },
+            "Contents" => content_id,
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page_id)],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(path).unwrap();
+    }
+
+    fn timing_summary(label: &str, mut samples: Vec<f64>) {
+        samples.sort_by(f64::total_cmp);
+        let percentile = |p: f64| samples[((samples.len() - 1) as f64 * p).round() as usize];
+        eprintln!(
+            "render-baseline {label}: n={} min_ms={:.2} median_ms={:.2} p95_ms={:.2}",
+            samples.len(),
+            samples[0],
+            percentile(0.5),
+            percentile(0.95)
+        );
+    }
+
+    /// Manual worker-internal render baseline: the real `render_page` plus
+    /// response encoding for one A4 page at scale 2.0, next to the bare PDFium
+    /// render it wraps. Run from `src-tauri` with a release-profile build:
+    /// `TAURI_RESOURCE_DIR=$PWD cargo test --release --lib -- --ignored --nocapture render_page_a4_timing`
+    #[test]
+    #[ignore = "manual render baseline measurement"]
+    fn render_page_a4_timing() {
+        const WARMUP: usize = 5;
+        const SAMPLES: usize = 40;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("a4-baseline.pdf");
+        write_a4_text_pdf(&path);
+        let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+        let document = pdfium.load_pdf_from_file(&path, None).unwrap();
+        let target = WorkerRenderTarget::Scale(2.0);
+        let measure = |run: &mut dyn FnMut()| {
+            for _ in 0..WARMUP {
+                run();
+            }
+            (0..SAMPLES)
+                .map(|_| {
+                    let started = Instant::now();
+                    run();
+                    started.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let page = document.pages().get(0).unwrap();
+        let config = PdfRenderConfig::new()
+            .set_target_width(1190)
+            .rotate(PdfPageRenderRotation::None, true)
+            .set_clear_color(PdfColor::WHITE)
+            .set_reverse_byte_order(true);
+        timing_summary(
+            "pdfium_render_and_buffer_copy",
+            measure(&mut || {
+                let bitmap = page.render_with_config(&config).unwrap();
+                std::hint::black_box(bitmap.as_raw_bytes());
+            }),
+        );
+        timing_summary(
+            "worker_render_page",
+            measure(&mut || {
+                std::hint::black_box(render_page(&document, 0, target, 0).unwrap());
+            }),
+        );
+        timing_summary(
+            "worker_render_page_and_encode_response",
+            measure(&mut || {
+                let response = WorkerResponse {
+                    protocol_version: WORKER_PROTOCOL_VERSION,
+                    request_id: 1,
+                    result: render_page(&document, 0, target, 0),
+                };
+                std::hint::black_box(encode_response(&response).unwrap());
+            }),
+        );
+        let WorkerResult::PageRendered { width, height, .. } =
+            render_page(&document, 0, target, 0).unwrap()
+        else {
+            panic!("expected rendered page");
+        };
+        eprintln!("render-baseline a4 bitmap: {width}x{height}");
     }
 }

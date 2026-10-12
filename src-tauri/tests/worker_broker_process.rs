@@ -270,13 +270,28 @@ async fn permits_enforce_broker_session_and_destructive_mode_authority() {
 
 #[tokio::test]
 async fn active_command_cancellation_reaps_worker_without_replay() {
-    let broker = PdfiumWorkerBroker::with_launcher(Ok(helper_launcher("hang-command")));
+    // Cancel only once the worker has read OpenDocument: a command cancelled
+    // before it is sent leaves the worker running by design, so a fixed delay
+    // would race worker spawn and Hello.
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("command-received");
+    let broker = PdfiumWorkerBroker::with_launcher(Ok(WorkerLauncher::for_test(
+        PathBuf::from(env!("CARGO_BIN_EXE_pdfium-worker-test-helper")),
+        vec![
+            OsString::from("hang-command"),
+            marker.clone().into_os_string(),
+        ],
+    )));
     let key = key("cancel-active");
     let admission = broker.admit_read(&key, None).await.unwrap();
     let cancellation = tokio_util::sync::CancellationToken::new();
     let trigger = cancellation.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !marker.exists() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(marker.exists(), "worker never received OpenDocument");
         trigger.cancel();
     });
     let error = broker
@@ -291,6 +306,7 @@ async fn active_command_cancellation_reaps_worker_without_replay() {
         .unwrap_err();
     assert_eq!(error.code, "PDFIUM_WORKER_CANCELLED");
     assert_eq!(broker.worker_epoch().await, None);
+    assert_eq!(broker.restart_attempts_for_test().await, 0);
 }
 
 #[tokio::test]
@@ -446,4 +462,468 @@ async fn reservation_task_abort_during_shutdown_transfers_cleanup_to_broker() {
 
     broker.shutdown().await.unwrap();
     assert_eq!(broker.worker_epoch().await, None);
+}
+
+async fn page_count_command(
+    broker: &PdfiumWorkerBroker,
+    key: &WorkerDocumentKey,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> Result<WorkerResult, preview_alternative_lib::pdf_engine::subprocess_manager::BrokerError> {
+    let admission = broker.admit_read(key, None).await?;
+    broker
+        .command_for_document(
+            &admission,
+            key,
+            |document_id| WorkerCommand::GetPageCount { document_id },
+            CommandTimeout::PageCount,
+            cancellation,
+        )
+        .await
+}
+
+fn cancel_after(millis: u64) -> tokio_util::sync::CancellationToken {
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let trigger = cancellation.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(millis)).await;
+        trigger.cancel();
+    });
+    cancellation
+}
+
+#[tokio::test]
+async fn reused_document_returns_recorded_page_count_without_worker_round_trip() {
+    // The helper hangs on GetPageCount, so any round-trip would time out.
+    let broker = open_with_mode("hang-page-count").await.unwrap();
+    let key = key("hang-page-count");
+    let epoch = broker.worker_epoch().await;
+    let admission = broker.admit_read(&key, None).await.unwrap();
+    let (_, page_count, _) = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        broker.ensure_document(&admission, key, "fake.pdf".to_string(), None, None),
+    )
+    .await
+    .expect("cached ensure must not wait on the worker")
+    .unwrap();
+    assert_eq!(page_count, 1);
+    assert_eq!(broker.worker_epoch().await, epoch);
+    drop(admission);
+    broker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_short_command_is_drained_and_keeps_worker_and_documents() {
+    let broker = open_with_mode("slow-page-count").await.unwrap();
+    let key = key("slow-page-count");
+    let epoch = broker.worker_epoch().await;
+    assert!(epoch.is_some());
+
+    let cancellation = cancel_after(20);
+    let error = page_count_command(&broker, &key, Some(&cancellation))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "PDFIUM_WORKER_CANCELLED");
+    assert_eq!(broker.worker_epoch().await, epoch);
+
+    // The stream is back at a frame boundary and the document mapping
+    // survived: the next command is answered by the same worker.
+    let result = page_count_command(&broker, &key, None).await.unwrap();
+    assert!(matches!(result, WorkerResult::PageCount(1)));
+    assert_eq!(broker.worker_epoch().await, epoch);
+    assert_eq!(broker.restart_attempts_for_test().await, 0);
+    broker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_command_past_grace_is_killed_without_restart_charge() {
+    let broker = open_with_mode("hang-page-count").await.unwrap();
+    let key = key("hang-page-count");
+    let started = std::time::Instant::now();
+    let cancellation = cancel_after(20);
+    let error = page_count_command(&broker, &key, Some(&cancellation))
+        .await
+        .unwrap_err();
+    let elapsed = started.elapsed();
+    assert_eq!(error.code, "PDFIUM_WORKER_CANCELLED");
+    assert!(
+        elapsed >= std::time::Duration::from_millis(250),
+        "worker was killed before the grace period: {elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "grace period was not bounded: {elapsed:?}"
+    );
+    assert_eq!(broker.worker_epoch().await, None);
+
+    // A cancellation replacement is neither a restart charge nor a
+    // document failure.
+    let admission = broker.admit_read(&key, None).await.unwrap();
+    broker
+        .ensure_document(&admission, key, "fake.pdf".to_string(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(broker.restart_attempts_for_test().await, 0);
+    drop(admission);
+    broker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn pre_cancelled_command_is_never_sent_to_the_worker() {
+    let broker = open_with_mode("hang-page-count").await.unwrap();
+    let key = key("hang-page-count");
+    let epoch = broker.worker_epoch().await;
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let admission = broker.admit_read(&key, None).await.unwrap();
+    cancellation.cancel();
+    let started = std::time::Instant::now();
+    let error = broker
+        .command_for_document(
+            &admission,
+            &key,
+            |document_id| WorkerCommand::GetPageCount { document_id },
+            CommandTimeout::PageCount,
+            Some(&cancellation),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "PDFIUM_WORKER_CANCELLED");
+    assert!(started.elapsed() < std::time::Duration::from_millis(200));
+    assert_eq!(broker.worker_epoch().await, epoch);
+    drop(admission);
+    broker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn abandoned_in_flight_exchange_is_replaced_without_health_penalty() {
+    let broker = open_with_mode("slow-page-count").await.unwrap();
+    let key = key("slow-page-count");
+    let epoch = broker.worker_epoch().await;
+    let task_broker = broker.clone();
+    let task_key = key.clone();
+    let task = tokio::spawn(async move {
+        let _ = page_count_command(&task_broker, &task_key, None).await;
+    });
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+    while !broker.state_busy_for_test() && tokio::time::Instant::now() < deadline {
+        tokio::task::yield_now().await;
+    }
+    assert!(broker.state_busy_for_test());
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    // Let the helper write the now-unwanted response into the pipe.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    // Reading that stale frame would be a request-ID mismatch charged as a
+    // protocol violation. The broker must replace the worker instead.
+    let admission = broker.admit_read(&key, None).await.unwrap();
+    broker
+        .ensure_document(&admission, key.clone(), "fake.pdf".to_string(), None, None)
+        .await
+        .unwrap();
+    drop(admission);
+    assert_ne!(broker.worker_epoch().await, epoch);
+    let result = page_count_command(&broker, &key, None).await.unwrap();
+    assert!(matches!(result, WorkerResult::PageCount(1)));
+    assert_eq!(broker.restart_attempts_for_test().await, 0);
+    broker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_during_cancellation_grace_stops_and_reaps_worker() {
+    let broker = open_with_mode("hang-page-count").await.unwrap();
+    let key = key("hang-page-count");
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let task_broker = broker.clone();
+    let task_key = key.clone();
+    let task_cancellation = cancellation.clone();
+    let command = tokio::spawn(async move {
+        page_count_command(&task_broker, &task_key, Some(&task_cancellation)).await
+    });
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+    while !broker.state_busy_for_test() && tokio::time::Instant::now() < deadline {
+        tokio::task::yield_now().await;
+    }
+    cancellation.cancel();
+    broker.shutdown().await.unwrap();
+    let error = command.await.unwrap().unwrap_err();
+    assert!(
+        matches!(
+            error.code,
+            "PDFIUM_WORKER_UNAVAILABLE" | "PDFIUM_WORKER_CANCELLED"
+        ),
+        "unexpected code {}",
+        error.code
+    );
+    assert_eq!(broker.worker_epoch().await, None);
+}
+
+struct TestReadLease {
+    admission: preview_alternative_lib::pdf_engine::subprocess_manager::WorkerAdmissionPermit,
+    key: WorkerDocumentKey,
+    page_count: u32,
+}
+
+impl preview_alternative_lib::pdf_engine::subprocess_manager::WorkerReadLease for TestReadLease {
+    fn admission(
+        &self,
+    ) -> &preview_alternative_lib::pdf_engine::subprocess_manager::WorkerAdmissionPermit {
+        &self.admission
+    }
+
+    fn document_key(&self) -> &WorkerDocumentKey {
+        &self.key
+    }
+
+    fn page_count(&self) -> u32 {
+        self.page_count
+    }
+}
+
+async fn acquire_test_lease(
+    broker: PdfiumWorkerBroker,
+    key: WorkerDocumentKey,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Result<TestReadLease, preview_alternative_lib::pdf_engine::subprocess_manager::BrokerError> {
+    let admission = broker.admit_read(&key, Some(&cancellation)).await?;
+    let (_, page_count, _) = broker
+        .ensure_document(
+            &admission,
+            key.clone(),
+            "fake.pdf".to_string(),
+            None,
+            Some(&cancellation),
+        )
+        .await?;
+    Ok(TestReadLease {
+        admission,
+        key,
+        page_count,
+    })
+}
+
+async fn chunked_search(
+    broker: &PdfiumWorkerBroker,
+    key: &WorkerDocumentKey,
+    max_results: usize,
+    cancellation: &tokio_util::sync::CancellationToken,
+) -> Result<
+    preview_alternative_lib::SearchResult,
+    preview_alternative_lib::pdf_engine::subprocess_manager::BrokerError,
+> {
+    broker
+        .search_text_in_chunks(
+            || acquire_test_lease(broker.clone(), key.clone(), cancellation.clone()),
+            "needle",
+            preview_alternative_lib::pdf_engine::subprocess_manager::SearchChunkPolicy {
+                max_pages: 1,
+                time_budget_ms: 100,
+                max_results,
+            },
+            cancellation,
+        )
+        .await
+}
+
+#[tokio::test]
+async fn chunked_search_aggregates_ordered_matches_and_counts_past_the_limit() {
+    let broker = open_with_mode("chunked-search").await.unwrap();
+    let key = key("chunked-search");
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let result = chunked_search(&broker, &key, 4, &cancellation)
+        .await
+        .unwrap();
+    assert!(!result.is_cancelled);
+    assert_eq!(result.total_matches, 6);
+    assert_eq!(
+        result
+            .matches
+            .iter()
+            .map(|found| (found.global_match_index, found.page_index))
+            .collect::<Vec<_>>(),
+        vec![(0, 0), (1, 1), (2, 2), (3, 3)]
+    );
+    broker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn reads_queued_behind_a_search_are_served_between_chunks() {
+    let broker = open_with_mode("chunked-search").await.unwrap();
+    let key = key("chunked-search");
+    let search_broker = broker.clone();
+    let search_key = key.clone();
+    let search = tokio::spawn(async move {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let result = chunked_search(&search_broker, &search_key, 100, &cancellation).await;
+        (result, std::time::Instant::now())
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+    let read_started = std::time::Instant::now();
+    let read = page_count_command(&broker, &key, None).await.unwrap();
+    let read_finished = std::time::Instant::now();
+    assert!(matches!(read, WorkerResult::PageCount(1)));
+
+    let (result, search_finished) = search.await.unwrap();
+    assert_eq!(result.unwrap().total_matches, 6);
+    assert!(
+        read_finished < search_finished,
+        "the read waited for the whole search"
+    );
+    assert!(
+        read_finished - read_started < std::time::Duration::from_millis(300),
+        "the read waited longer than about one chunk: {:?}",
+        read_finished - read_started
+    );
+    broker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelling_a_search_mid_chunk_keeps_the_worker() {
+    let broker = open_with_mode("chunked-search").await.unwrap();
+    let key = key("chunked-search");
+    let epoch = broker.worker_epoch().await;
+    let cancellation = cancel_after(120);
+    let error = chunked_search(&broker, &key, 100, &cancellation)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "PDFIUM_WORKER_CANCELLED");
+    assert_eq!(broker.worker_epoch().await, epoch);
+    assert_eq!(broker.restart_attempts_for_test().await, 0);
+
+    let fresh = tokio_util::sync::CancellationToken::new();
+    let result = chunked_search(&broker, &key, 100, &fresh).await.unwrap();
+    assert_eq!(result.total_matches, 6);
+    assert_eq!(broker.worker_epoch().await, epoch);
+    broker.shutdown().await.unwrap();
+}
+
+async fn render_page_with_short_timeout(
+    broker: &PdfiumWorkerBroker,
+    key: &WorkerDocumentKey,
+    page_index: u32,
+) -> Result<(), String> {
+    let admission = broker
+        .admit_read(key, None)
+        .await
+        .map_err(|error| error.code.to_string())?;
+    broker
+        .ensure_document(&admission, key.clone(), "fake.pdf".to_string(), None, None)
+        .await
+        .map_err(|error| error.code.to_string())?;
+    // The page scope comes from the command, not from the timeout class, so a
+    // short class keeps the test fast without a test-only timeout override.
+    let result = broker
+        .command_for_document(
+            &admission,
+            key,
+            |document_id| WorkerCommand::RenderPage {
+                document_id,
+                page_index,
+                target: preview_alternative_lib::worker::ipc::WorkerRenderTarget::Scale(1.0),
+                rotation: 0,
+            },
+            CommandTimeout::Ping,
+            None,
+        )
+        .await
+        .map_err(|error| error.code.to_string())?;
+    assert!(matches!(result, WorkerResult::PageRendered { .. }));
+    Ok(())
+}
+
+async fn release_page(
+    broker: &PdfiumWorkerBroker,
+    key: &WorkerDocumentKey,
+    page_index: u32,
+) -> Result<bool, String> {
+    let admission = broker
+        .admit_read(key, None)
+        .await
+        .map_err(|error| error.code.to_string())?;
+    broker
+        .release_page_quarantine(&admission, key, page_index)
+        .await
+        .map_err(|error| error.code.to_string())
+}
+
+#[tokio::test]
+async fn repeated_page_timeouts_quarantine_the_page_and_keep_the_document_usable() {
+    let broker = PdfiumWorkerBroker::with_launcher(Ok(helper_launcher("hang-render-pages=1")));
+    let key = key("page-quarantine");
+
+    for _ in 0..2 {
+        assert_eq!(
+            render_page_with_short_timeout(&broker, &key, 1).await,
+            Err("PDFIUM_WORKER_TIMEOUT".to_string())
+        );
+    }
+    // The other pages of the same generation still render.
+    render_page_with_short_timeout(&broker, &key, 0)
+        .await
+        .unwrap();
+
+    let epoch = broker.worker_epoch().await;
+    let restarts = broker.restart_attempts_for_test().await;
+    assert_eq!(
+        render_page_with_short_timeout(&broker, &key, 1).await,
+        Err("PDFIUM_PAGE_QUARANTINED".to_string())
+    );
+    // Rejected before the worker saw it: no kill and no restart charge.
+    assert_eq!(broker.worker_epoch().await, epoch);
+    assert_eq!(broker.restart_attempts_for_test().await, restarts);
+
+    // A retry grants exactly one more attempt inside the page window.
+    assert_eq!(release_page(&broker, &key, 1).await, Ok(true));
+    assert_eq!(release_page(&broker, &key, 1).await, Ok(false));
+    assert_eq!(
+        render_page_with_short_timeout(&broker, &key, 1).await,
+        Err("PDFIUM_WORKER_TIMEOUT".to_string())
+    );
+    assert_eq!(
+        render_page_with_short_timeout(&broker, &key, 1).await,
+        Err("PDFIUM_PAGE_QUARANTINED".to_string())
+    );
+    render_page_with_short_timeout(&broker, &key, 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        release_page(&broker, &key, 6).await,
+        Err("PDFIUM_WORKER_INVALID_PAGE_INDEX".to_string())
+    );
+
+    // Generation invalidation (mutation, close, candidate discard) clears it.
+    let exclusive = broker.admit_exclusive(&key.session_id).await.unwrap();
+    broker.invalidate_document(&exclusive, &key).await.unwrap();
+    drop(exclusive);
+    assert_eq!(release_page(&broker, &key, 1).await, Ok(false));
+}
+
+#[tokio::test]
+async fn timeouts_on_distinct_pages_quarantine_the_document() {
+    let broker = PdfiumWorkerBroker::with_launcher(Ok(helper_launcher("hang-render-pages=1,2,3")));
+    let key = key("document-quarantine");
+
+    for page in 1..=3 {
+        assert_eq!(
+            render_page_with_short_timeout(&broker, &key, page).await,
+            Err("PDFIUM_WORKER_TIMEOUT".to_string())
+        );
+    }
+    assert_eq!(
+        render_page_with_short_timeout(&broker, &key, 0).await,
+        Err("PDFIUM_DOCUMENT_QUARANTINED".to_string())
+    );
+    assert_eq!(
+        release_page(&broker, &key, 1).await,
+        Err("PDFIUM_DOCUMENT_QUARANTINED".to_string())
+    );
+    // Another generation of the same session is a different document.
+    let next_generation = WorkerDocumentKey {
+        session_id: key.session_id.clone(),
+        content_generation: key.content_generation + 1,
+    };
+    render_page_with_short_timeout(&broker, &next_generation, 0)
+        .await
+        .unwrap();
 }

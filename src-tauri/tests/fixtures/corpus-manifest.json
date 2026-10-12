@@ -52,6 +52,15 @@
       "networkRequirement": "none",
       "reproducibilityStatus": "reproducibility_unverified",
       "notes": "minimal.pdf uzerinden pypdf 6.10.0 ile uretilmistir; bayt-bayt determinizmi dogrulanmamistir."
+    },
+    "py-heavy-page-generator": {
+      "kind": "committed_script",
+      "path": "src-tauri/tests/fixtures/pdf/generate_heavy_page.py",
+      "language": "python3",
+      "dependencies": [],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "deterministic_by_construction",
+      "notes": "Pure Python standard library generator for heavy-page.pdf (worker timeout and page quarantine fixture)."
     }
   },
   "fixtures": [
@@ -447,6 +456,39 @@
       ],
       "featureManifest": null,
       "notes": "Large page dimensions (7200x7200 pt / 100x100 in) minimal test fixture.",
+      "allowEmpty": false
+    },
+    {
+      "id": "core-heavy-page",
+      "path": "src-tauri/tests/fixtures/pdf/heavy-page.pdf",
+      "sha256": "bd13fa8b92d8cf68e9867bd7e148bf9dac9e7be16916d3b9a9517c63ceb5f391",
+      "byteLength": 89102,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/fixtures/pdf/generate_heavy_page.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-heavy-page-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "security"
+      ],
+      "expectedCapabilities": [
+        "has_text",
+        "has_vector_content",
+        "multi_page"
+      ],
+      "expectedFindings": [],
+      "allowedTests": [
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": "Four pages: index 0 and 3 light; index 1 nested Form XObjects (parse-heavy, multi-GB worker memory, manual baseline only); index 2 PostScript function shading (render-heavy, low memory).",
       "allowEmpty": false
     },
     {

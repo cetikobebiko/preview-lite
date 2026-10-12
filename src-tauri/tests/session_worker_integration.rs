@@ -2,7 +2,10 @@
 mod macos_arm64 {
     use parking_lot::{Mutex, RwLock};
     use preview_alternative_lib::document_session;
-    use preview_alternative_lib::pdf_engine::render_service::{RenderScope, RenderService};
+    use preview_alternative_lib::pdf_engine::render_service::{
+        RenderResponse, RenderScope, RenderService,
+    };
+    use preview_alternative_lib::pdf_engine::render_wire::decode_render_frame;
     use preview_alternative_lib::pdf_engine::subprocess_manager::{
         PdfiumWorkerBroker, WorkerLauncher,
     };
@@ -14,7 +17,16 @@ mod macos_arm64 {
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
+    use tauri::ipc::{InvokeResponseBody, IpcResponse};
     use tauri::Manager;
+
+    /// Render commands answer with a raw `render-frame/1` body, never JSON.
+    fn decode_render(response: tauri::ipc::Response) -> RenderResponse {
+        match response.body().unwrap() {
+            InvokeResponseBody::Raw(bytes) => decode_render_frame(&bytes).unwrap(),
+            InvokeResponseBody::Json(json) => panic!("render returned JSON: {json:.64}"),
+        }
+    }
 
     fn fixture(name: &str) -> String {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -102,19 +114,21 @@ mod macos_arm64 {
         )
         .await
         .unwrap();
-        let rendered = document_session::render_session_page(
-            opened.session_id.clone(),
-            0,
-            1.0,
-            90,
-            1,
-            "session-render-request".to_string(),
-            app.state(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
+        let rendered = decode_render(
+            document_session::render_session_page(
+                opened.session_id.clone(),
+                0,
+                1.0,
+                90,
+                1,
+                "session-render-request".to_string(),
+                app.state(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(rendered.page_index, 0);
         assert_eq!(rendered.generation, 1);
         assert_eq!(rendered.request_id, "session-render-request");
@@ -123,19 +137,21 @@ mod macos_arm64 {
             rendered.width as usize * rendered.height as usize * 4
         );
 
-        let thumbnail = document_session::render_session_thumbnail(
-            opened.session_id.clone(),
-            0,
-            180,
-            1,
-            "thumbnail-request".to_string(),
-            RenderScope::SidebarThumbnail,
-            app.state(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
+        let thumbnail = decode_render(
+            document_session::render_session_thumbnail(
+                opened.session_id.clone(),
+                0,
+                180,
+                1,
+                "thumbnail-request".to_string(),
+                RenderScope::SidebarThumbnail,
+                app.state(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(thumbnail.width, 180);
         assert_eq!(thumbnail.request_id, "thumbnail-request");
 
@@ -151,6 +167,28 @@ mod macos_arm64 {
         .await
         .unwrap();
         assert!(layout.iter().any(|item| item.text.contains("PAGE-ONE")));
+
+        // A retry of a page that is not quarantined is a validated no-op.
+        let released =
+            document_session::retry_session_page(opened.session_id.clone(), 1, 0, app.state())
+                .await
+                .unwrap();
+        assert!(!released);
+        let stale =
+            document_session::retry_session_page(opened.session_id.clone(), 2, 0, app.state())
+                .await
+                .unwrap_err();
+        assert_eq!(stale.code, "STALE_GENERATION");
+        let out_of_range =
+            document_session::retry_session_page(opened.session_id.clone(), 1, 3, app.state())
+                .await
+                .unwrap_err();
+        assert_eq!(out_of_range.code, "PDFIUM_WORKER_INVALID_PAGE_INDEX");
+        let unknown =
+            document_session::retry_session_page("missing".to_string(), 1, 0, app.state())
+                .await
+                .unwrap_err();
+        assert_eq!(unknown.code, "DOCUMENT_SESSION_NOT_FOUND");
 
         let search = document_session::search_session_pdf_text(
             opened.session_id.clone(),
@@ -263,19 +301,21 @@ mod macos_arm64 {
         )
         .await
         .unwrap();
-        let reopened_after_mutation = document_session::render_session_page(
-            mutated.id.clone(),
-            1,
-            1.0,
-            0,
-            2,
-            "post-mutation-render".to_string(),
-            app.state(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
+        let reopened_after_mutation = decode_render(
+            document_session::render_session_page(
+                mutated.id.clone(),
+                1,
+                1.0,
+                0,
+                2,
+                "post-mutation-render".to_string(),
+                app.state(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(reopened_after_mutation.generation, 2);
 
         let epoch_before_crash = broker.worker_epoch().await.unwrap();
@@ -292,7 +332,8 @@ mod macos_arm64 {
             app.state(),
         )
         .await
-        .unwrap_err();
+        .err()
+        .expect("render must fail after the worker crash");
         assert_eq!(
             crashed.code, "PDFIUM_WORKER_CRASHED",
             "unexpected render error message: {}",
@@ -305,19 +346,21 @@ mod macos_arm64 {
         assert_eq!(after_crash.content_generation, 2);
         assert!(after_crash.dirty);
 
-        let retried = document_session::render_session_page(
-            mutated.id,
-            2,
-            1.2,
-            0,
-            2,
-            "explicit-retry-render".to_string(),
-            app.state(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
+        let retried = decode_render(
+            document_session::render_session_page(
+                mutated.id,
+                2,
+                1.2,
+                0,
+                2,
+                "explicit-retry-render".to_string(),
+                app.state(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(retried.generation, 2);
         assert_ne!(broker.worker_epoch().await.unwrap(), epoch_before_crash);
 
@@ -424,19 +467,21 @@ mod macos_arm64 {
         )
         .await
         .unwrap();
-        let render1 = document_session::render_session_page(
-            committed.snapshot.id.clone(),
-            0,
-            1.0,
-            0,
-            1,
-            "pre-mutation-render".to_string(),
-            app.state(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
+        let render1 = decode_render(
+            document_session::render_session_page(
+                committed.snapshot.id.clone(),
+                0,
+                1.0,
+                0,
+                1,
+                "pre-mutation-render".to_string(),
+                app.state(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(render1.generation, 1);
 
         // Intentionally pass an invalid recipe / failure to trigger worker document invalidation
@@ -456,19 +501,21 @@ mod macos_arm64 {
         assert_eq!(err.code, "MUTATION_WORKER_FAILED");
 
         // Next render must succeed via lazy reopen
-        let render2 = document_session::render_session_page(
-            committed.snapshot.id.clone(),
-            0,
-            1.0,
-            0,
-            1,
-            "lazy-reopen-render".to_string(),
-            app.state(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
+        let render2 = decode_render(
+            document_session::render_session_page(
+                committed.snapshot.id.clone(),
+                0,
+                1.0,
+                0,
+                1,
+                "lazy-reopen-render".to_string(),
+                app.state(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(render2.generation, 1);
 
         broker.shutdown().await.unwrap();

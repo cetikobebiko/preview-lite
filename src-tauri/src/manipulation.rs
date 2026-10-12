@@ -10,6 +10,15 @@ use tauri::State;
 
 const MAX_PAGE_DIMENSION_POINTS: f32 = 14_400.0;
 
+fn degrees_from_rotation(rotation: PdfPageRenderRotation) -> i32 {
+    match rotation {
+        PdfPageRenderRotation::Degrees90 => 90,
+        PdfPageRenderRotation::Degrees180 => 180,
+        PdfPageRenderRotation::Degrees270 => 270,
+        PdfPageRenderRotation::None => 0,
+    }
+}
+
 fn rotation_from_degrees(degrees: i32) -> Result<PdfPageRenderRotation, String> {
     if degrees % 90 != 0 {
         return Err(format!(
@@ -311,13 +320,14 @@ fn rotate_page_with_password(
         .map_err(|error| error.to_string())
 }
 
+/// Rotates a page clockwise by `degrees` relative to its current /Rotate value.
 pub(crate) fn rotate_page_report(
     file_path: String,
     page_index: u32,
     degrees: i32,
     password: Option<String>,
 ) -> Result<AtomicWriteReport, DocumentIoError> {
-    let rotation = rotation_from_degrees(degrees).map_err(|detail| {
+    rotation_from_degrees(degrees).map_err(|detail| {
         DocumentIoError::new(
             "rotate_page",
             DocumentIoStage::Preflight,
@@ -345,15 +355,21 @@ pub(crate) fn rotate_page_report(
                     "Sayfa indeksi aralık dışında: {page_index} >= {page_count}"
                 )));
             }
-            {
+            let rotation = {
                 let mut page = document
                     .pages_mut()
                     .get(page_index as u16)
                     .map_err(|error| {
                         DocumentIoFailure::preflight(format!("Sayfa bulunamadı: {error}"))
                     })?;
+                let current = page.rotation().map_err(|error| {
+                    DocumentIoFailure::preflight(format!("Sayfa rotasyonu okunamadı: {error}"))
+                })?;
+                let rotation = rotation_from_degrees(degrees_from_rotation(current) + degrees)
+                    .map_err(DocumentIoFailure::preflight)?;
                 page.set_rotation(rotation);
-            }
+                rotation
+            };
             document.save_to_file(temp).map_err(|error| {
                 DocumentIoFailure::write(format!("Temp PDF kaydedilemedi: {error}"))
             })?;
@@ -925,6 +941,38 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn document_io_rotate_page_is_relative_to_current_rotation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = copied_fixture("minimal.pdf", directory.path());
+        let file_path = path.to_string_lossy().to_string();
+        let page_rotation = || {
+            crate::pdf_engine::with_pdfium(|pdfium| -> Result<String, String> {
+                let document = pdfium
+                    .load_pdf_from_file(&path, None)
+                    .map_err(|error| error.to_string())?;
+                let rotation = document
+                    .pages()
+                    .get(0)
+                    .map_err(|error| error.to_string())?
+                    .rotation()
+                    .map_err(|error| error.to_string())?;
+                Ok(format!("{rotation:?}"))
+            })
+            .unwrap()
+        };
+
+        rotate_page_with_password(file_path.clone(), 0, 90, None).unwrap();
+        rotate_page_with_password(file_path.clone(), 0, 90, None).unwrap();
+        assert_eq!(page_rotation(), "Degrees180");
+        rotate_page_with_password(file_path.clone(), 0, -90, None).unwrap();
+        assert_eq!(page_rotation(), "Degrees90");
+        rotate_page_with_password(file_path.clone(), 0, -180, None).unwrap();
+        assert_eq!(page_rotation(), "Degrees270");
+        rotate_page_with_password(file_path, 0, 90, None).unwrap();
+        assert_eq!(page_rotation(), "None");
     }
 
     #[test]

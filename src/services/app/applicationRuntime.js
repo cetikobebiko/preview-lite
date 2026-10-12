@@ -2,6 +2,7 @@ import { getCurrentWindow } from "../platform/window.js";
 import { aiController } from "./aiController.js";
 import { createApplicationLifecycleController } from "./applicationLifecycleController.js";
 import { createKeyboardController } from "./keyboardController.js";
+import { parsePageInput } from "./viewerNavigationModel.js";
 import { createWindowLifecycleController } from "./windowLifecycleController.js";
 
 /** Owns global startup, input routing and deterministic mount/unmount ordering. */
@@ -86,10 +87,8 @@ export function createApplicationRuntime({
         label: "Gitmek istediğiniz sayfa numarası",
         placeholder: `1-${viewer.pageOrder.length}`,
       });
-      const index = Number.parseInt(page, 10) - 1;
-      if (Number.isInteger(index) && index >= 0 && index < viewer.pageOrder.length) {
-        await viewerRuntime.navigation.jumpToPage(index);
-      }
+      const index = parsePageInput(page, viewer.pageOrder.length);
+      if (index >= 0) await viewerRuntime.navigation.jumpToPage(index);
     },
     goToPage: viewerRuntime.navigation.jumpToPage,
     adjustZoom: viewerRuntime.navigation.adjustZoom,

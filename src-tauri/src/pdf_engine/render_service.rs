@@ -2,8 +2,11 @@ use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+
+use super::subprocess_manager::WORKER_METRICS_TARGET;
 
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 pub const MAX_IDENTIFIER_LENGTH: usize = 128;
@@ -28,6 +31,42 @@ pub enum RenderScope {
 impl RenderScope {
     fn is_main(self) -> bool {
         matches!(self, Self::MainPage)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::MainPage => "main_page",
+            Self::SidebarThumbnail => "sidebar_thumbnail",
+            Self::OrganizerThumbnail => "organizer_thumbnail",
+        }
+    }
+}
+
+/// Why the frontend cancelled a render request. Diagnostic only: it is logged
+/// to the worker-metrics target and never changes cancellation behavior.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderCancelReason {
+    Superseded,
+    ViewportExit,
+    Zoom,
+    Rerender,
+    Timeout,
+    Destroy,
+    Unspecified,
+}
+
+impl RenderCancelReason {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Superseded => "superseded",
+            Self::ViewportExit => "viewport_exit",
+            Self::Zoom => "zoom",
+            Self::Rerender => "rerender",
+            Self::Timeout => "timeout",
+            Self::Destroy => "destroy",
+            Self::Unspecified => "unspecified",
+        }
     }
 }
 
@@ -99,11 +138,17 @@ pub struct RenderCacheKey {
     pub rotation: i32,
 }
 
+/// RGBA pixels shared by the render cache and the responses built from it,
+/// so a cache insert or hit is a reference-count bump instead of a full
+/// pixel copy. `Arc<Vec<u8>>` rather than `Arc<[u8]>`: wrapping the worker's
+/// `Vec` moves only its pointer, while `Arc<[u8]>::from(Vec)` copies.
+pub type RenderPixels = Arc<Vec<u8>>;
+
 #[derive(Clone, Debug)]
 pub struct CachedRender {
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u8>,
+    pub data: RenderPixels,
 }
 
 impl CachedRender {
@@ -112,12 +157,13 @@ impl CachedRender {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Successful viewer render. Sent to the webview only as a binary
+/// `render-frame/1` body (`render_wire.rs`), never as JSON.
+#[derive(Clone, Debug)]
 pub struct RenderResponse {
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u8>,
+    pub data: RenderPixels,
     pub page_index: u32,
     pub generation: u64,
     pub request_id: String,
@@ -300,6 +346,12 @@ impl PdfiumRenderScheduler {
 
             tokio::select! {
                 _ = token.cancelled() => {
+                    tracing::debug!(
+                        target: WORKER_METRICS_TARGET,
+                        event = "render_cancel_observed",
+                        phase = "scheduler_queue",
+                        scope = scope.label(),
+                    );
                     return Err("render_cancelled".to_string());
                 }
                 _ = notified => {}
@@ -427,6 +479,12 @@ impl RenderService {
             tokens
         };
 
+        tracing::debug!(
+            target: WORKER_METRICS_TARGET,
+            event = "render_cancel",
+            trigger = "document_switch",
+            cancelled_requests = tokens.len(),
+        );
         for token in tokens {
             token.cancel();
         }
@@ -457,6 +515,12 @@ impl RenderService {
         };
 
         if let Some(replaced) = replaced {
+            tracing::debug!(
+                target: WORKER_METRICS_TARGET,
+                event = "render_cancel",
+                trigger = "slot_replaced",
+                scope = identity.scope.label(),
+            );
             replaced.token.cancel();
         }
 
@@ -702,7 +766,7 @@ mod tests {
         CachedRender {
             width: 1,
             height: (byte_count / 4) as u32,
-            data: vec![255; byte_count],
+            data: Arc::new(vec![255; byte_count]),
         }
     }
 

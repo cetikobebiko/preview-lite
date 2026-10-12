@@ -114,7 +114,7 @@ Invariantlar (B1/B2 + B5):
 - `FAST_LOCAL` native-only requirement taşımaz
 - `summary` counts gerçek `targets` uzunluğu ve `usesPdfium`/`realWorker` sayılarıyla eşleşir
 - (B5) `conditional` presence `default` profil içermeli, tüm profiller `0` olamaz (`ZERO_TESTS`/`CFG_ELIDED` hardening)
-- (B5) `realWorker=true` ⇒ `NATIVE_PLATFORM` (`MOCK_REALITY_MISMATCH` hardening)
+- (B5) `realWorker=true` ⇒ `NATIVE_PLATFORM` veya `EXACT_ARTIFACT` (`MOCK_REALITY_MISMATCH` hardening; artifact smoke paketlenmiş binary üzerinden production `--run-worker` kullanır)
 - (B5) coverage `worker` dimension yalnızca `realWorker=true` evidence ile tatmin edilebilir (fake/mocked terfisi fail-closed)
 - (B5) `NATIVE_PLATFORM` cfg-zero (`default:0`) `NOT_APPLICABLE`/`RUNTIME_UNAVAILABLE`, asla `PASS` değil
 - (B5) `IGNORED_TEST` / `describe.skip` / `#[ignore]` `PASS` sayılmaz — ayrı `IGNORED_TEST` evidence sayılır

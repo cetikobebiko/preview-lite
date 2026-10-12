@@ -1,3 +1,5 @@
+import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
+
 /**
  * Coordinates user-initiated viewer edits. It owns no reactive data: viewer and
  * annotation stores remain authoritative, while render/toast stay injected side effects.
@@ -11,8 +13,11 @@ export function createViewerEditActions({ viewer, annotation, render, onToast = 
     void render(options);
   }
 
+  // Drawings are keyed by physical page index (see annotationCanvasController).
+  const currentPhysicalPage = () => toPhysicalPageIndex(viewer.pageOrder, viewer.currentPageIndex);
+
   function undoLastAnnotation() {
-    const currentAnnotations = annotation.annotationsMap[viewer.currentPageIndex];
+    const currentAnnotations = annotation.annotationsMap[currentPhysicalPage()];
     if (!currentAnnotations?.length) return false;
 
     currentAnnotations.pop();
@@ -23,7 +28,9 @@ export function createViewerEditActions({ viewer, annotation, render, onToast = 
   }
 
   function clearCurrentPageAnnotations() {
-    annotation.annotationsMap[viewer.currentPageIndex] = [];
+    const pageIndex = currentPhysicalPage();
+    if (pageIndex < 0) return;
+    annotation.annotationsMap[pageIndex] = [];
     annotation.annotationsMap = { ...annotation.annotationsMap };
     requestRender({ silent: true });
     onToast("Sayfadaki tüm çizimler temizlendi.");
@@ -33,9 +40,16 @@ export function createViewerEditActions({ viewer, annotation, render, onToast = 
     viewer.currentPageIndex = Math.min(viewer.currentPageIndex, viewer.pageOrder.length - 1);
   }
 
-  function reorderPages(pageOrder) {
+  function keepCurrentPhysicalPage(pageOrder) {
+    const currentPhysicalIndex = viewer.pageOrder[viewer.currentPageIndex];
     viewer.pageOrder = pageOrder;
-    normalizeCurrentPage();
+    const displayIndex = pageOrder.indexOf(currentPhysicalIndex);
+    if (displayIndex >= 0) viewer.currentPageIndex = displayIndex;
+    else normalizeCurrentPage();
+  }
+
+  function reorderPages(pageOrder) {
+    keepCurrentPhysicalPage(pageOrder);
     requestRender();
     onToast("Sayfa sırası değiştirildi!");
   }
@@ -46,8 +60,7 @@ export function createViewerEditActions({ viewer, annotation, render, onToast = 
       return false;
     }
 
-    viewer.pageOrder = viewer.pageOrder.filter((_, index) => index !== displayIndex);
-    normalizeCurrentPage();
+    keepCurrentPhysicalPage(viewer.pageOrder.filter((_, index) => index !== displayIndex));
     requestRender();
     onToast(`Sayfa ${displayIndex + 1} kaldırıldı.`);
     return true;

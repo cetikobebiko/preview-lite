@@ -47,6 +47,17 @@ describe("paintBufferToCanvas", () => {
     expect(Array.from(context.putImageData.mock.calls[0][0].data)).toEqual([10, 20, 30, 255]);
   });
 
+  it("ikili IPC çerçevesindeki pikselleri ImageData'ya kopyasız verir", () => {
+    const { canvas, context } = createCanvasMock();
+    const buffer = new ArrayBuffer(8);
+    const data = new Uint8ClampedArray(buffer, 4, 4);
+    data.set([10, 20, 30, 255]);
+
+    paintBufferToCanvas(canvas, { width: 1, height: 1, data });
+
+    expect(context.putImageData.mock.calls[0][0].data).toBe(data);
+  });
+
   it.each([
     [{ width: 0, height: 1, data: [] }],
     [{ width: -1, height: 1, data: [] }],
@@ -75,6 +86,27 @@ describe("transformRgbaBuffer", () => {
     expect(Array.from(transformRgbaBuffer(source, "dark"))).toEqual([245, 235, 225, 40]);
     expect(Array.from(transformRgbaBuffer(source, "grayscale"))).toEqual([18, 18, 18, 40]);
     expect(Array.from(transformRgbaBuffer(source, "sepia"))).toEqual([24, 22, 17, 40]);
+    expect(Array.from(source)).toEqual([10, 20, 30, 40]);
+  });
+
+  it("normal modda typed array piksellerini kopyalamadan kullanır", () => {
+    const buffer = new ArrayBuffer(12);
+    const clamped = new Uint8ClampedArray(buffer, 4, 4);
+    expect(transformRgbaBuffer(clamped, "normal")).toBe(clamped);
+
+    const bytes = new Uint8Array(buffer, 8, 4);
+    const pixels = transformRgbaBuffer(bytes);
+    expect(pixels).toBeInstanceOf(Uint8ClampedArray);
+    expect(pixels.buffer).toBe(buffer);
+    expect(pixels.byteOffset).toBe(8);
+    expect(pixels.length).toBe(4);
+  });
+
+  it("renk modlarında kaynak tamponun tek kopyası üzerinde çalışır", () => {
+    const source = new Uint8ClampedArray([10, 20, 30, 40]);
+    const pixels = transformRgbaBuffer(source, "invert");
+    expect(pixels.buffer).not.toBe(source.buffer);
+    expect(Array.from(pixels)).toEqual([245, 235, 225, 40]);
     expect(Array.from(source)).toEqual([10, 20, 30, 40]);
   });
 

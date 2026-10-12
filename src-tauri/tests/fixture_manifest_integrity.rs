@@ -776,8 +776,10 @@ fn test_canonical_corpus_manifest_parses_and_validates() {
     assert_eq!(manifest.corpus_version, "1.0.0");
     assert!(!manifest.description.is_empty());
 
-    // Prompt 11I-A3 baseline: exactly 5 canonical generators
-    assert_eq!(manifest.generators.len(), 5);
+    // Prompt 11I-A3 baseline: 5 canonical generators, plus the heavy-page
+    // generator added for the worker page-quarantine policy.
+    assert_eq!(manifest.generators.len(), 6);
+    assert!(manifest.generators.contains_key("py-heavy-page-generator"));
     assert!(manifest.generators.contains_key("py-reorder-generator"));
     assert!(manifest.generators.contains_key("py-redaction-generator"));
     assert!(manifest
@@ -788,11 +790,11 @@ fn test_canonical_corpus_manifest_parses_and_validates() {
         .contains_key("py-release-smoke-generator"));
     assert!(manifest.generators.contains_key("pypdf-historical-method"));
 
-    // Prompt 11I-A3: exactly 56 fixtures in canonical corpus manifest
+    // Prompt 11I-A3: 56 fixtures, plus core-heavy-page (page quarantine).
     assert_eq!(
         manifest.fixtures.len(),
-        56,
-        "Canonical corpus-manifest.json must contain exactly 56 fixtures"
+        57,
+        "Canonical corpus-manifest.json must contain exactly 57 fixtures"
     );
 
     // Exactly one fixture carrying release_smoke category
@@ -2252,8 +2254,8 @@ fn test_corpus_roots_enumeration_and_no_unmanifested_pdf() {
 
     assert_eq!(
         declared_paths.len(),
-        56,
-        "Expected 56 unique declared fixture paths in canonical manifest"
+        57,
+        "Expected 57 unique declared fixture paths in canonical manifest"
     );
 
     let corpus_roots = [
@@ -2306,8 +2308,8 @@ fn test_corpus_roots_enumeration_and_no_unmanifested_pdf() {
 
     assert_eq!(
         disk_paths.len(),
-        56,
-        "Found {} PDF files on disk across corpus roots, expected 56",
+        57,
+        "Found {} PDF files on disk across corpus roots, expected 57",
         disk_paths.len()
     );
 

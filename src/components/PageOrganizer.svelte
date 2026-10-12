@@ -18,6 +18,11 @@
   import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { rotatePage, deletePages, reorderPages } from "../pdfState.js";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
+  import {
+    pageFailureMessage,
+    pageFailureRegistry,
+  } from "../services/pageFailureRegistry.js";
+  import { pageMappingAfterDelete, pageMappingAfterReorder } from "../services/app/pageIndexMapping.js";
   import FeatureNotice from "./FeatureNotice.svelte";
 
   let {
@@ -43,13 +48,13 @@
     if (!pageCoordinators.has(pageIndex)) {
       pageCoordinators.set(pageIndex, createRenderRequestCoordinator({
         scope: "organizer_thumbnail",
-        cancel: (request) => cancelRenderRequest({
+        cancel: (request, reason) => cancelRenderRequest({
           sessionId: request.sessionId,
           pageIndex: request.pageIndex,
           contentGeneration: request.contentGeneration,
           requestId: request.requestId,
           scope: request.scope,
-        }),
+        }, reason),
       }));
     }
     return pageCoordinators.get(pageIndex);
@@ -62,7 +67,7 @@
   }
 
   function invalidatePageThumbnail(page) {
-    coordinatorFor(page.index).cancelActive();
+    coordinatorFor(page.index).cancelActive("rerender");
     const requestId = ++thumbnailGeneration;
     pageRequestIds.set(page.index, requestId);
     releaseCanvasBackingStore(page.canvas);
@@ -134,6 +139,19 @@
     const coordinator = coordinatorFor(page.index);
     let requestSnapshot;
 
+    const source = {
+      sessionId: sourceSessionId,
+      contentGeneration: sourceContentGeneration,
+      pageIndex: page.index,
+      surface: "thumbnail",
+    };
+    const blockedBy = pageFailureRegistry.failure(source);
+    if (blockedBy) {
+      // Not requested again: each repeat would kill the shared PDF worker.
+      updatePageStatus(page, "error", pageFailureMessage(blockedBy, page.index));
+      return false;
+    }
+
     updatePageStatus(page, "loading");
     if (!canvas) {
       if (
@@ -201,6 +219,7 @@
       updatePageStatus(page, "ready");
       return true;
     } catch (error) {
+      const recorded = pageFailureRegistry.record(source, error);
       if (
         requestIsCurrent(
           page,
@@ -215,7 +234,9 @@
         updatePageStatus(
           page,
           "error",
-          error?.message || String(error) || "Minyatür yüklenemedi.",
+          recorded
+            ? pageFailureMessage(error.code, page.index)
+            : error?.message || String(error) || "Minyatür yüklenemedi.",
         );
       }
       return false;
@@ -328,7 +349,7 @@
       if (Number.isSafeInteger(sessionSnapshot?.contentGeneration)) {
         contentGeneration = sessionSnapshot.contentGeneration;
       }
-      dispatch("pageMutated", sessionSnapshot);
+      dispatch("pageMutated", { snapshot: sessionSnapshot, rotation: { pageIndex: page.index, degrees } });
     } catch (e) {
       if (
         isMounted &&
@@ -367,7 +388,7 @@
       pages.splice(index, 1);
       pages = [...pages];
       pageCount -= 1;
-      dispatch("pageMutated", sessionSnapshot);
+      dispatch("pageMutated", { snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterDelete([page.index]) });
     } catch (e) {
       alert("Silme hatası: " + e);
     }
@@ -386,7 +407,7 @@
       if (Number.isSafeInteger(sessionSnapshot?.contentGeneration)) {
         contentGeneration = sessionSnapshot.contentGeneration;
       }
-      dispatch("orderSaved", sessionSnapshot);
+      dispatch("orderSaved", { snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterReorder(newOrder) });
     } catch(e) {
       alert("Sıralama kaydedilemedi: " + e);
     }
@@ -429,7 +450,7 @@
               aria-label="Sayfa {page.index + 1} minyatürü"
             ></canvas>
             {#if page.status !== "ready"}
-              <div class="thumbnail-placeholder" class:error={page.status === "error"}>
+              <div class="thumbnail-placeholder" class:error={page.status === "error"} title={page.error || undefined}>
                 <span>{page.status === "error" ? "ÖNİZLEME YÜKLENEMEDİ" : "YÜKLENİYOR…"}</span>
               </div>
             {/if}

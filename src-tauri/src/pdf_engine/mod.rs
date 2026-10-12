@@ -1,4 +1,5 @@
 pub mod render_service;
+pub mod render_wire;
 pub mod runtime_metadata;
 pub mod subprocess_manager;
 
@@ -12,6 +13,7 @@ use render_service::{
 use serde::Serialize;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::State;
 use tokio_util::sync::CancellationToken;
 
@@ -697,24 +699,18 @@ pub(crate) async fn render_page_rgba(
         render_config = render_config.set_target_width(target_width);
         render_config = render_config.rotate(pdf_rotation, true);
         render_config = render_config.set_clear_color(PdfColor::WHITE);
+        // FPDF_REVERSE_BYTE_ORDER makes PDFium write straight RGBA, so the raw
+        // buffer needs no channel swap (same contract as the viewer worker).
+        render_config = render_config.set_reverse_byte_order(true);
 
         let bitmap = page.render_with_config(&render_config).map_err(|e| {
             crate::error::AppError::Image(format!("Sayfa render etme hatası: {:?}", e)).to_string()
         })?;
 
-        let bgra_data = bitmap.as_raw_bytes();
-        let mut rgba_data = vec![0; bgra_data.len()];
-        for i in (0..bgra_data.len()).step_by(4) {
-            rgba_data[i] = bgra_data[i + 2]; // R
-            rgba_data[i + 1] = bgra_data[i + 1]; // G
-            rgba_data[i + 2] = bgra_data[i]; // B
-            rgba_data[i + 3] = bgra_data[i + 3]; // A
-        }
-
         Ok(RenderedPage {
             width: bitmap.width() as u32,
             height: bitmap.height() as u32,
-            data: rgba_data,
+            data: bitmap.as_raw_bytes(),
         })
     })
     .await
@@ -744,7 +740,7 @@ pub struct RenderDocumentChange {
 
 #[derive(Serialize)]
 pub struct RenderCancellationResult {
-    cancelled: bool,
+    pub(crate) cancelled: bool,
 }
 
 #[tauri::command]
@@ -872,14 +868,15 @@ where
         (rendered.width, rendered.height),
     );
     let cache_key = cache_key(task.identity(), rendered.width, rendered.height, rotation);
-    if rendered.data.len() <= MAX_CACHE_ENTRY_BYTES {
+    let data = Arc::new(rendered.data);
+    if data.len() <= MAX_CACHE_ENTRY_BYTES {
         render_service.cache_response(
             task.identity(),
             cache_key,
             CachedRender {
                 width: rendered.width,
                 height: rendered.height,
-                data: rendered.data.clone(),
+                data: Arc::clone(&data),
             },
         );
     }
@@ -887,7 +884,7 @@ where
     let response = RenderResponse {
         width: rendered.width,
         height: rendered.height,
-        data: rendered.data,
+        data,
         page_index: task.identity().page_index,
         generation: task.identity().generation,
         request_id: task.identity().request_id.clone(),
@@ -1134,6 +1131,188 @@ mod canonical_render_validation_tests {
             "render_cancelled"
         );
         assert_eq!(service.cached_entry_count(), 0);
+    }
+
+    /// Manual baseline for the main-process half of the viewer render path
+    /// (cache bookkeeping plus the `render-frame/1` encode) with an A4 page at
+    /// scale 2.0 (1190x1684 RGBA). Pixel buffers are allocated before timing so
+    /// only pipeline copies are measured. Run from `src-tauri`:
+    /// `cargo test --release --lib -- --ignored --nocapture render_pipeline_cache_timing`
+    #[tokio::test]
+    #[ignore = "manual render baseline measurement"]
+    async fn render_pipeline_cache_timing() {
+        const WIDTH: u32 = 1190;
+        const HEIGHT: u32 = 1684;
+        const SAMPLES: usize = 40;
+        let pixels = WIDTH as usize * HEIGHT as usize * 4;
+        let service = RenderService::new();
+        service
+            .set_active_document(Some(active_document(1)))
+            .expect("activate");
+        let cache = password_cache();
+        let identity = |page_index: u32, request_id: String| RenderRequestIdentity {
+            page_index,
+            request_id,
+            ..request(1, "unused")
+        };
+        let summary = |label: &str, mut samples: Vec<f64>| {
+            samples.sort_by(f64::total_cmp);
+            eprintln!(
+                "render-baseline {label}: n={} min_ms={:.3} median_ms={:.3} p95_ms={:.3}",
+                samples.len(),
+                samples[0],
+                samples[samples.len() / 2],
+                samples[(samples.len() - 1) * 95 / 100]
+            );
+        };
+
+        let mut buffers = (0..SAMPLES)
+            .map(|index| vec![index as u8; pixels])
+            .collect::<Vec<_>>();
+        let mut miss = Vec::new();
+        for page_index in 0..SAMPLES as u32 {
+            let data = buffers.pop().unwrap();
+            let started = std::time::Instant::now();
+            let response = render_viewer_request_with_renderer(
+                identity(page_index, format!("miss-{page_index}")),
+                ViewerRenderSizing::Scale(2.0),
+                0,
+                &cache,
+                &service,
+                |_, _, _, _, _, _| async move {
+                    Ok(RenderedPage {
+                        width: WIDTH,
+                        height: HEIGHT,
+                        data,
+                    })
+                },
+            )
+            .await
+            .expect("cache miss render");
+            let frame = render_wire::encode_render_frame(&response).expect("encode frame");
+            miss.push(started.elapsed().as_secs_f64() * 1000.0);
+            std::hint::black_box(frame);
+        }
+        summary("pipeline_cache_miss_and_frame_encode", miss);
+
+        let last_page = SAMPLES as u32 - 1;
+        let mut hit = Vec::new();
+        for index in 0..SAMPLES {
+            let started = std::time::Instant::now();
+            let response = render_viewer_request_with_renderer(
+                identity(last_page, format!("hit-{index}")),
+                ViewerRenderSizing::Scale(2.0),
+                0,
+                &cache,
+                &service,
+                |_, _, _, _, _, _| async { Err("renderer_should_not_run".to_string()) },
+            )
+            .await
+            .expect("cache hit render");
+            let frame = render_wire::encode_render_frame(&response).expect("encode frame");
+            hit.push(started.elapsed().as_secs_f64() * 1000.0);
+            std::hint::black_box(frame);
+        }
+        summary("pipeline_cache_hit_and_frame_encode", hit);
+    }
+
+    const PURE_RGB_PIXELS: [[u8; 4]; 3] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
+
+    /// One fully filled 100x100 pt page per color in `PURE_RGB_PIXELS`.
+    fn write_pure_rgb_pdf(path: &std::path::Path) {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Dictionary, Document, Object, Stream};
+
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let mut page_ids = Vec::new();
+        for (red, green, blue) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
+            let content = Content {
+                operations: vec![
+                    Operation::new("rg", vec![red.into(), green.into(), blue.into()]),
+                    Operation::new("re", vec![0.into(), 0.into(), 100.into(), 100.into()]),
+                    Operation::new("f", vec![]),
+                ],
+            };
+            let content_id =
+                document.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+            page_ids.push(Object::Reference(document.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+                "Contents" => content_id,
+            })));
+        }
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => page_ids,
+                "Count" => 3,
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn render_page_rgba_returns_rgba_for_pure_red_green_blue_pages() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pure-rgb.pdf");
+        write_pure_rgb_pdf(&path);
+        for (page_index, expected) in PURE_RGB_PIXELS.into_iter().enumerate() {
+            let rendered = render_page_rgba(
+                path.to_string_lossy().to_string(),
+                page_index as u32,
+                1.0,
+                0,
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                rendered.data.len(),
+                rendered.width as usize * rendered.height as usize * 4
+            );
+            assert!(
+                rendered.data.chunks_exact(4).all(|pixel| pixel == expected),
+                "page {page_index}: first pixel {:?}, expected {expected:?}",
+                &rendered.data[..4]
+            );
+        }
+    }
+
+    /// Characterizes the production page export (job worker →
+    /// `export_pages_as_images_with_password`), which normalizes channels via
+    /// `PdfBitmap::as_image`.
+    #[test]
+    fn page_image_export_writes_pure_red_green_blue_pages() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pure-rgb.pdf");
+        write_pure_rgb_pdf(&path);
+        let files = crate::export::export_pages_as_images_with_password(
+            path.to_string_lossy().to_string(),
+            vec![0, 1, 2],
+            directory.path().to_string_lossy().to_string(),
+            "png".to_string(),
+            72.0,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(files.len(), 3);
+        for (file, expected) in files.iter().zip(PURE_RGB_PIXELS) {
+            let image = image::open(file).unwrap().to_rgba8();
+            assert!(
+                image.pixels().all(|pixel| pixel.0 == expected),
+                "{file}: first pixel {:?}, expected {expected:?}",
+                image.get_pixel(0, 0).0
+            );
+        }
     }
 }
 

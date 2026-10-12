@@ -1,5 +1,9 @@
 <script context="module">
-  let globalAspectRatio = 0;
+  import { createPageSizeFallback } from "../utils/pageGeometry.js";
+
+  // Last measured page size of the current document; forgotten when the session or
+  // content generation changes.
+  const pageSizeFallback = createPageSizeFallback();
 </script>
 
 <script>
@@ -8,7 +12,13 @@
     cancelRenderRequest,
     getPageTextLayout,
     renderPage,
+    retryPage,
   } from "../services/backend/viewer.js";
+  import {
+    DOCUMENT_QUARANTINED,
+    pageFailureMessage,
+    pageFailureRegistry,
+  } from "../services/pageFailureRegistry.js";
   import {
     RENDER_SESSION_CONTEXT,
     requireActiveRenderSession,
@@ -30,17 +40,23 @@
   } from "../features/redaction/secureRedactionGeometry.js";
   import { validateRedactionRegionInputs } from "../features/redaction/redactionSchemas.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
+  import { pageSizeStore } from "../services/pageSizeStore.js";
+  import {
+    DEFAULT_PAGE_SIZE_PT,
+    estimateRenderedPageCssSize,
+    renderDevicePixelRatio,
+  } from "../utils/pageGeometry.js";
   const dispatch = createEventDispatcher();
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
   const renderCoordinator = createRenderRequestCoordinator({
     scope: "main_page",
-    cancel: (request) => cancelRenderRequest({
+    cancel: (request, reason) => cancelRenderRequest({
       sessionId: request.sessionId,
       pageIndex: request.pageIndex,
       contentGeneration: request.contentGeneration,
       requestId: request.requestId,
       scope: request.scope,
-    }),
+    }, reason),
   });
   const featureContext = getRuntimeFeatureContext();
   const annotationPresentation = getFeaturePresentation("annotation", featureContext);
@@ -88,6 +104,9 @@
   let paintedPageRotation = 0;
   let pendingRenderKey = "";
   let failedRenderKey = "";
+  // Set by an explicit retry; a successful render then unblocks the page's
+  // other surfaces (text layout, thumbnails) as well.
+  let retryPending = false;
 
   let baseImgWidth = 0;
   let baseImgHeight = 0;
@@ -115,7 +134,12 @@
 
   let isBufferIntersecting = false;
   let cachedHeight = 1131;
-  let containerWidth = 800;
+  // Worker page size (pt, page /Rotate applied); null until loaded or when unavailable.
+  let pageSizePt = null;
+  let pageSizeRequestKey = "";
+  let paintedDocumentKey = "";
+  // Rendered CSS height minus the container height just before the paint (layout shift).
+  let placeholderHeightDelta = null;
   let redactionDragStart = null;
   let redactionDragCurrent = null;
   let redactionPointerId = null;
@@ -129,6 +153,21 @@
   $: desiredTextLayoutKey = sessionId
     ? `${sessionId}:${documentGenerationId}:${pageIndex}`
     : "";
+  $: documentKey = sessionId ? `${sessionId}:${documentGenerationId}` : "";
+
+  // Worker-safety failures survive scrolling and zooming: the page is not
+  // requested again until the user retries it or the generation changes.
+  // Callers pass `$pageFailureRegistry` and the identity explicitly so the
+  // surrounding reactive statement or template expression re-runs on change.
+  function pageFailure(_registryVersion, session, generation, page, surface) {
+    return pageFailureRegistry.failure({
+      sessionId: session,
+      contentGeneration: generation,
+      pageIndex: page,
+      surface,
+    });
+  }
+  $: requestPageSize(documentKey, sessionId, documentGenerationId, pageIndex);
 
   // Strict Mode-based Page Scoping (Reactively reduced to IntersectionObserver state)
   $: shouldRender = isSinglePageMode
@@ -143,6 +182,7 @@
   $: if (
     shouldRender &&
     desiredTextLayoutKey &&
+    !pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "textLayout") &&
     desiredTextLayoutKey !== loadedTextLayoutKey &&
     desiredTextLayoutKey !== pendingTextLayoutKey &&
     desiredTextLayoutKey !== failedTextLayoutKey
@@ -234,22 +274,29 @@
     cleanupMemory();
   }
 
-  // Unrendered Page Height Fallback & Memory
-  $: if (renderedCssHeight > 0 && lastRenderedScale > 0) {
-      const activeScaleRatio = scale / lastRenderedScale;
-      cachedHeight = renderedCssHeight * activeScaleRatio;
-  } else {
-      const baseRatio = globalAspectRatio > 0 ? globalAspectRatio : 0.707;
-      const displayRatio = normalizedRotation === 90 || normalizedRotation === 270
-        ? 1 / baseRatio
-        : baseRatio;
-      cachedHeight = (containerWidth / displayRatio) * scale;
-  }
+  // Placeholder height: the worker page size gives the rendered height before render.
+  // Without it, a rendered height of this page/document/rotation is rescaled, else the
+  // document's last measured page size (or A4) is used.
+  $: estimatedPageCssSize = estimateRenderedPageCssSize({
+    pageSize: pageSizePt ?? pageSizeFallback.get(documentKey),
+    scale,
+    rotation: normalizedRotation,
+    devicePixelRatio: currentDevicePixelRatio(),
+  });
+  $: cachedHeight = pageSizePt && estimatedPageCssSize
+    ? estimatedPageCssSize.height
+    : renderedCssHeight > 0 &&
+        lastRenderedScale > 0 &&
+        paintedDocumentKey === documentKey &&
+        paintedPageRotation === normalizedRotation
+      ? renderedCssHeight * (scale / lastRenderedScale)
+      : estimatedPageCssSize?.height ?? DEFAULT_PAGE_SIZE_PT.heightPt * scale;
 
   // Render anahtarı temizlendiğinde veya değiştiğinde görünür sayfayı yeniden çiz.
   $: if (
     shouldRender &&
     desiredRenderKey &&
+    !pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "render") &&
     desiredRenderKey !== paintedRenderKey &&
     desiredRenderKey !== pendingRenderKey &&
     desiredRenderKey !== failedRenderKey
@@ -266,6 +313,21 @@
       generation: generationId,
       documentGeneration: documentGenerationId,
     }, shouldDebounce ? 150 : 0);
+  }
+
+  function currentDevicePixelRatio() {
+    return renderDevicePixelRatio(typeof window !== "undefined" ? window.devicePixelRatio : 1);
+  }
+
+  function requestPageSize(key, session, generation, page) {
+    const requestKey = key ? `${key}:${page}` : "";
+    if (requestKey === pageSizeRequestKey) return;
+    pageSizeRequestKey = requestKey;
+    pageSizePt = requestKey ? pageSizeStore.peek(session, generation, page) : null;
+    if (!requestKey || pageSizePt) return;
+    void pageSizeStore.requestPage(session, generation, page).then((size) => {
+      if (requestKey === pageSizeRequestKey && !isDestroyed) pageSizePt = size;
+    });
   }
 
   function measureTextWidth(text, fontSize) {
@@ -353,6 +415,12 @@
       loadedTextLayoutKey = key;
       failedTextLayoutKey = "";
     } catch (err) {
+      pageFailureRegistry.record({
+        sessionId: session,
+        contentGeneration: documentGeneration,
+        pageIndex: page,
+        surface: "textLayout",
+      }, err);
       if (
         requestId === textLayoutRequestId &&
         key === desiredTextLayoutKey &&
@@ -373,7 +441,11 @@
 
   function queuePageRender(snapshot, delay) {
     if (zoomDebounceTimer) clearTimeout(zoomDebounceTimer);
-    renderCoordinator.cancelActive();
+    // A zoom gesture re-queues on every step. Cancelling the in-flight render
+    // each time would make every step a worker cancellation; let it finish
+    // (its result is dropped as stale) and cancel once the debounce settles.
+    const deferCancel = delay > 0;
+    if (!deferCancel) renderCoordinator.cancelActive("rerender");
     const requestId = ++renderRequestId;
     pendingRenderKey = snapshot.key;
     failedRenderKey = "";
@@ -381,6 +453,7 @@
 
     zoomDebounceTimer = setTimeout(() => {
       zoomDebounceTimer = null;
+      if (deferCancel) renderCoordinator.cancelActive("zoom");
       void fetchPageImage({ ...snapshot, requestId });
     }, delay);
   }
@@ -421,7 +494,7 @@
     try {
       console.log("Rendering page:", page + 1);
 
-      const requestDpr = Math.min(window.devicePixelRatio || 1.0, 2.0);
+      const requestDpr = currentDevicePixelRatio();
       const targetRenderScale = viewScale * requestDpr;
       const sessionSnapshot = requireActiveRenderSession(
         renderSession,
@@ -452,13 +525,22 @@
       const outputWidth = width / requestDpr;
       const outputHeight = height / requestDpr;
       const isSideways = pageRotation === 90 || pageRotation === 270;
+      const heightBeforePaint = cachedHeight;
 
       renderedCssWidth = outputWidth;
       renderedCssHeight = outputHeight;
       baseImgWidth = isSideways ? outputHeight : outputWidth;
       baseImgHeight = isSideways ? outputWidth : outputHeight;
-      if (globalAspectRatio === 0 && baseImgHeight > 0) {
-        globalAspectRatio = baseImgWidth / baseImgHeight;
+      paintedDocumentKey = `${session}:${documentGeneration}`;
+      pageSizeFallback.remember(paintedDocumentKey, {
+        widthPt: baseImgWidth / viewScale,
+        heightPt: baseImgHeight / viewScale,
+      });
+      placeholderHeightDelta = outputHeight - heightBeforePaint;
+      if (Math.abs(placeholderHeightDelta) > 1) {
+        console.debug(
+          `Sayfa ${page + 1} placeholder yüksekliği ${placeholderHeightDelta.toFixed(2)}px saptı`,
+        );
       }
 
       lastRenderedScale = viewScale;
@@ -469,17 +551,34 @@
       paintedPageRotation = pageRotation;
       failedRenderKey = "";
       renderErrorMsg = "";
+      if (retryPending) {
+        retryPending = false;
+        pageFailureRegistry.clearPage({
+          sessionId: session,
+          contentGeneration: documentGeneration,
+          pageIndex: page,
+        });
+      }
 
     } catch (err) {
+      const recorded = pageFailureRegistry.record({
+        sessionId: session,
+        contentGeneration: documentGeneration,
+        pageIndex: page,
+        surface: "render",
+      }, err);
       if (
         requestIsCurrent() &&
         !isExpectedRenderCancellation(err)
       ) {
         console.error(`Sayfa ${page} render hatası:`, err);
+        retryPending = false;
         const message = err?.message === "render_timeout"
           ? "Sayfa render zaman aşımına uğradı ve iptal edildi."
           : err?.message || err;
-        renderErrorMsg = `Sayfa ${page + 1} yüklenemedi: ${message}`;
+        renderErrorMsg = recorded
+          ? pageFailureMessage(err.code, page)
+          : `Sayfa ${page + 1} yüklenemedi: ${message}`;
         failedRenderKey = key;
       }
     } finally {
@@ -489,10 +588,32 @@
     }
   }
 
+  // Explicit user retry: lifts the backend page quarantine, then lets exactly
+  // one new render request through. Other surfaces wait for its success.
+  async function retryFailedPage() {
+    const identity = {
+      sessionId,
+      contentGeneration: documentGenerationId,
+      pageIndex,
+    };
+    try {
+      await retryPage(identity.sessionId, identity.contentGeneration, identity.pageIndex);
+    } catch (err) {
+      pageFailureRegistry.record({ ...identity, surface: "render" }, err);
+      renderErrorMsg = pageFailureMessage(err?.code, identity.pageIndex) ||
+        `Sayfa ${identity.pageIndex + 1} yeniden denenemedi: ${err?.message || err}`;
+      return;
+    }
+    retryPending = true;
+    failedRenderKey = "";
+    renderErrorMsg = "";
+    pageFailureRegistry.clearPage(identity, ["render"]);
+  }
+
   function cleanupMemory() {
     if (zoomDebounceTimer) clearTimeout(zoomDebounceTimer);
     zoomDebounceTimer = null;
-    renderCoordinator.cancelActive();
+    renderCoordinator.cancelActive("viewport_exit");
     renderRequestId += 1;
     pendingRenderKey = "";
     paintedRenderKey = "";
@@ -519,15 +640,16 @@
 
     visibilityObserver = new IntersectionObserver(
       (entries) => {
-        const entry = entries[0];
+        // Several threshold crossings can be batched; the last entry is the newest.
+        const entry = entries[entries.length - 1];
         const isVisibleRatio = entry.isIntersecting && entry.intersectionRatio >= 0.1;
         isVisible = isVisibleRatio;
 
-        if (isVisibleRatio && typeof onIntersect === "function") {
-          onIntersect(pageIndex);
+        if (typeof onIntersect === "function") {
+          onIntersect(pageIndex, entry.isIntersecting ? entry.intersectionRatio : 0);
         }
       },
-      { root: rootEl || null, threshold: [0, 0.1, 0.25, 0.5, 0.75, 1.0] }
+      { root: rootEl || null, threshold: Array.from({ length: 21 }, (_, step) => step / 20) }
     );
 
     bufferObserver = new IntersectionObserver(
@@ -547,6 +669,7 @@
     isDestroyed = true;
     if (zoomDebounceTimer) clearTimeout(zoomDebounceTimer);
     if (visibilityObserver) visibilityObserver.disconnect();
+    if (typeof onIntersect === "function") onIntersect(pageIndex, 0);
     if (bufferObserver) bufferObserver.disconnect();
     cleanupMemory();
     renderCoordinator.destroy();
@@ -584,9 +707,9 @@
   }
 
   // --- Metin Vurgulama (Highlight) İşlemleri ---
-  import { annotationsStore, addHighlight } from "../annotationsStore.js";
+  import { annotationsStore, addHighlight, highlightsForPage } from "../annotationsStore.js";
 
-  $: pageHighlights = $annotationsStore ? $annotationsStore.filter(h => h.pageIndex === pageIndex) : [];
+  $: pageHighlights = highlightsForPage($annotationsStore, sessionId, pageIndex);
 
   function handleTextSelection(e) {
     if (activeTool !== 'highlight') return;
@@ -613,8 +736,7 @@
 
       // Çok küçük rect'leri atla (artifacts)
       if (width * layerEl.offsetWidth > 2 && height * layerEl.offsetHeight > 2) {
-         addHighlight(pageIndex, { x, y, width, height }, activeColor);
-         added = true;
+         if (addHighlight(sessionId, pageIndex, { x, y, width, height }, activeColor)) added = true;
       }
     }
 
@@ -696,7 +818,14 @@
   }
 </script>
 
-<div class="pdf-page-container" bind:this={pageRef} bind:clientWidth={containerWidth} id={`page-${pageIndex}`} style="height: {cachedHeight}px; min-height: {cachedHeight}px;">
+<div
+  class="pdf-page-container"
+  bind:this={pageRef}
+  id={`page-${pageIndex}`}
+  style="height: {cachedHeight}px; min-height: {cachedHeight}px;"
+  aria-hidden={isSinglePageMode && !shouldRender ? "true" : undefined}
+  data-placeholder-height-delta={placeholderHeightDelta ?? undefined}
+>
   {#if shouldRender}
     <div
       class="pdf-image-wrapper"
@@ -886,9 +1015,13 @@
       </div>
 
       {#if !paintedRenderKey}
+        {@const renderFailure = pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "render")}
         <div class="loading-skeleton page-loading-state">
-          {#if renderErrorMsg}
-            <span class="page-error">⚠️ {renderErrorMsg}</span>
+          {#if renderErrorMsg || renderFailure}
+            <span class="page-error">⚠️ {renderErrorMsg || pageFailureMessage(renderFailure, pageIndex)}</span>
+            {#if renderFailure && renderFailure !== DOCUMENT_QUARANTINED}
+              <button type="button" class="hud-btn page-retry" on:click={retryFailedPage}>Yeniden dene</button>
+            {/if}
           {:else}
             <div class="spinner"></div>
             <span class="page-num">Sayfa {pageIndex + 1} Yükleniyor...</span>
@@ -896,7 +1029,8 @@
         </div>
       {/if}
     </div>
-  {:else}
+  {:else if !isSinglePageMode}
+    <!-- Single-page mode keeps inactive pages as empty, correctly sized scroll anchors. -->
     <div class="loading-skeleton" style="width: {renderedCssWidth > 0 ? (renderedCssWidth * cssScale) + 'px' : '100%'}; height: {cachedHeight}px; justify-content: center;">
       <div class="spinner"></div>
       <span class="page-num">Sayfa {pageIndex + 1} Yükleniyor...</span>
@@ -1008,6 +1142,10 @@
     padding: 12px;
     text-align: center;
     max-width: 300px;
+  }
+  .page-retry {
+    margin-top: 4px;
+    pointer-events: auto;
   }
 
   .search-highlight-layer {

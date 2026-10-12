@@ -26,13 +26,14 @@ export const setActiveRenderDocument = (request) =>
     contentGeneration: request.contentGeneration,
   });
 
-export const cancelRenderRequest = (request) =>
+export const cancelRenderRequest = (request, reason) =>
   callBackend("cancelSessionRenderRequest", {
     sessionId: request.sessionId,
     pageIndex: request.pageIndex,
     contentGeneration: request.contentGeneration,
     requestId: request.requestId,
     scope: request.scope,
+    reason,
   });
 
 export const getPageTextLayout = (
@@ -44,4 +45,19 @@ export const getPageTextLayout = (
     sessionId,
     expectedContentGeneration,
     pageIndex,
+  });
+
+// Lifts the backend quarantine of a page that repeatedly timed out; resolves
+// to whether one was lifted. Only for an explicit user retry.
+export const retryPage = (sessionId, expectedContentGeneration, pageIndex) =>
+  callBackend("retrySessionPage", {
+    sessionId,
+    expectedContentGeneration,
+    pageIndex,
+  });
+
+export const getPageSizes = (sessionId, expectedContentGeneration) =>
+  callBackend("getSessionPageSizes", {
+    sessionId,
+    expectedContentGeneration,
   });

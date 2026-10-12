@@ -1,3 +1,5 @@
+import { decodeRenderFrame } from "./renderFrame.js";
+
 const stringType = Object.freeze({ type: "string" });
 const booleanType = Object.freeze({ type: "boolean" });
 const numberType = Object.freeze({ type: "number" });
@@ -40,6 +42,19 @@ const renderScopeType = Object.freeze({
     "main_page",
     "sidebar_thumbnail",
     "organizer_thumbnail",
+  ]),
+});
+// Diagnostic only; mirrors `RenderCancelReason` in render_service.rs.
+const renderCancelReasonType = Object.freeze({
+  type: "string",
+  enum: Object.freeze([
+    "superseded",
+    "viewport_exit",
+    "zoom",
+    "rerender",
+    "timeout",
+    "destroy",
+    "unspecified",
   ]),
 });
 const renderScaleType = Object.freeze({
@@ -155,6 +170,26 @@ const command = (name, required = {}, optional = {}, validate = null) =>
     payload: objectOf(required, optional, validate),
   });
 
+// Raw `tauri::ipc::Response` bodies (ArrayBuffer); errors remain JSON.
+const binaryRenderFrameResponse = Object.freeze({
+  type: "binary",
+  format: "render-frame/1",
+  decode: decodeRenderFrame,
+});
+// `read_image_file` reuses render-frame/1; its page/generation/request ID
+// fields are fixed placeholders, so only the image dimensions and pixels
+// are exposed.
+const binaryImageFrameResponse = Object.freeze({
+  type: "binary",
+  format: "render-frame/1",
+  decode: (raw) => {
+    const { width, height, data } = decodeRenderFrame(raw);
+    return { width, height, data };
+  },
+});
+const withResponse = (contract, response) =>
+  Object.freeze({ ...contract, response });
+
 const commandWithoutPayload = (name) =>
   Object.freeze({
     command: name,
@@ -259,6 +294,10 @@ export const CONTRACTS = Object.freeze({
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
   }),
+  getSessionPageSizes: command("get_session_page_sizes", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+  }),
   getSessionPdfOutline: command("get_session_pdf_outline", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
@@ -285,7 +324,12 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     pageIndex: u32Type,
   }),
-  renderSessionPage: command(
+  retrySessionPage: command("retry_session_page", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    pageIndex: u32Type,
+  }),
+  renderSessionPage: withResponse(command(
     "render_session_page",
     {
       sessionId: renderIdentifierType,
@@ -300,8 +344,8 @@ export const CONTRACTS = Object.freeze({
       [0, 90, 180, 270].includes(value.rotation)
         ? null
         : "rotation must be 0, 90, 180, or 270",
-  ),
-  renderSessionThumbnail: command(
+  ), binaryRenderFrameResponse),
+  renderSessionThumbnail: withResponse(command(
     "render_session_thumbnail",
     {
       sessionId: renderIdentifierType,
@@ -317,7 +361,7 @@ export const CONTRACTS = Object.freeze({
       value.scope === "organizer_thumbnail"
         ? null
         : "thumbnail consumer scope must be sidebar_thumbnail or organizer_thumbnail",
-  ),
+  ), binaryRenderFrameResponse),
   setActiveSessionRenderDocument: command(
     "set_active_session_render_document",
     {
@@ -331,6 +375,8 @@ export const CONTRACTS = Object.freeze({
     contentGeneration: safeIntegerType,
     requestId: renderIdentifierType,
     scope: renderScopeType,
+  }, {
+    reason: renderCancelReasonType,
   }),
   rotateSessionPage: command("rotate_session_page", {
     sessionId: renderIdentifierType,
@@ -423,12 +469,12 @@ export const CONTRACTS = Object.freeze({
     activationToken: renderIdentifierType,
   }),
   closeAllDocumentSessions: commandWithoutPayload("close_all_document_sessions"),
-  readImageFile: command("read_image_file", {
+  readImageFile: withResponse(command("read_image_file", {
     path: stringType,
     rotation: i32Type,
     flipH: booleanType,
     flipV: booleanType,
-  }),
+  }), binaryImageFrameResponse),
   convertAndSaveImage: command("convert_and_save_image", {
     sourcePath: stringType,
     targetPath: stringType,
@@ -462,11 +508,10 @@ export const CONTRACTS = Object.freeze({
     ranges: arrayOf(tupleOf(u32Type, u32Type)),
     outputDir: stringType,
   }),
-  detectScannedPage: command("detect_scanned_page", {
+  detectScannedPages: command("detect_scanned_pages", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
-    pageIndex: u32Type,
   }),
   getAvailableOcrLanguages: commandWithoutPayload(
     "get_available_ocr_languages",

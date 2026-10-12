@@ -15,17 +15,18 @@ export function createDocumentExportController({
 
   async function exportCurrentPageImage() {
     const context = getContext();
-    if (!context.sessionId) return;
+    if (!context.sessionId || context.pageIndex < 0) return;
+    const pageNumber = context.displayPageIndex + 1;
     try {
       const savePath = await saveFile({
-        title: `Sayfa ${context.pageIndex + 1} Görsel/SVG Olarak Aktar`,
-        defaultPath: `${baseName(context.fileName)}_sayfa_${context.pageIndex + 1}.svg`,
+        title: `Sayfa ${pageNumber} Görsel/SVG Olarak Aktar`,
+        defaultPath: `${baseName(context.fileName)}_sayfa_${pageNumber}.svg`,
         filters: [{ name: "Vektörel SVG (*.svg)", extensions: ["svg"] }, { name: "PNG Görsel (*.png)", extensions: ["png"] }, { name: "JPEG Görsel (*.jpg)", extensions: ["jpg"] }, { name: "WebP Görsel (*.webp)", extensions: ["webp"] }],
       });
       if (!savePath) return;
       const extension = savePath.split(".").pop()?.toLowerCase() || "svg";
       await exportPage(context.sessionId, context.contentGeneration, context.pageIndex, savePath, extension);
-      if (isCurrent(context)) onToast(`Sayfa ${context.pageIndex + 1} ${extension.toUpperCase()} olarak aktarıldı!`);
+      if (isCurrent(context)) onToast(`Sayfa ${pageNumber} ${extension.toUpperCase()} olarak aktarıldı!`);
     } catch (error) {
       console.error("Dışa aktarma hatası:", error);
       onToast("Dışa aktarma hatası: " + error.toString());
@@ -88,7 +89,8 @@ export function createDocumentExportController({
     if (!input) return;
     const context = getContext();
     if (!context.sessionId) return;
-    const pageIndices = parsePageIndices(input, context.pageOrder.length);
+    // The user types page numbers as displayed; the backend extracts physical pages.
+    const pageIndices = parsePageIndices(input, context.pageOrder.length).map((displayIndex) => context.pageOrder[displayIndex]);
     if (pageIndices.length === 0) { onToast("Geçerli sayfa numarası girilmedi!"); return; }
     try {
       const savePath = await saveFile({
@@ -112,6 +114,7 @@ export function createDocumentExportController({
   async function executeBurnIn() {
     const context = getContext();
     if (!context.isLoadedPdfDocument || !context.sessionId) return;
+    if (!context.annotations?.length) { onToast("Bu belgede PDF'e gömülecek çizim yok."); return; }
     try {
       const savePath = await saveFile({
         title: "Açıklamalı PDF'i Kaydet", defaultPath: `${baseName(context.fileName)}_aciklamali.pdf`,

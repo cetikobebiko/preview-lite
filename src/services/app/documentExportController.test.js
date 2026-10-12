@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDocumentExportController } from "./documentExportController.js";
 
 function setup(overrides = {}) {
-  const context = { isPdf: true, isLoadedPdfDocument: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, pageOrder: [0, 1, 2], fileName: "report.pdf", annotations: [{ tool_type: "pen" }], rotation: 0, flipH: false, flipV: false };
+  const context = { isPdf: true, isLoadedPdfDocument: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, displayPageIndex: 1, pageOrder: [0, 1, 2], fileName: "report.pdf", annotations: [{ tool_type: "pen" }], rotation: 0, flipH: false, flipV: false };
   const guard = vi.fn(async (_feature, _runtime, action) => action());
   const extractPages = vi.fn(async () => undefined);
   const controller = createDocumentExportController({
@@ -27,7 +27,7 @@ describe("documentExportController", () => {
   });
 
   it("does not report a stale page-export completion", async () => {
-    const context = { isPdf: true, isLoadedPdfDocument: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, pageOrder: [0, 1], fileName: "report.pdf", annotations: [], rotation: 0, flipH: false, flipV: false };
+    const context = { isPdf: true, isLoadedPdfDocument: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, displayPageIndex: 1, pageOrder: [0, 1], fileName: "report.pdf", annotations: [], rotation: 0, flipH: false, flipV: false };
     const onToast = vi.fn();
     const controller = createDocumentExportController({
       getContext: () => ({ ...context }), saveFile: vi.fn(async () => "/tmp/page.png"), requestInput: vi.fn(),
@@ -36,5 +36,36 @@ describe("documentExportController", () => {
     });
     await controller.exportCurrentPageImage();
     expect(onToast).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a burn-in save when the document has no drawings", async () => {
+    const saveFile = vi.fn(async () => "/tmp/out.pdf");
+    const burnAnnotations = vi.fn(async () => undefined);
+    const onToast = vi.fn();
+    const { controller, context } = setup({ saveFile, burnAnnotations, onToast });
+    context.annotations = [];
+    await controller.burnInPdf();
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(burnAnnotations).not.toHaveBeenCalled();
+    expect(onToast).toHaveBeenCalledWith("Bu belgede PDF'e gömülecek çizim yok.");
+  });
+
+  it("exports the physical page while labelling it with its displayed number", async () => {
+    const exportPage = vi.fn(async () => undefined);
+    const saveFile = vi.fn(async () => "/tmp/page.png");
+    const { controller, context } = setup({ exportPage, saveFile });
+    context.pageIndex = 2;
+    context.displayPageIndex = 0;
+    await controller.exportCurrentPageImage();
+    expect(saveFile).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "report_sayfa_1.svg" }));
+    expect(exportPage).toHaveBeenCalledWith("session-a", 5, 2, "/tmp/page.png", "png");
+  });
+
+  it("maps typed (displayed) page numbers to physical pages when splitting", async () => {
+    const extractPages = vi.fn(async () => undefined);
+    const { controller, context } = setup({ extractPages, requestInput: vi.fn(async () => "1, 3") });
+    context.pageOrder = [2, 0, 1];
+    await controller.splitPdf();
+    expect(extractPages).toHaveBeenCalledWith("session-a", 5, [2, 1], "/tmp/out.pdf");
   });
 });

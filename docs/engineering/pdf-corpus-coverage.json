@@ -2171,6 +2171,21 @@
         "verificationType": "integration_assertion",
         "notes": "Direct encrypted search typed error vs success with password, no partial doc, no corruption on encrypted.pdf"
       }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-heavy-page",
+      "testId": "rust:worker_pdfium_integration::heavy_page_timeouts_quarantine_the_page_not_the_document",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
+        "verificationType": "worker_error_recovery",
+        "notes": "Real PDFium render and thumbnail timeouts on the shading page of heavy-page.pdf quarantine only that page; light pages keep rendering without worker kills"
+      }
     }
   ],
   "features": [
@@ -2201,6 +2216,7 @@
       "statusObservation": "experimental",
       "fixtureIds": [
         "core-encrypted",
+        "core-heavy-page",
         "core-large-page-dimensions",
         "core-malformed",
         "core-minimal",
@@ -2211,6 +2227,7 @@
         "rust:b4_integration_gaps::b4_viewer_unicode_extraction_preserves_turkish_tokens",
         "rust:crash_tests::committed_malformed_fixture_returns_typed_error_without_parent_crash",
         "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
+        "rust:worker_pdfium_integration::heavy_page_timeouts_quarantine_the_page_not_the_document",
         "rust:worker_pdfium_integration::large_page_dimensions_document_opens_with_bounded_geometry",
         "rust:worker_pdfium_integration::largest_practical_allowed_render_survives_worker_resource_envelope",
         "rust:worker_pdfium_integration::test_intrinsic_rotation_characterization_in_viewer_worker",
@@ -4055,6 +4072,12 @@
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/b4_integration_gaps.rs"
+    },
+    {
+      "id": "rust:worker_pdfium_integration::heavy_page_timeouts_quarantine_the_page_not_the_document",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
     }
   ],
   "gaps": [

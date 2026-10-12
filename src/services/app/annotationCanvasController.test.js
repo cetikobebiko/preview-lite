@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAnnotationCanvasController } from "./annotationCanvasController.js";
 
-function setup(tool = "pen") {
+function setup(tool = "pen", { pageOrder = [0, 1, 2], currentPageIndex = 2 } = {}) {
   const annotation = {
     activeTool: tool, isDrawing: false, startPos: null, currentPoints: [], currentAnnoItem: null,
     annotationsMap: {}, strokeColor: "#fff", strokeSize: 2,
   };
-  const viewer = { currentPageIndex: 2, isBookMode: false };
+  const viewer = { currentPageIndex, pageOrder, isBookMode: false };
   const canvas = { width: 400, height: 200, getBoundingClientRect: () => ({ left: 10, top: 20, width: 200, height: 100 }) };
   const render = vi.fn();
   const controller = createAnnotationCanvasController({
@@ -32,5 +32,22 @@ describe("annotationCanvasController", () => {
     await controller.handleMouseDown(event(20, 30));
     expect(annotation.annotationsMap[2]).toEqual([expect.objectContaining({ tool_type: "text", text: "Not" })]);
     expect(annotation.isDrawing).toBe(false);
+  });
+
+  it("keys drawings and their page_index by physical page, not display position", async () => {
+    const { annotation, controller, event } = setup("pen", { pageOrder: [2, 0, 1], currentPageIndex: 0 });
+    await controller.handleMouseDown(event(20, 30));
+    controller.handleMouseMove(event(30, 40));
+    controller.handleMouseUp();
+    expect(Object.keys(annotation.annotationsMap)).toEqual(["2"]);
+    expect(annotation.annotationsMap[2][0].page_index).toBe(2);
+  });
+
+  it("does not start a drawing when the current page has no valid physical index", async () => {
+    const { annotation, controller, event } = setup("pen", { pageOrder: [], currentPageIndex: 0 });
+    await controller.handleMouseDown(event(20, 30));
+    controller.handleMouseUp();
+    expect(annotation.isDrawing).toBe(false);
+    expect(annotation.annotationsMap).toEqual({});
   });
 });

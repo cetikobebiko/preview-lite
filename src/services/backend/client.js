@@ -18,6 +18,7 @@ const WORKER_SAFETY_FAILURE_CODES = new Set([
   "PDFIUM_WORKER_RESTART_LIMIT",
   "PDFIUM_WORKER_CLEANUP_FAILED",
   "PDFIUM_DOCUMENT_QUARANTINED",
+  "PDFIUM_PAGE_QUARANTINED",
 ]);
 
 export class BackendCommandError extends Error {
@@ -216,7 +217,8 @@ export async function callBackend(contractId, payload) {
       if (payload !== undefined) {
         throw validationError(contract.command, "command accepts no payload");
       }
-      return await invoke(contract.command);
+      const result = await invoke(contract.command);
+      return contract.response ? contract.response.decode(result) : result;
     }
 
     const validatedPayload = validateValue(
@@ -224,7 +226,8 @@ export async function callBackend(contractId, payload) {
       contract.payload,
       contract.command,
     );
-    return await invoke(contract.command, validatedPayload);
+    const result = await invoke(contract.command, validatedPayload);
+    return contract.response ? contract.response.decode(result) : result;
   } catch (cause) {
     throw normalizeError(contract.command, cause);
   }
@@ -235,8 +238,12 @@ export async function callBackendProfiled(contractId, payload) {
   const startedAt = performance.now();
   try {
     const result = await callBackend(contractId, payload);
+    const payloadBytes =
+      contract.response?.type === "binary" && result?.data?.buffer
+        ? ` (${result.data.buffer.byteLength} bytes)`
+        : "";
     console.log(
-      `[IPC Profiler] ${contract.command} took ${(performance.now() - startedAt).toFixed(2)}ms`,
+      `[IPC Profiler] ${contract.command} took ${(performance.now() - startedAt).toFixed(2)}ms${payloadBytes}`,
     );
     return result;
   } catch (error) {

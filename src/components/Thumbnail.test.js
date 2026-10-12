@@ -5,6 +5,7 @@ import {
   renderThumbnail,
 } from "../services/backend/viewer.js";
 import { paintBufferToCanvas } from "../utils/canvasUtils.js";
+import { pageFailureRegistry } from "../services/pageFailureRegistry.js";
 import Thumbnail from "./Thumbnail.svelte";
 
 const renderSessionMock = vi.hoisted(() => ({
@@ -38,6 +39,7 @@ const originalResizeObserver = globalThis.ResizeObserver;
 const originalRect = HTMLElement.prototype.getBoundingClientRect;
 
 beforeEach(() => {
+  pageFailureRegistry.reset();
   globalThis.IntersectionObserver = class IntersectionObserverMock {
     constructor(callback) {
       this.callback = callback;
@@ -112,7 +114,7 @@ describe("sidebar thumbnail RGBA pipeline", () => {
         contentGeneration: request.contentGeneration,
         requestId: request.requestId,
         scope: request.scope,
-      })
+      }, "destroy")
     );
     expect(paintBufferToCanvas).not.toHaveBeenCalled();
   });
@@ -133,5 +135,54 @@ describe("sidebar thumbnail RGBA pipeline", () => {
     await waitFor(() => expect(renderThumbnail).toHaveBeenCalledOnce());
     await Promise.resolve();
     expect(paintBufferToCanvas).not.toHaveBeenCalled();
+  });
+});
+
+describe("sidebar thumbnail worker-safety failures", () => {
+  const props = { sessionId: "document-1", contentGeneration: 4, pageIndex: 3 };
+  const timeout = () =>
+    Object.assign(new Error("timed out"), { code: "PDFIUM_WORKER_TIMEOUT" });
+
+  it("does not request a timed-out page again when it is shown again", async () => {
+    renderThumbnail.mockRejectedValueOnce(timeout());
+    const first = render(Thumbnail, { props });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(first.container.querySelector(".placeholder.failed")).not.toBeNull()
+    );
+    first.unmount();
+
+    const second = render(Thumbnail, { props });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(renderThumbnail).toHaveBeenCalledOnce();
+    expect(second.container.querySelector(".placeholder")?.getAttribute("title")).toBe(
+      "Sayfa 4 işlenirken zaman aşımı oluştu.",
+    );
+  });
+
+  it("loads again once a successful retry clears the page", async () => {
+    renderThumbnail.mockRejectedValueOnce(timeout());
+    render(Thumbnail, { props });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        pageFailureRegistry.failure({ ...props, surface: "thumbnail" }),
+      ).toBe("PDFIUM_WORKER_TIMEOUT")
+    );
+
+    pageFailureRegistry.clearPage(props);
+
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(paintBufferToCanvas).toHaveBeenCalledOnce());
+  });
+
+  it("never requests a page of a quarantined document", async () => {
+    pageFailureRegistry.record(
+      { ...props, pageIndex: 0, surface: "render" },
+      { code: "PDFIUM_DOCUMENT_QUARANTINED" },
+    );
+    render(Thumbnail, { props });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(renderThumbnail).not.toHaveBeenCalled();
   });
 });

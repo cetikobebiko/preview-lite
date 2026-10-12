@@ -6,9 +6,10 @@
   let {
     sessionId = "",
     contentGeneration = 0,
-    pageCount = 0,
+    pageOrder = [],
     currentPageIndex = 0,
     onJump = () => {},
+    onJumpPhysical = () => {},
   } = $props();
 
   let activeTab = $state('thumbnails');
@@ -77,19 +78,20 @@
           <div class="empty">Bu belgede içindekiler tablosu bulunamadı.</div>
         {:else}
           {#each outlineNodes as node, index (`${index}:${node.page_index}:${node.title}`)}
-            <OutlineItem {node} {onJump} />
+            <OutlineItem {node} onJump={onJumpPhysical} />
           {/each}
         {/if}
       </div>
     {:else if activeTab === 'thumbnails'}
       <div class="thumbnails-container">
-        {#each Array(pageCount) as _, i (i)}
+        {#each pageOrder as physicalIndex, displayIndex (physicalIndex)}
           <Thumbnail
             {sessionId}
             {contentGeneration}
-            pageIndex={i}
-            isActive={currentPageIndex === i}
-            onSelect={() => onJump(i)}
+            pageIndex={physicalIndex}
+            pageNumber={displayIndex + 1}
+            isActive={currentPageIndex === displayIndex}
+            onSelect={() => onJump(displayIndex)}
           />
         {/each}
       </div>

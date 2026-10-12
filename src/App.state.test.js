@@ -70,7 +70,7 @@ describe("App state consolidation & stale guard rules", () => {
 
   it("keeps image OCR unsupported and sends PDF OCR through session identity", () => {
     expect(featureRuntimeSource).toContain("createOcrActionController");
-    expect(ocrControllerSource).toContain("if (!context.isPdf || !context.sessionId)");
+    expect(ocrControllerSource).toContain("if (!context.isPdf || !context.sessionId || context.pageIndex < 0)");
     expect(ocrControllerSource).toContain("runOcr(sessionId, contentGeneration, pageIndex, featureContext)");
     expect(ocrControllerSource).not.toMatch(/runOcr\(.*imagePath/);
   });

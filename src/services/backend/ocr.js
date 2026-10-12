@@ -1,9 +1,9 @@
 import { callBackend } from "./client.js";
 import { runSessionJob } from "./sessionJob.js";
 
-export const detectScannedPage = (sessionId, expectedContentGeneration, pageIndex) =>
+export const detectScannedPages = (sessionId, expectedContentGeneration) =>
   runSessionJob(sessionId, (jobId) =>
-    callBackend("detectScannedPage", { jobId, sessionId, expectedContentGeneration, pageIndex }),
+    callBackend("detectScannedPages", { jobId, sessionId, expectedContentGeneration }),
   ).promise;
 
 export const getAvailableOcrLanguages = () =>

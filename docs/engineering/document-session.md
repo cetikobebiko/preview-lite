@@ -205,7 +205,7 @@ has a bounded timeout and kills/reaps a timed-out child.
 
 | Command | Target class | Checkpoint |
 |---|---|---|
-| `detect_scanned_page` | `boundary-only` | before PDFium text extraction |
+| `detect_scanned_pages` | `boundary-only` | before PDFium text extraction (one document-wide job) |
 | `run_ocr_on_page` | `boundary-only` | before PDFium render/Tesseract |
 | `export_as_searchable_pdf` | `boundary-only` | unsupported scaffold entry only |
 | `apply_redactions` | `unavailable` | `FEATURE_UNAVAILABLE` before snapshot/parser |

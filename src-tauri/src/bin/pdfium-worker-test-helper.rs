@@ -29,7 +29,20 @@ fn capabilities() -> Vec<WorkerCapability> {
         WorkerCapability::AuditAccessibility,
         WorkerCapability::Ping,
         WorkerCapability::Shutdown,
+        WorkerCapability::SearchTextPages,
+        WorkerCapability::GetPageSizes,
     ]
+}
+
+/// Pages in the "chunked-search" fake document; every page holds one match.
+const CHUNKED_SEARCH_PAGES: u32 = 6;
+/// Pages in the "hang-render-pages=<i,j,...>" fake document.
+const HANG_RENDER_PAGES: u32 = 6;
+
+/// Page indexes whose RenderPage never answers in "hang-render-pages=1,3" mode.
+fn hanging_render_pages(mode: &str) -> Option<Vec<u32>> {
+    let pages = mode.strip_prefix("hang-render-pages=")?;
+    Some(pages.split(',').map(|page| page.parse().unwrap()).collect())
 }
 
 fn accessibility_audit_fixture() -> AccessibilityAuditReport {
@@ -98,6 +111,7 @@ fn main() {
         let _ = stderr.flush();
     }
 
+    let hanging_pages = hanging_render_pages(&mode);
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
     let hello_payload = read_payload(&mut stdin, MAX_WORKER_REQUEST_BYTES).unwrap();
@@ -158,6 +172,11 @@ fn main() {
             Err(_) => return,
         };
         if mode == "hang-command" {
+            // An optional second argument names a file created once a command
+            // was read, so a test can cancel a command known to be in flight.
+            if let Some(marker) = std::env::args().nth(2) {
+                std::fs::write(marker, b"received").unwrap();
+            }
             std::thread::sleep(Duration::from_secs(60));
             return;
         }
@@ -178,6 +197,27 @@ fn main() {
         {
             std::thread::sleep(Duration::from_secs(60));
             return;
+        }
+        if mode == "slow-page-count"
+            && matches!(
+                &request.command,
+                preview_alternative_lib::worker::ipc::WorkerCommand::GetPageCount { .. }
+            )
+        {
+            // Finishes well inside the page-count cancellation grace period.
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if let preview_alternative_lib::worker::ipc::WorkerCommand::RenderPage {
+            page_index, ..
+        } = &request.command
+        {
+            if hanging_pages
+                .as_ref()
+                .is_some_and(|pages| pages.contains(page_index))
+            {
+                std::thread::sleep(Duration::from_secs(60));
+                return;
+            }
         }
         let is_audit = matches!(
             &request.command,
@@ -206,12 +246,62 @@ fn main() {
             preview_alternative_lib::worker::ipc::WorkerCommand::OpenDocument { .. } => {
                 Ok(WorkerResult::DocumentOpened {
                     document_id: 1,
-                    page_count: 1,
+                    page_count: if mode == "chunked-search" {
+                        CHUNKED_SEARCH_PAGES
+                    } else if hanging_pages.is_some() {
+                        HANG_RENDER_PAGES
+                    } else {
+                        1
+                    },
                     protected: false,
                 })
             }
+            preview_alternative_lib::worker::ipc::WorkerCommand::SearchTextPages {
+                start_page,
+                max_results,
+                first_match_index,
+                ..
+            } if mode == "chunked-search" => {
+                // One page per chunk, each taking long enough for other reads
+                // to queue behind it.
+                std::thread::sleep(Duration::from_millis(80));
+                let next = start_page + 1;
+                Ok(WorkerResult::SearchChunk(
+                    preview_alternative_lib::worker::ipc::WorkerSearchChunk {
+                        matches: if max_results > 0 {
+                            vec![preview_alternative_lib::SearchMatch {
+                                global_match_index: usize::try_from(first_match_index).unwrap(),
+                                page_index: start_page,
+                                rects: Vec::new(),
+                                snippet: format!("page {start_page}"),
+                            }]
+                        } else {
+                            Vec::new()
+                        },
+                        total_matches: 1,
+                        next_page: (next < CHUNKED_SEARCH_PAGES).then_some(next),
+                    },
+                ))
+            }
             preview_alternative_lib::worker::ipc::WorkerCommand::GetPageCount { .. } => {
                 Ok(WorkerResult::PageCount(1))
+            }
+            preview_alternative_lib::worker::ipc::WorkerCommand::RenderPage { .. }
+                if hanging_pages.is_some() =>
+            {
+                Ok(WorkerResult::PageRendered {
+                    width: 1,
+                    height: 1,
+                    data: vec![0, 0, 0, 255],
+                })
+            }
+            preview_alternative_lib::worker::ipc::WorkerCommand::GetPageSizes { .. } => {
+                Ok(WorkerResult::PageSizes(vec![
+                    preview_alternative_lib::worker::ipc::WorkerPageSize {
+                        width_pt: 612.0,
+                        height_pt: 792.0,
+                    },
+                ]))
             }
             preview_alternative_lib::worker::ipc::WorkerCommand::GetOutline { .. } => {
                 Ok(WorkerResult::Outline(Vec::new()))

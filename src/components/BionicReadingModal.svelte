@@ -1,55 +1,39 @@
 <script>
-  import { createEventDispatcher } from "svelte";
+  import { BIONIC_EMPTY_MESSAGE, toBionicLines } from "../utils/bionicText.js";
 
-  export let isOpen = false;
-  export let text = "";
+  let { isOpen = false, text = "", source = null, onclose } = $props();
 
-  const dispatch = createEventDispatcher();
+  const bionicLines = $derived(toBionicLines(text));
+  // Bionic Reading covers a single page; say which one and how its text was obtained.
+  const sourceLabel = $derived(
+    source && Number.isInteger(source.pageNumber)
+      ? `Yalnız sayfa ${source.pageNumber} · ${source.method === "ocr" ? "OCR ile tanınan metin" : "PDF metin katmanı"}`
+      : "",
+  );
 
   function close() {
-    dispatch("close");
+    onclose?.();
   }
-
-  function convertToBionic(rawText) {
-    if (!rawText) return "Metin yüklenmedi...";
-    
-    return rawText
-      .split("\n")
-      .map((line) => {
-        return line
-          .split(" ")
-          .map((word) => {
-            if (word.length <= 1) return `<b>${word}</b>`;
-            const mid = Math.ceil(word.length * 0.4);
-            const boldPart = word.slice(0, mid);
-            const restPart = word.slice(mid);
-            return `<b>${boldPart}</b>${restPart}`;
-          })
-          .join(" ");
-      })
-      .join("<br/>");
-  }
-
-  $: formattedBionicText = convertToBionic(text);
 </script>
 
 {#if isOpen}
-  <div class="bionic-overlay" on:click={close} role="presentation" tabindex="-1">
-    <div class="bionic-dialog" on:click|stopPropagation role="presentation">
+  <div class="bionic-overlay" onclick={close} role="presentation" tabindex="-1">
+    <div class="bionic-dialog" onclick={(event) => event.stopPropagation()} role="presentation">
       <div class="bionic-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 20px;">🧠</span>
           <div>
             <h3 class="bionic-title">Biyonik Okuma Katmanı (Bionic Reading)</h3>
             <p class="bionic-subtitle">İlk harfleri vurgulayarak hızlı okuma ve odaklanmayı artırır</p>
+            {#if sourceLabel}<p class="bionic-subtitle" data-testid="bionic-source">{sourceLabel}</p>{/if}
           </div>
         </div>
-        <button class="close-btn" on:click={close}>✕</button>
+        <button class="close-btn" onclick={close}>✕</button>
       </div>
 
       <div class="bionic-body">
-        <div class="bionic-text-content">
-          {@html formattedBionicText}
+        <div class="bionic-text-content" data-testid="bionic-text">
+          {#if bionicLines.length === 0}{BIONIC_EMPTY_MESSAGE}{:else}{#each bionicLines as words, lineIndex}{#if lineIndex > 0}<br />{/if}{#each words as word, wordIndex}{#if wordIndex > 0}{" "}{/if}<b>{word.bold}</b>{word.rest}{/each}{/each}{/if}
         </div>
       </div>
     </div>
@@ -119,7 +103,7 @@
     color: var(--text-primary);
   }
 
-  .bionic-text-content :global(b) {
+  .bionic-text-content b {
     color: var(--text-primary);
     font-weight: 700;
   }

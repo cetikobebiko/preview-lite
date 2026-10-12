@@ -1,5 +1,10 @@
-/** Coordinates Bionic Reading text preparation without becoming a reactive text owner. */
-export function createReadingPresentationController({ getContext, performOcr, featureContext, onToast }) {
+import { readPageText } from "./pageTextSource.js";
+
+/**
+ * Coordinates Bionic Reading text preparation without becoming a reactive text owner.
+ * Bionic Reading covers the current page only and labels where the text came from.
+ */
+export function createReadingPresentationController({ getContext, extractText, performOcr, featureContext, onToast }) {
   function isCurrent(context) {
     const current = getContext();
     return current.sessionId === context.sessionId && current.contentGeneration === context.contentGeneration;
@@ -8,18 +13,16 @@ export function createReadingPresentationController({ getContext, performOcr, fe
   async function openBionicReading() {
     const context = getContext();
     const { viewer, ui } = context;
+    if (!context.isPdf || !context.sessionId || context.pageIndex < 0) {
+      onToast("Bağımsız görseller için OCR bu sürümde desteklenmiyor.");
+      return;
+    }
     onToast("Biyonik okuma metni hazırlanıyor...");
     try {
-      let text = viewer.documentTextContext;
-      if (!text) {
-        if (!context.isPdf || !context.sessionId) {
-          onToast("Bağımsız görseller için OCR bu sürümde desteklenmiyor.");
-          return;
-        }
-        text = await performOcr(context.sessionId, context.contentGeneration, context.pageIndex, featureContext);
-        if (!isCurrent(context)) return;
-      }
+      const { text, method } = await readPageText(context, { extractText, performOcr, featureContext });
+      if (!isCurrent(context)) return;
       viewer.bionicText = text;
+      viewer.bionicSource = { pageNumber: context.displayPageIndex + 1, method };
       ui.isBionicModalOpen = true;
     } catch (error) {
       console.error("Biyonik metin hatası:", error);

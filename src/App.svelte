@@ -14,6 +14,8 @@
   } from "./services/asyncPrompt.svelte.js";
   import { createApplicationRuntime } from "./services/app/applicationRuntime.js";
   import { createDocumentRuntime } from "./services/app/documentRuntime.js";
+  import { createDocumentScopedStateReconciler } from "./services/app/documentScopedState.js";
+  import { bindHighlightSession, remapHighlightPages, rotateHighlightPage } from "./annotationsStore.js";
   import { createFeatureRuntime } from "./services/app/featureRuntime.js";
   import { createPresentationController } from "./services/app/presentationController.js";
   import { createViewerRuntime } from "./services/app/viewerRuntime.js";
@@ -70,6 +72,10 @@
     onToast: presentation.showToast,
     onError: presentation.setError,
   });
+  const documentScopedState = createDocumentScopedStateReconciler({
+    viewer, annotation, bindHighlightSession, remapHighlightPages, rotateHighlightPage,
+    closeDocumentModals: () => ui.closeModal("bionic"),
+  });
   const documentRuntime = createDocumentRuntime({
     documentSession, renderSession, viewer, annotation, ui, tick,
     viewerController: viewerRuntime.controller,
@@ -83,6 +89,7 @@
       error: presentation.showPasswordError,
       dismiss: presentation.dismissPasswordAttempt,
     },
+    applyPageScopedMutation: documentScopedState.applyPageMutation,
   });
   callbacks.savePosition = documentRuntime.savePosition;
   const featureRuntime = createFeatureRuntime({
@@ -117,6 +124,15 @@
       : viewer.activeImageSourcePath;
     document.title = titlePath ? `${titlePath} - Antigravity` : "Antigravity PDF Reader";
     prepress.updateContext(getPrepressContext());
+  });
+
+  $effect(() => {
+    const context = {
+      sessionId: documentSession.activeSessionId,
+      contentGeneration: documentSession.contentGeneration,
+      imagePath: viewer.activeImageSourcePath,
+    };
+    untrack(() => documentScopedState.reconcile(context));
   });
 
   $effect(() => {
@@ -161,7 +177,7 @@
   activePdfDisplayPath={documentRuntime.activeDisplayPath}
   fileName={documentRuntime.fileName}
   onToast={presentation.showToast}
-  onSessionMutation={(snapshot) => void documentRuntime.applyMutationSnapshot(snapshot)}
+  onSessionMutation={(snapshot, options) => void documentRuntime.applyMutationSnapshot(snapshot, options)}
 />
 
 <AppModalHost
@@ -209,6 +225,7 @@
       physicalPageIndex={viewer.physicalPageIndex}
       isLoadedPdfDocument={documentRuntime.isLoadedPdfDocument}
       onJump={viewerRuntime.navigation.jumpToPage}
+      onJumpPhysical={viewerRuntime.navigation.jumpToPhysicalPage}
       onScanSensitiveData={featureRuntime.scanSensitiveData}
       secureRedaction={featureRuntime.secureRedaction}
       onSessionSnapshot={documentRuntime.applyBackendSessionSnapshot}
@@ -233,6 +250,7 @@
       {secureRedactionState}
       secureRedaction={featureRuntime.secureRedaction}
       onSelectFile={documentRuntime.selectFile}
+      onReopenDocument={() => void documentRuntime.openFile(documentRuntime.activeDisplayPath)}
       onPageIntersect={viewerRuntime.navigation.handlePageIntersect}
       onSearchHighlightReady={featureRuntime.handleSearchHighlight}
       onSessionSnapshot={(snapshot) => void documentRuntime.applyMutationSnapshot(snapshot)}

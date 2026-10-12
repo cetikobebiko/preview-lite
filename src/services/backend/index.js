@@ -1,8 +1,10 @@
 export {
   cancelRenderRequest,
+  getPageSizes,
   getPageTextLayout,
   renderPage,
   renderThumbnail,
+  retryPage,
   setActiveRenderDocument,
 } from "./viewer.js";
 export * from "./session.js";
@@ -17,7 +19,7 @@ export {
 } from "./manipulation.js";
 
 export {
-  detectScannedPage,
+  detectScannedPages,
   getAvailableOcrLanguages,
   runOcrOnPage,
 } from "./ocr.js";

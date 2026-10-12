@@ -391,10 +391,14 @@ pub fn validate_registry_document(
             ));
         }
 
-        // B5 MOCK_REALITY_MISMATCH: realWorker requires NATIVE_PLATFORM
-        if rec.real_worker && rec.execution_class != "NATIVE_PLATFORM" {
+        // B5 MOCK_REALITY_MISMATCH: realWorker requires NATIVE_PLATFORM or EXACT_ARTIFACT
+        // (packaged artifact smoke spawns the production worker via --run-worker)
+        if rec.real_worker
+            && rec.execution_class != "NATIVE_PLATFORM"
+            && rec.execution_class != "EXACT_ARTIFACT"
+        {
             errors.push(format!(
-                "Registry id '{}' MOCK_REALITY_MISMATCH — realWorker=true requires NATIVE_PLATFORM (got {})",
+                "Registry id '{}' MOCK_REALITY_MISMATCH — realWorker=true requires NATIVE_PLATFORM or EXACT_ARTIFACT (got {})",
                 rec.id, rec.execution_class
             ));
         }

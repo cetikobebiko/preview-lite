@@ -4,6 +4,7 @@ import {
   callBackend,
   invokeProfiled,
 } from "./client.js";
+import { encodeRenderFrame } from "./renderFrameTestUtils.js";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const JOB_ID = "00000000-0000-4000-8000-000000000001";
@@ -282,6 +283,7 @@ describe("validated backend client", () => {
     "PDFIUM_WORKER_PROTOCOL_MISMATCH",
     "PDFIUM_WORKER_MESSAGE_TOO_LARGE",
     "PDFIUM_DOCUMENT_QUARANTINED",
+    "PDFIUM_PAGE_QUARANTINED",
   ])("preserves typed worker failure code and message: %s", async (code) => {
     const cause = {
       code,
@@ -359,5 +361,131 @@ describe("validated backend client", () => {
       message: expect.stringContaining("expected array"),
     });
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("binary render frame responses", () => {
+  const pageRequest = {
+    sessionId: "document",
+    pageIndex: 1,
+    scale: 2,
+    rotation: 0,
+    contentGeneration: 4,
+    requestId: "main_page-request",
+  };
+  const thumbnailRequest = {
+    sessionId: "document",
+    pageIndex: 1,
+    targetWidth: 1,
+    contentGeneration: 4,
+    requestId: "sidebar-request",
+    scope: "sidebar_thumbnail",
+  };
+
+  it.each([
+    ["renderSessionPage", pageRequest],
+    ["renderSessionThumbnail", thumbnailRequest],
+  ])("%s decodes the raw frame without a JSON pixel array", async (contractId, request) => {
+    const buffer = encodeRenderFrame({
+      width: 1,
+      height: 1,
+      data: new Uint8Array([10, 20, 30, 255]),
+      pageIndex: request.pageIndex,
+      generation: request.contentGeneration,
+      requestId: request.requestId,
+    });
+    invokeMock.mockResolvedValueOnce(buffer);
+
+    const result = await callBackend(contractId, request);
+
+    expect(result).toMatchObject({
+      width: 1,
+      height: 1,
+      pageIndex: 1,
+      generation: 4,
+      requestId: request.requestId,
+    });
+    expect(result.data).toBeInstanceOf(Uint8ClampedArray);
+    expect(result.data.buffer).toBe(buffer);
+  });
+
+  it("reports a malformed frame through the existing invalid payload error", async () => {
+    invokeMock.mockResolvedValueOnce(new ArrayBuffer(8));
+
+    await expect(callBackend("renderSessionPage", pageRequest)).rejects.toMatchObject({
+      name: "BackendCommandError",
+      command: "render_session_page",
+      message: "render_invalid_rgba_payload",
+    });
+  });
+
+  it("keeps the JSON DocumentSessionError contract for failures", async () => {
+    const backendError = {
+      code: "PDFIUM_WORKER_RENDER_FAILED",
+      message: "render failed",
+    };
+    invokeMock.mockRejectedValueOnce(backendError);
+
+    await expect(callBackend("renderSessionThumbnail", thumbnailRequest)).rejects.toMatchObject({
+      command: "render_session_thumbnail",
+      code: "PDFIUM_WORKER_RENDER_FAILED",
+      message: "render failed",
+      cause: backendError,
+    });
+  });
+
+  it("keeps render cancellation messages recognizable", async () => {
+    invokeMock.mockRejectedValueOnce({
+      code: "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
+      message: "render_cancelled",
+    });
+
+    await expect(callBackend("renderSessionPage", pageRequest)).rejects.toMatchObject({
+      message: "render_cancelled",
+    });
+  });
+});
+
+describe("binary image frame responses", () => {
+  const imageRequest = { path: "/a.png", rotation: 0, flipH: false, flipV: false };
+
+  it("decodes read_image_file frames to width/height/pixels only", async () => {
+    const buffer = encodeRenderFrame({
+      width: 2,
+      height: 1,
+      data: new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255]),
+      pageIndex: 0,
+      generation: 0,
+      requestId: "read_image_file",
+    });
+    invokeMock.mockResolvedValueOnce(buffer);
+
+    const result = await callBackend("readImageFile", imageRequest);
+
+    expect(Object.keys(result)).toEqual(["width", "height", "data"]);
+    expect(result).toMatchObject({ width: 2, height: 1 });
+    expect(result.data).toBeInstanceOf(Uint8ClampedArray);
+    expect(Array.from(result.data)).toEqual([1, 2, 3, 255, 4, 5, 6, 255]);
+    expect(result.data.buffer).toBe(buffer);
+  });
+
+  it("rejects a legacy JSON pixel array response", async () => {
+    invokeMock.mockResolvedValueOnce({ width: 1, height: 1, data: [1, 2, 3, 255] });
+
+    await expect(callBackend("readImageFile", imageRequest)).rejects.toMatchObject({
+      command: "read_image_file",
+      message: "render_invalid_rgba_payload",
+    });
+  });
+
+  it("keeps string errors for missing or corrupt images", async () => {
+    invokeMock.mockRejectedValueOnce("Görsel okunamadı: Format error decoding Png");
+
+    await expect(callBackend("readImageFile", imageRequest)).rejects.toMatchObject({
+      name: "BackendCommandError",
+      command: "read_image_file",
+      code: null,
+      message: "Görsel okunamadı: Format error decoding Png",
+    });
   });
 });

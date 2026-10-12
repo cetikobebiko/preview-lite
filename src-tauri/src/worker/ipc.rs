@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{self, Read, Write};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 3;
+pub const WORKER_PROTOCOL_VERSION: u16 = 5;
 pub const MAX_WORKER_REQUEST_BYTES: usize = 64 * 1024;
 pub const MAX_WORKER_RESPONSE_BYTES: usize =
     crate::pdf_engine::render_service::MAX_RENDER_BYTES + 64 * 1024;
@@ -11,6 +11,8 @@ pub const MAX_WORKER_PATH_CHARS: usize = 4096;
 pub const MAX_WORKER_PASSWORD_CHARS: usize = 4096;
 pub const MAX_WORKER_QUERY_CHARS: usize = 8192;
 pub const MAX_WORKER_SEARCH_RESULTS: usize = 10_000;
+pub const MAX_WORKER_SEARCH_CHUNK_PAGES: u32 = 4096;
+pub const MAX_WORKER_SEARCH_CHUNK_BUDGET_MS: u32 = 10_000;
 pub const MAX_WORKER_TEXT_ITEMS: usize = 250_000;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -56,6 +58,8 @@ pub enum WorkerCapability {
     AuditAccessibility,
     Ping,
     Shutdown,
+    SearchTextPages,
+    GetPageSizes,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -117,6 +121,23 @@ pub enum WorkerCommand {
     },
     Ping,
     Shutdown,
+    /// Searches pages from `start_page` until `max_pages` pages were scanned
+    /// or `time_budget_ms` elapsed (checked between pages, at least one page
+    /// per command). Returned matches are numbered from `first_match_index`;
+    /// at most `max_results` are returned but every match is counted.
+    SearchTextPages {
+        document_id: u64,
+        query: String,
+        start_page: u32,
+        max_pages: u32,
+        time_budget_ms: u32,
+        max_results: u32,
+        first_match_index: u64,
+    },
+    /// Display sizes of every page in PDF points, `/Rotate` already applied.
+    GetPageSizes {
+        document_id: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -162,6 +183,28 @@ pub enum WorkerResult {
     AccessibilityAudit(crate::a11y::AccessibilityAuditReport),
     Pong,
     ShutdownComplete,
+    SearchChunk(WorkerSearchChunk),
+    PageSizes(Vec<WorkerPageSize>),
+}
+
+/// Page size in PDF points as PDFium reports it (`FPDF_GetPageSizeByIndexF`):
+/// the page's `/Rotate` is applied, so this is the unrotated-by-the-viewer
+/// display size. Non-finite or non-positive sizes are reported as 0.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerPageSize {
+    pub width_pt: f32,
+    pub height_pt: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkerSearchChunk {
+    pub matches: Vec<crate::SearchMatch>,
+    /// Every match found in the scanned pages, including ones not returned
+    /// because `max_results` was reached.
+    pub total_matches: usize,
+    /// First page not scanned yet; `None` once the last page was scanned.
+    pub next_page: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -365,6 +408,7 @@ mod tests {
             },
             WorkerCommand::GetStructureTree { document_id: 7 },
             WorkerCommand::AuditAccessibility { document_id: 7 },
+            WorkerCommand::GetPageSizes { document_id: 7 },
         ];
         for (index, command) in commands.into_iter().enumerate() {
             let request = WorkerRequest {

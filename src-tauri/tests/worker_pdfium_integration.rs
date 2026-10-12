@@ -1179,4 +1179,732 @@ mod macos_arm64 {
         drop(admission);
         broker.shutdown().await.unwrap();
     }
+
+    struct ParityLease {
+        admission: preview_alternative_lib::pdf_engine::subprocess_manager::WorkerAdmissionPermit,
+        key: WorkerDocumentKey,
+        page_count: u32,
+    }
+
+    impl preview_alternative_lib::pdf_engine::subprocess_manager::WorkerReadLease for ParityLease {
+        fn admission(
+            &self,
+        ) -> &preview_alternative_lib::pdf_engine::subprocess_manager::WorkerAdmissionPermit
+        {
+            &self.admission
+        }
+
+        fn document_key(&self) -> &WorkerDocumentKey {
+            &self.key
+        }
+
+        fn page_count(&self) -> u32 {
+            self.page_count
+        }
+    }
+
+    async fn whole_document_search(
+        broker: &PdfiumWorkerBroker,
+        key: &WorkerDocumentKey,
+        path: &str,
+        query: &str,
+        max_results: u32,
+    ) -> preview_alternative_lib::SearchResult {
+        let admission = broker.admit_read(key, None).await.unwrap();
+        broker
+            .ensure_document(&admission, key.clone(), path.to_string(), None, None)
+            .await
+            .unwrap();
+        let result = broker
+            .command_for_document(
+                &admission,
+                key,
+                |document_id| WorkerCommand::SearchText {
+                    document_id,
+                    query: query.to_string(),
+                    max_results,
+                },
+                CommandTimeout::Search,
+                None,
+            )
+            .await
+            .unwrap();
+        let WorkerResult::Search(result) = result else {
+            panic!("unexpected whole-document search response");
+        };
+        result
+    }
+
+    async fn chunked_document_search(
+        broker: &PdfiumWorkerBroker,
+        key: &WorkerDocumentKey,
+        path: &str,
+        query: &str,
+        max_results: usize,
+    ) -> preview_alternative_lib::SearchResult {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        broker
+            .search_text_in_chunks(
+                || {
+                    let broker = broker.clone();
+                    let key = key.clone();
+                    let path = path.to_string();
+                    async move {
+                        let admission = broker.admit_read(&key, None).await?;
+                        let (_, page_count, _) = broker
+                            .ensure_document(&admission, key.clone(), path, None, None)
+                            .await?;
+                        Ok::<_, preview_alternative_lib::pdf_engine::subprocess_manager::BrokerError>(
+                            ParityLease {
+                                admission,
+                                key,
+                                page_count,
+                            },
+                        )
+                    }
+                },
+                query,
+                preview_alternative_lib::pdf_engine::subprocess_manager::SearchChunkPolicy {
+                    // One page per chunk exercises every chunk boundary.
+                    max_pages: 1,
+                    time_budget_ms: 10_000,
+                    max_results,
+                },
+                &cancellation,
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn chunked_search_is_identical_to_whole_document_search() {
+        let broker = broker();
+        let (_unicode_directory, unicode_path) = unicode_text_fixture();
+        let cases = [
+            (
+                fixture("three-distinct-pages.pdf"),
+                vec!["page-", "page-one", "e"],
+            ),
+            (
+                fixture("ai-text-rich.pdf"),
+                vec!["the", "e", "zzzz-not-present"],
+            ),
+            (fixture("release-smoke.pdf"), vec!["a", "release"]),
+            (unicode_path, vec!["order", "café", "istanbul", "A B"]),
+        ];
+        let mut compared_matches = 0usize;
+        for (index, (path, queries)) in cases.iter().enumerate() {
+            let key = WorkerDocumentKey {
+                session_id: format!("chunk-parity-{index}"),
+                content_generation: 1,
+            };
+            for query in queries {
+                for limit in [10_000u32, 2] {
+                    let whole = whole_document_search(&broker, &key, path, query, limit).await;
+                    let chunked = chunked_document_search(
+                        &broker,
+                        &key,
+                        path,
+                        query,
+                        usize::try_from(limit).unwrap(),
+                    )
+                    .await;
+                    assert_eq!(
+                        serde_json::to_value(&chunked).unwrap(),
+                        serde_json::to_value(&whole).unwrap(),
+                        "path={path} query={query} limit={limit}"
+                    );
+                    compared_matches += whole.matches.len();
+                }
+            }
+        }
+        // Guard against a vacuous comparison of empty results.
+        assert!(
+            compared_matches > 10,
+            "only {compared_matches} matches compared"
+        );
+        broker.shutdown().await.unwrap();
+    }
+    fn page_geometry_contract() -> serde_json::Value {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/contracts/page-render-geometry-v1.json");
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn json_numbers(value: &serde_json::Value) -> Vec<f64> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|number| number.as_f64().unwrap())
+            .collect()
+    }
+
+    fn page_geometry_fixture(contract: &serde_json::Value) -> (tempfile::TempDir, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("page-geometry.pdf");
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let mut page_ids = Vec::new();
+        for page in contract["pages"].as_array().unwrap() {
+            let to_box = |value: &serde_json::Value| {
+                json_numbers(value)
+                    .into_iter()
+                    .map(|number| Object::Real(number as f32))
+                    .collect::<Vec<_>>()
+            };
+            let mut dictionary = dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => to_box(&page["mediaBox"]),
+            };
+            if !page["cropBox"].is_null() {
+                dictionary.set("CropBox", to_box(&page["cropBox"]));
+            }
+            let rotate = page["rotate"].as_i64().unwrap();
+            if rotate != 0 {
+                dictionary.set("Rotate", rotate);
+            }
+            page_ids.push(document.add_object(dictionary));
+        }
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => page_ids.iter().copied().map(Object::Reference).collect::<Vec<_>>(),
+                "Count" => i64::try_from(page_ids.len()).unwrap(),
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(&path).unwrap();
+        (directory, path.to_string_lossy().to_string())
+    }
+
+    /// Pins the page sizes and real PDFium bitmap sizes that the frontend
+    /// placeholder-height estimate (src/utils/pageGeometry.js) is tested against.
+    #[tokio::test]
+    async fn page_sizes_and_render_sizes_match_geometry_contract() {
+        let contract = page_geometry_contract();
+        let (_directory, path) = page_geometry_fixture(&contract);
+        let pages = contract["pages"].as_array().unwrap();
+        let broker = broker();
+        let key = key("page-geometry-contract");
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        let (_document, page_count, _protected) = broker
+            .ensure_document(&admission, key.clone(), path, None, None)
+            .await
+            .unwrap();
+        assert_eq!(page_count as usize, pages.len());
+
+        let sizes = broker
+            .command_for_document(
+                &admission,
+                &key,
+                |document_id| WorkerCommand::GetPageSizes { document_id },
+                CommandTimeout::DocumentRead,
+                None,
+            )
+            .await
+            .unwrap();
+        let WorkerResult::PageSizes(sizes) = sizes else {
+            panic!("expected page sizes");
+        };
+        assert_eq!(sizes.len(), pages.len());
+        for (size, page) in sizes.iter().zip(pages) {
+            let id = page["id"].as_str().unwrap();
+            assert!(
+                (f64::from(size.width_pt) - page["widthPt"].as_f64().unwrap()).abs() < 0.01
+                    && (f64::from(size.height_pt) - page["heightPt"].as_f64().unwrap()).abs()
+                        < 0.01,
+                "{id}: worker reported {size:?}"
+            );
+        }
+
+        let mut actual = Vec::new();
+        for (page_index, page) in pages.iter().enumerate() {
+            for view_scale in json_numbers(&contract["viewScales"]) {
+                for dpr in json_numbers(&contract["devicePixelRatios"]) {
+                    for rotation in json_numbers(&contract["rotations"]) {
+                        let rendered = broker
+                            .command_for_document(
+                                &admission,
+                                &key,
+                                |document_id| WorkerCommand::RenderPage {
+                                    document_id,
+                                    page_index: u32::try_from(page_index).unwrap(),
+                                    target: WorkerRenderTarget::Scale(view_scale * dpr),
+                                    rotation: rotation as i32,
+                                },
+                                CommandTimeout::RenderPage,
+                                None,
+                            )
+                            .await
+                            .unwrap();
+                        let WorkerResult::PageRendered { width, height, .. } = rendered else {
+                            panic!("expected rendered page");
+                        };
+                        actual.push(serde_json::json!({
+                            "page": page["id"],
+                            "viewScale": view_scale,
+                            "devicePixelRatio": dpr,
+                            "rotation": rotation,
+                            "bitmapWidth": width,
+                            "bitmapHeight": height,
+                        }));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            serde_json::Value::Array(actual.clone()),
+            contract["renders"],
+            "PDFium render sizes changed; actual renders:\n{}",
+            serde_json::to_string(&actual).unwrap()
+        );
+
+        drop(admission);
+        broker.shutdown().await.unwrap();
+    }
+
+    /// Real PDFium: the shading page (index 2) of `heavy-page.pdf` cannot be
+    /// rasterized inside the 2 s class used here (production classes are
+    /// 10-20 s; see `heavy_page_command_timings`). Two timeouts on different
+    /// surfaces of that page quarantine only the page. The nested-form page
+    /// (index 1) is not used: its parse allocates gigabytes.
+    #[tokio::test]
+    async fn heavy_page_timeouts_quarantine_the_page_not_the_document() {
+        let path = fixture("heavy-page.pdf");
+        let broker = broker();
+        let key = key("heavy-page-quarantine");
+        let render = |page_index| {
+            Box::new(move |document_id| WorkerCommand::RenderPage {
+                document_id,
+                page_index,
+                target: WorkerRenderTarget::Scale(0.5),
+                rotation: 0,
+            }) as Box<dyn FnOnce(u64) -> WorkerCommand + Send>
+        };
+        let run = |command: Box<dyn FnOnce(u64) -> WorkerCommand + Send>| {
+            let broker = broker.clone();
+            let key = key.clone();
+            let path = path.clone();
+            async move {
+                let admission = broker.admit_read(&key, None).await.unwrap();
+                broker
+                    .ensure_document(&admission, key.clone(), path, None, None)
+                    .await
+                    .map_err(|error| error.code)?;
+                broker
+                    .command_for_document(&admission, &key, command, CommandTimeout::Ping, None)
+                    .await
+                    .map_err(|error| error.code)
+            }
+        };
+
+        assert_eq!(run(render(2)).await.unwrap_err(), "PDFIUM_WORKER_TIMEOUT");
+        assert_eq!(
+            run(Box::new(|document_id| WorkerCommand::RenderThumbnail {
+                document_id,
+                page_index: 2,
+                target_width: 150,
+            }))
+            .await
+            .unwrap_err(),
+            "PDFIUM_WORKER_TIMEOUT"
+        );
+        assert_eq!(run(render(2)).await.unwrap_err(), "PDFIUM_PAGE_QUARANTINED");
+
+        // From here on nothing may kill the worker: the quarantined page is
+        // rejected before it is sent and the light pages render normally.
+        let epoch = broker.worker_epoch().await;
+        assert!(epoch.is_some());
+        let restarts = broker.restart_attempts_for_test().await;
+        assert!(matches!(
+            run(render(0)).await,
+            Ok(WorkerResult::PageRendered { .. })
+        ));
+        assert!(matches!(
+            run(render(3)).await,
+            Ok(WorkerResult::PageRendered { .. })
+        ));
+        assert_eq!(
+            run(Box::new(|document_id| WorkerCommand::GetPageTextLayout {
+                document_id,
+                page_index: 2,
+            }))
+            .await
+            .unwrap_err(),
+            "PDFIUM_PAGE_QUARANTINED"
+        );
+        assert_eq!(broker.worker_epoch().await, epoch);
+        assert_eq!(broker.restart_attempts_for_test().await, restarts);
+        broker.shutdown().await.unwrap();
+    }
+
+    async fn timed_heavy_page_command(
+        broker: &PdfiumWorkerBroker,
+        key: &WorkerDocumentKey,
+        path: &str,
+        page_index: u32,
+        command: &str,
+        timeout: CommandTimeout,
+    ) -> (std::time::Duration, String) {
+        let admission = broker.admit_read(key, None).await.unwrap();
+        if let Err(error) = broker
+            .ensure_document(&admission, key.clone(), path.to_string(), None, None)
+            .await
+        {
+            return (std::time::Duration::ZERO, error.code.to_string());
+        }
+        let started = std::time::Instant::now();
+        let result = broker
+            .command_for_document(
+                &admission,
+                key,
+                |document_id| match command {
+                    "render-page" => WorkerCommand::RenderPage {
+                        document_id,
+                        page_index,
+                        target: WorkerRenderTarget::Scale(1.0),
+                        rotation: 0,
+                    },
+                    "render-thumbnail" => WorkerCommand::RenderThumbnail {
+                        document_id,
+                        page_index,
+                        target_width: 150,
+                    },
+                    _ => WorkerCommand::GetPageTextLayout {
+                        document_id,
+                        page_index,
+                    },
+                },
+                timeout,
+                None,
+            )
+            .await;
+        let outcome = match result {
+            Ok(_) => "ok".to_string(),
+            Err(error) => error.code.to_string(),
+        };
+        (started.elapsed(), outcome)
+    }
+
+    /// Baseline measurement, not a regression test: run with
+    /// `cargo test --test worker_pdfium_integration heavy_page_command_timings -- --ignored --nocapture`.
+    /// `HEAVY_PAGE_PDF` overrides the fixture path. Uses the production
+    /// timeout classes, so a timed-out command really waits for its limit.
+    #[tokio::test]
+    #[ignore = "manual worker baseline measurement; takes up to a minute"]
+    async fn heavy_page_command_timings() {
+        let path = std::env::var("HEAVY_PAGE_PDF").unwrap_or_else(|_| fixture("heavy-page.pdf"));
+        let broker = broker();
+        for (generation, (page_index, command, timeout)) in [
+            (0, "render-page", CommandTimeout::RenderPage),
+            (1, "render-page", CommandTimeout::RenderPage),
+            (1, "render-thumbnail", CommandTimeout::RenderThumbnail),
+            (1, "text-layout", CommandTimeout::TextLayout),
+            (2, "render-page", CommandTimeout::RenderPage),
+            (2, "render-thumbnail", CommandTimeout::RenderThumbnail),
+            (2, "text-layout", CommandTimeout::TextLayout),
+            (3, "render-page", CommandTimeout::RenderPage),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // A separate generation per command keeps each one's failure
+            // record (and so the page quarantine) out of the next measurement.
+            let key = WorkerDocumentKey {
+                session_id: "heavy-page-timings".to_string(),
+                content_generation: generation as u64 + 1,
+            };
+            let (elapsed, outcome) =
+                timed_heavy_page_command(&broker, &key, &path, page_index, command, timeout).await;
+            eprintln!(
+                "heavy-page page={page_index} command={command} outcome={outcome} elapsed_ms={:.0}",
+                elapsed.as_secs_f64() * 1000.0
+            );
+        }
+    }
+
+    fn solid_color_fixture() -> (tempfile::TempDir, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("solid-rgb.pdf");
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let mut page_ids = Vec::new();
+        for (red, green, blue) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
+            let content = Content {
+                operations: vec![
+                    Operation::new("rg", vec![red.into(), green.into(), blue.into()]),
+                    Operation::new("re", vec![0.into(), 0.into(), 200.into(), 200.into()]),
+                    Operation::new("f", vec![]),
+                ],
+            };
+            let content_id =
+                document.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+            page_ids.push(document.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+                "Contents" => content_id,
+            }));
+        }
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => page_ids.iter().copied().map(Object::Reference).collect::<Vec<_>>(),
+                "Count" => i64::try_from(page_ids.len()).unwrap(),
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(&path).unwrap();
+        (directory, path.to_string_lossy().to_string())
+    }
+
+    /// Golden channel-order contract: the worker's `PageRendered.data` is
+    /// straight RGBA. Pure red, green and blue pages must decode to exactly
+    /// those channels for both the page and thumbnail render commands.
+    #[tokio::test]
+    async fn rendered_pixels_are_rgba_for_pure_red_green_blue_pages() {
+        let (_directory, path) = solid_color_fixture();
+        let broker = broker();
+        let key = key("worker-rgba-golden");
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        broker
+            .ensure_document(&admission, key.clone(), path, None, None)
+            .await
+            .unwrap();
+        let expected: [[u8; 4]; 3] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
+        for (page_index, expected) in expected.into_iter().enumerate() {
+            let page_index = page_index as u32;
+            for thumbnail in [false, true] {
+                let rendered = broker
+                    .command_for_document(
+                        &admission,
+                        &key,
+                        |document_id| {
+                            if thumbnail {
+                                WorkerCommand::RenderThumbnail {
+                                    document_id,
+                                    page_index,
+                                    target_width: 64,
+                                }
+                            } else {
+                                WorkerCommand::RenderPage {
+                                    document_id,
+                                    page_index,
+                                    target: WorkerRenderTarget::Scale(1.0),
+                                    rotation: 0,
+                                }
+                            }
+                        },
+                        if thumbnail {
+                            CommandTimeout::RenderThumbnail
+                        } else {
+                            CommandTimeout::RenderPage
+                        },
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                let WorkerResult::PageRendered {
+                    width,
+                    height,
+                    data,
+                } = rendered
+                else {
+                    panic!("expected rendered page");
+                };
+                assert_eq!(data.len(), width as usize * height as usize * 4);
+                let mut pixels = data.chunks_exact(4);
+                assert!(
+                    pixels.all(|pixel| pixel == expected),
+                    "page {page_index} thumbnail={thumbnail}: first pixel {:?}, expected {expected:?}",
+                    &data[..4]
+                );
+            }
+        }
+        drop(admission);
+        broker.shutdown().await.unwrap();
+    }
+
+    /// 50 A4 text pages; the same per-page workload as the worker-internal
+    /// `render_page_a4_timing` baseline in `src/worker/pdfium.rs`.
+    fn a4_text_fixture(page_count: usize) -> (tempfile::TempDir, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("a4-scroll-baseline.pdf");
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let font_id = document.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let mut page_ids = Vec::new();
+        for page in 0..page_count {
+            let mut operations = vec![
+                Operation::new("rg", vec![0.85.into(), 0.2.into(), 0.2.into()]),
+                Operation::new("re", vec![40.into(), 760.into(), 515.into(), 40.into()]),
+                Operation::new("f", vec![]),
+                Operation::new("RG", vec![0.1.into(), 0.3.into(), 0.8.into()]),
+                Operation::new("w", vec![2.into()]),
+                Operation::new("m", vec![40.into(), 60.into()]),
+                Operation::new(
+                    "c",
+                    vec![
+                        200.into(),
+                        160.into(),
+                        400.into(),
+                        0.into(),
+                        555.into(),
+                        90.into(),
+                    ],
+                ),
+                Operation::new("S", vec![]),
+                Operation::new("rg", vec![0.into(), 0.into(), 0.into()]),
+            ];
+            for line in 0..60i64 {
+                operations.extend([
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), 10.into()]),
+                    Operation::new("Td", vec![40.into(), (740 - line * 11).into()]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::String(
+                            format!("{page:02}.{line:02} The quick brown fox jumps over the lazy dog; render baseline text line.")
+                                .into_bytes(),
+                            StringFormat::Literal,
+                        )],
+                    ),
+                    Operation::new("ET", vec![]),
+                ]);
+            }
+            let content_id = document.add_object(Stream::new(
+                dictionary! {},
+                Content { operations }.encode().unwrap(),
+            ));
+            page_ids.push(document.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font_id } },
+                "Contents" => content_id,
+            }));
+        }
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => page_ids.iter().copied().map(Object::Reference).collect::<Vec<_>>(),
+                "Count" => i64::try_from(page_ids.len()).unwrap(),
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(&path).unwrap();
+        (directory, path.to_string_lossy().to_string())
+    }
+
+    /// Manual render-pipeline baseline through the real worker subprocess:
+    /// single A4 page round trips and a 50-page sequential scroll proxy at
+    /// scale 2.0. `RENDER_BASELINE_WORKER_BIN` may point at a shipping
+    /// `cargo build --release` binary. Run from `src-tauri`:
+    /// `TAURI_RESOURCE_DIR=$PWD cargo test --release --test worker_pdfium_integration -- --ignored --nocapture render_pipeline_scroll_baseline`
+    #[tokio::test]
+    #[ignore = "manual render baseline measurement"]
+    async fn render_pipeline_scroll_baseline() {
+        const PAGES: u32 = 50;
+        let (_directory, path) = a4_text_fixture(PAGES as usize);
+        let executable = std::env::var_os("RENDER_BASELINE_WORKER_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_preview-alternative")));
+        eprintln!("render-baseline worker binary: {}", executable.display());
+        let broker = PdfiumWorkerBroker::with_launcher(Ok(WorkerLauncher::for_test(
+            executable,
+            vec![OsString::from("--run-worker")],
+        )));
+        let key = key("render-scroll-baseline");
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        broker
+            .ensure_document(&admission, key.clone(), path, None, None)
+            .await
+            .unwrap();
+        let render = |page_index: u32| {
+            let broker = &broker;
+            let admission = &admission;
+            let key = &key;
+            async move {
+                let started = std::time::Instant::now();
+                let rendered = broker
+                    .command_for_document(
+                        admission,
+                        key,
+                        |document_id| WorkerCommand::RenderPage {
+                            document_id,
+                            page_index,
+                            target: WorkerRenderTarget::Scale(2.0),
+                            rotation: 0,
+                        },
+                        CommandTimeout::RenderPage,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                let WorkerResult::PageRendered { data, .. } = rendered else {
+                    panic!("expected rendered page");
+                };
+                std::hint::black_box(data);
+                started.elapsed().as_secs_f64() * 1000.0
+            }
+        };
+
+        for _ in 0..5 {
+            render(0).await;
+        }
+        let mut single = Vec::new();
+        for _ in 0..40 {
+            single.push(render(0).await);
+        }
+        single.sort_by(f64::total_cmp);
+        eprintln!(
+            "render-baseline single_page_round_trip: n={} min_ms={:.2} median_ms={:.2} p95_ms={:.2}",
+            single.len(),
+            single[0],
+            single[single.len() / 2],
+            single[(single.len() - 1) * 95 / 100]
+        );
+
+        let mut scrolls = Vec::new();
+        for _ in 0..7 {
+            let started = std::time::Instant::now();
+            for page_index in 0..PAGES {
+                render(page_index).await;
+            }
+            scrolls.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        eprintln!("render-baseline scroll_50_pages_runs_ms: {scrolls:.1?}");
+        scrolls.sort_by(f64::total_cmp);
+        eprintln!(
+            "render-baseline scroll_50_pages: n={} min_ms={:.1} median_ms={:.1} max_ms={:.1}",
+            scrolls.len(),
+            scrolls[0],
+            scrolls[scrolls.len() / 2],
+            scrolls[scrolls.len() - 1]
+        );
+
+        drop(admission);
+        broker.shutdown().await.unwrap();
+    }
 }

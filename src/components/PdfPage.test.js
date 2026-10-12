@@ -4,10 +4,21 @@ import { resolve } from "node:path";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import {
+  cancelRenderRequest,
+  getPageSizes,
   getPageTextLayout,
   renderPage,
+  retryPage,
 } from "../services/backend/viewer.js";
+import { pageFailureRegistry } from "../services/pageFailureRegistry.js";
 import PdfPage from "./PdfPage.svelte";
+import {
+  addHighlight,
+  bindHighlightSession,
+  remapHighlightPages,
+  resetHighlightsForTests,
+} from "../annotationsStore.js";
+import { pageMappingAfterDelete } from "../services/app/pageIndexMapping.js";
 
 const renderSessionMock = vi.hoisted(() => ({
   current: {
@@ -31,8 +42,10 @@ vi.mock("svelte", async () => {
 
 vi.mock("../services/backend/viewer.js", () => ({
   cancelRenderRequest: vi.fn(async () => ({ cancelled: true })),
+  getPageSizes: vi.fn(async () => null),
   getPageTextLayout: vi.fn(),
   renderPage: vi.fn(),
+  retryPage: vi.fn(async () => true),
 }));
 
 vi.mock("../pdfState.js", () => ({
@@ -41,7 +54,7 @@ vi.mock("../pdfState.js", () => ({
   deleteAnnotation: vi.fn(async () => undefined),
   getFormFields: vi.fn(async () => []),
   updateFormField: vi.fn(async () => undefined),
-  detectScannedPage: vi.fn(async () => false),
+  detectScannedPages: vi.fn(async () => []),
   runOcrOnPage: vi.fn(async () => ({ words: [] })),
   getAvailableOcrLanguages: vi.fn(async () => ["eng"]),
 }));
@@ -94,6 +107,7 @@ function renderPdfPage(options) {
 }
 
 beforeEach(() => {
+  pageFailureRegistry.reset();
   renderSessionMock.current = {
     sessionId: "test-document",
     contentGeneration: 1,
@@ -578,6 +592,50 @@ describe("PdfPage PDFium text layer", () => {
   });
 });
 
+describe("PdfPage text highlights", () => {
+  const rect = { x: 0.1, y: 0.2, width: 0.3, height: 0.05 };
+  const pageProps = (sessionId, pageIndex) => ({
+    sessionId,
+    pageIndex,
+    isSinglePageMode: true,
+    currentPage: pageIndex,
+    documentGenerationId: 1,
+  });
+
+  beforeEach(() => resetHighlightsForTests());
+  afterEach(() => resetHighlightsForTests());
+
+  it("does not show the previous document's highlight on the same page number", async () => {
+    bindHighlightSession("doc-a");
+    addHighlight("doc-a", 0, rect);
+    const first = renderPdfPage({ props: pageProps("doc-a", 0) });
+    await waitFor(() => expect(first.container.querySelectorAll(".highlight-overlay-svg rect")).toHaveLength(1));
+    cleanup();
+
+    // Before the reconciler rebinds, a page of another session must not see doc-a highlights.
+    const second = renderPdfPage({ props: pageProps("doc-b", 0) });
+    await waitFor(() => expect(second.container.querySelector(".overlay-plane")).not.toBeNull());
+    await tick();
+    expect(second.container.querySelector(".highlight-overlay-svg")).toBeNull();
+
+    bindHighlightSession("doc-b");
+    await tick();
+    expect(second.container.querySelector(".highlight-overlay-svg")).toBeNull();
+  });
+
+  it("shows a highlight on its moved page after a page deletion is remapped", async () => {
+    bindHighlightSession("doc-a");
+    addHighlight("doc-a", 2, rect);
+    const page = renderPdfPage({ props: pageProps("doc-a", 1) });
+    await waitFor(() => expect(page.container.querySelector(".overlay-plane")).not.toBeNull());
+    await tick();
+    expect(page.container.querySelector(".highlight-overlay-svg")).toBeNull();
+
+    remapHighlightPages("doc-a", pageMappingAfterDelete([1]));
+    await waitFor(() => expect(page.container.querySelectorAll(".highlight-overlay-svg rect")).toHaveLength(1));
+  });
+});
+
 describe("PdfPage secure-redaction review selection", () => {
   const pendingRegion = {
     id: "region-1",
@@ -647,5 +705,385 @@ describe("PdfPage secure-redaction review selection", () => {
     expect(container.querySelector(".redaction-layer")).toBeNull();
     const source = readFileSync(resolve(process.cwd(), "src/components/PdfPage.svelte"), "utf8");
     expect(source).not.toMatch(/pending-redaction-region[^}]*background:\s*(?:#000|black|rgb\(0,\s*0,\s*0\))/s);
+  });
+});
+
+describe("PdfPage render cancellation", () => {
+  it("lets an in-flight render finish during a zoom gesture and cancels once when it settles", async () => {
+    const zoomRender = createDeferred();
+    renderPage
+      .mockImplementationOnce(async (request) => ({
+        ...renderedPage(request.rotation),
+        pageIndex: request.pageIndex,
+        generation: request.contentGeneration,
+        requestId: request.requestId,
+      }))
+      .mockImplementationOnce(() => zoomRender.promise);
+
+    const { rerender } = renderPdfPage({
+      props: {
+        sessionId: "test-document",
+        pageIndex: 0,
+        isSinglePageMode: true,
+        currentPage: 0,
+        documentGenerationId: 1,
+      },
+    });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
+    await tick();
+
+    await rerender({ scale: 1.25 });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+
+    // Further gesture steps while the 1.25 render is still in flight.
+    for (const scale of [1.5, 1.75, 2]) {
+      await rerender({ scale });
+    }
+    expect(cancelRenderRequest).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(3));
+    expect(cancelRenderRequest).toHaveBeenCalledOnce();
+    expect(cancelRenderRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: renderPage.mock.calls[1][0].requestId,
+        scope: "main_page",
+      }),
+      "zoom",
+    );
+    expect(renderPage.mock.calls[2][0].scale).toBe(
+      renderPage.mock.calls[0][0].scale * 2,
+    );
+    zoomRender.reject(new Error("render_cancelled"));
+  });
+
+  it("tags cancellation of a page leaving the render buffer", async () => {
+    const pendingRender = createDeferred();
+    renderPage.mockImplementationOnce(() => pendingRender.promise);
+
+    const { rerender } = renderPdfPage({
+      props: {
+        sessionId: "test-document",
+        pageIndex: 0,
+        isSinglePageMode: true,
+        currentPage: 0,
+        documentGenerationId: 1,
+      },
+    });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
+
+    await rerender({ currentPage: 1 });
+    expect(cancelRenderRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: renderPage.mock.calls[0][0].requestId,
+      }),
+      "viewport_exit",
+    );
+    pendingRender.reject(new Error("render_cancelled"));
+  });
+});
+
+describe("PdfPage visibility reporting", () => {
+  it("reports the newest intersection ratio and zero when hidden or destroyed", async () => {
+    const callbacks = [];
+    globalThis.IntersectionObserver = class IntersectionObserverMock {
+      constructor(callback) { callbacks.push(callback); }
+      observe() {}
+      disconnect() {}
+    };
+    const onIntersect = vi.fn();
+    const { unmount } = renderPdfPage({
+      props: { sessionId: "test-document", pageIndex: 3, documentGenerationId: 1, onIntersect },
+    });
+    const visibility = callbacks[0];
+    visibility([{ isIntersecting: true, intersectionRatio: 0.2 }, { isIntersecting: true, intersectionRatio: 0.6 }]);
+    expect(onIntersect).toHaveBeenLastCalledWith(3, 0.6);
+    visibility([{ isIntersecting: false, intersectionRatio: 0 }]);
+    expect(onIntersect).toHaveBeenLastCalledWith(3, 0);
+    onIntersect.mockClear();
+    unmount();
+    expect(onIntersect).toHaveBeenCalledWith(3, 0);
+  });
+});
+
+describe("PdfPage placeholder geometry and single-page mode", () => {
+  const LETTER = { widthPt: 612, heightPt: 792 };
+  const A4_LANDSCAPE = { widthPt: 841.89, heightPt: 595.276 };
+
+  function pageContainer(container) {
+    return container.querySelector(".pdf-page-container");
+  }
+
+  it("sizes unrendered pages from the worker page size of each page", async () => {
+    getPageSizes.mockResolvedValueOnce([LETTER, A4_LANDSCAPE]);
+    const { container: first } = renderPdfPage({
+      props: { sessionId: "mixed-sizes", pageIndex: 0, documentGenerationId: 1 },
+    });
+    const { container: second } = renderPdfPage({
+      props: { sessionId: "mixed-sizes", pageIndex: 1, documentGenerationId: 1, scale: 1.3 },
+    });
+
+    await waitFor(() => expect(pageContainer(first).style.height).toBe("792px"));
+    // trunc(841.89 * 1.3) = 1094 px wide; round(595.276 * 1094 / 841.89) = 774 px high.
+    await waitFor(() => expect(pageContainer(second).style.height).toBe("774px"));
+    expect(getPageSizes).toHaveBeenCalledTimes(1);
+    expect(getPageSizes).toHaveBeenCalledWith("mixed-sizes", 1);
+  });
+
+  it("asks for page sizes again when the content generation changes", async () => {
+    getPageSizes
+      .mockResolvedValueOnce([LETTER])
+      .mockResolvedValueOnce([A4_LANDSCAPE]);
+    const { container, rerender } = renderPdfPage({
+      props: { sessionId: "generation-sizes", pageIndex: 0, documentGenerationId: 1 },
+    });
+    await waitFor(() => expect(pageContainer(container).style.height).toBe("792px"));
+
+    await rerender({ documentGenerationId: 2 });
+    await waitFor(() => expect(pageContainer(container).style.height).toBe("595px"));
+    expect(getPageSizes).toHaveBeenLastCalledWith("generation-sizes", 2);
+  });
+
+  it("reports no layout shift when the placeholder matched the rendered page", async () => {
+    getPageSizes.mockResolvedValueOnce([LETTER]);
+    renderPage.mockImplementationOnce(async (request) => ({
+      width: 612,
+      height: 792,
+      data: new Uint8Array(612 * 792 * 4).fill(255),
+      pageIndex: request.pageIndex,
+      generation: request.contentGeneration,
+      requestId: request.requestId,
+    }));
+    const { container } = renderPdfPage({
+      props: {
+        sessionId: "delta-matched",
+        pageIndex: 0,
+        isSinglePageMode: true,
+        currentPage: 0,
+        documentGenerationId: 1,
+      },
+    });
+    await waitFor(() => expect(pageContainer(container).style.height).toBe("792px"));
+    await waitFor(() =>
+      expect(pageContainer(container).dataset.placeholderHeightDelta).toBe("0"),
+    );
+  });
+
+  it("measures the layout shift when the placeholder had to guess", async () => {
+    const { container } = renderPdfPage({
+      props: {
+        sessionId: "delta-guessed",
+        pageIndex: 0,
+        isSinglePageMode: true,
+        currentPage: 0,
+        documentGenerationId: 1,
+      },
+    });
+    // No worker size: A4 fallback (841 px) before the 20x10 render arrives.
+    await waitFor(() =>
+      expect(pageContainer(container).dataset.placeholderHeightDelta).toBe(String(10 - 841)),
+    );
+    expect(pageContainer(container).style.height).toBe("10px");
+  });
+
+  it("forgets the measured fallback size when another document is shown", async () => {
+    const { container: rendered } = renderPdfPage({
+      props: {
+        sessionId: "fallback-a",
+        pageIndex: 0,
+        isSinglePageMode: true,
+        currentPage: 0,
+        documentGenerationId: 1,
+      },
+    });
+    await waitFor(() => expect(pageContainer(rendered).style.height).toBe("10px"));
+
+    // Same document: the measured 20x10 page is reused for unrendered pages.
+    const { container: sameDocument } = renderPdfPage({
+      props: { sessionId: "fallback-a", pageIndex: 1, documentGenerationId: 1 },
+    });
+    expect(pageContainer(sameDocument).style.height).toBe("10px");
+
+    // Other document: back to the A4 default instead of the previous document's ratio.
+    const { container: otherDocument } = renderPdfPage({
+      props: { sessionId: "fallback-b", pageIndex: 1, documentGenerationId: 1 },
+    });
+    expect(pageContainer(otherDocument).style.height).toBe("841px");
+  });
+
+  it("renders only the active page in single-page mode and leaves the others empty", async () => {
+    getPageSizes.mockResolvedValueOnce([LETTER, LETTER, A4_LANDSCAPE]);
+    const pages = [0, 1, 2].map((pageIndex) =>
+      renderPdfPage({
+        props: {
+          sessionId: "single-page",
+          pageIndex,
+          isSinglePageMode: true,
+          currentPage: 1,
+          documentGenerationId: 1,
+        },
+      }).container,
+    );
+
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
+    expect(renderPage.mock.calls[0][0].pageIndex).toBe(1);
+    for (const index of [0, 2]) {
+      const shell = pageContainer(pages[index]);
+      expect(shell.children).toHaveLength(0);
+      expect(shell.textContent).not.toContain("Yükleniyor");
+      expect(shell.getAttribute("aria-hidden")).toBe("true");
+    }
+    expect(pageContainer(pages[1]).querySelector("canvas")).not.toBeNull();
+    // Inactive pages keep their real height so page navigation can still scroll to them.
+    await waitFor(() => expect(pageContainer(pages[2]).style.height).toBe("595px"));
+  });
+
+  it("keeps the loading placeholder for off-screen pages in continuous mode", () => {
+    const { container } = renderPdfPage({
+      props: { sessionId: "continuous", pageIndex: 4, documentGenerationId: 1 },
+    });
+    expect(pageContainer(container).textContent).toContain("Sayfa 5 Yükleniyor");
+    expect(pageContainer(container).hasAttribute("aria-hidden")).toBe(false);
+  });
+});
+
+function workerFailure(code, message = "worker failure") {
+  return Object.assign(new Error(message), { code });
+}
+
+function resolvedRender(request) {
+  return {
+    ...renderedPage(request.rotation),
+    pageIndex: request.pageIndex,
+    generation: request.contentGeneration,
+    requestId: request.requestId,
+  };
+}
+
+describe("PdfPage worker-safety failures", () => {
+  const singlePage = {
+    sessionId: "test-document",
+    pageIndex: 0,
+    isSinglePageMode: true,
+    currentPage: 0,
+    documentGenerationId: 1,
+  };
+
+  it("does not request a timed-out page again on zoom or when it comes back into view", async () => {
+    renderPage.mockRejectedValueOnce(workerFailure("PDFIUM_WORKER_TIMEOUT"));
+    const { container, rerender } = renderPdfPage({ props: singlePage });
+    await waitFor(() => {
+      expect(container.querySelector(".page-error")?.textContent).toContain(
+        "Sayfa 1 işlenirken zaman aşımı oluştu.",
+      );
+    });
+
+    await rerender({ scale: 1.5 });
+    await rerender({ currentPage: 1 });
+    await rerender({ currentPage: 0 });
+    await tick();
+
+    expect(renderPage).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".page-error")?.textContent).toContain(
+      "zaman aşımı",
+    );
+    expect(container.querySelector(".page-retry")).not.toBeNull();
+  });
+
+  it("retries a failed page with exactly one request and recovers on success", async () => {
+    renderPage.mockRejectedValueOnce(workerFailure("PDFIUM_PAGE_QUARANTINED"));
+    const { container } = renderPdfPage({ props: singlePage });
+    const retry = await waitFor(() => {
+      const button = container.querySelector(".page-retry");
+      expect(button).not.toBeNull();
+      return button;
+    });
+    expect(container.querySelector(".page-error")?.textContent).toContain(
+      "tekrarlanan zaman aşımları",
+    );
+
+    renderPage.mockImplementationOnce(async (request) => resolvedRender(request));
+    await fireEvent.click(retry);
+
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+    expect(retryPage).toHaveBeenCalledWith("test-document", 1, 0);
+    await waitFor(() => expect(container.querySelector(".page-error")).toBeNull());
+    await tick();
+    expect(renderPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops after a failed retry instead of retrying automatically", async () => {
+    renderPage
+      .mockRejectedValueOnce(workerFailure("PDFIUM_WORKER_TIMEOUT"))
+      .mockRejectedValueOnce(workerFailure("PDFIUM_PAGE_QUARANTINED"));
+    const { container } = renderPdfPage({ props: singlePage });
+    const retry = await waitFor(() => {
+      const button = container.querySelector(".page-retry");
+      expect(button).not.toBeNull();
+      return button;
+    });
+
+    await fireEvent.click(retry);
+    await waitFor(() => {
+      expect(container.querySelector(".page-error")?.textContent).toContain(
+        "askıya alındı",
+      );
+    });
+    await tick();
+    expect(renderPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks every page of a quarantined document and offers no page retry", async () => {
+    renderPage.mockRejectedValueOnce(workerFailure("PDFIUM_DOCUMENT_QUARANTINED"));
+    const { container } = renderPdfPage({ props: singlePage });
+    await waitFor(() => {
+      expect(container.querySelector(".page-error")?.textContent).toContain(
+        "Belge PDF motorunu tekrar tekrar durdurduğu için askıya alındı.",
+      );
+    });
+    expect(container.querySelector(".page-retry")).toBeNull();
+
+    const other = render(PdfPage, {
+      props: { ...singlePage, pageIndex: 1, currentPage: 1 },
+    });
+    await tick();
+    expect(renderPage).toHaveBeenCalledTimes(1);
+    expect(other.container.querySelector(".page-error")?.textContent).toContain(
+      "askıya alındı",
+    );
+  });
+
+  it("does not request a timed-out text layout again after the page comes back", async () => {
+    getPageTextLayout.mockRejectedValueOnce(workerFailure("PDFIUM_WORKER_TIMEOUT"));
+    const { rerender } = renderPdfPage({ props: singlePage });
+    await waitFor(() => expect(textRequestCount()).toBe(1));
+    await tick();
+
+    await rerender({ currentPage: 1 });
+    await rerender({ currentPage: 0 });
+    await tick();
+
+    expect(textRequestCount()).toBe(1);
+  });
+
+  it("requests the page again for a new content generation", async () => {
+    renderPage.mockRejectedValueOnce(workerFailure("PDFIUM_WORKER_TIMEOUT"));
+    const { container, rerender } = renderPdfPage({ props: singlePage });
+    await waitFor(() => expect(container.querySelector(".page-retry")).not.toBeNull());
+
+    renderSessionMock.current = { sessionId: "test-document", contentGeneration: 2 };
+    await rerender({ documentGenerationId: 2 });
+
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+    expect(renderPage.mock.calls[1][0].contentGeneration).toBe(2);
+  });
+
+  it("keeps ordinary failures retryable by a later request", async () => {
+    renderPage.mockRejectedValueOnce(new Error("PDF worker restart budget was exhausted"));
+    const { container, rerender } = renderPdfPage({ props: singlePage });
+    await waitFor(() => expect(container.querySelector(".page-error")).not.toBeNull());
+    expect(container.querySelector(".page-retry")).toBeNull();
+
+    await rerender({ scale: 1.5 });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
   });
 });

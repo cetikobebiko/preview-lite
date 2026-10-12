@@ -85,30 +85,15 @@ export async function splitSessionPdf(sessionId, expectedContentGeneration, rang
 // AŞAMA 10: Optik Karakter Tanıma (OCR)
 // ==========================================
 
-export async function detectScannedPage(
-  sessionId,
-  expectedContentGeneration,
-  pageIndex,
-) {
-  try {
-    return await ocrBackend.detectScannedPage(
-      sessionId,
-      expectedContentGeneration,
-      pageIndex,
-    );
-  } catch (e) {
-    console.error("Scanned page tespiti hatası:", e);
-    return false; // Hata durumunda varsayılan olarak metin katmanı var sayılır.
-  }
+// Belge başına tek job; sayfa başına bool vektörü döner. Hata yutulmaz:
+// cache/fallback politikası ocrDocumentState.js içindedir.
+export async function detectScannedPages(sessionId, expectedContentGeneration) {
+  return await ocrBackend.detectScannedPages(sessionId, expectedContentGeneration);
 }
 
+// Hata yutulmaz; fallback ve yeniden deneme politikası ocrDocumentState.js içindedir.
 export async function getAvailableOcrLanguages() {
-  try {
-    return await ocrBackend.getAvailableOcrLanguages();
-  } catch (e) {
-    console.error("OCR dilleri okunamadı:", e);
-    return ["eng"]; // Fallback
-  }
+  return await ocrBackend.getAvailableOcrLanguages();
 }
 
 export async function runOcrOnPage(

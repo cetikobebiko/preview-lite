@@ -1,5 +1,12 @@
-/** Owns annotation-pointer state transitions while the annotation store remains authoritative. */
+import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
+
+/**
+ * Owns annotation-pointer state transitions while the annotation store remains authoritative.
+ * Drawings are keyed by physical page index, the index burn-in export writes to.
+ */
 export function createAnnotationCanvasController({ annotation, viewer, getCanvases, promptText, render }) {
+  const currentPhysicalPage = () => toPhysicalPageIndex(viewer.pageOrder, viewer.currentPageIndex);
+
   function getCanvasCoords(event) {
     const { left, right } = getCanvases();
     const canvas = viewer.isBookMode && event.target === right ? right : left;
@@ -13,8 +20,10 @@ export function createAnnotationCanvasController({ annotation, viewer, getCanvas
   }
 
   function addToCurrentPage(item) {
-    if (!annotation.annotationsMap[viewer.currentPageIndex]) annotation.annotationsMap[viewer.currentPageIndex] = [];
-    annotation.annotationsMap[viewer.currentPageIndex].push(item);
+    const pageIndex = item.page_index;
+    if (!Number.isInteger(pageIndex) || pageIndex < 0) return;
+    if (!annotation.annotationsMap[pageIndex]) annotation.annotationsMap[pageIndex] = [];
+    annotation.annotationsMap[pageIndex].push(item);
     annotation.annotationsMap = { ...annotation.annotationsMap };
     render({ silent: true });
   }
@@ -27,7 +36,8 @@ export function createAnnotationCanvasController({ annotation, viewer, getCanvas
   async function handleMouseDown(event) {
     if (annotation.activeTool === "pointer") return;
     const coords = getCanvasCoords(event);
-    if (!coords) return;
+    const pageIndex = currentPhysicalPage();
+    if (!coords || pageIndex < 0) return;
     annotation.isDrawing = true;
     annotation.startPos = coords;
     const canvas = getCanvasSize();
@@ -35,13 +45,13 @@ export function createAnnotationCanvasController({ annotation, viewer, getCanvas
     if (annotation.activeTool === "pen" || annotation.activeTool === "highlighter") {
       annotation.currentPoints = [coords];
       annotation.currentAnnoItem = {
-        page_index: viewer.currentPageIndex, tool_type: annotation.activeTool, points: annotation.currentPoints,
+        page_index: pageIndex, tool_type: annotation.activeTool, points: annotation.currentPoints,
         color: annotation.strokeColor, size: annotation.strokeSize, canvas_width: canvas.width, canvas_height: canvas.height,
       };
     } else if (annotation.activeTool === "text") {
       const userText = await promptText({ title: "Metin Açıklaması", label: "Metin" });
       if (userText) addToCurrentPage({
-        page_index: viewer.currentPageIndex, tool_type: "text", x: coords.x, y: coords.y, text: userText,
+        page_index: pageIndex, tool_type: "text", x: coords.x, y: coords.y, text: userText,
         color: annotation.strokeColor, size: annotation.strokeSize, canvas_width: canvas.width, canvas_height: canvas.height,
       });
       annotation.isDrawing = false;
@@ -51,21 +61,22 @@ export function createAnnotationCanvasController({ annotation, viewer, getCanvas
   function handleMouseMove(event) {
     if (!annotation.isDrawing || annotation.activeTool === "pointer") return;
     const coords = getCanvasCoords(event);
-    if (!coords) return;
+    const pageIndex = currentPhysicalPage();
+    if (!coords || pageIndex < 0) return;
     const canvas = getCanvasSize();
     if (annotation.activeTool === "pen" || annotation.activeTool === "highlighter") {
       annotation.currentPoints.push(coords);
       annotation.currentAnnoItem.points = annotation.currentPoints;
     } else if (annotation.activeTool === "rectangle") {
       annotation.currentAnnoItem = {
-        page_index: viewer.currentPageIndex, tool_type: "rectangle",
+        page_index: pageIndex, tool_type: "rectangle",
         x: Math.min(annotation.startPos.x, coords.x), y: Math.min(annotation.startPos.y, coords.y),
         w: Math.abs(coords.x - annotation.startPos.x), h: Math.abs(coords.y - annotation.startPos.y),
         color: annotation.strokeColor, size: annotation.strokeSize, canvas_width: canvas.width, canvas_height: canvas.height,
       };
     } else if (annotation.activeTool === "arrow") {
       annotation.currentAnnoItem = {
-        page_index: viewer.currentPageIndex, tool_type: "arrow", x: annotation.startPos.x, y: annotation.startPos.y,
+        page_index: pageIndex, tool_type: "arrow", x: annotation.startPos.x, y: annotation.startPos.y,
         end_x: coords.x, end_y: coords.y, color: annotation.strokeColor, size: annotation.strokeSize,
         canvas_width: canvas.width, canvas_height: canvas.height,
       };

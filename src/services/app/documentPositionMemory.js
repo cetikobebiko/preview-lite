@@ -47,7 +47,9 @@ export function createDocumentPositionMemory({
     if (typeof state.isSinglePageMode === "boolean") viewer.isSinglePageMode = state.isSinglePageMode;
 
     onToast(`Son kalınan konum hatırlandı (Sayfa ${viewer.currentPageIndex + 1})`);
-    schedule(() => scrollToPage(viewer.currentPageIndex), 300);
+    // Capture now: intersection updates may move currentPageIndex before the deferred scroll runs.
+    const restoredPageIndex = viewer.currentPageIndex;
+    schedule(() => scrollToPage(restoredPageIndex), 300);
     return true;
   }
 

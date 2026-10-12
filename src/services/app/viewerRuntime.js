@@ -53,9 +53,9 @@ export function createViewerRuntime({
       overlay: () => {
         paintAnnotations({
           canvas,
-          pageIndex: viewer.currentPageIndex,
+          pageIndex: viewer.physicalPageIndex,
           annotation,
-          currentPageIndex: viewer.currentPageIndex,
+          currentPageIndex: viewer.physicalPageIndex,
         });
         callbacks.savePosition();
       },
@@ -89,6 +89,8 @@ export function createViewerRuntime({
       isMounted: getIsMounted,
       hasDocument: () => Boolean(documentSession.active || viewer.activeImageSourcePath),
       onRender: render,
+      onZoomStart: navigation.captureZoomAnchor,
+      onZoomCommit: () => { void navigation.restoreZoomAnchor(); },
     });
   }
 

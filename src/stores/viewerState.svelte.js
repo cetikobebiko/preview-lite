@@ -26,13 +26,18 @@ export function createViewerState() {
     isRendering: false,
     isDocumentLoading: false,
     isZooming: false,
+    zoomOriginY: null,
     historyStack: [],
     forwardStack: [],
     pdfMetadata: { title: "", author: "", subject: "", keywords: "", creator: "" },
     outlineList: [],
     documentTextContext: "",
+    // Physical page whose text documentTextContext holds; -1 when empty.
+    documentTextPageIndex: -1,
     readingTimeSeconds: 0,
     bionicText: "",
+    // { pageNumber, method: "pdf" | "ocr" } describing where bionicText came from.
+    bionicSource: null,
     isSpeaking: false,
   });
 
@@ -56,13 +61,16 @@ export function createViewerState() {
     get isRendering() { return state.isRendering; }, set isRendering(value) { state.isRendering = value; },
     get isDocumentLoading() { return state.isDocumentLoading; }, set isDocumentLoading(value) { state.isDocumentLoading = value; },
     get isZooming() { return state.isZooming; }, set isZooming(value) { state.isZooming = value; },
+    get zoomOriginY() { return state.zoomOriginY; }, set zoomOriginY(value) { state.zoomOriginY = value; },
     get historyStack() { return state.historyStack; }, set historyStack(value) { state.historyStack = value; },
     get forwardStack() { return state.forwardStack; }, set forwardStack(value) { state.forwardStack = value; },
     get pdfMetadata() { return state.pdfMetadata; }, set pdfMetadata(value) { state.pdfMetadata = value; },
     get outlineList() { return state.outlineList; }, set outlineList(value) { state.outlineList = value; },
     get documentTextContext() { return state.documentTextContext; }, set documentTextContext(value) { state.documentTextContext = value; },
+    get documentTextPageIndex() { return state.documentTextPageIndex; }, set documentTextPageIndex(value) { state.documentTextPageIndex = value; },
     get readingTimeSeconds() { return state.readingTimeSeconds; }, set readingTimeSeconds(value) { state.readingTimeSeconds = value; },
     get bionicText() { return state.bionicText; }, set bionicText(value) { state.bionicText = value; },
+    get bionicSource() { return state.bionicSource; }, set bionicSource(value) { state.bionicSource = value; },
     get isSpeaking() { return state.isSpeaking; }, set isSpeaking(value) { state.isSpeaking = value; },
     get physicalPageIndex() { return resolvePhysicalPageIndex(state.pageOrder, state.currentPageIndex); },
     get spreads() {
@@ -80,6 +88,7 @@ export function createViewerState() {
       state.currentPageIndex = 0;
       state.scale = 1;
       state.visualScale = 1;
+      state.zoomOriginY = null;
       state.rotation = 0;
       state.flipH = false;
       state.flipV = false;

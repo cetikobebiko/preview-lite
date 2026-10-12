@@ -17,12 +17,35 @@ describe("viewer edit actions", () => {
     expect(render).toHaveBeenCalledWith({ silent: true });
   });
 
+  it("undoes and clears drawings of the current physical page when the display order differs", () => {
+    const { viewer, annotation, actions } = setup();
+    viewer.pageOrder = [2, 0, 1];
+    viewer.currentPageIndex = 0;
+    annotation.annotationsMap = { 0: [{ id: "page-0" }], 2: [{ id: "x" }, { id: "y" }] };
+    actions.undoLastAnnotation();
+    expect(annotation.annotationsMap).toEqual({ 0: [{ id: "page-0" }], 2: [{ id: "x" }] });
+    actions.clearCurrentPageAnnotations();
+    expect(annotation.annotationsMap).toEqual({ 0: [{ id: "page-0" }], 2: [] });
+  });
+
   it("keeps page index valid after a deletion and requests a rerender", () => {
     const { viewer, render, actions } = setup();
     actions.deletePage(2);
     expect(viewer.pageOrder).toEqual([0, 1]);
     expect(viewer.currentPageIndex).toBe(1);
     expect(render).toHaveBeenCalledWith();
+  });
+
+  it("keeps the same physical page current after a reorder or an earlier page removal", () => {
+    const { viewer, actions } = setup();
+    actions.reorderPages([2, 0, 1]);
+    expect(viewer.currentPageIndex).toBe(2);
+    actions.deletePage(0);
+    expect(viewer.pageOrder).toEqual([0, 1]);
+    expect(viewer.currentPageIndex).toBe(1);
+    actions.deletePage(1);
+    expect(viewer.pageOrder).toEqual([0]);
+    expect(viewer.currentPageIndex).toBe(0);
   });
 
   it("applies visual transforms through the shared viewer store", () => {

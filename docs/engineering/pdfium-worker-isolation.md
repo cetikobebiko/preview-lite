@@ -9,6 +9,7 @@ PDFium work in the `--run-worker` process:
 - `authenticate_document_session`
 - `probe_candidate_render`
 - `get_session_page_count`
+- `get_session_page_sizes`
 - `get_session_pdf_outline`
 - `get_session_pdf_metadata`
 - `get_session_page_annotations`
@@ -51,8 +52,9 @@ Sanitization remains feature-disabled, but its read-only
 `InspectDocumentSanitization` job worker. The Tauri process validates/routs the typed report and
 does not parse the PDF. JavaScript stream payloads that require decoding are accounted against
 per-stream and total decoded-byte budgets after lopdf's whole-buffer decode returns; the parser
-allocation itself is bounded by process isolation, address-space limits, and the parent timeout,
-not by a cooperative bounded-decode API. Sanitization cancellation is parent-enforced process
+allocation itself is bounded by process isolation, address-space limits (not in effect on
+macOS; see "Platform and CI status"), and the parent timeout, not by a cooperative bounded-decode
+API. Sanitization cancellation is parent-enforced process
 kill + wait/reap; there is no production worker-side cooperative cancellation IPC. Legacy
 8C.3 additionally provides a private `SanitizePdf` ephemeral operation. It receives only the
 immutable snapshot, versioned policy/digest authority and a fixed internal output name; lopdf
@@ -99,8 +101,9 @@ immutable jobs/ snapshot
 ```
 
 The request limit is 1 MiB and the typed response limit is 256 MiB. Text output is limited to
-32 Mi characters and page-list operations to 10,000 pages. The worker applies the same Unix
-address-space resource ceiling as the viewer worker. Request and response files are create-new,
+32 Mi characters and page-list operations to 10,000 pages. The worker requests the same Unix
+address-space resource ceiling as the viewer worker; on macOS the request fails and the job
+worker discards the failure (see "Platform and CI status"). Request and response files are create-new,
 mode `0600` on Unix, and live only in the private session-job directory. Credentials are never
 placed in process arguments or logs.
 
@@ -143,6 +146,19 @@ closure then acquires broker admission, acquires the session read lease, revalid
 and dispatches the worker command. A queued render therefore holds neither a session read lease
 nor the broker's active slot.
 
+Viewer search runs as a sequence of bounded `SearchTextPages` chunks
+(`PdfiumWorkerBroker::search_text_in_chunks`). Every chunk repeats the full read sequence above
+(admission, session read lease, generation check), so reads queued behind a search are served
+between chunks, and a generation change between chunks fails the next chunk. A chunk stops after
+64 pages or ~150 ms (checked between pages, always at least one page). The broker validates each
+chunk against its request (page range, match numbering, result capacity) and concatenates them;
+because matches never span pages the result is identical to a whole-document `SearchText`, which
+the real-PDFium parity test checks on every chunk boundary.
+
+Once a document is open for a `(session ID, content generation)` key, the broker reuses the page
+count returned by `OpenDocument`: the worker opens it read-only and every mutation commits a new
+generation, so reusing an open document costs no worker round-trip.
+
 Exclusive mutation/close admission has priority over queued reads. Starting an exclusive action
 blocks and cancels queued reads for that session. A backlog for Session A cannot indefinitely
 starve an exclusive close or mutation for Session B.
@@ -152,7 +168,7 @@ response arrives or cancellation/timeout kills and reaps the worker.
 
 ## Protocol version and envelopes
 
-Protocol version: `2`.
+Protocol version: `4`.
 
 ```text
 WorkerRequest {
@@ -175,7 +191,21 @@ are distinct from frontend render request IDs.
 
 Commands are `Hello`, `OpenDocument`, `CloseDocument`, `CloseAllDocuments`, `GetPageCount`,
 `RenderPage`, `RenderThumbnail`, `GetPageTextLayout`, `SearchText`, `GetOutline`, `GetMetadata`,
-`GetPageAnnotations`, `GetStructureTree`, `AuditAccessibility`, `Ping`, and `Shutdown`.
+`GetPageAnnotations`, `GetStructureTree`, `AuditAccessibility`, `Ping`, `Shutdown`,
+`SearchTextPages`, and `GetPageSizes`.
+
+Worker protocol version 5 adds `GetPageSizes`, answered by `PageSizes([{ width_pt, height_pt }])`
+for every page in one round trip (`FPDF_GetPageSizeByIndexF`, so CropBox and the page `/Rotate`
+are applied; unusable sizes are reported as 0). `get_session_page_sizes` reaches it through
+`acquire_worker_read` with the expected content generation. The viewer uses it only to size
+unrendered page placeholders; render and geometry authority stays with `RenderPage`.
+`tests/fixtures/contracts/page-render-geometry-v1.json` pins the sizes and the real
+`RenderPage` bitmap sizes that the frontend placeholder estimate is tested against.
+
+Worker protocol version 4 adds `SearchTextPages`, answered by `SearchChunk { matches,
+total_matches, next_page }`. The worker checks `max_pages` (at most 4096) and `time_budget_ms`
+(at most 10 seconds) before each page after the first. `SearchText` remains in the protocol for
+the parity and Unicode tests; production viewer search uses `SearchTextPages`.
 
 Worker protocol version 3 returns `AccessibilityStructure` and `AccessibilityAudit`.
 Both read the cached worker-owned accessibility document; no active PDF is reopened
@@ -200,10 +230,13 @@ Deserialization uses a bincode byte limit and rejects trailing bytes.
 | Cached accessibility source | 64 MiB | Bounds the document-owned structure-tree/PDF/UA parser view |
 | Password-protected in-memory PDF | 256 MiB | Credential-safe owned-byte load within the worker resource envelope |
 
-The Unix address-space ceiling is 2 GiB. Its explicit peak model reserves one 256 MiB PDFium
-bitmap, one 256 MiB RGBA result, one 256 MiB serialized response copy, an optional 256 MiB
-password-protected document buffer, 512 MiB PDFium/runtime headroom, and another 512 MiB safety
-margin. A unit invariant prevents the bounded peak model from exceeding the address-space limit.
+The worker requests a 2 GiB Unix address-space ceiling (`RLIMIT_AS`). Its explicit peak model
+reserves one 256 MiB PDFium bitmap, one 256 MiB RGBA result, one 256 MiB serialized response
+copy, an optional 256 MiB password-protected document buffer, 512 MiB PDFium/runtime headroom,
+and another 512 MiB safety margin. A unit invariant prevents the bounded peak model from
+exceeding the requested limit. The ceiling is not in effect on macOS: `setrlimit` rejects it
+there (see "Platform and CI status"), so on macOS worker memory is currently unbounded. Whether
+it is enforced on Linux has not been verified in this repository.
 
 The frame length is checked before allocation; `u32`/`usize` and serialized length conversions
 are checked. Partial header, partial payload, malformed bincode, trailing bytes, oversized
@@ -304,30 +337,158 @@ cache invalidation.
 | Thumbnail | 10 seconds |
 | Open document, text layout | 15 seconds |
 | Main render | 20 seconds |
-| Search | 30 seconds |
+| Search chunk | 15 seconds |
+| Whole-document search (tests only) | 30 seconds |
 
 These values replace the former universal three-second watchdog. Small committed fixtures are
 measured by integration tests; the values remain conservative for slower CI. A single timeout
 fails only that request, kills and reaps the worker, and invalidates the epoch. The active command
 is not replayed.
 
-Queued cancellation removes the request before it holds a session lease. Cancelling an active
-native command kills and reaps the worker because PDFium may not return to read a cancel command.
+Queued cancellation removes the request before it holds a session lease. A command whose token is
+already cancelled is never sent. Cancellation never relies on the worker reading a cancel command,
+because PDFium may not return to the protocol loop until the native call finishes. Instead, a
+cancelled active command whose class normally finishes quickly may keep running for a bounded
+grace period:
+
+| Command class | Cancellation grace |
+|---|---:|
+| Main render, search chunk | 400 ms |
+| Thumbnail, text layout, page count | 250 ms |
+| Open document, document reads, whole-document search, lifecycle commands | none |
+
+The grace is also bounded by the command timeout. A response that arrives within it is validated
+(protocol version and request ID, as for any response) and then discarded; the caller receives
+`PDFIUM_WORKER_CANCELLED`, and the worker, its epoch, and its open documents are kept. Otherwise
+the worker is killed and reaped as before. Neither path consumes restart budget or counts toward
+quarantine. Shutdown cancellation skips the grace period. These grace values are initial bounds;
+they are to be revised from the worker metrics below.
+
+The broker records the request ID it is waiting for (`in_flight`) until a complete response
+frame has been read. If an exchange is abandoned (its future dropped) while a response is owed,
+the next broker operation replaces the worker instead of reading the stale frame, which would
+otherwise look like a protocol violation and be charged to the restart budget and to an
+unrelated document's quarantine record.
+
 Wrong-session cancellation only removes matching session queue entries.
+
+## Worker metrics
+
+Lifecycle and cancellation events are emitted at debug level on the `pdfium_worker_metrics`
+tracing target. They carry only command classes, durations, epochs, causes and counts; never
+paths, credentials, queries or payloads.
+
+| Event | Fields |
+|---|---|
+| `worker_spawn` | `reason` (`initial` or the previous termination cause), `spawn_to_hello_ms` |
+| `worker_terminate` | `cause` (`cancelled`, `abandoned`, `health_failure`, `close_failure`, `shutdown`) |
+| `exchange` | `command_class`, `outcome` (`ok`, `cancelled_drained`, `cancelled_killed`, error code), `duration_ms` |
+| `admission` | `mode`, `outcome` (`granted`, `cancelled_in_queue`, `rejected`), `wait_ms` |
+| `render_cancel` | `trigger` (`explicit`, `slot_replaced`, `document_switch`), frontend `reason`, `scope` |
+| `render_cancel_observed` | `phase` (`scheduler_queue`), `scope` |
+| `search_cancel`, `text_layout_cancel` | `trigger` (`search_superseded`, `text_layout_superseded`) |
+| `search_completed` | `chunks`, `total_matches`, `duration_ms` |
+
+The frontend passes a diagnostic `reason` with `cancel_session_render_request`: `superseded`,
+`viewport_exit`, `zoom`, `rerender`, `timeout`, `destroy`, or `unspecified`. It never changes
+cancellation behavior. To measure, run a release build with
+`RUST_LOG=pdfium_worker_metrics=debug` (JSON lines go to `logs/antigravity.log.*`) and summarize
+with `node scripts/worker-metrics-report.mjs <log>`.
+
+Frontend coalescing reduces how often cancellation happens at all. During a zoom gesture,
+`PdfPage` lets the in-flight render finish (its result is dropped as stale) and cancels once the
+150 ms debounce settles, instead of cancelling on every step. Sidebar and organizer thumbnails
+start rendering only after staying visible for 120 ms, so fast scrolling does not start and
+cancel a render for every item that crosses the viewport.
 
 ## Restart and quarantine
 
-Global process restarts and document failures have separate budgets.
+Global process restarts and document failures have separate budgets. Every crash, timeout, or
+protocol violation kills the shared worker, which drops the open documents of every session, so
+the failure records exist to stop one document from doing that repeatedly.
 
 - Global budget: five spawn attempts in a rolling 60-second window.
-- Document failure window: 60 seconds per `(session_id, content_generation)`.
-- Quarantine: three failures of the same category within the window.
-- Categories: crash, timeout, and protocol violation are counted separately.
+- Failure records are kept per `(session_id, content_generation)`.
+- Crash and protocol violation: document scope, whichever page was involved. Three failures of
+  the same category within 60 seconds quarantine the document generation.
+- Timeout of a document-scoped command (open, page count, search chunk, outline, metadata,
+  annotations, structure, accessibility audit, page sizes): three within 60 seconds quarantine the
+  document generation.
+- Timeout of a page-scoped command (`RenderPage`, `RenderThumbnail`, `GetPageTextLayout`; the
+  broker derives the page from the command through an exhaustive match): counted per page over a
+  300-second window. Two timeouts of the same page quarantine only that page; further page-scoped
+  commands for it are rejected with `PDFIUM_PAGE_QUARANTINED` before they reach the worker, so
+  they neither kill it nor consume restart budget. The window is longer than 60 seconds because
+  the worker runs one command at a time and a render may take 20 seconds to time out.
+- Document ceiling for page timeouts: timeouts on three distinct pages, or six page timeouts in
+  total, within 300 seconds quarantine the document generation.
 
-One timeout does not quarantine a document. Generation change, session invalidation/close, or
-candidate discard clears the relevant document failure and quarantine records. Quarantine changes
-neither dirty state nor content generation and prevents automatic rerender loops for that
-generation.
+The page thresholds and the 300-second window are initial bounds pending the worker-metrics
+baseline.
+
+`retry_session_page` (explicit user action only) lifts one page quarantine. It keeps the page's
+failure history: one more timeout inside the window quarantines the page again at once, and the
+document ceiling keeps counting, so repeated retries cannot turn into a kill loop. It never lifts
+a document quarantine; reopening the file creates a new session and therefore a new record.
+
+One timeout does not quarantine a page or a document. Generation change, session
+invalidation/close, or candidate discard clears the relevant failure, page quarantine, and
+document quarantine records. A document quarantine has no expiry within its generation.
+Quarantine changes neither dirty state nor content generation.
+
+The frontend (`src/services/pageFailureRegistry.js`) remembers, per document generation, page,
+and surface (main render, thumbnail, text layout), every `PDFIUM_WORKER_TIMEOUT`,
+`PDFIUM_WORKER_CRASHED`, `PDFIUM_PAGE_QUARANTINED`, and `PDFIUM_DOCUMENT_QUARANTINED` result. A
+remembered surface is not requested again on scroll, zoom, rotation, or remount; the page shows
+a Turkish message and a "Yeniden dene" button, which calls `retry_session_page` and allows one
+new main render request. The page's other surfaces are unblocked only after that render
+succeeds. A document quarantine blocks every page and shows a banner with a reopen action.
+Cancellations and other errors keep the earlier per-request behaviour.
+
+### Heavy-page baseline (2026-10-12, macOS arm64, real PDFium)
+
+`src-tauri/tests/fixtures/pdf/heavy-page.pdf` (generator `generate_heavy_page.py`) was measured
+with the production timeout classes, each command on a fresh failure record
+(`cargo test --test worker_pdfium_integration heavy_page_command_timings -- --ignored --nocapture`):
+
+| Page | Render page (20 s) | Thumbnail 150 px (10 s) | Text layout (15 s) |
+|---|---|---|---|
+| 0, light | ok, 187 ms | — | — |
+| 1, nested forms | timeout, 20.5 s | timeout, 10.2 s | timeout, 15.3 s |
+| 2, function shading | timeout, 20.0 s | ok, 3.1 s | ok, 4 ms |
+| 3, light | ok, 19 ms | — | — |
+
+Page 1 shows the case the policy addresses: one page makes all three surfaces time out, and
+under the previous document-wide rule those three timeouts (about 46 s) quarantined the whole
+generation. Now its second timeout quarantines only the page. Page 1 is used only for manual
+runs because its parse allocates far more than the 2 GiB peak model in "Framing and message
+limits", and nothing bounds worker memory on macOS (see "Worker memory on macOS"). The CI test
+`heavy_page_timeouts_quarantine_the_page_not_the_document` uses page 2 with a 2-second class
+(page 2 stays near 10 MB physical footprint for a full 20 s render).
+
+### Worker memory on macOS (2026-10-12, macOS 26.6.1 arm64, 8 GiB RAM)
+
+Resident set size (RSS, `ps -o rss`) is not a usable memory measure on macOS: the kernel
+compresses and swaps a growing process, so RSS stays near physical RAM pressure while the
+process keeps allocating. The measure that counts is the physical footprint
+(`proc_pid_rusage` `ri_phys_footprint`, which includes compressed and swapped pages); its
+kernel high-water mark is `ri_lifetime_max_phys_footprint`.
+
+Page 1 of `heavy-page.pdf`, debug worker binary with the release PDFium dylib, three runs each,
+the worker killed at the timeout as the broker does:
+
+| Command, timeout | Peak footprint (kernel high-water mark) | Peak RSS | Virtual size above idle |
+|---|---|---|---|
+| Render page, 20 s | 25.0 / 25.3 / 25.6 GB | 0.8 / 1.9 / 2.0 GB | +14 GiB |
+| Render page, 2 s | 2.6 / 2.6 / 2.6 GB | 2.0 / 2.1 / 2.1 GB | +0.09 GiB |
+| Thumbnail, 10 s (one run) | 12.6 GB | 2.1 GB | +3.4 GiB |
+| Text layout, 15 s (one run) | 18.9 GB | 2.0 GB | +9.1 GiB |
+
+Footprint grows linearly at about 1.27 GB/s from the first second. Virtual size stays within
+the allocator's up-front reservation for about 8 s and only then starts to grow, so a limit on
+address space would take effect far later than a limit on footprint. The earlier "2.6 GB RSS"
+reading came from `ps` sampling and understated the real footprint by an order of magnitude.
+These were manual probe runs, not a CI test.
 
 ## Mutation invalidation
 
@@ -427,6 +588,7 @@ Stable lifecycle codes include:
 - `PDFIUM_WORKER_RENDER_FAILED`
 - `PDFIUM_WORKER_ADMISSION_INVALID`
 - `PDFIUM_DOCUMENT_QUARANTINED`
+- `PDFIUM_PAGE_QUARANTINED`
 
 Document/password/render categories are mapped separately. `DocumentSessionError` serializes the
 code and message. The central frontend backend client copies the code onto `BackendCommandError`
@@ -444,10 +606,27 @@ reopen tests. Windows uses fake-worker lifecycle and handle-order tests; this is
 real Windows PDFium integration has been verified. Linux real PDFium integration is likewise not
 claimed.
 
-The Unix worker attempts a 2 GiB address-space limit. Failure is reported in handshake
-diagnostics rather than silently ignored. macOS may report this limit as unavailable. Windows Job
-Object containment is not implemented and is explicitly reported as unavailable; process
-kill/reap isolation still applies.
+The Unix worker attempts a 2 GiB address-space limit. On macOS this limit is never applied
+(verified 2026-10-12 on macOS 26.6.1 arm64):
+
+- `setrlimit(RLIMIT_AS, 2 GiB)` fails, so the viewer worker's `Hello` reports
+  `PDFIUM_WORKER_RESOURCE_LIMIT_UNAVAILABLE`. A standalone probe gets `EINVAL`: a freshly started
+  process already maps about 415 GiB of virtual address space (shared cache and allocator
+  reservations), and `RLIMIT_AS` and `RLIMIT_DATA` values below that size (2.5 GiB and 64 GiB
+  tried) are rejected, while one above it is accepted.
+- macOS does enforce `RLIMIT_AS` against total virtual size: a limit of current size + 1 GiB is
+  accepted, and `mmap` fails after the extra 1 GiB. A limit relative to the startup size is
+  therefore possible, but it measures address space, not memory (see "Worker memory on macOS").
+- The per-process footprint limits (`memorystatus_control`) return `EPERM` for an unprivileged
+  process.
+
+The diagnostic is not silently dropped by the worker, but nothing consumes it: the broker
+ignores the `Hello` diagnostics and the job worker ignores the return value of
+`apply_resource_limits()`. On macOS the viewer worker and every job worker therefore run
+without a memory bound; a runaway page is stopped only by the command timeout, after which it
+may already have built up tens of gigabytes of footprint. Windows Job Object containment is not
+implemented and is explicitly reported as unavailable; process kill/reap isolation still
+applies.
 
 ## Local verification (2026-07-29, macOS arm64)
 

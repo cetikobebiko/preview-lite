@@ -481,6 +481,9 @@ decode sırasındaki ilk allocation'ını preempt etmez. Decoded sonuç döner d
 per-stream ve total budget enforce edilir; oversized payload finding veya başarı raporu
 üretemez. Parser-level DoS sınırı ayrı ephemeral process, worker address-space limiti
 ve parent timeout/kill/wait birlikteliğidir; bounded/pre-allocation decode garantisi yoktur.
+macOS'ta address-space limiti uygulanmaz (`setrlimit` reddeder; bkz.
+`pdfium-worker-isolation.md`, "Platform and CI status"); orada sınır yalnız process
+izolasyonu ve parent timeout/kill/wait'tir.
 
 Production sanitization cancellation cooperative worker IPC kullanmaz. Scanner'ın
 checkpoint-capable seam'i yalnız deterministic unit test authority'sidir; production

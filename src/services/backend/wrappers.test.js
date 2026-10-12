@@ -10,6 +10,7 @@ import * as prepress from "./prepress.js";
 import * as redaction from "./redaction.js";
 import * as session from "./session.js";
 import * as viewer from "./viewer.js";
+import { encodeRenderFrame } from "./renderFrameTestUtils.js";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const JOB_ID = "00000000-0000-4000-8000-000000000001";
@@ -46,6 +47,16 @@ const accessibilityStructure = {
   schemaVersion: "accessibility-structure/1", inspectionVersion: "bounded-structure-inspection/1",
   root: null, findings: [], warnings: [], truncated: false, limitations: [],
 };
+const renderFrame = {
+  width: 1,
+  height: 1,
+  data: new Uint8Array([10, 20, 30, 255]),
+  pageIndex: 2,
+  generation: 7,
+  requestId: "request-1",
+};
+const decodedRenderFrame = { ...renderFrame, data: new Uint8ClampedArray(renderFrame.data) };
+const decodedImageFrame = { width: 1, height: 1, data: new Uint8ClampedArray(renderFrame.data) };
 const prepressIdentity = { sessionId: "session-1", contentGeneration: 7, physicalPageIndex: 2, requestId: "request-1", methodologyVersion: "naive-rgb-to-cmyk/1" };
 const previewMetadata = { schemaVersion: "rgb-derived-print-preview/1", methodology: "naive-rgb-to-cmyk/1", sourceColorModel: "pdfium_display_rgb", approximate: true, colorManaged: false, outputIntentApplied: false, spotColorsPreserved: false, overprintSimulated: false, renderingIntent: "not_applied", warnings: [] };
 const emptyInspectionCounts = { visitedObjects: 0, resourceReferences: 0, xobjects: 0, patterns: 0, shadings: 0, colorSpaceDefinitions: 0, uniqueColorSpaceObjects: 0, iccProfiles: 0, outputIntents: 0, spotColors: 0, fonts: 0, transparencyObservations: 0 };
@@ -58,7 +69,10 @@ const cases = [
   ["renderThumbnail", () => viewer.renderThumbnail({ ...renderSession, targetWidth: 180, scope: "sidebar_thumbnail" }), "render_session_thumbnail", { sessionId: "document-1", pageIndex: 2, targetWidth: 180, contentGeneration: 7, requestId: "request-1", scope: "sidebar_thumbnail" }],
   ["setActiveRenderDocument", () => viewer.setActiveRenderDocument({ sessionId: "document-1", contentGeneration: 7 }), "set_active_session_render_document", { sessionId: "document-1", contentGeneration: 7 }],
   ["cancelRenderRequest", () => viewer.cancelRenderRequest({ ...renderSession, scope: "main_page" }), "cancel_session_render_request", { sessionId: "document-1", pageIndex: 2, contentGeneration: 7, requestId: "request-1", scope: "main_page" }],
+  ["cancelRenderRequestWithReason", () => viewer.cancelRenderRequest({ ...renderSession, scope: "sidebar_thumbnail" }, "viewport_exit"), "cancel_session_render_request", { sessionId: "document-1", pageIndex: 2, contentGeneration: 7, requestId: "request-1", scope: "sidebar_thumbnail", reason: "viewport_exit" }],
   ["getPageTextLayout", () => viewer.getPageTextLayout("session-1", 7, 2), "get_session_page_text_layout", { sessionId: "session-1", expectedContentGeneration: 7, pageIndex: 2 }],
+  ["getPageSizes", () => viewer.getPageSizes("session-1", 7), "get_session_page_sizes", { sessionId: "session-1", expectedContentGeneration: 7 }],
+  ["retryPage", () => viewer.retryPage("session-1", 7, 2), "retry_session_page", { sessionId: "session-1", expectedContentGeneration: 7, pageIndex: 2 }],
   ["openDocumentSession", () => session.openDocumentSession("/a.pdf"), "open_document_session", { path: "/a.pdf" }],
   ["getActiveDocumentSessionSnapshot", () => session.getActiveDocumentSessionSnapshot(), "get_active_document_session_snapshot"],
   ["probeCandidateRender", () => session.probeCandidateRender("candidate-1", 1), "probe_candidate_render", { sessionId: "candidate-1", expectedContentGeneration: 1 }],
@@ -85,7 +99,7 @@ const cases = [
   ["mergePdfs", () => manipulation.mergePdfs(["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_pdfs", { filePaths: ["/a.pdf", "/b.pdf"], outputPath: "/out.pdf" }],
   ["mergeSessionPdfs", () => manipulation.mergeSessionPdfs("sid", 1, ["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_session_pdfs", { sessionId: "sid", expectedContentGeneration: 1, additionalPaths: ["/a.pdf", "/b.pdf"], targetPath: "/out.pdf" }],
   ["splitSessionPdf", () => manipulation.splitSessionPdf("sid", 1, [[0, 2], [3, 4]], "/tmp"), "split_session_pdf", { sessionId: "sid", expectedContentGeneration: 1, ranges: [[0, 2], [3, 4]], outputDir: "/tmp" }],
-  ["detectScannedPage", () => ocr.detectScannedPage("sid", 1, 1), "detect_scanned_page", { sessionId: "sid", expectedContentGeneration: 1, pageIndex: 1 }],
+  ["detectScannedPages", () => ocr.detectScannedPages("sid", 1), "detect_scanned_pages", { sessionId: "sid", expectedContentGeneration: 1 }],
   ["getAvailableOcrLanguages", () => ocr.getAvailableOcrLanguages(), "get_available_ocr_languages"],
   ["runOcrOnPage", () => ocr.runOcrOnPage("sid", 1, 1, "tur"), "run_ocr_on_page", { sessionId: "sid", expectedContentGeneration: 1, pageIndex: 1, lang: "tur" }],
   ["exportAsSearchablePdf", () => ocr.exportAsSearchablePdf("sid", 1, "/b.pdf", "tur"), "export_as_searchable_pdf", { sessionId: "sid", expectedContentGeneration: 1, outputPath: "/b.pdf", lang: "tur" }],
@@ -147,6 +161,12 @@ beforeEach(() => {
     }
     if (command === "audit_session_accessibility") return accessibilityAudit;
     if (command === "get_session_structure_tree") return accessibilityStructure;
+    if (command === "render_session_page" || command === "render_session_thumbnail") {
+      return encodeRenderFrame(renderFrame);
+    }
+    if (command === "read_image_file") {
+      return encodeRenderFrame({ ...renderFrame, pageIndex: 0, generation: 0, requestId: "read_image_file" });
+    }
     return "result";
   });
 });
@@ -169,6 +189,8 @@ describe("canonical backend wrappers", () => {
       : command === "inspect_session_print_resources" ? inspectionReport
       : command === "generate_session_rgb_derived_coverage_preview" ? coveragePreview
       : command === "generate_session_rgb_derived_process_preview" ? processPreview
+      : command === "render_session_page" || command === "render_session_thumbnail" ? decodedRenderFrame
+      : command === "read_image_file" ? decodedImageFrame
         : "result";
     await expect(action()).resolves.toEqual(expected);
     if (payload === undefined) {

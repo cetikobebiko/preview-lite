@@ -1,14 +1,27 @@
 <script>
   import PdfPage from "./PdfPage.svelte";
+  import {
+    DOCUMENT_QUARANTINED,
+    pageFailureMessage,
+    pageFailureRegistry,
+  } from "../services/pageFailureRegistry.js";
 
   let {
     isPdf, viewer, annotation, documentSession, searchState, spreads, physicalPageIndex,
     prepress, featureUi, errorMsg, getActivePrepressPayload, getSensitiveDataHighlights = () => [],
     secureRedactionState, secureRedaction,
-    onSelectFile, onPageIntersect, onSearchHighlightReady,
+    onSelectFile, onReopenDocument = null, onPageIntersect, onSearchHighlightReady,
     onSessionSnapshot, onCanvasMouseDown, onCanvasMouseMove,
     onCanvasMouseUp, viewerAreaRef = $bindable(), canvasRefLeft = $bindable(),
   } = $props();
+
+  // Set once any request of the active generation came back quarantined; no
+  // page of it is requested again, so reopening is the way forward.
+  const documentQuarantined = $derived(($pageFailureRegistry, isPdf &&
+    pageFailureRegistry.isDocumentQuarantined(
+      documentSession.activeSessionId,
+      documentSession.contentGeneration,
+    )));
 </script>
 
 <div class="viewer-area" bind:this={viewerAreaRef}>
@@ -23,9 +36,15 @@
       <span class="hud-btn active" style="padding: 4px 16px;">[ DOSYA SEÇ ]</span>
     </button>
   {:else}
-    <div class="canvas-container {viewer.isBookMode || viewer.isSplitView ? 'book-mode' : ''} {viewer.isSmartDarkMode ? 'smart-dark-mode' : ''}" style="transform: scale({viewer.visualScale}); transform-origin: top center; will-change: transform; transition: {viewer.isZooming ? 'none' : 'transform 0.2s ease-out'};">
+    <div class="canvas-container {viewer.isBookMode || viewer.isSplitView ? 'book-mode' : ''} {viewer.isSmartDarkMode ? 'smart-dark-mode' : ''}" style="transform: scale({viewer.visualScale}); transform-origin: 50% {viewer.zoomOriginY ?? 0}px; will-change: transform; transition: {viewer.isZooming ? 'none' : 'transform 0.2s ease-out'};">
       {#if viewer.isRendering}<div class="loading-overlay"><div class="spinner"></div><p style="font-size: 11px; font-weight: 700; color: var(--accent-industrial);">// RENDER_İŞLENİYOR...</p></div>{/if}
       {#if errorMsg}<div class="error-card"><p>{errorMsg}</p></div>{/if}
+      {#if documentQuarantined}
+        <div class="error-card document-quarantine" role="alert">
+          <p>{pageFailureMessage(DOCUMENT_QUARANTINED, 0)} Belgeyi yeniden açarak tekrar deneyebilirsiniz.</p>
+          {#if onReopenDocument}<button class="hud-btn" onclick={onReopenDocument}>[ BELGEYİ YENİDEN AÇ ]</button>{/if}
+        </div>
+      {/if}
       <div class="pdf-continuous-scroll" style="width: 100%; display: flex; flex-direction: column; align-items: center;">
         {#if isPdf}
           {#each spreads as spread (spread.join("-"))}

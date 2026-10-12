@@ -40,6 +40,34 @@ describe("viewer controller", () => {
     expect(listeners.has("wheel")).toBe(false);
   });
 
+  it("brackets a ctrl+wheel gesture with one zoom-start and one zoom-commit hook", () => {
+    vi.useFakeTimers();
+    const listeners = new Map();
+    const element = {
+      addEventListener: (name, handler) => listeners.set(name, handler),
+      removeEventListener: (name) => listeners.delete(name),
+    };
+    const viewer = { scale: 1, visualScale: 1, isZooming: false };
+    const order = [];
+    const controller = createViewerController({
+      setActiveRenderDocument: async () => {},
+      renderSession: { snapshot: () => ({ contentGeneration: 1 }), activate: () => {}, clear: () => {} },
+    });
+    controller.attachViewport({
+      element, viewer, hasDocument: () => true, isMounted: () => true,
+      onRender: () => order.push(["render", viewer.scale]),
+      onZoomStart: () => order.push(["start", viewer.visualScale]),
+      onZoomCommit: () => order.push(["commit", viewer.scale]),
+    });
+    const wheel = { ctrlKey: true, deltaY: -1, preventDefault: vi.fn() };
+    listeners.get("wheel")(wheel);
+    listeners.get("wheel")(wheel);
+    vi.advanceTimersByTime(300);
+    expect(order).toEqual([["start", 1], ["render", 1.1], ["commit", 1.1]]);
+    controller.stop();
+    vi.useRealTimers();
+  });
+
   it("drops a late image result after the active image identity changes", async () => {
     let runFrame;
     let resolveImage;

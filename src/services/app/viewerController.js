@@ -95,7 +95,7 @@ export function createViewerController({
     }, delayMs);
   }
 
-  function attachViewport({ element, viewer, hasDocument, isMounted, onRender }) {
+  function attachViewport({ element, viewer, hasDocument, isMounted, onRender, onZoomStart = () => {}, onZoomCommit = () => {} }) {
     detachViewport();
     if (!element) return;
     viewport = element;
@@ -105,6 +105,7 @@ export function createViewerController({
     const handleWheel = (event) => {
       if (!hasDocument() || (!event.ctrlKey && !event.metaKey)) return;
       event.preventDefault();
+      if (!viewer.isZooming) onZoomStart();
       const zoomFactor = event.deltaY < 0 ? 1.05 : 0.95;
       let visualScale = viewer.visualScale * zoomFactor;
       const effectiveScale = viewer.scale * visualScale;
@@ -117,6 +118,7 @@ export function createViewerController({
         viewer.visualScale = 1;
         viewer.isZooming = false;
         renderIfCurrent();
+        if (!destroyed && isMounted() && hasDocument()) onZoomCommit();
       }, 300);
     };
     element.addEventListener("wheel", handleWheel, { passive: false });

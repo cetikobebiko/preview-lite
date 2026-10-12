@@ -108,7 +108,7 @@ describe("organizer thumbnail item RGBA pipeline", () => {
         contentGeneration: request.contentGeneration,
         requestId: request.requestId,
         scope: request.scope,
-      })
+      }, "destroy")
     );
     expect(canvas.width).toBe(0);
     expect(canvas.height).toBe(0);

@@ -1,5 +1,6 @@
 <script>
-  import { detectScannedPage, runOcrOnPage, getAvailableOcrLanguages } from "../pdfState.js";
+  import { runOcrOnPage } from "../pdfState.js";
+  import { getOcrLanguages, isPageScanned } from "../ocrDocumentState.js";
   import { fade } from "svelte/transition";
 
   let {
@@ -55,13 +56,15 @@
     sequence,
   ) {
     try {
+      // Tespit belge başına tek job, dil listesi uygulama düzeyinde cache'lenir;
+      // sayfa mount/unmount döngüsü yeni job veya tesseract süreci başlatmaz.
       const [scanned, langs] = await Promise.all([
-        detectScannedPage(
+        isPageScanned(
           requestSessionId,
           requestGeneration,
           requestPageIndex,
         ),
-        getAvailableOcrLanguages(),
+        getOcrLanguages(),
       ]);
       if (!requestIsCurrent(
         sequence,

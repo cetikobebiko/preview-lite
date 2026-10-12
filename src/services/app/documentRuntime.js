@@ -27,6 +27,7 @@ import {
 import { createDocumentLifecycleController } from "./documentLifecycleController.js";
 import { createDocumentOpenController } from "./documentOpenController.js";
 import { createDocumentPositionMemory } from "./documentPositionMemory.js";
+import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
 
 const transitionApi = Object.freeze({
   beginSessionTransition,
@@ -51,6 +52,7 @@ export function createDocumentRuntime({
   onToast,
   onError,
   passwordPresentation,
+  applyPageScopedMutation = () => {},
 }) {
   const isPdf = () => Boolean(documentSession.active);
   const activeDisplayPath = () => documentSession.active?.displayPath ?? "";
@@ -78,8 +80,10 @@ export function createDocumentRuntime({
     getState: getDocumentState,
     saveState: saveDocumentState,
     onToast,
-    scrollToPage: (pageIndex) => {
-      globalThis.document?.getElementById(`page-${pageIndex}`)?.scrollIntoView({ behavior: "auto", block: "start" });
+    scrollToPage: (displayIndex) => {
+      const physicalIndex = toPhysicalPageIndex(viewer.pageOrder, displayIndex);
+      if (physicalIndex < 0) return;
+      globalThis.document?.getElementById(`page-${physicalIndex}`)?.scrollIntoView({ behavior: "auto", block: "start" });
     },
   });
 
@@ -184,13 +188,20 @@ export function createDocumentRuntime({
     setError: onError,
   });
 
-  async function applyMutationSnapshot(snapshot) {
+  async function applyMutationSnapshot(snapshot, { mapPageIndex = null, rotation = null } = {}) {
+    // The backend already renumbered/rotated the pages; apply even if a newer snapshot won the race.
+    if ((mapPageIndex || rotation) && snapshot?.id && snapshot.id === documentSession.activeSessionId) {
+      applyPageScopedMutation(snapshot.id, { mapPageIndex, rotation });
+    }
     if (!applyBackendSessionSnapshot(snapshot, { activateRender: true })) return;
     const pageCount = await getSessionPageCount(snapshot.id, snapshot.contentGeneration);
     if (documentSession.activeSessionId !== snapshot.id
       || documentSession.contentGeneration !== snapshot.contentGeneration) return;
     viewer.pageOrder = Array.from({ length: pageCount }, (_, index) => index);
     viewer.currentPageIndex = Math.min(viewer.currentPageIndex, Math.max(0, pageCount - 1));
+    // Physical indices were renumbered by the backend; history entries no longer name the same pages.
+    viewer.historyStack = [];
+    viewer.forwardStack = [];
     ui.closeModal("page_organizer");
   }
 

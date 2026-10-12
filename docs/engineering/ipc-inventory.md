@@ -27,8 +27,8 @@ tanımlarını, `src-tauri/src/lib.rs:970-1037` içindeki
 
 | Ölçüm | Sayı |
 |---|---:|
-| Total Registered Commands in `generate_handler!` | 64 |
-| Session PDF Operation Commands | 27 |
+| Total Registered Commands in `generate_handler!` | 65 |
+| Session PDF Operation Commands | 28 |
 | Legacy Unsessioned Render Commands Removed | 4 (`render_page`, `render_thumbnail`, `set_active_render_document`, `cancel_render_request`) |
 | Invalid / Broken IPC Call-sites | 0 |
 | Contract Schema Coverage | 100% |
@@ -49,6 +49,7 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 |---|---|---|:---:|---|
 | `get_session_structure_tree` | `session_id: String; expected_content_generation: u64` | `src-tauri/src/document_session.rs`, pub async | evet | `src/components/A11yPanel.svelte` through `session.js` |
 | `audit_session_accessibility` | `session_id: String; expected_content_generation: u64` | `src-tauri/src/document_session.rs`, pub async | evet | `src/components/A11yPanel.svelte` through `session.js` |
+| `get_session_page_sizes` | `session_id: String; expected_content_generation: u64` | `src-tauri/src/document_session.rs`, pub async; worker `GetPageSizes` | evet | `src/services/pageSizeStore.js` through `viewer.js` (`getPageSizes`) — PdfPage placeholder heights |
 | `build_semantic_index` | `job_id: String; session_id: String; expected_content_generation: u64; chunk_size: usize; chunk_overlap: usize; embed_model: String; request_id: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:39` |
 | `semantic_search` | `session_id: String; expected_content_generation: u64; query: String; top_k: usize; embed_model: String; expected_chunk_size: usize; expected_chunk_overlap: usize; request_id: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:60` |
 | `query_document_rag` | `session_id: String; expected_content_generation: u64; prompt: String; history: Vec<ChatMessage>; llm_model: String; embed_model: String; expected_chunk_size: usize; expected_chunk_overlap: usize; request_id: String` | `src-tauri/src/ai.rs`, pub async | evet | `src/services/backend/ai.js:82` |
@@ -74,8 +75,8 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `share_file_macos` | macOS `file_path: String`; diğer platform `_file_path: String` | `src-tauri/src/lib.rs:371/400`, private sync, platform `cfg` | evet | `src/App.svelte:1209` |
 | `perform_ocr_on_page` | macOS `path: String; page_index: u32`; diğer platform `_path: String; _page_index: u32` | `src-tauri/src/lib.rs:407/463`, private async/sync, platform `cfg` | evet | `src/App.svelte:1147,1193,1220` |
 | `extract_pages` | `source_path: String; page_indices: Vec<u32>; target_path: String` | `src-tauri/src/lib.rs:513`, private sync | evet | `src/App.svelte:1428` |
-| `read_image_file` | `path: String; rotation: i32; flip_h: bool; flip_v: bool` | `src-tauri/src/lib.rs:549`, private sync | evet | `src/App.svelte:979` |
-| `convert_and_save_image` | `source_path: String; target_path: String; format: String; rotation: i32; flip_h: bool; flip_v: bool` | `src-tauri/src/lib.rs:572`, private sync | evet | `src/App.svelte:1917` |
+| `read_image_file` | `path: String; rotation: i32; flip_h: bool; flip_v: bool` | `src-tauri/src/lib.rs:567`, private async (`spawn_blocking`), `render-frame/1` binary yanıt | evet | `src/services/backend/document.js:4` |
+| `convert_and_save_image` | `source_path: String; target_path: String; format: String; rotation: i32; flip_h: bool; flip_v: bool` | `src-tauri/src/lib.rs:618`, private async (`spawn_blocking`) | evet | `src/services/backend/document.js:7` |
 | `reorder_pdf_pages` | `source_path: String; page_order: Vec<u32>; target_path: String` | `src-tauri/src/lib.rs:687`, private sync | evet | `src/App.svelte:1834` |
 | `burn_annotations_to_pdf` | `source_path: String; annotations_json: String; target_path: String` | `src-tauri/src/lib.rs:783`, private sync | evet | `src/pdfState.js:14` |
 | `rotate_page` | `file_path: String; page_index: u32; degrees: i32` | `src-tauri/src/manipulation.rs:14`, pub sync | evet | `src/pdfState.js:27` |
@@ -173,6 +174,7 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/App.svelte:1917` | `convert_and_save_image` | `{ sourcePath, targetPath, format, rotation, flipH, flipV }` |
 | `src/components/A11yPanel.svelte` | `audit_session_accessibility` | `{ sessionId, expectedContentGeneration }` |
 | `src/components/A11yPanel.svelte` | `get_session_structure_tree` | `{ sessionId, expectedContentGeneration }` |
+| `src/services/pageSizeStore.js` | `get_session_page_sizes` | `{ sessionId, expectedContentGeneration }` |
 | `src/components/PageOrganizer.svelte:94` | `render_thumbnail` | `{ path, pageIndex, targetWidth }` |
 | `src/components/PdfPage.svelte:278` | `get_page_text_layout` | `{ filePath, pageIndex }` |
 | `src/components/PdfPage.svelte:354` | `render_page` | `{ path, pageIndex, scale, rotation }` |
@@ -352,6 +354,102 @@ frontend-generated `jobId`. Their terminal response is
 contain `jobId`, `sessionId`, captured `contentGeneration`, and cleanup status.
 `cancel_session_job` requires `{ sessionId, jobId }`. Cleanup retry/deferred
 warnings are path-free and do not replace the operation result.
+
+## Page quarantine retry
+
+| Command | Payload | Result |
+|---|---|---|
+| `retry_session_page` | `sessionId`, `expectedContentGeneration`, `pageIndex` | `boolean`: whether a page quarantine was lifted |
+
+Explicit user action only (`viewer.js` `retryPage`, PdfPage "Yeniden dene"). It validates the
+session lifecycle and generation (`STALE_GENERATION`), and the page index against the open worker
+document (`PDFIUM_WORKER_INVALID_PAGE_INDEX`). It does not open the document or lift a document
+quarantine (`PDFIUM_DOCUMENT_QUARANTINED`). Policy: `pdfium-worker-isolation.md`, "Restart and
+quarantine".
+
+## Render binary response (`render-frame/1`, Prompt 3)
+
+`render_session_page` and `render_session_thumbnail` return their successful
+result as a raw `tauri::ipc::Response` body (Tauri 2.11.5,
+`InvokeResponseBody::Raw`). The webview receives an `ArrayBuffer`; there is no
+JSON pixel array. Failures are unchanged: the command rejects with the JSON
+`DocumentSessionError` (`{ code, message }`), including `render_cancelled`,
+`render_superseded` and `render_inactive_document` messages.
+
+| Command | Payload (unchanged) | Success body | Error body |
+|---|---|---|---|
+| `render_session_page` | `sessionId`, `pageIndex`, `scale`, `rotation`, `contentGeneration`, `requestId` | `render-frame/1` bytes | JSON `DocumentSessionError` |
+| `render_session_thumbnail` | `sessionId`, `pageIndex`, `targetWidth`, `contentGeneration`, `requestId`, `scope` | `render-frame/1` bytes | JSON `DocumentSessionError` |
+
+Wire format v1, all integers little-endian. Encoder:
+`src-tauri/src/pdf_engine/render_wire.rs`; decoder:
+`src/services/backend/renderFrame.js`. A golden frame is asserted on both sides.
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 4 | magic `AGRF` (`41 47 52 46`) |
+| 4 | 2 | version `u16` = 1 |
+| 6 | 4 | width `u32` (> 0) |
+| 10 | 4 | height `u32` (> 0) |
+| 14 | 4 | pageIndex `u32` |
+| 18 | 8 | generation `u64` (<= `Number.MAX_SAFE_INTEGER`) |
+| 26 | 2 | requestId byte length `u16` (1..=512; <= 128 characters) |
+| 28 | n | requestId, UTF-8 |
+| 28 + n | width × height × 4 | RGBA pixels |
+
+The decoder rejects short buffers, wrong magic/version, invalid metadata and
+any total length other than `28 + n + width × height × 4` with
+`render_invalid_rgba_payload` (normalized to `BackendCommandError` by
+`callBackend`). The decoded object keeps the previous shape
+`{ width, height, data, pageIndex, generation, requestId }`, so
+`validateRenderResponse` stale-result checks (requestId / generation /
+pageIndex) and cancellation handling are unchanged. `data` is a zero-copy
+`Uint8ClampedArray` view over the IPC buffer; `transformRgbaBuffer` paints it
+without copying in `normal` mode and makes exactly one copy for color modes.
+
+Contract schema: both contracts in `contracts.js` carry
+`response: { type: "binary", format: "render-frame/1", decode }`; payload
+schemas are unchanged, so contract schema coverage stays 100%.
+
+Transport note: on Tauri's postMessage fallback (used only when the custom
+`ipc://` protocol fails) a raw body is delivered as a number array; the
+decoder accepts it, but that path does not get the size benefit.
+
+## Görsel komutları (Prompt 6)
+
+`read_image_file` ve `convert_and_save_image` artık `async`; görsel
+decode/transform/encode işi `run_image_job` üzerinden
+`tokio::task::spawn_blocking` içinde çalışır, Tauri async runtime thread'leri
+ve ana thread bloklanmaz. Payload'lar değişmedi. Hatalar eskisi gibi düz
+`String` döner (`Görsel dosyası bulunamadı…`, `Görsel okunamadı…`,
+`Görsel açılamadı…`, `Desteklenmeyen format…`); blocking görev panic ederse
+`Görsel işlemi tamamlanamadı…` döner.
+
+| Command | Success body | Error body |
+|---|---|---|
+| `read_image_file` | `render-frame/1` bytes (`tauri::ipc::Response`) | JSON string |
+| `convert_and_save_image` | `null` (`()`) | JSON string |
+
+`read_image_file` yeni format icat etmez; `render_wire::encode_render_frame`
+ile yukarıdaki `render-frame/1` çerçevesini üretir. Görsel bir oturum
+olmadığından `pageIndex = 0`, `generation = 0`, `requestId = "read_image_file"`
+sabit yer tutuculardır. `contracts.js` içindeki `readImageFile` kontratı
+`response: { type: "binary", format: "render-frame/1", decode }` taşır;
+decoder `decodeRenderFrame` çıktısından yalnız `{ width, height, data }`
+döndürür, böylece çağıranlar (`documentOpenController.prepareImage`,
+`viewerController.renderImage` → `paintBufferToCanvas`) önceki şekli görür;
+`data` artık sayı dizisi değil, IPC buffer'ı üzerinde kopyasız
+`Uint8ClampedArray`'dır.
+
+Bellek sınırı: her iki komut da görseli `open_bounded_image` ile açar ve PDF
+render sınırlarını paylaşır (`render_service::MAX_PIXEL_DIMENSION`,
+`MAX_RENDER_BYTES`): kenar başına en fazla 16384 px, decoder tamponu
+(`total_bytes`) ve RGBA çıktısı (`width × height × 4`) için en fazla 256 MiB
+(≈ 67 MP). Boyutlar yalnız başlıktan okunup piksel tamponu ayrılmadan
+denetlenir; aşımda `Görsel çok büyük: en fazla 16384×16384 piksel ve 256 MiB
+çözümlenmiş veri desteklenir.` hatası döner (`image::ImageError::Limits` de
+aynı mesaja eşlenir). Decode sonrası rotate/flip, `to_rgba8` ve çerçeve
+kodlaması sınır içindeki görsel için ek kopyalar üretir.
 
 ## AI Subsystem IPC Envanteri (Prompt 9A.11)
 

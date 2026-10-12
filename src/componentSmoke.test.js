@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
-import { flushSync } from "svelte";
+import { flushSync, tick } from "svelte";
 
 const appRuntime = vi.hoisted(() => {
   const cleanup = vi.fn();
@@ -106,6 +106,7 @@ import AppModalHost from "./components/AppModalHost.svelte";
 import SearchHost from "./components/SearchHost.svelte";
 import ViewerHudDock from "./components/ViewerHudDock.svelte";
 import ViewerShell from "./components/ViewerShell.svelte";
+import { pageFailureRegistry } from "./services/pageFailureRegistry.js";
 import { createDocumentSessionStore } from "./stores/documentSession.svelte.js";
 import { createUiState } from "./stores/uiState.svelte.js";
 
@@ -354,5 +355,47 @@ describe("7R.6 component smoke behavior", () => {
     await view.rerender({ ...base, isPdf: true, viewer: { ...viewer, activeImageSourcePath: "" } });
     expect(document.querySelector(".viewer-area .pdf-continuous-scroll")).not.toBeNull();
     expect(document.querySelector(".viewer-area canvas")).toBeNull();
+  });
+
+  it("offers reopening when the active document generation is quarantined", async () => {
+    pageFailureRegistry.reset();
+    const onReopenDocument = vi.fn();
+    const props = {
+      isPdf: true,
+      viewer: {
+        activeImageSourcePath: "", visualScale: 1, isBookMode: false, isSplitView: false,
+        isSmartDarkMode: false, isZooming: false, isRendering: false, pageOrder: [], currentPageIndex: 0,
+        scale: 1, rotation: 0, renderGenerationId: 0,
+      },
+      annotation: { activeTool: "pointer", activeColor: "#fff" },
+      documentSession: { activeSessionId: "session-q", contentGeneration: 3 },
+      searchState: { requestId: 0, matchesByPage: {} }, spreads: [], physicalPageIndex: -1,
+      prepress: { heatmap: null, separations: null, channels: {}, boxes: null },
+      featureUi: feature([]), errorMsg: "", getActivePrepressPayload: () => null,
+      onSelectFile: vi.fn(), onReopenDocument, onPageIntersect: vi.fn(), onSearchHighlightReady: vi.fn(),
+      onSessionSnapshot: vi.fn(), onCanvasMouseDown: vi.fn(), onCanvasMouseMove: vi.fn(), onCanvasMouseUp: vi.fn(),
+    };
+    const view = render(ViewerShell, { props });
+    expect(document.querySelector(".document-quarantine")).toBeNull();
+
+    // Another generation of the same session does not count.
+    pageFailureRegistry.record(
+      { sessionId: "session-q", contentGeneration: 2, pageIndex: 0, surface: "render" },
+      { code: "PDFIUM_DOCUMENT_QUARANTINED" },
+    );
+    await tick();
+    expect(document.querySelector(".document-quarantine")).toBeNull();
+
+    pageFailureRegistry.record(
+      { sessionId: "session-q", contentGeneration: 3, pageIndex: 0, surface: "render" },
+      { code: "PDFIUM_DOCUMENT_QUARANTINED" },
+    );
+    await tick();
+    expect(document.querySelector(".document-quarantine")?.textContent).toContain(
+      "Belgeyi yeniden açarak tekrar deneyebilirsiniz.",
+    );
+    await fireEvent.click(view.getByText("[ BELGEYİ YENİDEN AÇ ]"));
+    expect(onReopenDocument).toHaveBeenCalledOnce();
+    pageFailureRegistry.reset();
   });
 });

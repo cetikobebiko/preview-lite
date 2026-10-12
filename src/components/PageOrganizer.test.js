@@ -4,6 +4,7 @@ import { tick } from "svelte";
 import { rotatePage } from "../pdfState.js";
 import { renderThumbnail } from "../services/backend/viewer.js";
 import { paintBufferToCanvas } from "../utils/canvasUtils.js";
+import { pageFailureRegistry } from "../services/pageFailureRegistry.js";
 import PageOrganizer from "./PageOrganizer.svelte";
 
 const renderSessionMock = vi.hoisted(() => ({
@@ -85,6 +86,7 @@ const originalConfirm = globalThis.confirm;
 const originalAnimate = Element.prototype.animate;
 
 beforeEach(() => {
+  pageFailureRegistry.reset();
   globalThis.alert = vi.fn();
   globalThis.confirm = vi.fn(() => true);
   Element.prototype.animate = vi.fn(() => ({
@@ -301,5 +303,43 @@ describe("PageOrganizer PDFium thumbnails", () => {
 
     await waitFor(() => expect(getByText("ÖNİZLEME YÜKLENEMEDİ")).toBeTruthy());
     expect(paintBufferToCanvas).not.toHaveBeenCalled();
+  });
+});
+
+describe("PageOrganizer worker-safety failures", () => {
+  it("skips a timed-out page on reload and keeps rendering the others", async () => {
+    renderThumbnail.mockImplementation(async (request) => {
+      if (request.pageIndex === 1) {
+        throw Object.assign(new Error("timed out"), { code: "PDFIUM_WORKER_TIMEOUT" });
+      }
+      return renderedThumbnail(255, request);
+    });
+    const props = { sessionId: "test-document", contentGeneration: 1, pageCount: 3 };
+    const first = renderOrganizer({ props });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(3));
+    await flushAsyncWork();
+    first.unmount();
+
+    const { container } = renderOrganizer({ props });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(5));
+    await flushAsyncWork();
+    expect(renderThumbnail.mock.calls.slice(3).map(([request]) => request.pageIndex))
+      .toEqual([0, 2]);
+    const failed = container.querySelectorAll(".thumbnail-placeholder.error");
+    expect(failed).toHaveLength(1);
+    expect(failed[0].getAttribute("title")).toBe("Sayfa 2 işlenirken zaman aşımı oluştu.");
+  });
+
+  it("stops requesting pages once the document is quarantined", async () => {
+    renderThumbnail.mockImplementation(async () => {
+      throw Object.assign(new Error("quarantined"), { code: "PDFIUM_DOCUMENT_QUARANTINED" });
+    });
+    renderOrganizer({
+      props: { sessionId: "test-document", contentGeneration: 1, pageCount: 4 },
+    });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledOnce());
+    await flushAsyncWork();
+    await flushAsyncWork();
+    expect(renderThumbnail).toHaveBeenCalledOnce();
   });
 });

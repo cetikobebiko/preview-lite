@@ -7,12 +7,12 @@
 
   let {
     isPdf, ui, viewer, documentSession, sensitiveScanState, secureRedactionState, secureRedaction, featureUi, physicalPageIndex, isLoadedPdfDocument,
-    onJump, onScanSensitiveData, onSessionSnapshot, onProcessPreview, onCoveragePreview, onChannels,
+    onJump, onJumpPhysical, onScanSensitiveData, onSessionSnapshot, onProcessPreview, onCoveragePreview, onChannels,
   } = $props();
 </script>
 
 {#if isPdf && ui.panels.sidebar}
-  <Sidebar sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} pageCount={viewer.pageOrder.length} currentPageIndex={viewer.currentPageIndex} onJump={onJump} />
+  <Sidebar sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} pageOrder={viewer.pageOrder} currentPageIndex={viewer.currentPageIndex} onJump={onJump} onJumpPhysical={onJumpPhysical} />
 {/if}
 {#if ui.panels.secureRedaction && isPdf && featureUi("redaction").visible}
   <SecureRedactionPanel

@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
-pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 9;
+pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 10;
 pub const SECURE_REDACTION_TRANSFORM_OUTPUT_NAME: &str = "secure-redaction-transform.pdf";
 const PREPRESS_CANCELLATION_MARKER: &str = "prepress-cancel.requested";
 const MAX_JOB_REQUEST_BYTES: u64 = 1024 * 1024;
@@ -97,9 +97,7 @@ pub enum JobCommand {
         additional_input_names: Vec<String>,
         output_name: String,
     },
-    DetectScannedPage {
-        page_index: u32,
-    },
+    DetectScannedPages,
     RenderOcrPage {
         page_index: u32,
         output_name: String,
@@ -232,7 +230,7 @@ impl std::fmt::Debug for JobRequest {
 pub enum JobResult {
     SnapshotValid,
     MutationValidated,
-    Boolean(bool),
+    ScannedPages(Vec<bool>),
     File(PathBuf),
     Files(Vec<PathBuf>),
     Text(String),
@@ -617,21 +615,26 @@ fn execute_command(
             )?;
             Ok(JobResult::File(output_path))
         }
-        JobCommand::DetectScannedPage { page_index } => {
-            with_document(snapshot_path, credential, |document| {
-                let page = get_page(document, page_index)?;
-                let text = page
+        JobCommand::DetectScannedPages => with_document(snapshot_path, credential, |document| {
+            let page_count = usize::from(document.pages().len());
+            if page_count > MAX_JOB_PAGES {
+                return Err(job_failed(
+                    "SESSION_JOB_OUTPUT_LIMIT_EXCEEDED",
+                    "Taranmış sayfa tespiti sayfa limiti aşıldı",
+                ));
+            }
+            let mut flags = Vec::with_capacity(page_count);
+            for page in document.pages().iter() {
+                // Metni okunamayan sayfa, eski sayfa başına akıştaki frontend
+                // fallback'i gibi "taranmamış" sayılır; tek sayfa tüm belgeyi düşürmez.
+                let scanned = page
                     .text()
-                    .map_err(|_| {
-                        job_failed(
-                            "SESSION_JOB_TEXT_EXTRACTION_FAILED",
-                            "Sayfa metni okunamadı",
-                        )
-                    })?
-                    .all();
-                Ok(JobResult::Boolean(text.trim().len() < 20))
-            })
-        }
+                    .map(|text| is_scanned_page_text(&text.all()))
+                    .unwrap_or(false);
+                flags.push(scanned);
+            }
+            Ok(JobResult::ScannedPages(flags))
+        }),
         JobCommand::RenderOcrPage {
             page_index,
             output_name,
@@ -1566,6 +1569,10 @@ fn with_document<T>(
     operation(&document)
 }
 
+fn is_scanned_page_text(text: &str) -> bool {
+    text.trim().len() < 20
+}
+
 fn get_page<'a>(document: &'a PdfDocument<'_>, page_index: u32) -> Result<PdfPage<'a>, JobFailure> {
     let page_index = u16::try_from(page_index)
         .map_err(|_| job_failed("SESSION_JOB_INVALID_PAGE", "Sayfa numarası sınır dışında"))?;
@@ -1957,6 +1964,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scanned_page_heuristic_matches_previous_per_page_threshold() {
+        assert!(is_scanned_page_text(""));
+        assert!(is_scanned_page_text("   \n\t  "));
+        assert!(is_scanned_page_text("  nineteen characters "));
+        assert!(!is_scanned_page_text("twenty characters!!!"));
+        assert!(!is_scanned_page_text("Bu sayfa gerçek bir metin katmanı içerir."));
+    }
+
+    #[test]
     fn output_path_rejects_parent_traversal() {
         let root = Path::new("/tmp/job");
         assert!(checked_output_path(root, "../escape.png").is_err());
@@ -2025,7 +2041,7 @@ mod tests {
             scale: 1.25,
         } if request_id == "preview-request")
         );
-        assert_eq!(JOB_WORKER_PROTOCOL_VERSION, 9);
+        assert_eq!(JOB_WORKER_PROTOCOL_VERSION, 10);
     }
 
     #[test]
