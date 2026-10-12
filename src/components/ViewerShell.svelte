@@ -15,6 +15,26 @@
     onCanvasMouseUp, viewerAreaRef = $bindable(), canvasRefLeft = $bindable(),
   } = $props();
 
+  // Per-page props are looked up from values derived once per state change, and
+  // pages without data share one frozen empty array: a PdfPage whose prop value
+  // keeps its identity does not re-run the reactive blocks that read it.
+  const EMPTY = Object.freeze([]);
+  const nonEmpty = (items) => (Array.isArray(items) && items.length > 0 ? items : EMPTY);
+  const pendingRegionsByPage = $derived.by(() => {
+    const byPage = new Map();
+    for (const region of secureRedactionState?.pendingRegions ?? EMPTY) {
+      const regions = byPage.get(region.pageIndex);
+      if (regions) regions.push(region);
+      else byPage.set(region.pageIndex, [region]);
+    }
+    return byPage;
+  });
+  // A prepress payload only ever belongs to the current physical page.
+  const coveragePreviewPayload = $derived(getActivePrepressPayload(prepress.coveragePreview, physicalPageIndex, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result"));
+  const processPreviewPayload = $derived(getActivePrepressPayload(prepress.processPreview, physicalPageIndex, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result"));
+  // PdfPage reads currentPage only in single-page mode.
+  const singlePageCurrent = $derived(viewer.isSinglePageMode ? viewer.pageOrder[viewer.currentPageIndex] ?? viewer.currentPageIndex : -1);
+
   // Set once any request of the active generation came back quarantined; no
   // page of it is requested again, so reopening is the way forward.
   const documentQuarantined = $derived(($pageFailureRegistry, isPdf &&
@@ -50,7 +70,7 @@
           {#each spreads as spread (spread.join("-"))}
             <div class="book-spread-row {viewer.isBookMode ? 'book-mode' : ''}">
               {#each spread as pageIdx (pageIdx)}
-                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={viewer.pageOrder[viewer.currentPageIndex] ?? viewer.currentPageIndex} isBookMode={viewer.isBookMode} isSinglePageMode={viewer.isSinglePageMode} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={searchState.matchesByPage[pageIdx] || []} sensitiveDataHighlights={getSensitiveDataHighlights(pageIdx, viewer.rotation)} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={secureRedactionState?.pendingRegions?.filter((region) => region.pageIndex === pageIdx) ?? []} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} on:searchHighlightReady={onSearchHighlightReady} activeTool={annotation.activeTool} activeColor={annotation.activeColor} approximateCoveragePreview={getActivePrepressPayload(prepress.coveragePreview, pageIdx, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result")} approximateProcessPreview={getActivePrepressPayload(prepress.processPreview, pageIdx, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result")} approximateProcessChannels={prepress.channels} on:sessionSnapshot={(event) => onSessionSnapshot(event.detail)} />
+                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={singlePageCurrent} isBookMode={viewer.isBookMode} isSinglePageMode={viewer.isSinglePageMode} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={nonEmpty(searchState.matchesByPage[pageIdx])} sensitiveDataHighlights={nonEmpty(getSensitiveDataHighlights(pageIdx, viewer.rotation))} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={pendingRegionsByPage.get(pageIdx) ?? EMPTY} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} on:searchHighlightReady={onSearchHighlightReady} activeTool={annotation.activeTool} activeColor={annotation.activeColor} approximateCoveragePreview={pageIdx === physicalPageIndex ? coveragePreviewPayload : null} approximateProcessPreview={pageIdx === physicalPageIndex ? processPreviewPayload : null} approximateProcessChannels={prepress.channels} on:sessionSnapshot={(event) => onSessionSnapshot(event.detail)} />
               {/each}
             </div>
           {/each}
