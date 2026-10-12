@@ -1,9 +1,14 @@
 <script context="module">
   import { createPageSizeFallback } from "../utils/pageGeometry.js";
+  import { createTextWidthMeasurer } from "../utils/textLayerUtils.js";
 
   // Last measured page size of the current document; forgotten when the session or
   // content generation changes.
   const pageSizeFallback = createPageSizeFallback();
+  // Shared by all pages: common words are measured once per app run, not per page and zoom.
+  const measureTextWidth = createTextWidthMeasurer(() =>
+    typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d"),
+  );
 </script>
 
 <script>
@@ -123,8 +128,6 @@
   let pendingTextLayoutKey = "";
   let failedTextLayoutKey = "";
   let textLayoutRequestId = 0;
-  let textMeasureCanvas = null;
-  let textMeasureContext = null;
   export let searchRequestId = 0;
   export let searchMatches = [];
   let positionedSearchMatches = [];
@@ -328,17 +331,6 @@
     void pageSizeStore.requestPage(session, generation, page).then((size) => {
       if (requestKey === pageSizeRequestKey && !isDestroyed) pageSizePt = size;
     });
-  }
-
-  function measureTextWidth(text, fontSize) {
-    if (!textMeasureCanvas && typeof document !== "undefined") {
-      textMeasureCanvas = document.createElement("canvas");
-      textMeasureContext = textMeasureCanvas.getContext("2d");
-    }
-
-    if (!textMeasureContext) return Number.NaN;
-    textMeasureContext.font = `${fontSize}px sans-serif`;
-    return textMeasureContext.measureText(text).width;
   }
 
   async function notifySearchHighlightReady(matchIndex, readyKey, sequence) {
@@ -672,8 +664,6 @@
     renderCoordinator.destroy();
     textLayouts = [];
     loadedTextLayoutKey = "";
-    textMeasureCanvas = null;
-    textMeasureContext = null;
   });
 
   function getNormalizedLocalCoords(clientX, clientY, element, rot) {

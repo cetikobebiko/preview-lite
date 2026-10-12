@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createTextLayerItems,
+  createTextWidthMeasurer,
   normalizeTextRotation,
   positionTextBox,
   sanitizeTextLayout,
@@ -125,5 +126,65 @@ describe("createTextLayerItems", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ text: "kept", hasTrailingSpace: false });
+  });
+});
+
+describe("createTextWidthMeasurer", () => {
+  // A canvas stand-in whose width is linear in the px size set on `font`.
+  function fakeContext() {
+    const context = {
+      font: "",
+      measureText: vi.fn((text) => ({ width: text.length * 0.5 * Number.parseFloat(context.font) })),
+    };
+    return context;
+  }
+
+  it("measures each text once and scales it to every font size", () => {
+    const context = fakeContext();
+    const getContext = vi.fn(() => context);
+    const measure = createTextWidthMeasurer(getContext);
+
+    expect(measure("word", 10)).toBeCloseTo(20);
+    expect(measure("word", 13)).toBeCloseTo(26);
+    expect(measure("word", 17.5)).toBeCloseTo(35);
+    expect(measure("other", 10)).toBeCloseTo(25);
+
+    expect(context.measureText).toHaveBeenCalledTimes(2);
+    expect(context.font).toBe("100px sans-serif");
+    expect(getContext).toHaveBeenCalledOnce();
+  });
+
+  it("returns NaN without a canvas so text boxes use the fallback width", () => {
+    const measure = createTextWidthMeasurer(() => null);
+    expect(measure("word", 10)).toBeNaN();
+
+    const item = positionTextBox(BOX, 0, 100, 100, measure);
+    expect(item.width).toBeCloseTo("word".length * item.fontSize * 0.5);
+    expect(item.width * item.scaleX).toBeCloseTo(30);
+  });
+
+  it("drops the oldest widths beyond its size limit", () => {
+    const context = fakeContext();
+    const measure = createTextWidthMeasurer(() => context, { maxEntries: 2 });
+
+    measure("a", 10);
+    measure("b", 10);
+    measure("c", 10);
+    measure("b", 10);
+    measure("a", 10);
+
+    expect(context.measureText.mock.calls.map(([text]) => text)).toEqual(["a", "b", "c", "a"]);
+  });
+
+  it("keeps each span's scaled box on the PDFium word box at every zoom", () => {
+    const measure = createTextWidthMeasurer(() => fakeContext());
+    for (const pageWidth of [612, 795.6, 1071]) {
+      const [item] = createTextLayerItems([BOX], {
+        pageCssWidth: pageWidth,
+        pageCssHeight: pageWidth * 1.294,
+        measureTextWidth: measure,
+      });
+      expect(item.width * item.scaleX).toBeCloseTo(BOX.width * pageWidth);
+    }
   });
 });

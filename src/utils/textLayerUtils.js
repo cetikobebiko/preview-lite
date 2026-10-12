@@ -53,6 +53,38 @@ export function sanitizeTextLayout(layout) {
   };
 }
 
+const REFERENCE_FONT_SIZE = 100;
+const DEFAULT_MAX_CACHED_WIDTHS = 10_000;
+
+/**
+ * Canvas text widths scale linearly with the font size, so each text is
+ * measured once at a reference size and scaled afterwards: a zoom step costs
+ * no canvas measurement for words already seen. `getContext` is called once,
+ * on first use; the oldest widths are dropped beyond `maxEntries`.
+ */
+export function createTextWidthMeasurer(
+  getContext,
+  { fontFamily = "sans-serif", maxEntries = DEFAULT_MAX_CACHED_WIDTHS } = {},
+) {
+  const referenceWidths = new Map();
+  let context;
+
+  return function measureTextWidth(text, fontSize) {
+    let width = referenceWidths.get(text);
+    if (width === undefined) {
+      context ??= getContext?.() ?? null;
+      if (!context) return Number.NaN;
+      context.font = `${REFERENCE_FONT_SIZE}px ${fontFamily}`;
+      width = context.measureText(text).width;
+      if (referenceWidths.size >= maxEntries) {
+        referenceWidths.delete(referenceWidths.keys().next().value);
+      }
+      referenceWidths.set(text, width);
+    }
+    return width * (fontSize / REFERENCE_FONT_SIZE);
+  };
+}
+
 function fallbackTextWidth(text, fontSize) {
   return Math.max(text.length * fontSize * 0.5, fontSize * 0.25);
 }
