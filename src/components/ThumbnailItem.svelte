@@ -15,6 +15,7 @@
   } from "../utils/renderRequestCoordinator.js";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
   import { createVisibilityDwell } from "../utils/visibilityDwell.js";
+  import { findScrollRoot } from "../utils/scrollRoot.js";
 
   let {
     sessionId = "",
@@ -35,6 +36,7 @@
   let isLoading = $state(false);
   let isDragOver = $state(false);
   let observer = $state();
+  let releaseObserver = null;
   let isMounted = $state(false);
   let isIntersecting = $state(false);
   let usesIntersectionObserver = $state(false);
@@ -87,16 +89,28 @@
               visibilityDwell.enter();
             } else if (!isIntersecting) {
               visibilityDwell.leave();
-              if (isLoaded || isLoading || canvasRef?.width || canvasRef?.height) {
-                invalidateThumbnail("viewport_exit");
-              }
+              if (isLoading) invalidateThumbnail("viewport_exit");
             }
           });
         },
         { rootMargin: "100px" }
       );
+      // A painted thumbnail is kept until it is far outside the grid, so
+      // scrolling back a little does not render it again. The margin needs the
+      // grid's scroll container as root; the viewport root would clip it away.
+      releaseObserver = new IntersectionObserver(
+        (entries) => {
+          const entry = entries[entries.length - 1];
+          if (entry?.isIntersecting) return;
+          if (isLoaded || isLoading || canvasRef?.width || canvasRef?.height) {
+            invalidateThumbnail("viewport_exit");
+          }
+        },
+        { root: findScrollRoot(containerRef), rootMargin: "1000px" }
+      );
       if (containerRef) {
         observer.observe(containerRef);
+        releaseObserver.observe(containerRef);
       }
     } else {
       void loadThumbnail();
@@ -113,6 +127,7 @@
       if (containerRef) observer.unobserve(containerRef);
       observer.disconnect();
     }
+    releaseObserver?.disconnect();
   });
 
   async function loadThumbnail() {

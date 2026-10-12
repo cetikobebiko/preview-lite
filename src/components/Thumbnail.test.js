@@ -79,6 +79,34 @@ afterEach(() => {
   HTMLElement.prototype.getBoundingClientRect = originalRect;
 });
 
+// Observers keyed by rootMargin, so a test can move a thumbnail in and out of
+// the load zone and the release zone separately.
+function trackIntersectionObservers() {
+  const observers = [];
+  globalThis.IntersectionObserver = class IntersectionObserverMock {
+    constructor(callback, options = {}) {
+      this.callback = callback;
+      this.options = options;
+      observers.push(this);
+    }
+    observe(element) {
+      this.element = element;
+      this.callback([{ isIntersecting: true, target: element }]);
+    }
+    unobserve() {}
+    disconnect() {}
+  };
+  return (rootMargin, isIntersecting) => {
+    for (const observer of observers) {
+      if (observer.options.rootMargin === rootMargin) {
+        observer.callback([{ isIntersecting, target: observer.element }]);
+      }
+    }
+  };
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe("sidebar thumbnail RGBA pipeline", () => {
   it("preserves measured dynamic pixel width and paints validated RGBA", async () => {
     render(Thumbnail, {
@@ -184,5 +212,50 @@ describe("sidebar thumbnail worker-safety failures", () => {
     render(Thumbnail, { props });
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(renderThumbnail).not.toHaveBeenCalled();
+  });
+});
+
+describe("sidebar thumbnail retention", () => {
+  const props = { sessionId: "document-1", contentGeneration: 4, pageIndex: 2 };
+
+  it("keeps a painted thumbnail near the list and releases it far away", async () => {
+    const move = trackIntersectionObservers();
+    const { container } = render(Thumbnail, { props });
+    await waitFor(() => expect(paintBufferToCanvas).toHaveBeenCalledOnce());
+    expect(container.querySelector(".placeholder")).toBeNull();
+
+    move("200px", false);
+    move("200px", true);
+    await sleep(200);
+    expect(renderThumbnail).toHaveBeenCalledOnce();
+    expect(container.querySelector(".placeholder")).toBeNull();
+
+    move("200px", false);
+    move("1000px", false);
+    await waitFor(() => expect(container.querySelector(".placeholder")).not.toBeNull());
+    move("1000px", true);
+    move("200px", true);
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(2));
+  });
+
+  it("renders once after a burst of resizes", async () => {
+    let resize;
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      constructor(callback) {
+        resize = callback;
+      }
+      observe() {}
+      disconnect() {}
+    };
+    render(Thumbnail, { props });
+    await waitFor(() => expect(paintBufferToCanvas).toHaveBeenCalledOnce());
+
+    for (let step = 0; step < 5; step += 1) {
+      resize([]);
+      await sleep(20);
+    }
+    await sleep(300);
+
+    expect(renderThumbnail).toHaveBeenCalledTimes(2);
   });
 });

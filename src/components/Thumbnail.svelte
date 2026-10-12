@@ -10,6 +10,7 @@
   } from "../services/renderSession.js";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
   import { createVisibilityDwell } from "../utils/visibilityDwell.js";
+  import { findScrollRoot } from "../utils/scrollRoot.js";
   import {
     pageFailureMessage,
     pageFailureRegistry,
@@ -28,6 +29,10 @@
     isActive = false,
     onSelect = () => {},
   } = $props();
+
+  const LOAD_MARGIN = "200px";
+  const RELEASE_MARGIN = "1000px";
+  const RESIZE_DEBOUNCE_MS = 150;
 
   const displayedPageNumber = $derived(pageNumber ?? pageIndex + 1);
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
@@ -106,25 +111,43 @@
       } else if (!isVisible) {
         visibilityDwell.leave();
         coordinator.cancelActive("viewport_exit");
-        loadedKey = "";
-        releaseCanvas();
       }
-    }, { rootMargin: "200px" });
+    }, { rootMargin: LOAD_MARGIN });
+    // A painted thumbnail is kept until it is far outside the list, so
+    // scrolling back a little does not render it again. The margin needs the
+    // list's scroll container as root; the viewport root would clip it away.
+    const releaseObserver = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting === true) return;
+      loadedKey = "";
+      releaseCanvas();
+    }, { root: findScrollRoot(container), rootMargin: RELEASE_MARGIN });
+    // A panel drag resizes every step; render once the width has settled.
+    let resizeTimer = null;
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
-      if (isVisible && loadedKey && !loading) {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        if (!mounted || !loadedKey || loading) return;
         loadedKey = "";
-        coordinator.cancelActive("rerender");
-        void loadThumbnail();
-      }
+        if (isVisible) {
+          coordinator.cancelActive("rerender");
+          void loadThumbnail();
+        } else {
+          releaseCanvas();
+        }
+      }, RESIZE_DEBOUNCE_MS);
     });
     if (container) {
       observer.observe(container);
+      releaseObserver.observe(container);
       resizeObserver?.observe(container);
     }
     return () => {
       mounted = false;
+      clearTimeout(resizeTimer);
       visibilityDwell.destroy();
       observer.disconnect();
+      releaseObserver.disconnect();
       resizeObserver?.disconnect();
       coordinator.destroy();
       releaseCanvas();
