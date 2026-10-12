@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BackendCommandError,
   callBackend,
+  callBackendProfiled,
   invokeProfiled,
 } from "./client.js";
 import { encodeRenderFrame } from "./renderFrameTestUtils.js";
@@ -407,6 +408,28 @@ describe("binary render frame responses", () => {
     });
     expect(result.data).toBeInstanceOf(Uint8ClampedArray);
     expect(result.data.buffer).toBe(buffer);
+  });
+
+  it("profiled render calls do not log on success", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    invokeMock.mockResolvedValueOnce(encodeRenderFrame({
+      width: 1,
+      height: 1,
+      data: new Uint8Array([10, 20, 30, 255]),
+      pageIndex: pageRequest.pageIndex,
+      generation: pageRequest.contentGeneration,
+      requestId: pageRequest.requestId,
+    }));
+
+    try {
+      await expect(callBackendProfiled("renderSessionPage", pageRequest)).resolves.toMatchObject({
+        width: 1,
+        requestId: pageRequest.requestId,
+      });
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("reports a malformed frame through the existing invalid payload error", async () => {

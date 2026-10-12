@@ -492,8 +492,6 @@
       !isDestroyed;
 
     try {
-      console.log("Rendering page:", page + 1);
-
       const requestDpr = currentDevicePixelRatio();
       const targetRenderScale = viewScale * requestDpr;
       const sessionSnapshot = requireActiveRenderSession(
@@ -514,10 +512,7 @@
         await request.wait(renderPromise),
         requestSnapshot,
       );
-      if (!requestIsCurrent() || !canvasRef) {
-        console.log(`Render result dropped for page ${page + 1}`);
-        return;
-      }
+      if (!requestIsCurrent() || !canvasRef) return;
 
       const { width, height } = paintBufferToCanvas(canvasRef, rendered, {
         colorMode: pageColorMode,

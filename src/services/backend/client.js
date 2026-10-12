@@ -233,19 +233,13 @@ export async function callBackend(contractId, payload) {
   }
 }
 
+// Successful calls are not logged: render and thumbnail requests go through
+// here on every scroll step. Backend telemetry carries their timings.
 export async function callBackendProfiled(contractId, payload) {
   const contract = resolveContract(contractId);
   const startedAt = performance.now();
   try {
-    const result = await callBackend(contractId, payload);
-    const payloadBytes =
-      contract.response?.type === "binary" && result?.data?.buffer
-        ? ` (${result.data.buffer.byteLength} bytes)`
-        : "";
-    console.log(
-      `[IPC Profiler] ${contract.command} took ${(performance.now() - startedAt).toFixed(2)}ms${payloadBytes}`,
-    );
-    return result;
+    return await callBackend(contractId, payload);
   } catch (error) {
     console.error(
       `[IPC Profiler] ${contract.command} failed after ${(performance.now() - startedAt).toFixed(2)}ms`,

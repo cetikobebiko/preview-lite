@@ -708,6 +708,43 @@ describe("PdfPage secure-redaction review selection", () => {
   });
 });
 
+describe("PdfPage console output", () => {
+  it("renders and drops stale results without console.log", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const staleRender = createDeferred();
+    renderPage.mockImplementationOnce(() => staleRender.promise);
+    try {
+      const { container, rerender } = renderPdfPage({
+        props: {
+          sessionId: "test-document",
+          pageIndex: 0,
+          isSinglePageMode: true,
+          currentPage: 0,
+          documentGenerationId: 1,
+        },
+      });
+      await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
+      const staleRequest = renderPage.mock.calls[0][0];
+
+      await rerender({ scale: 1.25 });
+      await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(container.querySelector(".textLayer")).not.toBeNull());
+      staleRender.resolve({
+        ...renderedPage(staleRequest.rotation),
+        pageIndex: staleRequest.pageIndex,
+        generation: staleRequest.contentGeneration,
+        requestId: staleRequest.requestId,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
 describe("PdfPage render cancellation", () => {
   it("lets an in-flight render finish during a zoom gesture and cancels once when it settles", async () => {
     const zoomRender = createDeferred();
