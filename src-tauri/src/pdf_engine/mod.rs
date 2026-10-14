@@ -392,7 +392,8 @@ fn verify_runtime(path: &std::path::Path) -> Result<(), AppError> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+// Production only parses ELF on Linux; the byte parser is unit-tested on every host.
+#[cfg(any(target_os = "linux", test))]
 fn verify_elf_header_bytes(elf_header: &[u8], expected_arch: &str) -> Result<(), AppError> {
     if elf_header.len() < 20 {
         return Err(AppError::RuntimeLoadFailed(
@@ -465,9 +466,8 @@ fn verify_linux_architecture(_path: &std::path::Path) -> Result<(), AppError> {
     Ok(())
 }
 
-// Test-only reference parser (`verify_windows_architecture` reads the PE header
-// inline); its tests live in the Linux-gated `linux_runtime_resolution_tests`.
-#[cfg(all(test, target_os = "linux"))]
+// Test-only reference parser: `verify_windows_architecture` reads the PE header inline.
+#[cfg(test)]
 fn verify_pe_header_bytes(bytes: &[u8], expected_arch: &str) -> Result<(), AppError> {
     if bytes.len() < 64 {
         return Err(AppError::RuntimeLoadFailed(
@@ -1600,572 +1600,563 @@ mod linux_runtime_resolution_tests {
         assert_ne!(EXPECTED_ARCH, "amd64");
         assert_ne!(EXPECTED_ARCH, "x64");
     }
+}
 
-    // FAST_LOCAL Windows resolver tests (no Windows host required)
-    #[cfg(all(test, target_os = "windows"))]
-    mod windows_resolver_fast_local_tests {
-        use super::*;
-        use crate::pdf_engine::runtime_metadata::{
-            EXPECTED_ARCH, EXPECTED_PACKAGED_LOCATION, EXPECTED_STAGED_PATH, IS_DEV_BUILD,
-            RUNTIME_FILENAME, SUPPLY_CHAIN_STATUS,
+// FAST_LOCAL Windows resolver tests (compiled only on Windows hosts)
+#[cfg(all(test, target_os = "windows"))]
+mod windows_resolver_fast_local_tests {
+    use super::cross_platform_fast_local_tests::assert_pre_resolved_path_was_used;
+    use super::*;
+    use crate::pdf_engine::runtime_metadata::{
+        EXPECTED_ARCH, EXPECTED_BYTE_LENGTH, EXPECTED_PACKAGED_LOCATION, EXPECTED_SHA256,
+        EXPECTED_STAGED_PATH, IS_DEV_BUILD, RUNTIME_FILENAME,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn windows_runtime_filename_is_pdfium_dll() {
+        assert_eq!(RUNTIME_FILENAME, "pdfium.dll");
+    }
+
+    #[test]
+    fn windows_expected_arch_is_x86_64() {
+        assert_eq!(EXPECTED_ARCH, "x86_64");
+    }
+
+    #[test]
+    fn windows_staged_path_ends_with_pdfium_dll() {
+        assert!(EXPECTED_STAGED_PATH.ends_with("pdfium.dll"));
+    }
+
+    #[test]
+    fn windows_packaged_location_ends_with_pdfium_dll() {
+        assert!(EXPECTED_PACKAGED_LOCATION.ends_with("pdfium.dll"));
+    }
+
+    #[test]
+    fn resolve_windows_rejects_cwd_relative_paths() {
+        // This test verifies that the Windows resolver does NOT use CWD-relative paths
+        // by checking that the resolution logic doesn't contain "./" patterns
+        // The actual resolver is platform-gated, so we test the metadata contract
+        assert!(!EXPECTED_STAGED_PATH.starts_with("./"));
+        assert!(!EXPECTED_PACKAGED_LOCATION.starts_with("./"));
+    }
+
+    #[test]
+    fn resolve_windows_requires_absolute_dev_override() {
+        // PDFIUM_PATH must be absolute in development mode
+        // This is enforced by the resolver logic (checked in integration)
+        let relative_path = PathBuf::from("pdfium.dll");
+
+        // Relative path should not be accepted as valid override
+        assert!(!relative_path.is_absolute());
+    }
+
+    #[test]
+    fn path_composition_windows_resource_dir() {
+        // Test path composition: TAURI_RESOURCE_DIR + lib + pdfium.dll
+        let resource_dir = PathBuf::from("C:\\mock\\resourceDir");
+        let expected = resource_dir.join("lib").join("pdfium.dll");
+        assert_eq!(
+            expected.to_string_lossy().as_ref(),
+            "C:\\mock\\resourceDir\\lib\\pdfium.dll"
+        );
+    }
+
+    #[test]
+    fn unsafe_filename_rejection_traversal() {
+        // Path traversal attempts should be rejected by is_valid_runtime_file
+        let temp = TempDir::new().unwrap();
+        let traversal = temp.path().join("..").join("pdfium.dll");
+        // is_valid_runtime_file checks for exact filename match
+        assert!(!is_valid_runtime_file(&traversal));
+    }
+
+    #[test]
+    fn unsafe_filename_rejection_absolute_outside_root() {
+        // Absolute paths outside allowed roots should be rejected by is_path_under_allowlist
+        let temp = TempDir::new().unwrap();
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("pdfium.dll");
+        fs::write(&target, b"dummy").unwrap();
+
+        let canonical_target = target.canonicalize().unwrap();
+        let current_exe = std::env::current_exe().ok();
+        let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from);
+
+        let allowed_roots: Vec<PathBuf> = current_exe
+            .as_ref()
+            .map(|p| p.parent().unwrap_or(p).to_path_buf())
+            .into_iter()
+            .chain(cargo_manifest_dir)
+            .collect();
+
+        let is_allowed = allowed_roots.iter().any(|root| {
+            root.canonicalize()
+                .map(|cr| canonical_target.starts_with(&cr))
+                .unwrap_or(false)
+        });
+        assert!(
+            !is_allowed,
+            "Absolute path outside allowed roots should be rejected"
+        );
+    }
+
+    #[test]
+    fn malformed_sha256_rejected() {
+        // Test that SHA256 output is always 32 bytes
+        // (build.rs validates hex decoding at compile time)
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(b"test");
+        assert_eq!(hash.as_slice().len(), 32);
+    }
+
+    #[test]
+    fn integrity_helper_sha256_correctness() {
+        let temp = TempDir::new().unwrap();
+        let test_file = temp.path().join("test.bin");
+        fs::write(&test_file, b"hello world").unwrap();
+
+        let hash = compute_sha256(&test_file).unwrap();
+        use sha2::{Digest, Sha256};
+        let expected = Sha256::digest(b"hello world");
+        assert_eq!(hash.as_slice(), expected.as_slice());
+    }
+
+    #[test]
+    fn missing_metadata_fails_closed_verification_skipped() {
+        // When EXPECTED_SHA256 is None, verification is skipped but logged
+        // This test verifies the constant can be None
+        let _ = EXPECTED_SHA256; // Can be None
+        let _ = EXPECTED_BYTE_LENGTH; // Can be None
+    }
+
+    #[test]
+    fn windows_pe_architecture_x64_constant() {
+        // IMAGE_FILE_MACHINE_AMD64 = 0x8664
+        const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
+        assert_eq!(IMAGE_FILE_MACHINE_AMD64, 0x8664);
+    }
+
+    #[test]
+    fn dev_vs_release_classification() {
+        // IS_DEV_BUILD gates development-only paths
+        assert_eq!(IS_DEV_BUILD, cfg!(debug_assertions));
+    }
+
+    #[test]
+    fn get_pdfium_with_resolved_path_uses_provided_path() {
+        // Test that the function signature accepts pre-resolved path
+        // (Actual binding test requires Windows host - deferred to 11V-D)
+        let temp = TempDir::new().unwrap();
+        let dummy_dll = temp.path().join("pdfium.dll");
+        fs::write(&dummy_dll, b"dummy").unwrap();
+
+        // The dummy passes the pre-resolved path checks, so the failure must come from
+        // runtime verification or binding of that path, never from path resolution.
+        let Err(err) = get_pdfium_with_resolved_path(Some(dummy_dll.clone())) else {
+            panic!("dummy runtime must not bind");
         };
-        use std::fs;
-        use std::path::PathBuf;
-        use tempfile::TempDir;
+        assert_pre_resolved_path_was_used(&err);
+    }
+}
 
-        #[test]
-        fn windows_runtime_filename_is_pdfium_dll() {
-            assert_eq!(RUNTIME_FILENAME, "pdfium.dll");
-        }
+// Cross-platform FAST_LOCAL tests (run on all platforms)
+#[cfg(test)]
+mod cross_platform_fast_local_tests {
+    use super::*;
+    use crate::pdf_engine::runtime_metadata::{IS_DEV_BUILD, RUNTIME_FILENAME};
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
 
-        #[test]
-        fn windows_expected_arch_is_x86_64() {
-            assert_eq!(EXPECTED_ARCH, "x86_64");
-        }
+    /// Errors `get_pdfium_with_resolved_path` raises before touching the provided path.
+    pub(super) fn assert_pre_resolved_path_was_used(err: &str) {
+        assert!(
+            !err.contains("does not exist") && !err.contains("unexpected filename"),
+            "pre-resolved path was rejected instead of used: {err}"
+        );
+    }
 
-        #[test]
-        fn windows_staged_path_ends_with_pdfium_dll() {
-            assert!(EXPECTED_STAGED_PATH.ends_with("pdfium.dll"));
-        }
+    #[test]
+    fn runtime_filename_matches_platform() {
+        #[cfg(target_os = "linux")]
+        assert_eq!(RUNTIME_FILENAME, "libpdfium.so");
+        #[cfg(target_os = "windows")]
+        assert_eq!(RUNTIME_FILENAME, "pdfium.dll");
+        #[cfg(target_os = "macos")]
+        assert_eq!(RUNTIME_FILENAME, "libpdfium.dylib");
+    }
 
-        #[test]
-        fn windows_packaged_location_ends_with_pdfium_dll() {
-            assert!(EXPECTED_PACKAGED_LOCATION.ends_with("pdfium.dll"));
-        }
+    #[test]
+    fn dev_vs_release_classification_cross_platform() {
+        assert_eq!(IS_DEV_BUILD, cfg!(debug_assertions));
+    }
 
-        #[test]
-        fn resolve_windows_rejects_cwd_relative_paths() {
-            // This test verifies that the Windows resolver does NOT use CWD-relative paths
-            // by checking that the resolution logic doesn't contain "./" patterns
-            // The actual resolver is platform-gated, so we test the metadata contract
-            assert!(!EXPECTED_STAGED_PATH.starts_with("./"));
-            assert!(!EXPECTED_PACKAGED_LOCATION.starts_with("./"));
-        }
+    #[test]
+    fn path_traversal_rejection_cross_platform() {
+        let temp = TempDir::new().unwrap();
+        let traversal = temp.path().join("..").join(RUNTIME_FILENAME);
+        assert!(!is_valid_runtime_file(&traversal));
+    }
 
-        #[test]
-        fn resolve_windows_requires_absolute_dev_override() {
-            // PDFIUM_PATH must be absolute in development mode
-            // This is enforced by the resolver logic (checked in integration)
-            let temp = TempDir::new().unwrap();
-            let relative_path = temp.path().join("pdfium.dll");
-            fs::write(&relative_path, b"dummy").unwrap();
+    #[test]
+    fn integrity_helper_sha256_correctness_cross_platform() {
+        let temp = TempDir::new().unwrap();
+        let test_file = temp.path().join("test.bin");
+        fs::write(&test_file, b"hello world").unwrap();
 
-            // Relative path should not be accepted as valid override
-            assert!(!relative_path.is_absolute());
-        }
+        let hash = compute_sha256(&test_file).unwrap();
+        use sha2::{Digest, Sha256};
+        let expected = Sha256::digest(b"hello world");
+        assert_eq!(hash.as_slice(), expected.as_slice());
+    }
 
-        #[test]
-        fn path_composition_windows_resource_dir() {
-            // Test path composition: TAURI_RESOURCE_DIR + lib + pdfium.dll
-            let resource_dir = PathBuf::from("C:\\mock\\resourceDir");
-            let expected = resource_dir.join("lib").join("pdfium.dll");
-            assert_eq!(
-                expected.to_string_lossy().as_ref(),
-                "C:\\mock\\resourceDir\\lib\\pdfium.dll"
-            );
-        }
+    #[test]
+    fn get_pdfium_with_resolved_path_accepts_path_cross_platform() {
+        let temp = TempDir::new().unwrap();
+        let dummy = temp.path().join(RUNTIME_FILENAME);
+        fs::write(&dummy, b"dummy").unwrap();
 
-        #[test]
-        fn unsafe_filename_rejection_traversal() {
-            // Path traversal attempts should be rejected by is_valid_runtime_file
-            let temp = TempDir::new().unwrap();
-            let traversal = temp.path().join("..").join("pdfium.dll");
-            // is_valid_runtime_file checks for exact filename match
-            assert!(!is_valid_runtime_file(&traversal));
-        }
+        // On Linux/Windows the dummy fails the ELF/PE header check, on macOS it fails
+        // to bind; either way the provided path was used rather than resolved again.
+        let Err(err) = get_pdfium_with_resolved_path(Some(dummy.clone())) else {
+            panic!("dummy runtime must not bind");
+        };
+        assert_pre_resolved_path_was_used(&err);
+    }
 
-        #[test]
-        fn unsafe_filename_rejection_absolute_outside_root() {
-            // Absolute paths outside allowed roots should be rejected by is_path_under_allowlist
-            let temp = TempDir::new().unwrap();
-            let outside = temp.path().join("outside");
-            fs::create_dir_all(&outside).unwrap();
-            let target = outside.join("pdfium.dll");
-            fs::write(&target, b"dummy").unwrap();
+    #[test]
+    fn elf_header_parser_accepts_valid_x86_64() {
+        let mut header = [0u8; 64];
+        header[0..4].copy_from_slice(b"\x7fELF");
+        header[4] = 2; // ELFCLASS64
+        header[5] = 1; // ELFDATA2LSB (little-endian)
+        header[0x12] = 0x3e; // EM_X86_64 low byte
+        header[0x13] = 0x00; // EM_X86_64 high byte
 
-            let canonical_target = target.canonicalize().unwrap();
-            let current_exe = std::env::current_exe().ok();
-            let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from);
+        let result = verify_elf_header_bytes(&header, "x86_64");
+        assert!(
+            result.is_ok(),
+            "Valid x86_64 ELF header should be accepted: {:?}",
+            result
+        );
+    }
 
-            let allowed_roots: Vec<PathBuf> = current_exe
-                .as_ref()
-                .map(|p| p.parent().unwrap_or(p).to_path_buf())
-                .into_iter()
-                .chain(cargo_manifest_dir)
-                .collect();
+    #[test]
+    fn elf_header_parser_rejects_32bit() {
+        let mut header = [0u8; 64];
+        header[0..4].copy_from_slice(b"\x7fELF");
+        header[4] = 1; // ELFCLASS32 (32-bit)
+        header[5] = 1; // little-endian
+        header[0x12] = 0x3e;
+        header[0x13] = 0x00;
 
-            let is_allowed = allowed_roots.iter().any(|root| {
-                root.canonicalize()
-                    .map(|cr| canonical_target.starts_with(&cr))
-                    .unwrap_or(false)
-            });
-            assert!(
-                !is_allowed,
-                "Absolute path outside allowed roots should be rejected"
-            );
-        }
-
-        #[test]
-        fn malformed_sha256_rejected() {
-            // Test that SHA256 output is always 32 bytes
-            // (build.rs validates hex decoding at compile time)
-            use sha2::{Digest, Sha256};
-            let hash = Sha256::digest(b"test");
-            assert_eq!(hash.as_slice().len(), 32);
-        }
-
-        #[test]
-        fn integrity_helper_sha256_correctness() {
-            let temp = TempDir::new().unwrap();
-            let test_file = temp.path().join("test.bin");
-            fs::write(&test_file, b"hello world").unwrap();
-
-            let hash = compute_sha256(&test_file).unwrap();
-            use sha2::{Digest, Sha256};
-            let expected = Sha256::digest(b"hello world");
-            assert_eq!(hash.as_slice(), expected.as_slice());
-        }
-
-        #[test]
-        fn missing_metadata_fails_closed_verification_skipped() {
-            // When EXPECTED_SHA256 is None, verification is skipped but logged
-            // This test verifies the constant can be None
-            let _ = EXPECTED_SHA256; // Can be None
-            let _ = EXPECTED_BYTE_LENGTH; // Can be None
-        }
-
-        #[test]
-        fn windows_pe_architecture_x64_constant() {
-            // IMAGE_FILE_MACHINE_AMD64 = 0x8664
-            const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
-            assert_eq!(IMAGE_FILE_MACHINE_AMD64, 0x8664);
-        }
-
-        #[test]
-        fn dev_vs_release_classification() {
-            // IS_DEV_BUILD gates development-only paths
-            #[cfg(debug_assertions)]
-            assert!(IS_DEV_BUILD);
-            #[cfg(not(debug_assertions))]
-            assert!(!IS_DEV_BUILD);
-        }
-
-        #[test]
-        fn get_pdfium_with_resolved_path_uses_provided_path() {
-            // Test that the function signature accepts pre-resolved path
-            // (Actual binding test requires Windows host - deferred to 11V-D)
-            let temp = TempDir::new().unwrap();
-            let dummy_dll = temp.path().join("pdfium.dll");
-            fs::write(&dummy_dll, b"dummy").unwrap();
-
-            // Function should accept the path (binding will fail but resolution works)
-            // We can't test binding without Windows, but we verify the path is used
-            let result = get_pdfium_with_resolved_path(Some(dummy_dll.clone()));
-            // Error should be about binding, not resolution
-            assert!(result.is_err());
-            let err = result.unwrap_err();
-            assert!(
-                err.contains("bind")
-                    || err.contains("Failed to bind")
-                    || err.contains("DLL")
-                    || err.contains("library")
-            );
+        let result = verify_elf_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeArchitectureMismatch { expected, found } => {
+                assert_eq!(expected, "x86_64");
+                assert!(
+                    found.contains("32-bit"),
+                    "Expected 32-bit mention, found: {}",
+                    found
+                );
+            }
+            other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
         }
     }
 
-    // Cross-platform FAST_LOCAL tests (run on all platforms)
-    #[cfg(test)]
-    mod cross_platform_fast_local_tests {
-        use super::*;
-        use crate::pdf_engine::runtime_metadata::{IS_DEV_BUILD, RUNTIME_FILENAME};
-        use std::fs;
-        use std::path::PathBuf;
-        use tempfile::TempDir;
+    #[test]
+    fn elf_header_parser_rejects_arm_aarch64() {
+        let mut header = [0u8; 64];
+        header[0..4].copy_from_slice(b"\x7fELF");
+        header[4] = 2; // 64-bit
+        header[5] = 1; // little-endian
+        header[0x12] = 0xb7; // EM_AARCH64 (183 = 0xB7)
+        header[0x13] = 0x00;
 
-        #[test]
-        fn runtime_filename_matches_platform() {
-            #[cfg(target_os = "linux")]
-            assert_eq!(RUNTIME_FILENAME, "libpdfium.so");
-            #[cfg(target_os = "windows")]
-            assert_eq!(RUNTIME_FILENAME, "pdfium.dll");
-            #[cfg(target_os = "macos")]
-            assert_eq!(RUNTIME_FILENAME, "libpdfium.dylib");
-        }
-
-        #[test]
-        fn dev_vs_release_classification_cross_platform() {
-            #[cfg(debug_assertions)]
-            assert!(IS_DEV_BUILD);
-            #[cfg(not(debug_assertions))]
-            assert!(!IS_DEV_BUILD);
-        }
-
-        #[test]
-        fn path_traversal_rejection_cross_platform() {
-            let temp = TempDir::new().unwrap();
-            let traversal = temp.path().join("..").join(RUNTIME_FILENAME);
-            assert!(!is_valid_runtime_file(&traversal));
-        }
-
-        #[test]
-        fn integrity_helper_sha256_correctness_cross_platform() {
-            let temp = TempDir::new().unwrap();
-            let test_file = temp.path().join("test.bin");
-            fs::write(&test_file, b"hello world").unwrap();
-
-            let hash = compute_sha256(&test_file).unwrap();
-            use sha2::{Digest, Sha256};
-            let expected = Sha256::digest(b"hello world");
-            assert_eq!(hash.as_slice(), expected.as_slice());
-        }
-
-        #[test]
-        fn get_pdfium_with_resolved_path_accepts_path_cross_platform() {
-            let temp = TempDir::new().unwrap();
-            let dummy = temp.path().join(RUNTIME_FILENAME);
-            fs::write(&dummy, b"dummy").unwrap();
-
-            let result = get_pdfium_with_resolved_path(Some(dummy.clone()));
-            assert!(result.is_err());
-            let err = result.unwrap_err();
-            assert!(
-                err.contains("bind")
-                    || err.contains("Failed to bind")
-                    || err.contains("DLL")
-                    || err.contains("library")
-                    || err.contains("dylib")
-                    || err.contains("so")
-            );
-        }
-
-        #[test]
-        fn elf_header_parser_accepts_valid_x86_64() {
-            let mut header = [0u8; 64];
-            header[0..4].copy_from_slice(b"\x7fELF");
-            header[4] = 2; // ELFCLASS64
-            header[5] = 1; // ELFDATA2LSB (little-endian)
-            header[0x12] = 0x3e; // EM_X86_64 low byte
-            header[0x13] = 0x00; // EM_X86_64 high byte
-
-            let result = verify_elf_header_bytes(&header, "x86_64");
-            assert!(
-                result.is_ok(),
-                "Valid x86_64 ELF header should be accepted: {:?}",
-                result
-            );
-        }
-
-        #[test]
-        fn elf_header_parser_rejects_32bit() {
-            let mut header = [0u8; 64];
-            header[0..4].copy_from_slice(b"\x7fELF");
-            header[4] = 1; // ELFCLASS32 (32-bit)
-            header[5] = 1; // little-endian
-            header[0x12] = 0x3e;
-            header[0x13] = 0x00;
-
-            let result = verify_elf_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeArchitectureMismatch { expected, found } => {
-                    assert_eq!(expected, "x86_64");
-                    assert!(
-                        found.contains("32-bit"),
-                        "Expected 32-bit mention, found: {}",
-                        found
-                    );
-                }
-                other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
+        let result = verify_elf_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeArchitectureMismatch { expected, found } => {
+                assert_eq!(expected, "x86_64");
+                assert_eq!(found, "AArch64");
             }
+            other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn elf_header_parser_rejects_arm_aarch64() {
-            let mut header = [0u8; 64];
-            header[0..4].copy_from_slice(b"\x7fELF");
-            header[4] = 2; // 64-bit
-            header[5] = 1; // little-endian
-            header[0x12] = 0xb7; // EM_AARCH64 (183 = 0xB7)
-            header[0x13] = 0x00;
-
-            let result = verify_elf_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeArchitectureMismatch { expected, found } => {
-                    assert_eq!(expected, "x86_64");
-                    assert_eq!(found, "AArch64");
-                }
-                other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
+    #[test]
+    fn elf_header_parser_rejects_non_elf_signature() {
+        let header = [0u8; 64]; // zeros, not \x7fELF
+        let result = verify_elf_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeLoadFailed(msg) => {
+                assert!(msg.contains("Not a valid ELF file"));
             }
+            other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn elf_header_parser_rejects_non_elf_signature() {
-            let header = [0u8; 64]; // zeros, not \x7fELF
-            let result = verify_elf_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeLoadFailed(msg) => {
-                    assert!(msg.contains("Not a valid ELF file"));
-                }
-                other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
+    #[test]
+    fn elf_header_parser_rejects_short_header() {
+        let short = [0u8; 10];
+        let result = verify_elf_header_bytes(&short, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeLoadFailed(msg) => {
+                assert!(msg.contains("too short"));
             }
+            other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn elf_header_parser_rejects_short_header() {
-            let short = [0u8; 10];
-            let result = verify_elf_header_bytes(&short, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeLoadFailed(msg) => {
-                    assert!(msg.contains("too short"));
-                }
-                other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
+    #[test]
+    fn linux_runtime_metadata_constants() {
+        use crate::pdf_engine::runtime_metadata::{
+            LINUX_EXPECTED_ARCH, LINUX_EXPECTED_PACKAGED_LOCATION, LINUX_EXPECTED_STAGED_PATH,
+            LINUX_RUNTIME_FILENAME, LINUX_SUPPLY_CHAIN_STATUS,
+        };
+
+        assert_eq!(LINUX_EXPECTED_ARCH, "x86_64");
+        assert_eq!(LINUX_RUNTIME_FILENAME, "libpdfium.so");
+        assert!(LINUX_EXPECTED_STAGED_PATH.ends_with("lib/libpdfium.so"));
+        assert!(LINUX_EXPECTED_PACKAGED_LOCATION.ends_with("lib/libpdfium.so"));
+        assert!(matches!(
+            LINUX_SUPPLY_CHAIN_STATUS,
+            "COMPLETE" | "PARTIAL" | "INCOMPLETE" | "MISSING"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linux_path_composition_deterministic() {
+        let resource_dir = PathBuf::from("/mock/app/resources");
+        let packaged = resource_dir.join("lib").join("libpdfium.so");
+        assert_eq!(
+            packaged.to_str().unwrap(),
+            "/mock/app/resources/lib/libpdfium.so"
+        );
+    }
+
+    #[test]
+    fn linux_relative_pdfium_path_rejected() {
+        let relative = PathBuf::from("./libpdfium.so");
+        assert!(
+            !relative.is_absolute(),
+            "Relative PDFIUM_PATH must be rejected before canonicalization"
+        );
+    }
+
+    #[test]
+    fn pe_header_parser_accepts_valid_x86_64() {
+        let mut header = [0u8; 128];
+        header[0..2].copy_from_slice(b"MZ");
+        header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"PE\0\0");
+        header[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
+        header[86..88].copy_from_slice(&0x0000u16.to_le_bytes());
+
+        let result = verify_pe_header_bytes(&header, "x86_64");
+        assert!(
+            result.is_ok(),
+            "Valid x86_64 PE header should be accepted: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn pe_header_parser_rejects_non_mz_signature() {
+        let header = [0u8; 128];
+        let result = verify_pe_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeLoadFailed(msg) => {
+                assert!(msg.contains("missing MZ signature"));
             }
+            other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn linux_runtime_metadata_constants() {
-            use crate::pdf_engine::runtime_metadata::{
-                LINUX_EXPECTED_ARCH, LINUX_EXPECTED_PACKAGED_LOCATION, LINUX_EXPECTED_STAGED_PATH,
-                LINUX_RUNTIME_FILENAME, LINUX_SUPPLY_CHAIN_STATUS,
-            };
-
-            assert_eq!(LINUX_EXPECTED_ARCH, "x86_64");
-            assert_eq!(LINUX_RUNTIME_FILENAME, "libpdfium.so");
-            assert!(LINUX_EXPECTED_STAGED_PATH.ends_with("lib/libpdfium.so"));
-            assert!(LINUX_EXPECTED_PACKAGED_LOCATION.ends_with("lib/libpdfium.so"));
-            assert!(matches!(
-                LINUX_SUPPLY_CHAIN_STATUS,
-                "COMPLETE" | "PARTIAL" | "INCOMPLETE" | "MISSING"
-            ));
-        }
-
-        #[test]
-        fn linux_path_composition_deterministic() {
-            let resource_dir = PathBuf::from("/mock/app/resources");
-            let packaged = resource_dir.join("lib").join("libpdfium.so");
-            assert_eq!(
-                packaged.to_str().unwrap(),
-                "/mock/app/resources/lib/libpdfium.so"
-            );
-        }
-
-        #[test]
-        fn linux_relative_pdfium_path_rejected() {
-            let relative = PathBuf::from("./libpdfium.so");
-            assert!(
-                !relative.is_absolute(),
-                "Relative PDFIUM_PATH must be rejected before canonicalization"
-            );
-        }
-
-        #[test]
-        fn pe_header_parser_accepts_valid_x86_64() {
-            let mut header = [0u8; 128];
-            header[0..2].copy_from_slice(b"MZ");
-            header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
-            header[64..68].copy_from_slice(b"PE\0\0");
-            header[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
-            header[86..88].copy_from_slice(&0x0000u16.to_le_bytes());
-
-            let result = verify_pe_header_bytes(&header, "x86_64");
-            assert!(
-                result.is_ok(),
-                "Valid x86_64 PE header should be accepted: {:?}",
-                result
-            );
-        }
-
-        #[test]
-        fn pe_header_parser_rejects_non_mz_signature() {
-            let header = [0u8; 128];
-            let result = verify_pe_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeLoadFailed(msg) => {
-                    assert!(msg.contains("missing MZ signature"));
-                }
-                other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
+    #[test]
+    fn pe_header_parser_rejects_non_pe_signature() {
+        let mut header = [0u8; 128];
+        header[0..2].copy_from_slice(b"MZ");
+        header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"NOPE");
+        let result = verify_pe_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeLoadFailed(msg) => {
+                assert!(msg.contains("missing PE signature"));
             }
+            other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn pe_header_parser_rejects_non_pe_signature() {
-            let mut header = [0u8; 128];
-            header[0..2].copy_from_slice(b"MZ");
-            header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
-            header[64..68].copy_from_slice(b"NOPE");
-            let result = verify_pe_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeLoadFailed(msg) => {
-                    assert!(msg.contains("missing PE signature"));
-                }
-                other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
+    #[test]
+    fn pe_header_parser_rejects_i386_32bit() {
+        let mut header = [0u8; 128];
+        header[0..2].copy_from_slice(b"MZ");
+        header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"PE\0\0");
+        header[68..70].copy_from_slice(&0x014cu16.to_le_bytes());
+        header[86..88].copy_from_slice(&0x0000u16.to_le_bytes());
+
+        let result = verify_pe_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeArchitectureMismatch { expected, found } => {
+                assert_eq!(expected, "x86_64");
+                assert_eq!(found, "x86");
             }
+            other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn pe_header_parser_rejects_i386_32bit() {
-            let mut header = [0u8; 128];
-            header[0..2].copy_from_slice(b"MZ");
-            header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
-            header[64..68].copy_from_slice(b"PE\0\0");
-            header[68..70].copy_from_slice(&0x014cu16.to_le_bytes());
-            header[86..88].copy_from_slice(&0x0000u16.to_le_bytes());
+    #[test]
+    fn pe_header_parser_rejects_arm64() {
+        let mut header = [0u8; 128];
+        header[0..2].copy_from_slice(b"MZ");
+        header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"PE\0\0");
+        header[68..70].copy_from_slice(&0xAA64u16.to_le_bytes());
+        header[86..88].copy_from_slice(&0x0000u16.to_le_bytes());
 
-            let result = verify_pe_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeArchitectureMismatch { expected, found } => {
-                    assert_eq!(expected, "x86_64");
-                    assert_eq!(found, "x86");
-                }
-                other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
+        let result = verify_pe_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeArchitectureMismatch { expected, found } => {
+                assert_eq!(expected, "x86_64");
+                assert_eq!(found, "aarch64");
             }
+            other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn pe_header_parser_rejects_arm64() {
-            let mut header = [0u8; 128];
-            header[0..2].copy_from_slice(b"MZ");
-            header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
-            header[64..68].copy_from_slice(b"PE\0\0");
-            header[68..70].copy_from_slice(&0xAA64u16.to_le_bytes());
-            header[86..88].copy_from_slice(&0x0000u16.to_le_bytes());
+    #[test]
+    fn pe_header_parser_rejects_32bit_characteristic_flag() {
+        let mut header = [0u8; 128];
+        header[0..2].copy_from_slice(b"MZ");
+        header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"PE\0\0");
+        header[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
+        header[86..88].copy_from_slice(&0x0020u16.to_le_bytes());
 
-            let result = verify_pe_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeArchitectureMismatch { expected, found } => {
-                    assert_eq!(expected, "x86_64");
-                    assert_eq!(found, "aarch64");
-                }
-                other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
+        let result = verify_pe_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeArchitectureMismatch { expected, found } => {
+                assert_eq!(expected, "x86_64");
+                assert!(found.contains("32-bit flag set"));
             }
+            other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn pe_header_parser_rejects_32bit_characteristic_flag() {
-            let mut header = [0u8; 128];
-            header[0..2].copy_from_slice(b"MZ");
-            header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
-            header[64..68].copy_from_slice(b"PE\0\0");
-            header[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
-            header[86..88].copy_from_slice(&0x0020u16.to_le_bytes());
-
-            let result = verify_pe_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeArchitectureMismatch { expected, found } => {
-                    assert_eq!(expected, "x86_64");
-                    assert!(found.contains("32-bit flag set"));
-                }
-                other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
+    #[test]
+    fn pe_header_parser_rejects_truncated_dos_header() {
+        let short = [0u8; 20];
+        let result = verify_pe_header_bytes(&short, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeLoadFailed(msg) => {
+                assert!(msg.contains("too short"));
             }
+            other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn pe_header_parser_rejects_truncated_dos_header() {
-            let short = [0u8; 20];
-            let result = verify_pe_header_bytes(&short, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeLoadFailed(msg) => {
-                    assert!(msg.contains("too short"));
-                }
-                other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
+    #[test]
+    fn pe_header_parser_rejects_truncated_coff_header() {
+        let mut header = [0u8; 70];
+        header[0..2].copy_from_slice(b"MZ");
+        header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"PE\0\0");
+        let result = verify_pe_header_bytes(&header, "x86_64");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::RuntimeLoadFailed(msg) => {
+                assert!(msg.contains("truncated before COFF header"));
             }
+            other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
         }
+    }
 
-        #[test]
-        fn pe_header_parser_rejects_truncated_coff_header() {
-            let mut header = [0u8; 70];
-            header[0..2].copy_from_slice(b"MZ");
-            header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
-            header[64..68].copy_from_slice(b"PE\0\0");
-            let result = verify_pe_header_bytes(&header, "x86_64");
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                AppError::RuntimeLoadFailed(msg) => {
-                    assert!(msg.contains("truncated before COFF header"));
-                }
-                other => panic!("Expected RuntimeLoadFailed, got {:?}", other),
-            }
-        }
+    #[test]
+    fn windows_runtime_metadata_constants() {
+        use crate::pdf_engine::runtime_metadata::{
+            WINDOWS_EXPECTED_ARCH, WINDOWS_EXPECTED_PACKAGED_LOCATION,
+            WINDOWS_EXPECTED_STAGED_PATH, WINDOWS_RUNTIME_FILENAME, WINDOWS_SUPPLY_CHAIN_STATUS,
+        };
 
-        #[test]
-        fn windows_runtime_metadata_constants() {
-            use crate::pdf_engine::runtime_metadata::{
-                WINDOWS_EXPECTED_ARCH, WINDOWS_EXPECTED_PACKAGED_LOCATION,
-                WINDOWS_EXPECTED_STAGED_PATH, WINDOWS_RUNTIME_FILENAME,
-                WINDOWS_SUPPLY_CHAIN_STATUS,
-            };
+        assert_eq!(WINDOWS_EXPECTED_ARCH, "x86_64");
+        assert_eq!(WINDOWS_RUNTIME_FILENAME, "pdfium.dll");
+        assert!(WINDOWS_EXPECTED_STAGED_PATH.ends_with("lib/pdfium.dll"));
+        assert!(WINDOWS_EXPECTED_PACKAGED_LOCATION.ends_with("lib/pdfium.dll"));
+        assert!(matches!(
+            WINDOWS_SUPPLY_CHAIN_STATUS,
+            "COMPLETE" | "PARTIAL" | "INCOMPLETE" | "MISSING"
+        ));
+    }
 
-            assert_eq!(WINDOWS_EXPECTED_ARCH, "x86_64");
-            assert_eq!(WINDOWS_RUNTIME_FILENAME, "pdfium.dll");
-            assert!(WINDOWS_EXPECTED_STAGED_PATH.ends_with("lib/pdfium.dll"));
-            assert!(WINDOWS_EXPECTED_PACKAGED_LOCATION.ends_with("lib/pdfium.dll"));
-            assert!(matches!(
-                WINDOWS_SUPPLY_CHAIN_STATUS,
-                "COMPLETE" | "PARTIAL" | "INCOMPLETE" | "MISSING"
-            ));
-        }
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_composition_deterministic() {
+        let resource_dir = PathBuf::from("C:\\mock\\app\\resources");
+        let packaged = resource_dir.join("lib").join("pdfium.dll");
+        assert_eq!(
+            packaged.to_string_lossy(),
+            "C:\\mock\\app\\resources\\lib\\pdfium.dll"
+        );
+    }
 
-        #[test]
-        fn windows_path_composition_deterministic() {
-            let resource_dir = PathBuf::from("C:\\mock\\app\\resources");
-            let packaged = resource_dir.join("lib").join("pdfium.dll");
-            assert_eq!(
-                packaged.to_string_lossy(),
-                "C:\\mock\\app\\resources\\lib\\pdfium.dll"
-            );
-        }
+    #[test]
+    fn windows_packaging_path_parity() {
+        use crate::pdf_engine::runtime_metadata::{
+            WINDOWS_EXPECTED_PACKAGED_LOCATION, WINDOWS_EXPECTED_STAGED_PATH,
+            WINDOWS_RUNTIME_FILENAME,
+        };
 
-        #[test]
-        fn windows_packaging_path_parity() {
-            use crate::pdf_engine::runtime_metadata::{
-                RUNTIME_FILENAME, WINDOWS_EXPECTED_PACKAGED_LOCATION,
-                WINDOWS_EXPECTED_STAGED_PATH,
-            };
+        // 1. Packaged location constant must be canonical
+        assert_eq!(
+            WINDOWS_EXPECTED_PACKAGED_LOCATION,
+            "resourceDir/lib/pdfium.dll"
+        );
 
-            // 1. Packaged location constant must be canonical
-            assert_eq!(
-                WINDOWS_EXPECTED_PACKAGED_LOCATION,
-                "resourceDir/lib/pdfium.dll"
-            );
+        // 2. Staged path in repo must be canonical
+        assert_eq!(WINDOWS_EXPECTED_STAGED_PATH, "src-tauri/lib/pdfium.dll");
 
-            // 2. Staged path in repo must be canonical
-            assert_eq!(WINDOWS_EXPECTED_STAGED_PATH, "src-tauri/lib/pdfium.dll");
+        // 3. Package resource definition in tauri.windows.conf.json is derived from staged path
+        let package_resource_entry = WINDOWS_EXPECTED_STAGED_PATH
+            .strip_prefix("src-tauri/")
+            .unwrap_or(WINDOWS_EXPECTED_STAGED_PATH);
+        assert_eq!(
+            package_resource_entry, "lib/pdfium.dll",
+            "Packaging resource entry must match staged path subpath"
+        );
 
-            // 3. Package resource definition in tauri.windows.conf.json is derived from staged path
-            let package_resource_entry = WINDOWS_EXPECTED_STAGED_PATH
-                .strip_prefix("src-tauri/")
-                .unwrap_or(WINDOWS_EXPECTED_STAGED_PATH);
-            assert_eq!(
-                package_resource_entry, "lib/pdfium.dll",
-                "Packaging resource entry must match staged path subpath"
-            );
+        // 4. Loader path composition (resourceDir / lib / RUNTIME_FILENAME) matches packaged location
+        let mock_resource_dir = PathBuf::from("resourceDir");
+        let loader_packaged = mock_resource_dir.join("lib").join(WINDOWS_RUNTIME_FILENAME);
+        let loader_str = loader_packaged.to_string_lossy().replace('\\', "/");
+        assert_eq!(
+            loader_str, WINDOWS_EXPECTED_PACKAGED_LOCATION,
+            "D3 loader expected path must be in 100% parity with packaged location"
+        );
+    }
 
-            // 4. Loader path composition (resourceDir / lib / RUNTIME_FILENAME) matches packaged location
-            let mock_resource_dir = PathBuf::from("resourceDir");
-            let loader_packaged = mock_resource_dir.join("lib").join(RUNTIME_FILENAME);
-            let loader_str = loader_packaged.to_string_lossy().replace('\\', "/");
-            assert_eq!(
-                loader_str, WINDOWS_EXPECTED_PACKAGED_LOCATION,
-                "D3 loader expected path must be in 100% parity with packaged location"
-            );
-        }
-
-        #[test]
-        fn windows_relative_pdfium_path_rejected() {
-            let relative = PathBuf::from("./pdfium.dll");
-            assert!(
-                !relative.is_absolute(),
-                "Relative PDFIUM_PATH must be rejected before canonicalization"
-            );
-        }
+    #[test]
+    fn windows_relative_pdfium_path_rejected() {
+        let relative = PathBuf::from("./pdfium.dll");
+        assert!(
+            !relative.is_absolute(),
+            "Relative PDFIUM_PATH must be rejected before canonicalization"
+        );
     }
 }
