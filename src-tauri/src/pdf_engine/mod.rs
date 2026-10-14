@@ -98,9 +98,9 @@ fn resolve_linux_runtime_path() -> Result<PathBuf, AppError> {
             .join("lib")
             .join(RUNTIME_FILENAME);
         if packaged_path.exists() && is_valid_runtime_file(&packaged_path) {
-            return Ok(packaged_path.canonicalize().map_err(|e| {
+            return packaged_path.canonicalize().map_err(|e| {
                 AppError::RuntimeUnavailable(format!("Packaged path canonicalization failed: {e}"))
-            })?);
+            });
         }
     }
 
@@ -159,9 +159,9 @@ fn resolve_windows_runtime_path() -> Result<PathBuf, AppError> {
             .join("lib")
             .join(RUNTIME_FILENAME);
         if packaged_path.exists() && is_valid_runtime_file(&packaged_path) {
-            return Ok(packaged_path.canonicalize().map_err(|e| {
+            return packaged_path.canonicalize().map_err(|e| {
                 AppError::RuntimeUnavailable(format!("Packaged path canonicalization failed: {e}"))
-            })?);
+            });
         }
     }
 
@@ -219,9 +219,9 @@ fn resolve_macos_runtime_path() -> Result<PathBuf, AppError> {
             .join("lib")
             .join(RUNTIME_FILENAME);
         if packaged_path.exists() && is_valid_runtime_file(&packaged_path) {
-            return Ok(packaged_path.canonicalize().map_err(|e| {
+            return packaged_path.canonicalize().map_err(|e| {
                 AppError::RuntimeUnavailable(format!("Packaged path canonicalization failed: {e}"))
-            })?);
+            });
         }
     }
 
@@ -324,9 +324,9 @@ fn is_symlink_outside_root(path: &std::path::Path) -> bool {
 }
 
 fn verify_runtime(path: &std::path::Path) -> Result<(), AppError> {
-    use crate::pdf_engine::runtime_metadata::{
-        EXPECTED_BYTE_LENGTH, EXPECTED_SHA256, IS_DEV_BUILD,
-    };
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    use crate::pdf_engine::runtime_metadata::IS_DEV_BUILD;
+    use crate::pdf_engine::runtime_metadata::{EXPECTED_BYTE_LENGTH, EXPECTED_SHA256};
 
     let metadata = std::fs::metadata(path).map_err(|e| {
         AppError::RuntimeLoadFailed(format!("Failed to read runtime metadata: {e}"))
@@ -392,6 +392,7 @@ fn verify_runtime(path: &std::path::Path) -> Result<(), AppError> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn verify_elf_header_bytes(elf_header: &[u8], expected_arch: &str) -> Result<(), AppError> {
     if elf_header.len() < 20 {
         return Err(AppError::RuntimeLoadFailed(
@@ -464,6 +465,9 @@ fn verify_linux_architecture(_path: &std::path::Path) -> Result<(), AppError> {
     Ok(())
 }
 
+// Test-only reference parser (`verify_windows_architecture` reads the PE header
+// inline); its tests live in the Linux-gated `linux_runtime_resolution_tests`.
+#[cfg(all(test, target_os = "linux"))]
 fn verify_pe_header_bytes(bytes: &[u8], expected_arch: &str) -> Result<(), AppError> {
     if bytes.len() < 64 {
         return Err(AppError::RuntimeLoadFailed(

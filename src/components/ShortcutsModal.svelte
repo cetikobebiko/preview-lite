@@ -23,10 +23,10 @@
   
   <svelte:window onkeydown={handleKeyDown} />
   
-  <div class="modal-overlay" transition:fade={{ duration: 150 }} onclick={() => onclose?.()}>
-    <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }} onclick={(event) => event.stopPropagation()}>
+  <div class="modal-overlay" role="presentation" transition:fade={{ duration: 150 }} onclick={(event) => event.target === event.currentTarget && onclose?.()}>
+    <div class="modal-content glass-panel" role="dialog" aria-modal="true" aria-labelledby="shortcuts-modal-title" transition:fly={{ y: 20, duration: 250 }}>
       <div class="modal-header">
-        <h3>Klavye Kısayolları</h3>
+        <h3 id="shortcuts-modal-title">Klavye Kısayolları</h3>
         <button class="close-btn" onclick={() => onclose?.()}>×</button>
       </div>
       

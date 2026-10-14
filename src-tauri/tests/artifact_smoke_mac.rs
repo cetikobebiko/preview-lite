@@ -8,7 +8,7 @@
 //! Run with: ARTIFACT_SMOKE_MACOS_PATH=<path> cargo test --test artifact_smoke_mac -- --ignored
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn artifact_path_from_env() -> Option<PathBuf> {
@@ -17,7 +17,7 @@ fn artifact_path_from_env() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn artifact_type_from_path(path: &PathBuf) -> Option<String> {
+fn artifact_type_from_path(path: &Path) -> Option<String> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     match ext.as_str() {
         "dmg" => Some("MACOS_DMG".to_string()),

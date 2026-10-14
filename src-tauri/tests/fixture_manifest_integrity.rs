@@ -479,29 +479,26 @@ pub fn validate_manifest(
                     ));
                 }
             }
-            SourceType::Unknown => {
-                if fixture.provenance_status == ProvenanceStatus::Complete {
-                    errors.push(format!(
-                        "Fixture '{}' has sourceType 'unknown' but provenanceStatus is 'complete'",
-                        fixture.id
-                    ));
-                }
+            SourceType::Unknown if fixture.provenance_status == ProvenanceStatus::Complete => {
+                errors.push(format!(
+                    "Fixture '{}' has sourceType 'unknown' but provenanceStatus is 'complete'",
+                    fixture.id
+                ));
             }
             _ => {}
         }
 
-        if fixture.provenance_status == ProvenanceStatus::Complete {
-            if fixture
+        if fixture.provenance_status == ProvenanceStatus::Complete
+            && fixture
                 .source
                 .as_ref()
                 .map(|s| s.trim().is_empty())
                 .unwrap_or(true)
-            {
-                errors.push(format!(
-                    "Fixture '{}' has provenanceStatus 'complete' but missing source description",
-                    fixture.id
-                ));
-            }
+        {
+            errors.push(format!(
+                "Fixture '{}' has provenanceStatus 'complete' but missing source description",
+                fixture.id
+            ));
         }
 
         // License Invariants
@@ -666,13 +663,11 @@ pub fn validate_manifest(
             }
         }
 
-        if fixture.encrypted {
-            if !fixture.categories.contains(&FixtureCategory::Encrypted) {
-                errors.push(format!(
-                    "Fixture '{}' has encrypted == true but lacks category 'encrypted'",
-                    fixture.id
-                ));
-            }
+        if fixture.encrypted && !fixture.categories.contains(&FixtureCategory::Encrypted) {
+            errors.push(format!(
+                "Fixture '{}' has encrypted == true but lacks category 'encrypted'",
+                fixture.id
+            ));
         }
 
         // Disk checks (if active)
@@ -2508,7 +2503,7 @@ fn test_release_smoke_and_large_dimensions_fixtures_integrity() {
             "multi_page".to_string(),
         ]
     );
-    assert!(smoke_fixture.allow_empty == false);
+    assert!(!smoke_fixture.allow_empty);
     assert!(smoke_fixture.allowed_tests.contains(&TestKind::Smoke));
 
     let smoke_disk_bytes =
@@ -2546,7 +2541,7 @@ fn test_release_smoke_and_large_dimensions_fixtures_integrity() {
         large_fixture.expected_capabilities,
         vec!["large_page_dimensions".to_string()]
     );
-    assert!(large_fixture.allow_empty == false);
+    assert!(!large_fixture.allow_empty);
 
     let large_disk_bytes = fs::read(repo_root.join(&large_fixture.path))
         .expect("Read large-page-dimensions.pdf from disk");

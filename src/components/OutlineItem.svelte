@@ -7,14 +7,22 @@
 </script>
 
 <div class="outline-node">
-  <div class="outline-header" onclick={() => { if(node.children.length === 0 || onJump) onJump(node.page_index); expanded = !expanded; }}>
+  <div class="outline-header">
     {#if node.children.length > 0}
-      <span class="toggle" onclick={(event) => { event.stopPropagation(); expanded = !expanded; }}>
+      <button
+        type="button"
+        class="toggle"
+        aria-expanded={expanded}
+        aria-label={expanded ? "Daralt" : "Genişlet"}
+        onclick={() => { expanded = !expanded; }}
+      >
         {expanded ? '▼' : '▶'}
-      </span>
+      </button>
     {/if}
-    <span class="title">{node.title}</span>
-    <span class="page-num">{node.page_index + 1}</span>
+    <button type="button" class="outline-link" onclick={() => { if(node.children.length === 0 || onJump) onJump(node.page_index); expanded = !expanded; }}>
+      <span class="title">{node.title}</span>
+      <span class="page-num">{node.page_index + 1}</span>
+    </button>
   </div>
   
   {#if expanded && node.children.length > 0}
@@ -35,13 +43,30 @@
   .outline-header {
     display: flex;
     align-items: center;
-    padding: 6px 8px;
-    cursor: pointer;
     border-radius: 4px;
     transition: background-color 0.2s;
   }
   .outline-header:hover {
     background-color: rgba(255, 255, 255, 0.1);
+  }
+  .outline-header button {
+    padding: 6px 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .outline-header .outline-link {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    padding-right: 8px;
+    text-align: left;
+  }
+  .outline-header > button:first-child {
+    padding-left: 8px;
   }
   .toggle {
     display: inline-block;

@@ -1,18 +1,16 @@
 use pdfium_render::prelude::*;
 use preview_alternative_lib::document_session::SessionJobCancellationCheckpoint;
 use preview_alternative_lib::secure_redaction::{
-    CanonicalPageGeometry, DevicePixelRect, EncryptionPolicy, InteractiveContentPolicy,
-    NormalizedTopLeftRect, PageRedactionStrategy, PageRotation, PdfPointRect,
-    RedactionAcknowledgements, RedactionAppearancePolicy, RedactionProfile, RedactionRegionInput,
-    RedactionStrategy, SecureRedactionPolicy, SignaturePolicy, REDACTION_SCHEMA_VERSION,
+    DevicePixelRect, EncryptionPolicy, InteractiveContentPolicy, NormalizedTopLeftRect,
+    PageRedactionStrategy, PageRotation, PdfPointRect, RedactionAcknowledgements,
+    RedactionAppearancePolicy, RedactionProfile, RedactionRegionInput, RedactionStrategy,
+    SecureRedactionPolicy, SignaturePolicy, REDACTION_SCHEMA_VERSION,
 };
 use preview_alternative_lib::secure_redaction_inspection::inspect_and_plan_secure_redaction;
 use preview_alternative_lib::secure_redaction_raster::{
-    apply_opaque_black_overwrite, build_lossless_raster_payload_for_page,
-    calculate_raster_dimensions, create_redaction_render_config, map_pdf_rect_to_device_pixel_rect,
-    merge_device_pixel_rects, render_affected_page_raster, verify_opaque_black_overwrite,
-    LosslessRasterPayload, RasterizedRegionMapping, RedactionBackgroundPolicy,
-    RedactionPixelFormat, RedactionRasterBuffer, RedactionRasterSpec,
+    build_lossless_raster_payload_for_page, calculate_raster_dimensions,
+    create_redaction_render_config, map_pdf_rect_to_device_pixel_rect, render_affected_page_raster,
+    RedactionBackgroundPolicy, RedactionPixelFormat, RedactionRasterSpec,
 };
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -141,21 +141,21 @@ fn main() {
 
     if !cfg!(debug_assertions) && target_os == "windows" {
         verify_windows_runtime_pre_package(
-            &windows_expected_staged_path,
+            windows_expected_staged_path,
             windows_sha256_bytes,
             windows_byte_length,
-            &windows_architecture,
-            &windows_supply_chain_status,
+            windows_architecture,
+            windows_supply_chain_status,
         );
     }
 
     if !cfg!(debug_assertions) && target_os == "linux" {
         verify_linux_runtime_pre_package(
-            &linux_expected_staged_path,
+            linux_expected_staged_path,
             linux_sha256_bytes,
             linux_byte_length,
-            &linux_architecture,
-            &linux_supply_chain_status,
+            linux_architecture,
+            linux_supply_chain_status,
         );
     }
 
@@ -199,7 +199,7 @@ fn main() {
     content.push_str("/// Expected version/revision of the packaged Linux PDFium runtime.\n");
     content.push_str("/// None if supply chain metadata is incomplete.\n");
     content.push_str(&format!(
-        "pub const LINUX_EXPECTED_VERSION: Option<&'static str> = {};\n\n",
+        "pub const LINUX_EXPECTED_VERSION: Option<&str> = {};\n\n",
         linux_version
             .map(|v| format!("\"{}\"", v))
             .unwrap_or("None".to_string())
@@ -207,31 +207,31 @@ fn main() {
 
     content.push_str("/// Expected architecture of the packaged Linux PDFium runtime.\n");
     content.push_str(&format!(
-        "pub const LINUX_EXPECTED_ARCH: &'static str = \"{}\";\n\n",
+        "pub const LINUX_EXPECTED_ARCH: &str = \"{}\";\n\n",
         linux_architecture
     ));
 
     content.push_str("/// Expected runtime filename for Linux.\n");
     content.push_str(&format!(
-        "pub const LINUX_RUNTIME_FILENAME: &'static str = \"{}\";\n\n",
+        "pub const LINUX_RUNTIME_FILENAME: &str = \"{}\";\n\n",
         linux_runtime_filename
     ));
 
     content.push_str("/// Supply chain status for Linux runtime.\n");
     content.push_str(&format!(
-        "pub const LINUX_SUPPLY_CHAIN_STATUS: &'static str = \"{}\";\n\n",
+        "pub const LINUX_SUPPLY_CHAIN_STATUS: &str = \"{}\";\n\n",
         linux_supply_chain_status
     ));
 
     content.push_str("/// Expected staged path in repository (source of truth for bundling).\n");
     content.push_str(&format!(
-        "pub const LINUX_EXPECTED_STAGED_PATH: &'static str = \"{}\";\n\n",
+        "pub const LINUX_EXPECTED_STAGED_PATH: &str = \"{}\";\n\n",
         linux_expected_staged_path
     ));
 
     content.push_str("/// Expected packaged location at runtime (Tauri resourceDir).\n");
     content.push_str(&format!(
-        "pub const LINUX_EXPECTED_PACKAGED_LOCATION: &'static str = \"{}\";\n\n",
+        "pub const LINUX_EXPECTED_PACKAGED_LOCATION: &str = \"{}\";\n\n",
         linux_expected_packaged_location
     ));
 
@@ -268,7 +268,7 @@ fn main() {
     content.push_str("/// Expected version/revision of the packaged Windows PDFium runtime.\n");
     content.push_str("/// None if supply chain metadata is incomplete.\n");
     content.push_str(&format!(
-        "pub const WINDOWS_EXPECTED_VERSION: Option<&'static str> = {};\n\n",
+        "pub const WINDOWS_EXPECTED_VERSION: Option<&str> = {};\n\n",
         windows_version
             .map(|v| format!("\"{}\"", v))
             .unwrap_or("None".to_string())
@@ -276,31 +276,31 @@ fn main() {
 
     content.push_str("/// Expected architecture of the packaged Windows PDFium runtime.\n");
     content.push_str(&format!(
-        "pub const WINDOWS_EXPECTED_ARCH: &'static str = \"{}\";\n\n",
+        "pub const WINDOWS_EXPECTED_ARCH: &str = \"{}\";\n\n",
         windows_architecture
     ));
 
     content.push_str("/// Expected runtime filename for Windows.\n");
     content.push_str(&format!(
-        "pub const WINDOWS_RUNTIME_FILENAME: &'static str = \"{}\";\n\n",
+        "pub const WINDOWS_RUNTIME_FILENAME: &str = \"{}\";\n\n",
         windows_runtime_filename
     ));
 
     content.push_str("/// Supply chain status for Windows runtime.\n");
     content.push_str(&format!(
-        "pub const WINDOWS_SUPPLY_CHAIN_STATUS: &'static str = \"{}\";\n\n",
+        "pub const WINDOWS_SUPPLY_CHAIN_STATUS: &str = \"{}\";\n\n",
         windows_supply_chain_status
     ));
 
     content.push_str("/// Expected staged path in repository (source of truth for bundling).\n");
     content.push_str(&format!(
-        "pub const WINDOWS_EXPECTED_STAGED_PATH: &'static str = \"{}\";\n\n",
+        "pub const WINDOWS_EXPECTED_STAGED_PATH: &str = \"{}\";\n\n",
         windows_expected_staged_path
     ));
 
     content.push_str("/// Expected packaged location at runtime (Tauri resourceDir).\n");
     content.push_str(&format!(
-        "pub const WINDOWS_EXPECTED_PACKAGED_LOCATION: &'static str = \"{}\";\n\n",
+        "pub const WINDOWS_EXPECTED_PACKAGED_LOCATION: &str = \"{}\";\n\n",
         windows_expected_packaged_location
     ));
 

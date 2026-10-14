@@ -131,10 +131,10 @@
   }
 </script>
 
-<div class="modal-overlay" transition:fade={{ duration: 150 }} onclick={() => onclose?.()}>
-  <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }} onclick={(event) => event.stopPropagation()}>
+<div class="modal-overlay" role="presentation" transition:fade={{ duration: 150 }} onclick={(event) => event.target === event.currentTarget && onclose?.()}>
+  <div class="modal-content glass-panel" role="dialog" aria-modal="true" aria-labelledby="merge-split-modal-title" transition:fly={{ y: 20, duration: 250 }}>
       <div class="modal-header">
-          <h3>Belge Araçları</h3>
+          <h3 id="merge-split-modal-title">Belge Araçları</h3>
           <div class="mode-tabs">
             <button class:active={mode === 'merge'} onclick={() => mode='merge'}>Birleştir</button>
             <button class:active={mode === 'split'} onclick={() => mode='split'}>Böl</button>
@@ -161,8 +161,8 @@
           <div class="split-section">
             <p class="hint">Geçerli belgenin toplam sayfa sayısı: {maxPages}</p>
             <div class="form-group">
-                <label>Bölünecek Aralıklar (Örn: 1-3, 5, 8-10)</label>
-                <input type="text" bind:value={splitRangesText} placeholder="1-5, 8, 11-13" class="tech-input" />
+                <label for="split-ranges-input">Bölünecek Aralıklar (Örn: 1-3, 5, 8-10)</label>
+                <input id="split-ranges-input" type="text" bind:value={splitRangesText} placeholder="1-5, 8, 11-13" class="tech-input" />
             </div>
             <p class="hint">Yukarıdaki her bir aralık için seçtiğiniz klasörde ayrı bir PDF oluşturulacaktır.</p>
           </div>

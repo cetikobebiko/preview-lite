@@ -182,10 +182,7 @@ impl VerapdfHarness {
 
     /// Validate a PDF file against a profile.
     pub fn validate(&self, pdf_path: &Path, profile: &str) -> Result<ValidationOutcome> {
-        let validator_id = ValidatorId(format!(
-            "verapdf-{}",
-            profile.replace('/', "-").replace(':', "-")
-        ));
+        let validator_id = ValidatorId(format!("verapdf-{}", profile.replace(['/', ':'], "-")));
         let profile_id = ProfileId(profile.to_string());
         let start = Instant::now();
 
@@ -610,6 +607,12 @@ pub struct MockVerapdfHarness {
     pub version: String,
 }
 
+impl Default for MockVerapdfHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockVerapdfHarness {
     pub fn new() -> Self {
         Self {
@@ -623,10 +626,8 @@ impl MockVerapdfHarness {
     }
 
     pub fn validate(&self, _pdf_path: &Path, profile: &str) -> Result<ValidationOutcome> {
-        let validator_id = ValidatorId(format!(
-            "mock-verapdf-{}",
-            profile.replace('/', "-").replace(':', "-")
-        ));
+        let validator_id =
+            ValidatorId(format!("mock-verapdf-{}", profile.replace(['/', ':'], "-")));
         let profile_id = ProfileId(profile.to_string());
         let start = Instant::now();
 
