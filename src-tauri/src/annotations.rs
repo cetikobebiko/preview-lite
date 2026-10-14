@@ -2,11 +2,9 @@ use crate::document_io::{
     atomic_write_pdf, ensure_unprotected, AtomicWriteReport, CommitState, DocumentIoError,
     DocumentIoFailure, DocumentIoStage,
 };
-use crate::PasswordCache;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tauri::State;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RectData {
@@ -211,41 +209,6 @@ pub(crate) fn read_page_annotations(
     Ok(result)
 }
 
-#[tauri::command]
-pub fn add_annotation(
-    file_path: String,
-    page_index: u32,
-    annot_type: String,
-    rect: RectData,
-    color: String,
-    contents: Option<String>,
-    cache: State<'_, PasswordCache>,
-) -> Result<String, String> {
-    let password = {
-        let lock = cache.0.lock();
-        lock.get(&file_path).cloned()
-    };
-    add_annotation_with_password(
-        file_path, page_index, annot_type, rect, color, contents, password,
-    )
-}
-
-fn add_annotation_with_password(
-    file_path: String,
-    page_index: u32,
-    annot_type: String,
-    rect: RectData,
-    color: String,
-    contents: Option<String>,
-    password: Option<String>,
-) -> Result<String, String> {
-    add_annotation_report(
-        file_path, page_index, annot_type, rect, color, contents, password,
-    )
-    .map(|_| "ok".to_string())
-    .map_err(|error| error.to_string())
-}
-
 pub(crate) fn add_annotation_report(
     file_path: String,
     page_index: u32,
@@ -426,31 +389,6 @@ pub(crate) fn add_annotation_report(
     )
 }
 
-#[tauri::command]
-pub fn delete_annotation(
-    file_path: String,
-    page_index: u32,
-    annot_id: String,
-    cache: State<'_, PasswordCache>,
-) -> Result<(), String> {
-    let password = {
-        let lock = cache.0.lock();
-        lock.get(&file_path).cloned()
-    };
-    delete_annotation_with_password(file_path, page_index, annot_id, password)
-}
-
-fn delete_annotation_with_password(
-    file_path: String,
-    page_index: u32,
-    annot_id: String,
-    password: Option<String>,
-) -> Result<(), String> {
-    delete_annotation_report(file_path, page_index, annot_id, password)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
-}
-
 pub(crate) fn delete_annotation_report(
     file_path: String,
     page_index: u32,
@@ -540,77 +478,6 @@ pub(crate) fn delete_annotation_report(
     )
 }
 
-#[tauri::command]
-pub fn save_pdf_with_annotations(
-    file_path: String,
-    output_path: String,
-    cache: State<'_, PasswordCache>,
-) -> Result<(), String> {
-    let password = {
-        let lock = cache.0.lock();
-        lock.get(&file_path).cloned()
-    };
-    save_pdf_with_annotations_with_password(file_path, output_path, password)
-}
-
-fn save_pdf_with_annotations_with_password(
-    file_path: String,
-    output_path: String,
-    password: Option<String>,
-) -> Result<(), String> {
-    let source = PathBuf::from(&file_path);
-    let source_for_write = source.clone();
-    let target = PathBuf::from(&output_path);
-    atomic_write_pdf(
-        "save_pdf_with_annotations",
-        std::slice::from_ref(&source),
-        &target,
-        move |pdfium, temp| {
-            let document = open_pdfium_doc(
-                pdfium,
-                source_for_write.to_string_lossy().as_ref(),
-                password.as_deref(),
-            )
-            .map_err(DocumentIoFailure::preflight)?;
-            ensure_unprotected(&document)?;
-            let page_count = document.pages().len();
-            let mut annotations = Vec::with_capacity(page_count as usize);
-            for page_index in 0..page_count {
-                annotations.push(page_annotation_fingerprints(&document, page_index)?);
-            }
-            document.save_to_file(temp).map_err(|error| {
-                DocumentIoFailure::write(format!("Temp PDF kaydedilemedi: {error}"))
-            })?;
-            Ok(annotations)
-        },
-        |document, expected| {
-            if document.pages().len() as usize != expected.len() {
-                return Err(DocumentIoFailure::invariant(format!(
-                    "Annotation save sayfa sayısını değiştirdi: beklenen {}, bulunan {}",
-                    expected.len(),
-                    document.pages().len()
-                )));
-            }
-            for (page_index, expected_page) in expected.iter().enumerate() {
-                let actual = page_annotation_fingerprints(document, page_index as u16)?;
-                if actual.len() != expected_page.len()
-                    || !actual
-                        .iter()
-                        .zip(expected_page)
-                        .all(|(left, right)| left.matches(right))
-                {
-                    return Err(DocumentIoFailure::invariant(format!(
-                        "Sayfa {page_index} annotation invariant'ı bozuldu"
-                    )));
-                }
-            }
-            Ok(())
-        },
-    )
-    .map(|_| ())
-    .map_err(|error| error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,6 +491,33 @@ mod tests {
             .join("annotations.pdf")
     }
 
+    fn add_annotation_with_password(
+        file_path: String,
+        page_index: u32,
+        annot_type: String,
+        rect: RectData,
+        color: String,
+        contents: Option<String>,
+        password: Option<String>,
+    ) -> Result<String, String> {
+        add_annotation_report(
+            file_path, page_index, annot_type, rect, color, contents, password,
+        )
+        .map(|_| "ok".to_string())
+        .map_err(|error| error.to_string())
+    }
+
+    fn delete_annotation_with_password(
+        file_path: String,
+        page_index: u32,
+        annot_id: String,
+        password: Option<String>,
+    ) -> Result<(), String> {
+        delete_annotation_report(file_path, page_index, annot_id, password)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn annotation_fingerprints(path: &Path) -> Vec<AnnotationFingerprint> {
         crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
             let document = pdfium
@@ -635,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn document_io_annotation_add_delete_and_same_path_save_are_atomic() {
+    fn document_io_annotation_add_and_delete_are_atomic() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("annotations.pdf");
         fs::copy(fixture(), &path).unwrap();
@@ -662,14 +556,6 @@ mod tests {
             after_add.last().and_then(|item| item.contents.as_deref()),
             Some("Atomic highlight")
         );
-
-        save_pdf_with_annotations_with_password(
-            path.to_string_lossy().to_string(),
-            path.to_string_lossy().to_string(),
-            None,
-        )
-        .unwrap();
-        assert_eq!(annotation_fingerprints(&path).len(), 2);
 
         delete_annotation_with_password(
             path.to_string_lossy().to_string(),

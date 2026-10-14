@@ -2,11 +2,9 @@ use crate::document_io::{
     atomic_write_pdf, ensure_unprotected, AtomicWriteReport, CommitState, DocumentIoError,
     DocumentIoFailure, DocumentIoStage,
 };
-use crate::PasswordCache;
 use pdfium_render::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use tauri::State;
 
 const MAX_PAGE_DIMENSION_POINTS: f32 = 14_400.0;
 
@@ -32,11 +30,6 @@ fn rotation_from_degrees(degrees: i32) -> Result<PdfPageRenderRotation, String> 
         270 => PdfPageRenderRotation::Degrees270,
         _ => PdfPageRenderRotation::None,
     })
-}
-
-fn cached_password(file_path: &str, cache: &PasswordCache) -> Option<String> {
-    let guard = cache.0.lock();
-    guard.get(file_path).cloned()
 }
 
 #[derive(Clone, Debug)]
@@ -298,28 +291,6 @@ pub(crate) fn reorder_pdf_to_target_report(
     )
 }
 
-#[tauri::command]
-pub fn rotate_page(
-    file_path: String,
-    page_index: u32,
-    degrees: i32,
-    cache: State<PasswordCache>,
-) -> Result<(), String> {
-    let password = cached_password(&file_path, &cache);
-    rotate_page_with_password(file_path, page_index, degrees, password)
-}
-
-fn rotate_page_with_password(
-    file_path: String,
-    page_index: u32,
-    degrees: i32,
-    password: Option<String>,
-) -> Result<(), String> {
-    rotate_page_report(file_path, page_index, degrees, password)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
-}
-
 /// Rotates a page clockwise by `degrees` relative to its current /Rotate value.
 pub(crate) fn rotate_page_report(
     file_path: String,
@@ -398,26 +369,6 @@ pub(crate) fn rotate_page_report(
     )
 }
 
-#[tauri::command]
-pub fn delete_pages(
-    file_path: String,
-    page_indices: Vec<u32>,
-    cache: State<PasswordCache>,
-) -> Result<(), String> {
-    let password = cached_password(&file_path, &cache);
-    delete_pages_with_password(file_path, page_indices, password)
-}
-
-fn delete_pages_with_password(
-    file_path: String,
-    page_indices: Vec<u32>,
-    password: Option<String>,
-) -> Result<(), String> {
-    delete_pages_report(file_path, page_indices, password)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
-}
-
 pub(crate) fn delete_pages_report(
     file_path: String,
     page_indices: Vec<u32>,
@@ -488,30 +439,6 @@ pub(crate) fn delete_pages_report(
             Ok(())
         },
     )
-}
-
-#[tauri::command]
-pub fn insert_blank_page(
-    file_path: String,
-    at_index: u32,
-    width: f32,
-    height: f32,
-    cache: State<PasswordCache>,
-) -> Result<(), String> {
-    let password = cached_password(&file_path, &cache);
-    insert_blank_page_with_password(file_path, at_index, width, height, password)
-}
-
-fn insert_blank_page_with_password(
-    file_path: String,
-    at_index: u32,
-    width: f32,
-    height: f32,
-    password: Option<String>,
-) -> Result<(), String> {
-    insert_blank_page_report(file_path, at_index, width, height, password)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn insert_blank_page_report(
@@ -601,7 +528,6 @@ pub(crate) fn insert_blank_page_report(
     )
 }
 
-#[tauri::command]
 pub fn merge_pdfs(file_paths: Vec<String>, output_path: String) -> Result<(), String> {
     if file_paths.is_empty() {
         return Err(
@@ -816,48 +742,6 @@ pub fn merge_pdfs_internal(
     })
 }
 
-#[derive(serde::Serialize)]
-pub struct FormField {
-    pub id: String,
-    pub field_type: String,
-    pub value: String,
-    pub page_index: u32,
-}
-
-#[tauri::command]
-pub fn get_form_fields(
-    _file_path: String,
-    _cache: State<PasswordCache>,
-) -> Result<Vec<FormField>, String> {
-    Ok(vec![])
-}
-
-#[tauri::command]
-pub fn update_form_field(
-    _file_path: String,
-    _field_id: String,
-    _value: String,
-    _cache: State<PasswordCache>,
-) -> Result<(), String> {
-    Err("Form güncelleme şu an desteklenmiyor.".into())
-}
-
-#[tauri::command]
-pub fn reorder_pages(
-    file_path: String,
-    new_order: Vec<u32>,
-    cache: State<PasswordCache>,
-) -> Result<(), String> {
-    let password = cached_password(&file_path, &cache);
-    reorder_pdf_to_target(
-        file_path.clone(),
-        new_order,
-        file_path,
-        password,
-        ReorderMode::FullPermutation,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -876,6 +760,39 @@ mod tests {
         let target = directory.join(name);
         fs::copy(fixture(name), &target).unwrap();
         target
+    }
+
+    fn rotate_page_with_password(
+        file_path: String,
+        page_index: u32,
+        degrees: i32,
+        password: Option<String>,
+    ) -> Result<(), String> {
+        rotate_page_report(file_path, page_index, degrees, password)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn delete_pages_with_password(
+        file_path: String,
+        page_indices: Vec<u32>,
+        password: Option<String>,
+    ) -> Result<(), String> {
+        delete_pages_report(file_path, page_indices, password)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn insert_blank_page_with_password(
+        file_path: String,
+        at_index: u32,
+        width: f32,
+        height: f32,
+        password: Option<String>,
+    ) -> Result<(), String> {
+        insert_blank_page_report(file_path, at_index, width, height, password)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     fn assert_page_sizes(path: &Path, expected: &[(f32, f32)]) {
