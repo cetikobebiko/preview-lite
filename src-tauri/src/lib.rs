@@ -1394,8 +1394,32 @@ pub fn run_smoke() {
     let _ = child.wait();
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+/// Keeps the non-blocking log writer alive until `RunEvent::Exit`, where it is
+/// dropped so buffered lines reach disk. `None` in debug builds and when file
+/// logging fell back to stderr.
+pub struct LogGuard(pub parking_lot::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>);
+
+#[cfg(not(debug_assertions))]
+const LOG_FILE_PREFIX: &str = "antigravity.log";
+
+/// Validates and creates the release log directory resolved by Tauri. A
+/// relative path would depend on the process working directory (`/` on macOS,
+/// the install directory on Windows), so it is rejected like a resolver error.
+#[cfg_attr(all(debug_assertions, not(test)), allow(dead_code))]
+fn prepare_log_dir<E: std::fmt::Display>(
+    app_log_dir: Result<std::path::PathBuf, E>,
+) -> Result<std::path::PathBuf, String> {
+    let dir = app_log_dir.map_err(|error| format!("uygulama log dizini çözümlenemedi: {error}"))?;
+    if !dir.is_absolute() {
+        return Err(format!("log dizini göreli: {}", dir.display()));
+    }
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("log dizini oluşturulamadı ({}): {error}", dir.display()))?;
+    Ok(dir)
+}
+
+#[cfg(debug_assertions)]
+fn init_debug_tracing() {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::EnvFilter;
 
@@ -1404,30 +1428,67 @@ pub fn run() {
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
 
-    #[cfg(debug_assertions)]
-    {
-        registry
-            .with(tracing_subscriber::fmt::layer().pretty().with_filter(
+    registry
+        .with(
+            tracing_subscriber::fmt::layer().pretty().with_filter(
                 EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
-            ))
-            .init();
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let file_appender = tracing_appender::rolling::daily("logs", "antigravity.log");
-        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-        std::mem::forget(_guard); // Prevent guard from dropping and stopping the logging thread
-        registry
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .json()
-                    .with_writer(non_blocking)
-                    .with_filter(
-                        EnvFilter::from_default_env().add_directive(tracing::Level::WARN.into()),
-                    ),
-            )
-            .init();
-    }
+            ),
+        )
+        .init();
+}
+
+/// Installs the release JSON logger: a daily rolling file in the app log
+/// directory, or stderr when that directory or file cannot be prepared.
+#[cfg(not(debug_assertions))]
+fn init_release_tracing(
+    app_log_dir: tauri::Result<std::path::PathBuf>,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::fmt::writer::BoxMakeWriter;
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::EnvFilter;
+
+    let appender = prepare_log_dir(app_log_dir).and_then(|dir| {
+        tracing_appender::rolling::RollingFileAppender::builder()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix(LOG_FILE_PREFIX)
+            .build(&dir)
+            .map_err(|error| format!("log dosyası açılamadı ({}): {error}", dir.display()))
+    });
+    let (writer, guard) = match appender {
+        Ok(appender) => {
+            let (writer, guard) = tracing_appender::non_blocking(appender);
+            (BoxMakeWriter::new(writer), Some(guard))
+        }
+        Err(reason) => {
+            eprintln!("Dosya loglaması kullanılamıyor, stderr'e yazılıyor: {reason}");
+            (BoxMakeWriter::new(std::io::stderr), None)
+        }
+    };
+
+    let registry = tracing_subscriber::registry();
+
+    #[cfg(feature = "tracy")]
+    let registry = registry.with(tracing_tracy::TracyLayer::default());
+
+    registry
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer)
+                .with_filter(
+                    EnvFilter::from_default_env().add_directive(tracing::Level::WARN.into()),
+                ),
+        )
+        .init();
+    guard
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    // Release logging needs the app log directory, so it is installed in
+    // `setup`; events emitted before that point are not written to the file.
+    #[cfg(debug_assertions)]
+    init_debug_tracing();
 
     let (batch_tx, batch_rx) = tokio::sync::mpsc::channel(100);
     let batch_queue = batch::BatchQueue { sender: batch_tx };
@@ -1442,6 +1503,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            #[cfg(not(debug_assertions))]
+            let log_guard = init_release_tracing(app.path().app_log_dir());
+            #[cfg(debug_assertions)]
+            let log_guard = None;
+            app.manage(LogGuard(parking_lot::Mutex::new(log_guard)));
+
             let handle = app.handle().clone();
             app.state::<document_session::DocumentSessionStore>()
                 .start_job_reaper();
@@ -1578,8 +1645,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("Tauri uygulaması başlatılırken hata oluştu")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { api, .. } => {
                 let coordinator = app_handle.state::<AppShutdownCoordinator>();
                 if !coordinator
                     .0
@@ -1605,12 +1672,57 @@ pub fn run() {
                     });
                 }
             }
+            tauri::RunEvent::Exit => {
+                // Dropping the guard flushes buffered log lines before the process exits.
+                if let Some(log_guard) = app_handle.try_state::<LogGuard>() {
+                    drop(log_guard.0.lock().take());
+                }
+            }
+            _ => {}
         });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepare_log_dir_creates_missing_absolute_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("Logs").join("antigravity");
+
+        let resolved = prepare_log_dir::<tauri::Error>(Ok(dir.clone())).unwrap();
+
+        assert_eq!(resolved, dir);
+        assert!(dir.is_dir());
+    }
+
+    #[test]
+    fn prepare_log_dir_reports_resolver_error() {
+        let error = prepare_log_dir::<&str>(Err("home dizini yok")).unwrap_err();
+        assert!(error.contains("home dizini yok"), "{error}");
+    }
+
+    #[test]
+    fn prepare_log_dir_rejects_relative_directory() {
+        let relative = std::path::PathBuf::from("logs-relative-test");
+
+        let error = prepare_log_dir::<tauri::Error>(Ok(relative.clone())).unwrap_err();
+
+        assert!(error.contains("göreli"), "{error}");
+        assert!(!relative.exists());
+    }
+
+    #[test]
+    fn prepare_log_dir_reports_uncreatable_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let blocker = root.path().join("not-a-directory");
+        std::fs::write(&blocker, b"file").unwrap();
+
+        let error = prepare_log_dir::<tauri::Error>(Ok(blocker.join("logs"))).unwrap_err();
+
+        assert!(error.contains("oluşturulamadı"), "{error}");
+    }
 
     #[test]
     fn test_corrupted_or_missing_pdf_handling() {
