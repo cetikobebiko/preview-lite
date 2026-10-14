@@ -2961,7 +2961,7 @@
     {
       "id": "batch_processing",
       "name": "Batch Processing",
-      "statusObservation": "mock",
+      "statusObservation": "disabled",
       "fixtureIds": [],
       "testIds": [],
       "dimensions": {

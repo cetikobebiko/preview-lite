@@ -160,8 +160,8 @@ atomic publication kabulünden sonra mümkündür.
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
 |---|---|---|---|---|---|---|
-| Batch job yürütme | Yalnız `pluginStore.js:43` wrapper; consumer yok | `batch::add_batch_job`; `batch.rs` | `mock` | Queue/status modeli vardır, worker yaklaşık 500 ms bekleyip tamamlandı durumuna geçer. | Gerçek OCR/export/manipulation işi dispatch edilmez. | Test yok. |
-| Batch status UI | Listener bulunmadı | `batch_job_status` event'i | `unreachable` | Backend queued/running/completed eventleri emit eder. | Frontend consumer yok; wrapper da normal UI'da kullanılmıyor. | Test yok. |
+| Batch job yürütme | Yalnız `pluginStore.js` wrapper; consumer yok, `batch_processing` feature gate kapalı | `batch::add_batch_job`; `batch.rs` | `disabled` | Komut kayıtlıdır ancak argümanları okumadan fail-closed `FEATURE_UNAVAILABLE` döndürür. Sahte (500 ms bekleyip tamamlandı bildiren) worker ve kuyruk kaldırılmıştır. | Gerçek batch yürütme uygulanmamıştır. | `cargo test batch::tests::add_batch_job_fails_closed`; `wrappers.test.js` payload sözleşmesi. |
+| Batch status UI | Listener bulunmadı | Yok (`batch_job_status` event'i kaldırıldı) | `disabled` | Backend artık batch status event'i emit etmez. | Yok. | Yok. |
 
 ## Platform-specific features
 
@@ -234,6 +234,6 @@ src/utils/textLayerUtils.test.js
 4. Tarihsel PDF/UA validation adı kaldırılmıştır; üretim yüzeyi yalnız structured Basic Accessibility Audit olarak sunulur.
 5. `apply_redactions` ve `sanitize_pdf_document` fail-closed `FEATURE_UNAVAILABLE` döndürür.
 6. Plugin permission enforcement kanıtlanmamıştır.
-7. Batch engine gerçek işleri yürütmez ve frontend status consumer'ı yoktur.
+7. Batch engine uygulanmamıştır; `add_batch_job` fail-closed `FEATURE_UNAVAILABLE` döndürür.
 8. Viewer PDFium yolları uzun ömürlü viewer worker’a; OCR/AI extraction/export/print preparation/prepress/sensitive scan, sanitization inspection ve snapshot validation yolları ayrı ephemeral job worker’a bağlıdır. Sanitization transform (`sanitize_pdf_document`) ile diğer mock/disabled signature, redaction, searchable-PDF ve PDF/X handler’ları parse öncesi `FEATURE_UNAVAILABLE` döndürür.
 9. Signature Settings ve Markdown notes export UI'ları gerçek persistence/write yapmadan başarı bildirir.

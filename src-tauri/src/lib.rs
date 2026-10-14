@@ -1490,10 +1490,7 @@ pub fn run() {
     #[cfg(debug_assertions)]
     init_debug_tracing();
 
-    let (batch_tx, batch_rx) = tokio::sync::mpsc::channel(100);
-    let batch_queue = batch::BatchQueue { sender: batch_tx };
     let shutdown_token = tokio_util::sync::CancellationToken::new();
-    let shutdown_token_clone = shutdown_token.clone();
     let password_cache = std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new()));
     let document_sessions = document_session::DocumentSessionStore::initialize_with_password_cache(
         std::sync::Arc::clone(&password_cache),
@@ -1509,7 +1506,6 @@ pub fn run() {
             let log_guard = None;
             app.manage(LogGuard(parking_lot::Mutex::new(log_guard)));
 
-            let handle = app.handle().clone();
             app.state::<document_session::DocumentSessionStore>()
                 .start_job_reaper();
 
@@ -1520,10 +1516,6 @@ pub fn run() {
                 std::env::set_var("PDFIUM_PATH", &runtime_path);
                 std::env::set_var("TAURI_RESOURCE_DIR", &resource_dir);
             }
-
-            tauri::async_runtime::spawn(async move {
-                batch::start_batch_worker(handle, batch_rx, shutdown_token_clone).await;
-            });
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -1553,7 +1545,6 @@ pub fn run() {
         .manage(document_sessions)
         .manage(plugins::PluginState::new())
         .manage(tts::SpeechController::new())
-        .manage(batch_queue)
         .invoke_handler(tauri::generate_handler![
             document_session::open_document_session,
             document_session::authenticate_document_session,

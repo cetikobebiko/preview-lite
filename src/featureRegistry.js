@@ -265,9 +265,9 @@ const RAW_FEATURES = [
   {
     id: "batch_processing",
     label: "Batch processing",
-    status: "mock",
+    status: "disabled",
     enabled: false,
-    warning: "Toplu iş kuyruğu gerçek belge işlemi yapmaz; gerçek işlem yapılmaz.",
+    warning: "Toplu iş işleme bu sürümde devre dışıdır; backend FEATURE_UNAVAILABLE döndürür.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#batch-processing",
   },
