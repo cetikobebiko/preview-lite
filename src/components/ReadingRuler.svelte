@@ -1,6 +1,6 @@
 <script>
-  export let isActive = false;
-  let mouseY = 300;
+  let { isActive = false } = $props();
+  let mouseY = $state(300);
   const rulerHeight = 44;
 
   function handleMouseMove(e) {
@@ -10,7 +10,7 @@
   }
 </script>
 
-<svelte:window on:mousemove={handleMouseMove} />
+<svelte:window onmousemove={handleMouseMove} />
 
 {#if isActive}
   <div class="ruler-container">

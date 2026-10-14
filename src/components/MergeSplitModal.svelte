@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher } from "svelte";
+  import { untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { mergeSessionPdfs, splitSessionPdf } from "../pdfState.js";
   import { open, save } from "@tauri-apps/plugin-dialog";
@@ -7,23 +7,19 @@
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
 
-  export let currentFilePath = "";
-  export let maxPages = 0;
-  export let sessionId = "";
-  export let contentGeneration = 0;
+  let { currentFilePath = "", maxPages = 0, sessionId = "", contentGeneration = 0, onclose } = $props();
 
-  const dispatch = createEventDispatcher();
   const featureContext = getRuntimeFeatureContext();
   const featurePresentation = getFeaturePresentation("page_manipulation", featureContext);
   
-  let mode = "merge"; // 'merge' or 'split'
-  let isProcessing = false;
+  let mode = $state("merge"); // 'merge' or 'split'
+  let isProcessing = $state(false);
   
-  // Merge state
-  let filesToMerge = currentFilePath ? [currentFilePath] : [];
+  // Merge state: seeded once from the file open when the modal mounts.
+  let filesToMerge = $state(untrack(() => (currentFilePath ? [currentFilePath] : [])));
   
   // Split state
-  let splitRangesText = "1-1"; 
+  let splitRangesText = $state("1-1"); 
 
   async function runPageAction(callback) {
     try {
@@ -81,7 +77,7 @@
         const extraFiles = filesToMerge.filter(f => f !== currentFilePath);
         await mergeSessionPdfs(sessionId, contentGeneration, extraFiles, savePath);
         alert("Dosyalar başarıyla birleştirildi!");
-        dispatch("close");
+        onclose?.();
       }
     } catch(e) {
       alert("Birleştirme hatası: " + e);
@@ -126,7 +122,7 @@
         if (!sessionId) throw new Error("Aktif document session bulunamadı.");
         await splitSessionPdf(sessionId, contentGeneration, ranges, outDir);
         alert("PDF başarıyla bölündü ve klasöre kaydedildi!");
-        dispatch("close");
+        onclose?.();
       }
     } catch(e) {
       alert("Bölme hatası: " + e);
@@ -135,13 +131,13 @@
   }
 </script>
 
-<div class="modal-overlay" transition:fade={{ duration: 150 }} on:click={() => dispatch("close")}>
-  <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }} on:click|stopPropagation>
+<div class="modal-overlay" transition:fade={{ duration: 150 }} onclick={() => onclose?.()}>
+  <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }} onclick={(event) => event.stopPropagation()}>
       <div class="modal-header">
           <h3>Belge Araçları</h3>
           <div class="mode-tabs">
-            <button class:active={mode === 'merge'} on:click={() => mode='merge'}>Birleştir</button>
-            <button class:active={mode === 'split'} on:click={() => mode='split'}>Böl</button>
+            <button class:active={mode === 'merge'} onclick={() => mode='merge'}>Birleştir</button>
+            <button class:active={mode === 'split'} onclick={() => mode='split'}>Böl</button>
           </div>
       </div>
       
@@ -155,11 +151,11 @@
                 <div class="file-item">
                   <span class="file-number">{i+1}.</span>
                   <span class="file-name">{file.split('/').pop().split('\\').pop()}</span>
-                  <button class="remove-btn" on:click={() => removeFile(i)}>✕</button>
+                  <button class="remove-btn" onclick={() => removeFile(i)}>✕</button>
                 </div>
               {/each}
             </div>
-            <button class="tech-button add-file-btn" on:click={handleAddFiles} disabled={!featurePresentation.runnable}>+ Dosya Ekle</button>
+            <button class="tech-button add-file-btn" onclick={handleAddFiles} disabled={!featurePresentation.runnable}>+ Dosya Ekle</button>
           </div>
         {:else}
           <div class="split-section">
@@ -174,13 +170,13 @@
       </div>
       
       <div class="modal-footer">
-          <button class="tech-button" on:click={() => dispatch("close")} disabled={isProcessing}>İptal</button>
+          <button class="tech-button" onclick={() => onclose?.()} disabled={isProcessing}>İptal</button>
           {#if mode === 'merge'}
-            <button class="tech-button primary" on:click={executeMerge} disabled={isProcessing || !featurePresentation.runnable}>
+            <button class="tech-button primary" onclick={executeMerge} disabled={isProcessing || !featurePresentation.runnable}>
               {isProcessing ? 'İşleniyor...' : 'Birleştir ve Kaydet'}
             </button>
           {:else}
-            <button class="tech-button primary" on:click={executeSplit} disabled={isProcessing || !featurePresentation.runnable}>
+            <button class="tech-button primary" onclick={executeSplit} disabled={isProcessing || !featurePresentation.runnable}>
               {isProcessing ? 'İşleniyor...' : 'Böl ve Kaydet'}
             </button>
           {/if}

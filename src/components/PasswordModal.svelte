@@ -1,28 +1,25 @@
 <script>
-  import { createEventDispatcher, onMount } from "svelte";
+  let { isOpen = false, fileName = "", errorMsg = "", onsubmit, oncancel } = $props();
 
-  export let isOpen = false;
-  export let fileName = "";
-  export let errorMsg = "";
+  let password = $state("");
+  let inputRef = $state();
 
-  const dispatch = createEventDispatcher();
-  let password = "";
-  let inputRef;
-
-  $: if (isOpen && inputRef) {
-    setTimeout(() => inputRef.focus(), 50);
-  }
+  $effect(() => {
+    if (isOpen && inputRef) {
+      setTimeout(() => inputRef.focus(), 50);
+    }
+  });
 
   function handleSubmit() {
     if (!password) return;
-    dispatch("submit", { password });
+    onsubmit?.(password);
     // Güvenlik: Parolayı Svelte state'inden hemen sil
     password = "";
   }
 
   function handleCancel() {
     password = "";
-    dispatch("cancel");
+    oncancel?.();
   }
 
   function handleKeydown(e) {
@@ -49,7 +46,7 @@
           bind:this={inputRef}
           type="password"
           bind:value={password}
-          on:keydown={handleKeydown}
+          onkeydown={handleKeydown}
           placeholder="Parolayı girin..."
           class="password-input {errorMsg ? 'error' : ''}"
         />
@@ -60,8 +57,8 @@
       </div>
 
       <div class="modal-footer">
-        <button class="btn btn-secondary" on:click={handleCancel}>İptal</button>
-        <button class="btn btn-primary" on:click={handleSubmit} disabled={!password}>Kilidi Aç</button>
+        <button class="btn btn-secondary" onclick={handleCancel}>İptal</button>
+        <button class="btn btn-primary" onclick={handleSubmit} disabled={!password}>Kilidi Aç</button>
       </div>
     </div>
   </div>

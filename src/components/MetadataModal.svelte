@@ -1,19 +1,18 @@
 <script>
-  import { createEventDispatcher } from "svelte";
-
-  export let isOpen = false;
-  export let metadata = {
-    title: "",
-    author: "",
-    subject: "",
-    keywords: "",
-    creator: "",
-  };
-
-  const dispatch = createEventDispatcher();
+  let {
+    isOpen = false,
+    metadata = {
+      title: "",
+      author: "",
+      subject: "",
+      keywords: "",
+      creator: "",
+    },
+    onclose,
+  } = $props();
 
   function close() {
-    dispatch("close");
+    onclose?.();
   }
 
   function handleSave() {
@@ -23,8 +22,8 @@
 </script>
 
 {#if isOpen}
-  <div class="meta-overlay" on:click={close} role="presentation" tabindex="-1">
-    <div class="meta-dialog" on:click|stopPropagation role="presentation">
+  <div class="meta-overlay" onclick={close} role="presentation" tabindex="-1">
+    <div class="meta-dialog" onclick={(event) => event.stopPropagation()} role="presentation">
       <div class="meta-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 20px;">🏷️</span>
@@ -33,7 +32,7 @@
             <p class="meta-subtitle">PDFium motoru metadata yazma C API'si sunmamaktadır</p>
           </div>
         </div>
-        <button class="close-btn" on:click={close}>✕</button>
+        <button class="close-btn" onclick={close}>✕</button>
       </div>
 
       <div class="meta-body">
@@ -68,7 +67,7 @@
       </div>
 
       <div class="meta-footer">
-        <button class="cancel-btn" on:click={close}>Kapat</button>
+        <button class="cancel-btn" onclick={close}>Kapat</button>
         <button class="save-btn" disabled title="PDFium C API metin/alt-text yazma desteği sunmamaktadır">
           Kaydet (Desteklenmiyor)
         </button>

@@ -1,17 +1,16 @@
 <script>
-  import { createEventDispatcher } from "svelte";
-
-  export let isOpen = false;
-  export let fileName = "";
-  export let totalPages = 1;
-  export let currentPage = 1;
-  export let readingTimeSeconds = 0;
-  export let scale = 1.0;
-
-  const dispatch = createEventDispatcher();
+  let {
+    isOpen = false,
+    fileName = "",
+    totalPages = 1,
+    currentPage = 1,
+    readingTimeSeconds = 0,
+    scale = 1.0,
+    onclose,
+  } = $props();
 
   function close() {
-    dispatch("close");
+    onclose?.();
   }
 
   function formatTime(totalSecs) {
@@ -23,13 +22,13 @@
     return `${secs} sn`;
   }
 
-  $: progressPercent = Math.round((currentPage / Math.max(1, totalPages)) * 100);
-  $: avgTimePerPage = totalPages > 0 ? Math.round(readingTimeSeconds / Math.max(1, currentPage)) : 0;
+  const progressPercent = $derived(Math.round((currentPage / Math.max(1, totalPages)) * 100));
+  const avgTimePerPage = $derived(totalPages > 0 ? Math.round(readingTimeSeconds / Math.max(1, currentPage)) : 0);
 </script>
 
 {#if isOpen}
-  <div class="analytics-overlay" on:click={close} role="presentation" tabindex="-1">
-    <div class="analytics-dialog" on:click|stopPropagation role="presentation">
+  <div class="analytics-overlay" onclick={close} role="presentation" tabindex="-1">
+    <div class="analytics-dialog" onclick={(event) => event.stopPropagation()} role="presentation">
       <div class="analytics-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 20px;">📊</span>
@@ -38,7 +37,7 @@
             <p class="analytics-subtitle">{fileName}</p>
           </div>
         </div>
-        <button class="close-btn" on:click={close}>✕</button>
+        <button class="close-btn" onclick={close}>✕</button>
       </div>
 
       <div class="analytics-body">

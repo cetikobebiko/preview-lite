@@ -1,14 +1,15 @@
 <script>
-  export let node;
-  export let onJump;
-  
-  let expanded = false;
+  import OutlineItem from "./OutlineItem.svelte";
+
+  let { node, onJump } = $props();
+
+  let expanded = $state(false);
 </script>
 
 <div class="outline-node">
-  <div class="outline-header" on:click={() => { if(node.children.length === 0 || onJump) onJump(node.page_index); expanded = !expanded; }}>
+  <div class="outline-header" onclick={() => { if(node.children.length === 0 || onJump) onJump(node.page_index); expanded = !expanded; }}>
     {#if node.children.length > 0}
-      <span class="toggle" on:click|stopPropagation={() => expanded = !expanded}>
+      <span class="toggle" onclick={(event) => { event.stopPropagation(); expanded = !expanded; }}>
         {expanded ? '▼' : '▶'}
       </span>
     {/if}
@@ -19,7 +20,7 @@
   {#if expanded && node.children.length > 0}
     <div class="children">
       {#each node.children as child}
-        <svelte:self node={child} {onJump} />
+        <OutlineItem node={child} {onJump} />
       {/each}
     </div>
   {/if}

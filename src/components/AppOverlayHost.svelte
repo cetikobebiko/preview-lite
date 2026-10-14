@@ -34,8 +34,8 @@
   isOpen={Boolean(passwordAttempt)}
   fileName={passwordAttempt?.candidateName ?? ""}
   errorMsg={passwordAttempt?.error ?? ""}
-  on:submit={(event) => onPasswordSubmit(event.detail.password, passwordAttempt?.attemptId)}
-  on:cancel={() => onPasswordCancel(passwordAttempt?.attemptId)}
+  onsubmit={(password) => onPasswordSubmit(password, passwordAttempt?.attemptId)}
+  oncancel={() => onPasswordCancel(passwordAttempt?.attemptId)}
 />
 
 <AsyncPromptDialog coordinator={asyncPrompt} />
