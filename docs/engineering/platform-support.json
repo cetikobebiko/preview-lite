@@ -85,7 +85,6 @@
         "present": true,
         "verifiedForRelease": false,
         "paths": [
-          "src-tauri/libpdfium.dylib",
           "src-tauri/lib/libpdfium.dylib"
         ],
         "copiesByteIdentical": true,
