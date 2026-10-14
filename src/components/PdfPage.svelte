@@ -1,4 +1,4 @@
-<script context="module">
+<script module>
   import { createPageSizeFallback } from "../utils/pageGeometry.js";
   import { createTextWidthMeasurer } from "../utils/textLayerUtils.js";
 
@@ -12,7 +12,7 @@
 </script>
 
 <script>
-  import { createEventDispatcher, getContext, onMount, onDestroy, tick } from "svelte";
+  import { getContext, onMount, onDestroy, tick, untrack } from "svelte";
   import {
     cancelRenderRequest,
     getPageTextLayout,
@@ -51,7 +51,7 @@
     estimateRenderedPageCssSize,
     renderDevicePixelRatio,
   } from "../utils/pageGeometry.js";
-  const dispatch = createEventDispatcher();
+  import { annotationsStore, addHighlight, highlightsForPage } from "../annotationsStore.js";
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
   const renderCoordinator = createRenderRequestCoordinator({
     scope: "main_page",
@@ -69,136 +69,106 @@
   const ocrPresentation = getFeaturePresentation("ocr", featureContext);
   const searchPresentation = getFeaturePresentation("search", featureContext);
 
-  export let sessionId = "";
-  export let pageIndex = 0;
-  export let scale = 1.0;
-  export let rotation = 0;
-  // For notifying parent which page is currently most visible
-  export let onIntersect = null;
-  export let activeTool = "pointer";
-  export let activeColor = "#facc15";
-  export let colorMode = "normal";
+  let {
+    sessionId = "",
+    pageIndex = 0,
+    scale = 1.0,
+    rotation = 0,
+    // For notifying parent which page is currently most visible
+    onIntersect = null,
+    activeTool = "pointer",
+    activeColor = "#facc15",
+    colorMode = "normal",
 
+    isSinglePageMode = false,
+    currentPage = 0,
+    generationId = 0,
+    documentGenerationId = 0,
 
-  export let isSinglePageMode = false;
-  export let currentPage = 0;
-  export let generationId = 0;
-  export let documentGenerationId = 0;
+    approximateCoveragePreview = null,
+    approximateProcessPreview = null,
+    approximateProcessChannels = { c: true, m: true, y: true, k: true },
+    sensitiveDataHighlights = [],
+    secureRedactionEnabled = false,
+    secureRedactionSelectionMode = false,
+    pendingRedactionRegions = [],
+    onRedactionRegionSelected = null,
+    searchRequestId = 0,
+    searchMatches = [],
+    onsearchHighlightReady,
+    onsessionSnapshot,
+  } = $props();
 
-  export let approximateCoveragePreview = null;
-  export let approximateProcessPreview = null;
-  export let approximateProcessChannels = { c: true, m: true, y: true, k: true };
-  export let sensitiveDataHighlights = [];
-  export let secureRedactionEnabled = false;
-  export let secureRedactionSelectionMode = false;
-  export let pendingRedactionRegions = [];
-  export let onRedactionRegionSelected = null;
-
+  // Plain `let`s are bookkeeping that no template, derived value or effect condition reads.
   let pageRef;
-  let canvasRef;
+  // $state: bound inside {#if}; read only in untracked or async code.
+  let canvasRef = $state();
   let isVisible = false;
   let isRendering = false;
   let observer = null;
-  let lastRenderedScale = 0;
-  let renderErrorMsg = "";
+  let lastRenderedScale = $state(0);
+  let renderErrorMsg = $state("");
   let isDestroyed = false;
   let renderRequestId = 0;
-  let paintedRenderKey = "";
-  let paintedSessionId = "";
-  let paintedPageIndex = -1;
-  let paintedPageRotation = 0;
-  let pendingRenderKey = "";
-  let failedRenderKey = "";
+  let paintedRenderKey = $state("");
+  let paintedSessionId = $state("");
+  let paintedPageIndex = $state(-1);
+  let paintedPageRotation = $state(0);
+  let pendingRenderKey = $state("");
+  let failedRenderKey = $state("");
   // Set by an explicit retry; a successful render then unblocks the page's
   // other surfaces (text layout, thumbnails) as well.
   let retryPending = false;
 
-  let baseImgWidth = 0;
-  let baseImgHeight = 0;
-  let renderedCssWidth = 0;
-  let renderedCssHeight = 0;
-  let cssScale = 1.0;
+  let baseImgWidth = $state(0);
+  let baseImgHeight = $state(0);
+  let renderedCssWidth = $state(0);
+  let renderedCssHeight = $state(0);
+  let cssScale = $state(1.0);
   let zoomDebounceTimer = null;
 
   // Aşama 3: Metin ve Arama Verileri
-  let textLayouts = [];
-  let textLayoutItems = [];
+  let textLayouts = $state.raw([]);
   let observedTextLayoutKey = "";
-  let loadedTextLayoutKey = "";
-  let pendingTextLayoutKey = "";
-  let failedTextLayoutKey = "";
+  let loadedTextLayoutKey = $state("");
+  let pendingTextLayoutKey = $state("");
+  let failedTextLayoutKey = $state("");
   let textLayoutRequestId = 0;
-  export let searchRequestId = 0;
-  export let searchMatches = [];
-  let positionedSearchMatches = [];
-  let searchHighlightLayerRef;
+  let searchHighlightLayerRef = $state();
   let lastHighlightReadyKey = "";
   let highlightReadySequence = 0;
 
-  let isBufferIntersecting = false;
-  let cachedHeight = 1131;
+  let isBufferIntersecting = $state(false);
   // Worker page size (pt, page /Rotate applied); null until loaded or when unavailable.
-  let pageSizePt = null;
+  let pageSizePt = $state.raw(null);
   let pageSizeRequestKey = "";
-  let paintedDocumentKey = "";
+  let paintedDocumentKey = $state("");
   // Rendered CSS height minus the container height just before the paint (layout shift).
-  let placeholderHeightDelta = null;
-  let redactionDragStart = null;
-  let redactionDragCurrent = null;
+  let placeholderHeightDelta = $state(null);
+  let redactionDragStart = $state.raw(null);
+  let redactionDragCurrent = $state.raw(null);
   let redactionPointerId = null;
 
-  $: normalizedRotation = ((rotation % 360) + 360) % 360;
-  $: unscaledWidth = lastRenderedScale > 0 ? baseImgWidth / lastRenderedScale : 1;
-  $: unscaledHeight = lastRenderedScale > 0 ? baseImgHeight / lastRenderedScale : 1;
-  $: desiredRenderKey = sessionId && scale
-    ? `${sessionId}:${documentGenerationId}:${pageIndex}:${scale}:${normalizedRotation}:${colorMode}:${generationId}`
-    : "";
-  $: desiredTextLayoutKey = sessionId
-    ? `${sessionId}:${documentGenerationId}:${pageIndex}`
-    : "";
-  $: documentKey = sessionId ? `${sessionId}:${documentGenerationId}` : "";
+  let visibilityObserver = null;
+  let bufferObserver = null;
 
-  // Worker-safety failures survive scrolling and zooming: the page is not
-  // requested again until the user retries it or the generation changes.
-  // Callers pass `$pageFailureRegistry` and the identity explicitly so the
-  // surrounding reactive statement or template expression re-runs on change.
-  function pageFailure(_registryVersion, session, generation, page, surface) {
-    return pageFailureRegistry.failure({
-      sessionId: session,
-      contentGeneration: generation,
-      pageIndex: page,
-      surface,
-    });
-  }
-  $: requestPageSize(documentKey, sessionId, documentGenerationId, pageIndex);
+  const normalizedRotation = $derived(((rotation % 360) + 360) % 360);
+  const unscaledWidth = $derived(lastRenderedScale > 0 ? baseImgWidth / lastRenderedScale : 1);
+  const unscaledHeight = $derived(lastRenderedScale > 0 ? baseImgHeight / lastRenderedScale : 1);
+  const desiredRenderKey = $derived(sessionId && scale
+    ? `${sessionId}:${documentGenerationId}:${pageIndex}:${scale}:${normalizedRotation}:${colorMode}:${generationId}`
+    : "");
+  const desiredTextLayoutKey = $derived(sessionId
+    ? `${sessionId}:${documentGenerationId}:${pageIndex}`
+    : "");
+  const documentKey = $derived(sessionId ? `${sessionId}:${documentGenerationId}` : "");
 
   // Strict Mode-based Page Scoping (Reactively reduced to IntersectionObserver state)
-  $: shouldRender = isSinglePageMode
+  const shouldRender = $derived(isSinglePageMode
     ? (pageIndex === currentPage)
-    : isBufferIntersecting;
+    : isBufferIntersecting);
 
-  $: if (desiredTextLayoutKey !== observedTextLayoutKey) {
-    observedTextLayoutKey = desiredTextLayoutKey;
-    resetTextLayoutForDocument();
-  }
-
-  $: if (
-    shouldRender &&
-    desiredTextLayoutKey &&
-    !pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "textLayout") &&
-    desiredTextLayoutKey !== loadedTextLayoutKey &&
-    desiredTextLayoutKey !== pendingTextLayoutKey &&
-    desiredTextLayoutKey !== failedTextLayoutKey
-  ) {
-    queueTextLayoutRequest({
-      key: desiredTextLayoutKey,
-      session: sessionId,
-      page: pageIndex,
-      documentGeneration: documentGenerationId,
-    });
-  }
-
-  $: textLayoutItems =
+  const textLayoutItems = $derived(
     paintedRenderKey &&
     paintedSessionId === sessionId &&
     paintedPageIndex === pageIndex &&
@@ -211,9 +181,9 @@
           pageCssHeight: renderedCssHeight,
           measureTextWidth,
         })
-      : [];
+      : []);
 
-  $: positionedSearchMatches =
+  const positionedSearchMatches = $derived(
     paintedRenderKey &&
     renderedCssWidth > 0 &&
     renderedCssHeight > 0 &&
@@ -234,27 +204,106 @@
               : [],
           }))
           .filter((match) => match.boxes.length > 0)
-      : [];
+      : []);
 
-  $: positionedPendingRedactions = Array.isArray(pendingRedactionRegions)
+  const positionedPendingRedactions = $derived(Array.isArray(pendingRedactionRegions)
     ? pendingRedactionRegions
         .map((region) => ({
           ...region,
           viewportRect: logicalRectToViewportRect(region.normalizedTopLeftRect, normalizedRotation),
         }))
         .filter((region) => region.viewportRect)
-    : [];
+    : []);
 
-  $: redactionPreviewRect = redactionDragStart && redactionDragCurrent
+  const redactionPreviewRect = $derived(redactionDragStart && redactionDragCurrent
     ? {
         x: Math.min(redactionDragStart.x, redactionDragCurrent.x),
         y: Math.min(redactionDragStart.y, redactionDragCurrent.y),
         width: Math.abs(redactionDragCurrent.x - redactionDragStart.x),
         height: Math.abs(redactionDragCurrent.y - redactionDragStart.y),
       }
-    : null;
+    : null);
 
-  $: {
+  const isTextLayerInteractive = $derived(activeTool === "pointer");
+
+  // Placeholder height: the worker page size gives the rendered height before render.
+  // Without it, a rendered height of this page/document/rotation is rescaled, else the
+  // document's last measured page size (or A4) is used.
+  const estimatedPageCssSize = $derived(estimateRenderedPageCssSize({
+    pageSize: pageSizePt ?? pageSizeFallback.get(documentKey),
+    scale,
+    rotation: normalizedRotation,
+    devicePixelRatio: currentDevicePixelRatio(),
+  }));
+  const cachedHeight = $derived(pageSizePt && estimatedPageCssSize
+    ? estimatedPageCssSize.height
+    : renderedCssHeight > 0 &&
+        lastRenderedScale > 0 &&
+        paintedDocumentKey === documentKey &&
+        paintedPageRotation === normalizedRotation
+      ? renderedCssHeight * (scale / lastRenderedScale)
+      : estimatedPageCssSize?.height ?? DEFAULT_PAGE_SIZE_PT.heightPt * scale);
+
+  // --- Metin Vurgulama (Highlight) İşlemleri ---
+  const pageHighlights = $derived(highlightsForPage($annotationsStore, sessionId, pageIndex));
+
+  // Worker-safety failures survive scrolling and zooming: the page is not
+  // requested again until the user retries it or the generation changes.
+  // Callers pass `$pageFailureRegistry` and the identity explicitly so the
+  // surrounding effect or template expression re-runs on change.
+  function pageFailure(_registryVersion, session, generation, page, surface) {
+    return pageFailureRegistry.failure({
+      sessionId: session,
+      contentGeneration: generation,
+      pageIndex: page,
+      surface,
+    });
+  }
+
+  // Effects. `$effect.pre` runs before the DOM update, like the legacy reactive statements they replace:
+  // the canvas must be released while it is still mounted. Each effect tracks only its condition;
+  // the work runs in `untrack`. They run in this order within a flush, and the order matters
+  // (text-layout reset before the text-layout request; memory release before the render queue).
+  // They also run once on creation, so everything they touch is declared above.
+
+  $effect.pre(() => {
+    const key = documentKey;
+    const session = sessionId;
+    const generation = documentGenerationId;
+    const page = pageIndex;
+    untrack(() => requestPageSize(key, session, generation, page));
+  });
+
+  // Must precede the text-layout request effect: in the other order a page or session change
+  // would request the layout, cancel it here, and request it again.
+  $effect.pre(() => {
+    const key = desiredTextLayoutKey;
+    if (key !== observedTextLayoutKey) {
+      observedTextLayoutKey = key;
+      untrack(resetTextLayoutForDocument);
+    }
+  });
+
+  $effect.pre(() => {
+    if (
+      shouldRender &&
+      desiredTextLayoutKey &&
+      !pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "textLayout") &&
+      desiredTextLayoutKey !== loadedTextLayoutKey &&
+      desiredTextLayoutKey !== pendingTextLayoutKey &&
+      desiredTextLayoutKey !== failedTextLayoutKey
+    ) {
+      const snapshot = {
+        key: desiredTextLayoutKey,
+        session: sessionId,
+        page: pageIndex,
+        documentGeneration: documentGenerationId,
+      };
+      untrack(() => queueTextLayoutRequest(snapshot));
+    }
+  });
+
+  $effect.pre(() => {
     const activeMatch = positionedSearchMatches.find((match) => match.isActive);
     const readyKey = activeMatch && paintedRenderKey
       ? `${searchRequestId}:${activeMatch.index}:${pageIndex}:${paintedRenderKey}`
@@ -264,59 +313,47 @@
       readyKey !== lastHighlightReadyKey &&
       shouldRender
     ) {
-      lastHighlightReadyKey = readyKey;
-      const sequence = ++highlightReadySequence;
-      void notifySearchHighlightReady(activeMatch.index, readyKey, sequence);
+      untrack(() => {
+        lastHighlightReadyKey = readyKey;
+        const sequence = ++highlightReadySequence;
+        void notifySearchHighlightReady(activeMatch.index, readyKey, sequence);
+      });
     }
-  }
-
-  $: isTextLayerInteractive = activeTool === "pointer";
+  });
 
   // Ekranda veya aktif mod sınırında değilse görsel verilerini bellekten sil
-  $: if (!shouldRender) {
-    cleanupMemory();
-  }
-
-  // Placeholder height: the worker page size gives the rendered height before render.
-  // Without it, a rendered height of this page/document/rotation is rescaled, else the
-  // document's last measured page size (or A4) is used.
-  $: estimatedPageCssSize = estimateRenderedPageCssSize({
-    pageSize: pageSizePt ?? pageSizeFallback.get(documentKey),
-    scale,
-    rotation: normalizedRotation,
-    devicePixelRatio: currentDevicePixelRatio(),
+  $effect.pre(() => {
+    if (!shouldRender) {
+      untrack(cleanupMemory);
+    }
   });
-  $: cachedHeight = pageSizePt && estimatedPageCssSize
-    ? estimatedPageCssSize.height
-    : renderedCssHeight > 0 &&
-        lastRenderedScale > 0 &&
-        paintedDocumentKey === documentKey &&
-        paintedPageRotation === normalizedRotation
-      ? renderedCssHeight * (scale / lastRenderedScale)
-      : estimatedPageCssSize?.height ?? DEFAULT_PAGE_SIZE_PT.heightPt * scale;
 
   // Render anahtarı temizlendiğinde veya değiştiğinde görünür sayfayı yeniden çiz.
-  $: if (
-    shouldRender &&
-    desiredRenderKey &&
-    !pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "render") &&
-    desiredRenderKey !== paintedRenderKey &&
-    desiredRenderKey !== pendingRenderKey &&
-    desiredRenderKey !== failedRenderKey
-  ) {
-    const shouldDebounce = paintedRenderKey && lastRenderedScale !== scale;
-    cssScale = lastRenderedScale > 0 ? scale / lastRenderedScale : 1.0;
-    queuePageRender({
-      key: desiredRenderKey,
-      session: sessionId,
-      page: pageIndex,
-      viewScale: scale,
-      pageRotation: normalizedRotation,
-      pageColorMode: colorMode,
-      generation: generationId,
-      documentGeneration: documentGenerationId,
-    }, shouldDebounce ? 150 : 0);
-  }
+  $effect.pre(() => {
+    if (
+      shouldRender &&
+      desiredRenderKey &&
+      !pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "render") &&
+      desiredRenderKey !== paintedRenderKey &&
+      desiredRenderKey !== pendingRenderKey &&
+      desiredRenderKey !== failedRenderKey
+    ) {
+      untrack(() => {
+        const shouldDebounce = paintedRenderKey && lastRenderedScale !== scale;
+        cssScale = lastRenderedScale > 0 ? scale / lastRenderedScale : 1.0;
+        queuePageRender({
+          key: desiredRenderKey,
+          session: sessionId,
+          page: pageIndex,
+          viewScale: scale,
+          pageRotation: normalizedRotation,
+          pageColorMode: colorMode,
+          generation: generationId,
+          documentGeneration: documentGenerationId,
+        }, shouldDebounce ? 150 : 0);
+      });
+    }
+  });
 
   function currentDevicePixelRatio() {
     return renderDevicePixelRatio(typeof window !== "undefined" ? window.devicePixelRatio : 1);
@@ -350,7 +387,7 @@
     );
     if (!element) return;
 
-    dispatch("searchHighlightReady", {
+    onsearchHighlightReady?.({
       searchRequestId,
       matchIndex,
       pageIndex,
@@ -388,7 +425,7 @@
 
     try {
       const layout = await getPageTextLayout(
-        sessionId,
+        session,
         documentGeneration,
         page,
       );
@@ -619,9 +656,6 @@
     failedTextLayoutKey = "";
   }
 
-  let visibilityObserver = null;
-  let bufferObserver = null;
-
   onMount(() => {
     const rootEl = document.querySelector('.viewer-area');
 
@@ -692,11 +726,6 @@
       y: localY / oh
     };
   }
-
-  // --- Metin Vurgulama (Highlight) İşlemleri ---
-  import { annotationsStore, addHighlight, highlightsForPage } from "../annotationsStore.js";
-
-  $: pageHighlights = highlightsForPage($annotationsStore, sessionId, pageIndex);
 
   function handleTextSelection(e) {
     if (activeTool !== 'highlight') return;
@@ -836,10 +865,10 @@
             class:is-selecting={secureRedactionSelectionMode}
             role="presentation"
             aria-label="Bekleyen redaksiyon adayları"
-            on:pointerdown={startRedactionSelection}
-            on:pointermove={moveRedactionSelection}
-            on:pointerup={finishRedactionSelection}
-            on:pointercancel={cancelRedactionSelection}
+            onpointerdown={startRedactionSelection}
+            onpointermove={moveRedactionSelection}
+            onpointerup={finishRedactionSelection}
+            onpointercancel={cancelRedactionSelection}
           >
             {#each positionedPendingRedactions as region (region.id)}
               <div
@@ -866,12 +895,12 @@
         {/if}
 
         {#if paintedRenderKey && textLayoutItems.length > 0}
-          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="textLayer"
             class:is-interactive={isTextLayerInteractive}
             data-page-index={pageIndex}
-            on:mouseup={handleTextSelection}
+            onmouseup={handleTextSelection}
           >
             {#each textLayoutItems as item, itemIndex (`${loadedTextLayoutKey}:${itemIndex}`)}
               <span
@@ -992,7 +1021,7 @@
                     pageHeight={unscaledHeight}
                     {activeTool}
                     {activeColor}
-                    onsessionSnapshot={(snapshot) => dispatch("sessionSnapshot", snapshot)}
+                    {onsessionSnapshot}
                   />
                 {/if}
               </div>
@@ -1007,7 +1036,7 @@
           {#if renderErrorMsg || renderFailure}
             <span class="page-error">⚠️ {renderErrorMsg || pageFailureMessage(renderFailure, pageIndex)}</span>
             {#if renderFailure && renderFailure !== DOCUMENT_QUARANTINED}
-              <button type="button" class="hud-btn page-retry" on:click={retryFailedPage}>Yeniden dene</button>
+              <button type="button" class="hud-btn page-retry" onclick={retryFailedPage}>Yeniden dene</button>
             {/if}
           {:else}
             <div class="spinner"></div>

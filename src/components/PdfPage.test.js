@@ -468,7 +468,7 @@ describe("PdfPage PDFium text layer", () => {
         documentGenerationId: 1,
         searchRequestId: 20,
         searchMatches: [],
-        $$events: { searchHighlightReady: ready },
+        onsearchHighlightReady: ready,
       },
     });
     await waitFor(() => expect(container.querySelector(".textLayer")).not.toBeNull());
@@ -486,12 +486,12 @@ describe("PdfPage PDFium text layer", () => {
     });
 
     await waitFor(() => expect(ready).toHaveBeenCalledOnce());
-    expect(ready.mock.calls[0][0].detail).toMatchObject({
+    expect(ready.mock.calls[0][0]).toMatchObject({
       searchRequestId: 20,
       matchIndex: 3,
       pageIndex: 0,
     });
-    expect(ready.mock.calls[0][0].detail.element).toBe(
+    expect(ready.mock.calls[0][0].element).toBe(
       container.querySelector('[data-search-match-index="3"]'),
     );
   });
@@ -1138,5 +1138,70 @@ describe("PdfPage worker-safety failures", () => {
 
     await rerender({ scale: 1.5 });
     await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("PdfPage effect ordering", () => {
+  const props = {
+    sessionId: "test-document",
+    pageIndex: 0,
+    isSinglePageMode: true,
+    currentPage: 0,
+    documentGenerationId: 1,
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("requests the text layout once per page or session change", async () => {
+    const { container, rerender } = renderPdfPage({ props });
+    await waitFor(() => expect(container.querySelector(".textLayer")).not.toBeNull());
+    expect(textRequestCount()).toBe(1);
+
+    await rerender({ pageIndex: 1, currentPage: 1 });
+    await settle();
+    expect(textRequestCount()).toBe(2);
+    expect(getPageTextLayout.mock.calls[1]).toEqual(["test-document", 1, 1]);
+
+    renderSessionMock.current = { sessionId: "other-document", contentGeneration: 1 };
+    await rerender({ sessionId: "other-document" });
+    await settle();
+    expect(textRequestCount()).toBe(3);
+    expect(getPageTextLayout.mock.calls[2]).toEqual(["other-document", 1, 1]);
+  });
+
+  it("renders once and queues nothing more while the render key is unchanged", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { container, rerender } = renderPdfPage({ props });
+    await waitFor(() => expect(container.querySelector(".textLayer")).not.toBeNull());
+    expect(renderPage).toHaveBeenCalledTimes(1);
+
+    await rerender({ activeColor: "#ff0000", searchRequestId: 4, scale: 1 });
+    await settle();
+    await settle();
+    expect(renderPage).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("shrinks the canvas while it is still mounted when the page leaves the render buffer", async () => {
+    const { container, rerender } = renderPdfPage({ props });
+    await waitFor(() => expect(container.querySelector(".textLayer")).not.toBeNull());
+    const canvas = container.querySelector("canvas");
+    const widthDescriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "width");
+    const widthWrites = [];
+    const widthSpy = vi.spyOn(HTMLCanvasElement.prototype, "width", "set").mockImplementation(function (value) {
+      widthWrites.push({ canvas: this, value, connected: this.isConnected });
+      widthDescriptor.set.call(this, value);
+    });
+
+    await rerender({ currentPage: 1 });
+    widthSpy.mockRestore();
+    expect(container.querySelector("canvas")).toBeNull();
+    expect(widthWrites).toContainEqual({ canvas, value: 1, connected: true });
+  });
+
+  it("passes annotation session snapshots to the callback prop", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/PdfPage.svelte"), "utf8");
+    expect(source).toMatch(/<AnnotationLayer[^>]*\{onsessionSnapshot\}/s);
+    expect(source).not.toMatch(/export let|createEventDispatcher|\bon:[a-z]+=/);
   });
 });
