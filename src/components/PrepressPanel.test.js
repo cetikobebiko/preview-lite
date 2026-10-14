@@ -26,8 +26,8 @@ function deferredHandle() {
   return { promise, resolve, reject, cancel: vi.fn().mockResolvedValue({ status: "cancel_pending" }) };
 }
 const resolvedHandle = (value) => ({ promise: Promise.resolve(value), cancel: vi.fn().mockResolvedValue({}) });
-function renderReady(props = {}, events = {}) {
-  return render(PrepressPanel, { props: { sessionId: "session-test-1", pageIndex: 2, contentGeneration: 7, isDocumentReady: true, scale: 1.5, ...props }, events });
+function renderReady(props = {}) {
+  return render(PrepressPanel, { props: { sessionId: "session-test-1", pageIndex: 2, contentGeneration: 7, isDocumentReady: true, scale: 1.5, ...props } });
 }
 
 beforeEach(() => {
@@ -61,12 +61,12 @@ describe("Print inspection and approximate preview panel", () => {
   it("emits process preview with request ownership and methodology metadata", async () => {
     generateSessionRgbDerivedProcessPreview.mockImplementation((_session, _generation, _page, requestId) => resolvedHandle(processPreview(requestId)));
     const onReady = vi.fn();
-    const { getByRole, getAllByText } = renderReady({}, { processPreviewReady: onReady });
+    const { getByRole, getAllByText } = renderReady({ onprocessPreviewReady: onReady });
     await fireEvent.click(getByRole("button", { name: "Tahmini C/M/Y/K görünümü üret" }));
-    await waitFor(() => expect(onReady.mock.calls.some(([event]) => event.detail?.result)).toBe(true));
+    await waitFor(() => expect(onReady.mock.calls.some(([detail]) => detail?.result)).toBe(true));
     expect(generateSessionRgbDerivedProcessPreview).toHaveBeenCalledWith("session-test-1", 7, 2, "request-1", 1.5);
-    const readyEvent = onReady.mock.calls.find(([event]) => event.detail?.result)[0];
-    expect(readyEvent.detail).toMatchObject({ physicalPageIndex: 2, requestId: "request-1" });
+    const readyDetail = onReady.mock.calls.find(([detail]) => detail?.result)[0];
+    expect(readyDetail).toMatchObject({ physicalPageIndex: 2, requestId: "request-1" });
     expect(getAllByText("APPROXIMATE RGB-DERIVED PREVIEW").length).toBeGreaterThan(0);
     expect(getAllByText(/outputIntentApplied: false/).length).toBeGreaterThan(0);
   });
@@ -75,26 +75,26 @@ describe("Print inspection and approximate preview panel", () => {
     generateSessionRgbDerivedProcessPreview.mockImplementation((_a, _b, _c, requestId) => resolvedHandle(processPreview(requestId)));
     generateSessionRgbDerivedCoveragePreview.mockImplementation((_a, _b, _c, requestId) => resolvedHandle(coveragePreview(requestId)));
     const onProcess = vi.fn(), onCoverage = vi.fn();
-    const { getByRole } = renderReady({}, { processPreviewReady: onProcess, coveragePreviewReady: onCoverage });
+    const { getByRole } = renderReady({ onprocessPreviewReady: onProcess, oncoveragePreviewReady: onCoverage });
     await fireEvent.click(getByRole("button", { name: "Tahmini C/M/Y/K görünümü üret" }));
     await waitFor(() => expect(onProcess).toHaveBeenCalled());
     await fireEvent.click(getByRole("button", { name: "Tahmini eşik ısı haritası üret" }));
     await waitFor(() => expect(onCoverage).toHaveBeenCalled());
-    expect(onProcess.mock.calls.some(([event]) => event.detail?.result === null && event.detail.requestId === "request-1")).toBe(true);
+    expect(onProcess.mock.calls.some(([detail]) => detail?.result === null && detail.requestId === "request-1")).toBe(true);
   });
 
   it("cancels and rejects stale work after a page switch", async () => {
     const oldHandle = deferredHandle();
     generateSessionRgbDerivedProcessPreview.mockReturnValue(oldHandle);
     const onReady = vi.fn();
-    const { getByRole, rerender } = renderReady({}, { processPreviewReady: onReady });
+    const { getByRole, rerender } = renderReady({ onprocessPreviewReady: onReady });
     await fireEvent.click(getByRole("button", { name: "Tahmini C/M/Y/K görünümü üret" }));
     await rerender({ sessionId: "session-test-1", pageIndex: 3, contentGeneration: 7, isDocumentReady: true, scale: 1.5 });
     await tick();
     expect(oldHandle.cancel).toHaveBeenCalled();
     oldHandle.resolve(processPreview("request-1"));
     await tick();
-    expect(onReady.mock.calls.some(([event]) => event.detail?.result)).toBe(false);
+    expect(onReady.mock.calls.some(([detail]) => detail?.result)).toBe(false);
   });
 
   it("does not call PDF operations before the session document is ready", async () => {

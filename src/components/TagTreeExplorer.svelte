@@ -1,13 +1,11 @@
 <script>
-  import { createEventDispatcher } from "svelte";
   import TagTreeExplorer from "./TagTreeExplorer.svelte";
 
-  let { node, isRoot = false, level = 0 } = $props();
-  const dispatch = createEventDispatcher();
+  let { node, isRoot = false, level = 0, onnodeSelected } = $props();
   let isExpanded = $state(true);
 
   function selectNode() {
-    dispatch("nodeSelected", node);
+    onnodeSelected?.(node);
   }
 </script>
 
@@ -33,7 +31,7 @@
   {#if isExpanded && node.children?.length > 0}
     <div class="border-l border-white/10 ml-2">
       {#each node.children as child (child.id)}
-        <TagTreeExplorer node={child} level={level + 1} on:nodeSelected={(event) => dispatch("nodeSelected", event.detail)} />
+        <TagTreeExplorer node={child} level={level + 1} {onnodeSelected} />
       {/each}
     </div>
   {/if}

@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, getContext, onMount, onDestroy, tick } from "svelte";
+  import { getContext, onMount, onDestroy, tick } from "svelte";
   import {
     cancelRenderRequest,
     renderThumbnail as renderThumbnailBackend,
@@ -29,9 +29,10 @@
     sessionId = "",
     contentGeneration = 0,
     pageCount = 0,
+    onclose,
+    onpageMutated,
+    onorderSaved,
   } = $props();
-
-  const dispatch = createEventDispatcher();
 
   let pages = $state([]); // { id, index, canvas, rotation, status, error }
   let draggedIndex = $state(null);
@@ -349,7 +350,7 @@
       if (Number.isSafeInteger(sessionSnapshot?.contentGeneration)) {
         contentGeneration = sessionSnapshot.contentGeneration;
       }
-      dispatch("pageMutated", { snapshot: sessionSnapshot, rotation: { pageIndex: page.index, degrees } });
+      onpageMutated?.({ snapshot: sessionSnapshot, rotation: { pageIndex: page.index, degrees } });
     } catch (e) {
       if (
         isMounted &&
@@ -388,7 +389,7 @@
       pages.splice(index, 1);
       pages = [...pages];
       pageCount -= 1;
-      dispatch("pageMutated", { snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterDelete([page.index]) });
+      onpageMutated?.({ snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterDelete([page.index]) });
     } catch (e) {
       alert("Silme hatası: " + e);
     }
@@ -407,7 +408,7 @@
       if (Number.isSafeInteger(sessionSnapshot?.contentGeneration)) {
         contentGeneration = sessionSnapshot.contentGeneration;
       }
-      dispatch("orderSaved", { snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterReorder(newOrder) });
+      onorderSaved?.({ snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterReorder(newOrder) });
     } catch(e) {
       alert("Sıralama kaydedilemedi: " + e);
     }
@@ -424,7 +425,7 @@
         <button class="tech-button primary" onclick={handleSaveOrder} disabled={isSaving}>
           {isSaving ? 'Kaydediliyor...' : 'Sıralamayı Kaydet'}
         </button>
-        <button class="tech-button" onclick={() => dispatch('close')} disabled={isSaving}>
+        <button class="tech-button" onclick={() => onclose?.()} disabled={isSaving}>
           Kapat
         </button>
       </div>

@@ -18,10 +18,10 @@
 {/if}
 
 {#if ui.isModalOpen("ai_assistant") && featureUi("local_ai").visible}
-  <AiSidebar {sessionId} {contentGeneration} on:openSettings={() => ui.openModal("ai_settings")} on:close={() => ui.closeModal("ai_assistant")} />
+  <AiSidebar {sessionId} {contentGeneration} onopenSettings={() => ui.openModal("ai_settings")} onclose={() => ui.closeModal("ai_assistant")} />
 {/if}
 {#if ui.isModalOpen("ai_settings") && featureUi("local_ai").visible}
-  <AiSettingsModal on:close={() => ui.closeModal("ai_settings")} />
+  <AiSettingsModal onclose={() => ui.closeModal("ai_settings")} />
 {/if}
 {#if featureUi("sanitization").visible}
   <SanitizationPanel

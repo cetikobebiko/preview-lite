@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, tick } from "svelte";
+  import { tick } from "svelte";
 
   let {
     isOpen = false,
@@ -15,7 +15,6 @@
     onclose,
   } = $props();
 
-  const dispatch = createEventDispatcher();
   let inputRef = $state(null);
   let isSemanticMode = $state(false);
   let semanticResults = $state([]);
@@ -36,7 +35,6 @@
     if (typeof onsearch === "function") {
       onsearch({ detail });
     }
-    dispatch("search", detail);
   }
 
   function handleSemanticSearch() {
@@ -44,28 +42,24 @@
     if (typeof onsemanticSearch === "function") {
       onsemanticSearch({ detail: query });
     }
-    dispatch("semanticSearch", query);
   }
 
   function handleNext() {
     if (typeof onnext === "function") {
       onnext();
     }
-    dispatch("next");
   }
 
   function handlePrev() {
     if (typeof onprev === "function") {
       onprev();
     }
-    dispatch("prev");
   }
 
   function handleClose() {
     if (typeof onclose === "function") {
       onclose();
     }
-    dispatch("close");
   }
 
   function handleKeyDown(e) {

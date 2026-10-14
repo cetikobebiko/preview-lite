@@ -1,8 +1,7 @@
 <script>
-    import { createEventDispatcher, onMount } from "svelte";
     import { fade, fly } from "svelte/transition";
   
-    const dispatch = createEventDispatcher();
+    let { onclose } = $props();
   
     const shortcuts = [
       { key: "Ctrl + O", desc: "Dosya Aç" },
@@ -18,17 +17,17 @@
     ];
   
     function handleKeyDown(e) {
-      if (e.key === "Escape") dispatch("close");
+      if (e.key === "Escape") onclose?.();
     }
   </script>
   
-  <svelte:window on:keydown={handleKeyDown} />
+  <svelte:window onkeydown={handleKeyDown} />
   
-  <div class="modal-overlay" transition:fade={{ duration: 150 }} on:click={() => dispatch("close")}>
-    <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }} on:click|stopPropagation>
+  <div class="modal-overlay" transition:fade={{ duration: 150 }} onclick={() => onclose?.()}>
+    <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }} onclick={(event) => event.stopPropagation()}>
       <div class="modal-header">
         <h3>Klavye Kısayolları</h3>
-        <button class="close-btn" on:click={() => dispatch("close")}>×</button>
+        <button class="close-btn" onclick={() => onclose?.()}>×</button>
       </div>
       
       <div class="modal-body">

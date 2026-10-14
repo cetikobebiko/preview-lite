@@ -1,5 +1,4 @@
 <script>
-  import { createEventDispatcher } from "svelte";
   import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { getPageAnnotations, addAnnotation, deleteAnnotation } from "../pdfState.js";
   import { requireAsyncPromptCoordinator } from "../services/asyncPrompt.svelte.js";
@@ -13,9 +12,9 @@
     pageHeight = 0,
     activeTool = "pointer",
     activeColor = "#facc15",
+    onsessionSnapshot,
   } = $props();
   
-  const dispatch = createEventDispatcher();
   const asyncPrompt = requireAsyncPromptCoordinator();
 
   let annotations = $state([]);
@@ -128,7 +127,7 @@
         );
         contentGeneration = sessionSnapshot.contentGeneration;
         await loadAnnotations();
-        dispatch("sessionSnapshot", sessionSnapshot);
+        onsessionSnapshot?.(sessionSnapshot);
       } catch (err) {
         console.error("Açıklama kaydedilemedi", err);
       }
@@ -151,7 +150,7 @@
          );
          contentGeneration = sessionSnapshot.contentGeneration;
          await loadAnnotations();
-         dispatch("sessionSnapshot", sessionSnapshot);
+         onsessionSnapshot?.(sessionSnapshot);
        }
     }
     
@@ -173,7 +172,7 @@
         );
         contentGeneration = sessionSnapshot.contentGeneration;
         await loadAnnotations();
-        dispatch("sessionSnapshot", sessionSnapshot);
+        onsessionSnapshot?.(sessionSnapshot);
       } catch (e) {
         console.error(e);
       }

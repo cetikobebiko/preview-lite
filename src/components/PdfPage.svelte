@@ -992,7 +992,7 @@
                     pageHeight={unscaledHeight}
                     {activeTool}
                     {activeColor}
-                    on:sessionSnapshot
+                    onsessionSnapshot={(snapshot) => dispatch("sessionSnapshot", snapshot)}
                   />
                 {/if}
               </div>

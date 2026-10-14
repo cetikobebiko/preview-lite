@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import {
     generateSessionRgbDerivedCoveragePreview,
     generateSessionRgbDerivedProcessPreview,
@@ -7,8 +7,10 @@
   } from "../services/backend/prepress.js";
   import FeatureNotice from "./FeatureNotice.svelte";
 
-  const dispatch = createEventDispatcher();
-  let { scale = 1.5, sessionId = "", pageIndex = -1, contentGeneration = 0, isDocumentReady = false } = $props();
+  let {
+    scale = 1.5, sessionId = "", pageIndex = -1, contentGeneration = 0, isDocumentReady = false,
+    onprocessPreviewReady, oncoveragePreviewReady, onchannelsChanged,
+  } = $props();
   let report = $state(null), reportError = $state(""), reportHandle = $state(null), reportRequestId = $state("");
   let processResult = $state(null), processError = $state(""), processHandle = $state(null), processRequestId = $state("");
   let coverageResult = $state(null), coverageError = $state(""), coverageHandle = $state(null), coverageRequestId = $state("");
@@ -39,12 +41,12 @@
     const clearIdentity = processResult?.identity ?? null;
     cancelHandle(processHandle); processHandle = null; processRequestId = ""; processResult = null;
     channels = { c: true, m: true, y: true, k: true };
-    if (emit && clearIdentity) dispatch("processPreviewReady", { ...clearIdentity, result: null });
+    if (emit && clearIdentity) onprocessPreviewReady?.({ ...clearIdentity, result: null });
   }
   function clearCoverage(emit = true) {
     const clearIdentity = coverageResult?.identity ?? null;
     cancelHandle(coverageHandle); coverageHandle = null; coverageRequestId = ""; coverageResult = null;
-    if (emit && clearIdentity) dispatch("coveragePreviewReady", { ...clearIdentity, result: null });
+    if (emit && clearIdentity) oncoveragePreviewReady?.({ ...clearIdentity, result: null });
   }
   function resetAll() {
     cancelHandle(reportHandle); reportHandle = null; reportRequestId = ""; report = null; reportError = "";
@@ -73,7 +75,7 @@
     try {
       const value = await handle.promise;
       if (!isCurrent(expected, processRequestId)) return;
-      processResult = value; dispatch("processPreviewReady", { result: value, channels, ...expected });
+      processResult = value; onprocessPreviewReady?.({ result: value, channels, ...expected });
     } catch (error) { if (isCurrent(expected, processRequestId)) processError = error instanceof Error ? error.message : String(error); }
     finally { if (isCurrent(expected, processRequestId)) processHandle = null; }
   }
@@ -88,7 +90,7 @@
     try {
       const value = await handle.promise;
       if (!isCurrent(expected, coverageRequestId)) return;
-      coverageResult = value; dispatch("coveragePreviewReady", { result: value, ...expected });
+      coverageResult = value; oncoveragePreviewReady?.({ result: value, ...expected });
     } catch (error) { if (isCurrent(expected, coverageRequestId)) coverageError = error instanceof Error ? error.message : String(error); }
     finally { if (isCurrent(expected, coverageRequestId)) coverageHandle = null; }
   }
@@ -96,7 +98,7 @@
   function toggleChannel(channel) {
     if (!processResult) return;
     channels = { ...channels, [channel]: !channels[channel] };
-    dispatch("channelsChanged", { channels, sessionId, contentGeneration, physicalPageIndex: pageIndex, requestId: processResult.identity.requestId });
+    onchannelsChanged?.({ channels, sessionId, contentGeneration, physicalPageIndex: pageIndex, requestId: processResult.identity.requestId });
   }
   const boxText = (box) => box?.coordinates ? box.coordinates.map((value) => value.toFixed(2)).join(", ") : "Yok";
 

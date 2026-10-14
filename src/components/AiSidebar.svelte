@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { fly } from "svelte/transition";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
@@ -7,8 +7,7 @@
   import { aiController } from "../services/app/aiController.js";
   import { aiState } from "../stores/aiState.svelte.js";
 
-  let { sessionId = "", contentGeneration = 0 } = $props();
-  const dispatch = createEventDispatcher();
+  let { sessionId = "", contentGeneration = 0, onopenSettings, onclose } = $props();
   const featureContext = getRuntimeFeatureContext();
   const featurePresentation = getFeaturePresentation("local_ai", featureContext);
 
@@ -118,8 +117,8 @@
   <div class="header">
     <h3>Yapay Zeka (Ollama)</h3>
     <div class="header-actions">
-      <button class="icon-btn" onclick={() => dispatch("openSettings")} title="Ayarlar">⚙️</button>
-      <button class="icon-btn" onclick={() => dispatch("close")} title="Kapat">✕</button>
+      <button class="icon-btn" onclick={() => onopenSettings?.()} title="Ayarlar">⚙️</button>
+      <button class="icon-btn" onclick={() => onclose?.()} title="Kapat">✕</button>
     </div>
   </div>
 

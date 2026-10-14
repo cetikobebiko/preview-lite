@@ -1,5 +1,4 @@
 <script>
-  import { createEventDispatcher } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { fade, fly } from "svelte/transition";
   import { open, save } from "@tauri-apps/plugin-dialog";
@@ -13,9 +12,9 @@
     sessionId = "",
     contentGeneration = 0,
     maxPages = 1,
+    onclose,
+    onsuccess,
   } = $props();
-  
-  const dispatch = createEventDispatcher();
   
   let pageRange = $state("");
   let exportType = $state("image"); // "image", "text", "print"
@@ -86,8 +85,8 @@
                     imgFormat,
                     imgDpi,
                   );
-                  dispatch("success", "Görseller başarıyla dışa aktarıldı!");
-                  dispatch("close");
+                  onsuccess?.("Görseller başarıyla dışa aktarıldı!");
+                  onclose?.();
               }
           } else if (exportType === "text") {
               const savePath = await save({
@@ -105,14 +104,14 @@
                   );
                   const { writeTextFile } = await import('@tauri-apps/plugin-fs');
                   await writeTextFile(savePath, textContent);
-                  dispatch("success", "Metin başarıyla dışa aktarıldı!");
-                  dispatch("close");
+                  onsuccess?.("Metin başarıyla dışa aktarıldı!");
+                  onclose?.();
               }
           } else if (exportType === "print") {
               const ranges = pageRange.trim() ? selectedPages : null;
               await printSessionPdf(sessionId, contentGeneration, ranges);
-              dispatch("success", "Yazdırma işlemi başlatıldı!");
-              dispatch("close");
+              onsuccess?.("Yazdırma işlemi başlatıldı!");
+              onclose?.();
           }
       } catch (err) {
           errorMsg = err.toString();
@@ -128,13 +127,13 @@
   transition:fade={{ duration: 150 }}
   oncancel={(event) => {
     event.preventDefault();
-    dispatch("close");
+    onclose?.();
   }}
 >
   <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }}>
       <div class="modal-header">
           <h3>Dışa Aktar (Export)</h3>
-          <button type="button" class="close-btn" aria-label="Kapat" onclick={() => dispatch("close")}>×</button>
+          <button type="button" class="close-btn" aria-label="Kapat" onclick={() => onclose?.()}>×</button>
       </div>
       
       <div class="modal-body">

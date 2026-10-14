@@ -1,11 +1,9 @@
 <script>
-  import { createEventDispatcher } from "svelte";
   import { auditSessionAccessibility, getSessionStructureTree } from "../services/backend/session.js";
   import FeatureNotice from "./FeatureNotice.svelte";
   import TagTreeExplorer from "./TagTreeExplorer.svelte";
 
-  let { sessionId = "", contentGeneration = 0 } = $props();
-  const dispatch = createEventDispatcher();
+  let { sessionId = "", contentGeneration = 0, onclose } = $props();
   let activeTab = $state("summary");
   let isLoading = $state(false);
   let errorMsg = $state("");
@@ -72,7 +70,7 @@
 <div class="h-full flex flex-col bg-[#1e1e1e] text-white border-l border-white/10 w-80 shadow-2xl z-50">
   <div class="p-4 border-b border-white/10 flex justify-between items-center bg-[#252526]">
     <h2 class="text-lg font-semibold">Basic accessibility audit</h2>
-    <button class="p-1 hover:bg-white/10 rounded" onclick={() => dispatch("close")} aria-label="Close accessibility panel">✕</button>
+    <button class="p-1 hover:bg-white/10 rounded" onclick={() => onclose?.()} aria-label="Close accessibility panel">✕</button>
   </div>
 
   <div class="flex border-b border-white/10 text-xs overflow-x-auto">
@@ -129,7 +127,7 @@
         {#if inspection?.root}
           <div class="text-xs text-yellow-200 mb-3">Read-only structural inspection; this is not a screen-reader preview or reading-order verification.</div>
           <div class="bg-[#181818] rounded border border-white/10 p-2 overflow-x-auto">
-            <TagTreeExplorer node={inspection.root} isRoot on:nodeSelected={(event) => selectedNode = event.detail} />
+            <TagTreeExplorer node={inspection.root} isRoot onnodeSelected={(node) => selectedNode = node} />
           </div>
           {#if selectedNode}
             <div class="mt-3 bg-[#252526] p-3 rounded border border-white/10 text-xs">

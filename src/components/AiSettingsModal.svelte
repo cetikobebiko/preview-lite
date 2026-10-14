@@ -1,12 +1,12 @@
 <script>
-  import { createEventDispatcher, onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { aiController } from "../services/app/aiController.js";
   import { aiState } from "../stores/aiState.svelte.js";
   import * as backendAi from "../services/backend/ai.js";
 
-  const dispatch = createEventDispatcher();
+  let { onclose, onsave } = $props();
 
   let endpointDraft = $state(aiState.endpointDraft);
   let remoteConsent = $state(aiState.remoteConsent);
@@ -94,8 +94,8 @@
       aiState.embedModel = currentEmbedModel;
       aiController.persistSettings();
 
-      dispatch("save", { ollamaUrl: endpointDraft, llmModel: currentLlmModel, embedModel: currentEmbedModel });
-      dispatch("close");
+      onsave?.({ ollamaUrl: endpointDraft, llmModel: currentLlmModel, embedModel: currentEmbedModel });
+      onclose?.();
     } catch (err) {
       saveError = err?.message || String(err);
     }
@@ -108,13 +108,13 @@
   transition:fade={{ duration: 150 }}
   oncancel={(event) => {
     event.preventDefault();
-    dispatch("close");
+    onclose?.();
   }}
 >
   <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }}>
     <div class="modal-header">
       <h3>Yapay Zeka Ayarları (Ollama)</h3>
-      <button type="button" class="close-btn" aria-label="Kapat" onclick={() => dispatch("close")}>✕</button>
+      <button type="button" class="close-btn" aria-label="Kapat" onclick={() => onclose?.()}>✕</button>
     </div>
     <div class="modal-body">
       <FeatureNotice featureId="local_ai" />
@@ -181,7 +181,7 @@
       </div>
     </div>
     <div class="modal-footer">
-      <button class="tech-button" onclick={() => dispatch("close")}>İptal</button>
+      <button class="tech-button" onclick={() => onclose?.()}>İptal</button>
       <button
         class="tech-button primary"
         onclick={handleSave}
