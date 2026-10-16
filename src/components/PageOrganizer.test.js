@@ -151,7 +151,7 @@ describe("PageOrganizer PDFium thumbnails", () => {
       },
     });
 
-    await waitFor(() => expect(getByText("ÖNİZLEME YÜKLENEMEDİ")).toBeTruthy());
+    await waitFor(() => expect(getByText("Önizleme yüklenemedi")).toBeTruthy());
     expect(paintBufferToCanvas).not.toHaveBeenCalled();
     expect(getByLabelText("Sayfa 1 minyatürü").width).toBe(0);
     expect(getByLabelText("Sayfa 1 minyatürü").height).toBe(0);
@@ -304,7 +304,7 @@ describe("PageOrganizer PDFium thumbnails", () => {
       },
     });
 
-    await waitFor(() => expect(getByText("ÖNİZLEME YÜKLENEMEDİ")).toBeTruthy());
+    await waitFor(() => expect(getByText("Önizleme yüklenemedi")).toBeTruthy());
     expect(paintBufferToCanvas).not.toHaveBeenCalled();
   });
 });

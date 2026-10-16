@@ -33,11 +33,16 @@ describe("shadcn-svelte foundation", () => {
     expect(appCss).not.toMatch(/^\*\s*\{[^}]*padding:\s*0/m);
   });
 
-  it("follows the OS appearance and points legacy variables at the palette", () => {
+  it("follows the OS appearance", () => {
     expect(appCss).toContain("@custom-variant dark (@media (prefers-color-scheme: dark));");
     expect(appCss).toContain("@media (prefers-color-scheme: dark) {");
-    expect(appCss).not.toContain("--accent-industrial: #");
-    expect(appCss).toContain("--accent-industrial: var(--primary);");
-    expect(appCss).toContain("--bg-surface: var(--card);");
+  });
+
+  it("no longer defines or reads the old telemetry theme variables or HUD classes", () => {
+    const legacy = /--(bg-primary|bg-surface|bg-panel|border-raw|border-focus|text-primary|text-muted|font-mono|accent-industrial|error-color|success-color)\b|\bhud-btn\b/;
+    const offenders = readdirSync(resolve(process.cwd(), "src"), { recursive: true })
+      .filter((file) => /\.(svelte|css)$/.test(file) && !file.startsWith("lib/"))
+      .filter((file) => legacy.test(readFileSync(resolve(process.cwd(), "src", file), "utf8")));
+    expect(offenders).toEqual([]);
   });
 });

@@ -1,5 +1,9 @@
 <script>
   import { tick } from "svelte";
+  import SearchIcon from "@lucide/svelte/icons/search";
+  import ChevronUpIcon from "@lucide/svelte/icons/chevron-up";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import XIcon from "@lucide/svelte/icons/x";
 
   let {
     isOpen = false,
@@ -80,131 +84,44 @@
 </script>
 
 {#if isOpen}
-  <div class="search-bar">
+  <div class="search-bar absolute top-3 right-4 z-40 flex items-center gap-1 rounded-lg border bg-popover p-1 pl-2 text-popover-foreground shadow-md" role="search">
     <button
-      class="mode-toggle {isSemanticMode ? 'semantic' : 'exact'}"
+      type="button"
+      class="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground aria-pressed:bg-primary/10 aria-pressed:text-primary"
+      aria-pressed={isSemanticMode}
       onclick={() => (isSemanticMode = !isSemanticMode)}
       title="Arama Modunu Değiştir"
     >
-      [{isSemanticMode ? 'SEMANTİK' : 'EXACT'}]
+      {isSemanticMode ? 'Anlamsal' : 'Tam eşleşme'}
     </button>
-    <div class="search-input-wrapper">
+    <div class="relative">
+      <SearchIcon class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <input
         bind:this={inputRef}
         type="text"
-        placeholder={isSemanticMode ? "Yapay zeka ile anlamsal arama..." : "BELGE İÇİNDE ARA..."}
+        aria-label="Belgede ara"
+        class="h-7 w-52 rounded-md border border-input bg-background pr-2 pl-7 text-[13px] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        placeholder={isSemanticMode ? "Yapay zeka ile anlamsal arama..." : "Belgede ara"}
         value={query}
         oninput={handleSearchInput}
         onkeydown={handleKeyDown}
       />
     </div>
 
-    {#if isSearching}
-      <div class="search-spinner"></div>
-    {:else if error}
-      <span class="search-count empty">SEARCH ERROR</span>
-    {:else if query.trim() && totalMatches > 0}
-      <span class="search-count">MATCH: {String(currentMatchIndex + 1).padStart(2, '0')}/{String(totalMatches).padStart(2, '0')}</span>
-    {:else if query.trim()}
-      <span class="search-count empty">NO MATCH</span>
-    {/if}
+    <span class="min-w-14 px-1 text-center text-[11px] whitespace-nowrap tabular-nums text-muted-foreground" role="status">
+      {#if isSearching}
+        <span class="search-spinner inline-block size-3 animate-spin rounded-full border-2 border-border border-t-primary align-middle" aria-label="Aranıyor"></span>
+      {:else if error}
+        <span class="text-destructive">Arama hatası</span>
+      {:else if query.trim() && totalMatches > 0}
+        {currentMatchIndex + 1} / {totalMatches}
+      {:else if query.trim()}
+        Eşleşme yok
+      {/if}
+    </span>
 
-    <div class="search-actions">
-      <button class="search-btn" onclick={handlePrev} disabled={totalMatches === 0} title="Önceki Eşleşme (Shift + Enter)">
-        [PREV]
-      </button>
-      <button class="search-btn" onclick={handleNext} disabled={totalMatches === 0} title="Sonraki Eşleşme (Enter)">
-        [NEXT]
-      </button>
-      <button class="search-btn close-btn" onclick={handleClose} title="Aramayı Kapat (Esc)">
-        [ESC]
-      </button>
-    </div>
+    <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40" onclick={handlePrev} disabled={totalMatches === 0} title="Önceki Eşleşme (Shift + Enter)" aria-label="Önceki eşleşme"><ChevronUpIcon class="size-4" /></button>
+    <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40" onclick={handleNext} disabled={totalMatches === 0} title="Sonraki Eşleşme (Enter)" aria-label="Sonraki eşleşme"><ChevronDownIcon class="size-4" /></button>
+    <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40" onclick={handleClose} title="Aramayı Kapat (Esc)" aria-label="Aramayı kapat"><XIcon class="size-4" /></button>
   </div>
 {/if}
-
-<style>
-  .search-bar {
-    position: absolute;
-    top: 12px;
-    right: 16px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-raw);
-    padding: 6px 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    z-index: 80;
-    font-family: var(--font-mono);
-  }
-
-  .search-input-wrapper input {
-    background: var(--bg-panel);
-    border: 1px solid var(--border-raw);
-    outline: none;
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    padding: 4px 8px;
-    width: 160px;
-  }
-
-  .search-input-wrapper input:focus {
-    border-color: var(--accent-industrial);
-  }
-
-  .search-count {
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--accent-industrial);
-    white-space: nowrap;
-    background: var(--bg-primary);
-    padding: 3px 6px;
-    border: 1px solid var(--border-raw);
-  }
-
-  .search-count.empty {
-    color: var(--error-color);
-  }
-
-  .search-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    border-left: 1px solid var(--border-raw);
-    padding-left: 6px;
-  }
-
-  .search-btn {
-    background: var(--bg-panel);
-    border: 1px solid var(--border-raw);
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 700;
-    padding: 4px 6px;
-    cursor: pointer;
-  }
-
-  .search-btn:hover:not(:disabled) {
-    border-color: var(--accent-industrial);
-    color: var(--accent-industrial);
-  }
-
-  .search-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
-  .search-spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--border-raw);
-    border-top-color: var(--accent-industrial);
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-</style>

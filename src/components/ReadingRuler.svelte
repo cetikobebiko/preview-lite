@@ -50,8 +50,8 @@
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 1px solid var(--accent-industrial);
-    border-bottom: 1px solid var(--accent-industrial);
+    border-top: 1px solid var(--primary);
+    border-bottom: 1px solid var(--primary);
     pointer-events: none;
     transition: top 0.05s ease-out;
   }

@@ -5,7 +5,7 @@ import SearchBar from './SearchBar.svelte';
 describe('SearchBar Component', () => {
   it('renders exact search placeholder when not in semantic mode', () => {
     const { getByPlaceholderText } = render(SearchBar, { props: { isOpen: true } });
-    expect(getByPlaceholderText('BELGE İÇİNDE ARA...')).toBeTruthy();
+    expect(getByPlaceholderText('Belgede ara')).toBeTruthy();
   });
 
   it('input değişikliğini kontrollü query modeliyle yalnız bir kez bildirir', async () => {
@@ -14,7 +14,7 @@ describe('SearchBar Component', () => {
       props: { isOpen: true, query: '', search: listener, onsearch: listener },
     });
 
-    await fireEvent.input(getByPlaceholderText('BELGE İÇİNDE ARA...'), {
+    await fireEvent.input(getByPlaceholderText('Belgede ara'), {
       target: { value: 'İstanbul & <PDF>' },
     });
 
@@ -25,7 +25,7 @@ describe('SearchBar Component', () => {
     const { rerender, getByPlaceholderText } = render(SearchBar, {
       props: { isOpen: true, query: 'önceki' },
     });
-    const input = getByPlaceholderText('BELGE İÇİNDE ARA...');
+    const input = getByPlaceholderText('Belgede ara');
     expect(input.value).toBe('önceki');
 
     await rerender({ isOpen: true, query: '' });
@@ -41,7 +41,17 @@ describe('SearchBar Component', () => {
         error: 'ipc failed',
       },
     });
-    expect(getByText('SEARCH ERROR')).toBeTruthy();
-    expect(queryByText('MATCH: 01/03')).toBeNull();
+    expect(getByText('Arama hatası')).toBeTruthy();
+    expect(queryByText('1 / 3')).toBeNull();
+  });
+
+  it('eşleşme konumunu ve boş sonucu sade metinle gösterir', async () => {
+    const { getByRole, rerender } = render(SearchBar, {
+      props: { isOpen: true, query: 'rapor', totalMatches: 12, currentMatchIndex: 2 },
+    });
+    expect(getByRole('status').textContent.trim()).toBe('3 / 12');
+
+    await rerender({ isOpen: true, query: 'rapor', totalMatches: 0 });
+    expect(getByRole('status').textContent.trim()).toBe('Eşleşme yok');
   });
 });

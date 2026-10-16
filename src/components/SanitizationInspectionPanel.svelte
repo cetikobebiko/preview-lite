@@ -125,7 +125,7 @@
 </aside>
 
 <style>
-  .inspection-panel { width: min(440px, 94vw); height: 100%; overflow: auto; padding: 18px; color: var(--text-primary, #e5e7eb); background: var(--bg-surface, #17191d); border-left: 1px solid var(--border-raw, #34373d); }
+  .inspection-panel { width: min(440px, 94vw); height: 100%; overflow: auto; padding: 18px; color: var(--foreground); background: var(--card); border-left: 1px solid var(--border); }
   header, .control-title, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   h2, h3, p { margin: 0; }
   h2 { font-size: 1.1rem; }

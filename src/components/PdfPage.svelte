@@ -960,7 +960,7 @@
           {#if renderErrorMsg || renderFailure}
             <span class="page-error">⚠️ {renderErrorMsg || pageFailureMessage(renderFailure, pageIndex)}</span>
             {#if renderFailure && renderFailure !== DOCUMENT_QUARANTINED}
-              <button type="button" class="hud-btn page-retry" onclick={retryFailedPage}>Yeniden dene</button>
+              <button type="button" class="page-retry mt-2 inline-flex h-7 items-center rounded-md border bg-secondary px-3 text-xs font-medium text-secondary-foreground hover:bg-accent" onclick={retryFailedPage}>Yeniden dene</button>
             {/if}
           {:else}
             <div class="spinner"></div>
@@ -1057,20 +1057,20 @@
     position: absolute;
     inset: 0;
     justify-content: center;
-    background: var(--bg-surface);
+    /* Paper stays white before render, like the rendered page. */
+    background: #ffffff;
   }
   .loading-skeleton {
     display: flex;
     flex-direction: column;
     align-items: center;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: #8e8e93;
   }
   .spinner {
     width: 24px;
     height: 24px;
-    border: 3px solid var(--border-raw);
-    border-top-color: var(--accent-industrial);
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
     border-radius: 50%;
     animation: spin 1s linear infinite;
     margin-bottom: 8px;
@@ -1107,7 +1107,7 @@
   }
   .highlight-rect.is-active {
     background: rgba(255, 85, 0, 0.48);
-    outline: 1px solid var(--accent-industrial);
+    outline: 1px solid var(--primary);
     outline-offset: -1px;
   }
 </style>

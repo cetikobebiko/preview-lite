@@ -73,11 +73,6 @@ export function createFeatureRuntime({
 }) {
   const featureContext = getRuntimeFeatureContext();
   const featureUi = (featureId) => getFeaturePresentation(featureId, featureContext);
-  const featureControlLabel = (featureId, label) => {
-    const badge = featureUi(featureId).badge;
-    return badge ? `[${label} · ${badge}]` : `[${label}]`;
-  };
-
   function reportUnavailable(error) {
     if (!(error instanceof FeatureUnavailableError)) return false;
     onToast(error.presentation?.warning || error.presentation?.reason || error.message);
@@ -355,7 +350,6 @@ export function createFeatureRuntime({
 
   return Object.freeze({
     featureUi,
-    featureControlLabel,
     runUiAction,
     commandRouter,
     searchController,

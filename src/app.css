@@ -99,64 +99,12 @@
   }
 }
 
-/*
- * Legacy aliases: components not yet moved to shadcn-svelte read these, so
- * they pick up the new palette right away. Removed once nothing uses them.
- */
-:root {
-  --bg-primary: var(--background);
-  --bg-surface: var(--card);
-  --bg-panel: var(--secondary);
-  --border-raw: var(--border);
-  --border-focus: var(--ring);
-  --text-primary: var(--foreground);
-  --text-muted: var(--muted-foreground);
-  --font-mono: var(--font-ui);
-  --accent-industrial: var(--primary);
-  --error-color: var(--destructive);
-  --success-color: var(--success);
-}
-
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
   background: var(--background);
   position: relative;
-}
-
-/* Buttons still rendered by components not yet moved to shadcn-svelte. */
-.hud-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: calc(var(--radius) * 0.8);
-  background: var(--secondary);
-  color: var(--secondary-foreground);
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color 0.1s ease;
-}
-
-.hud-btn:hover:not(:disabled) {
-  background: var(--accent);
-}
-
-.hud-btn.active {
-  border-color: transparent;
-  background: var(--primary);
-  color: var(--primary-foreground);
-}
-
-.hud-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Workspace & viewer: pages sit on a neutral gray surface, like Preview. */

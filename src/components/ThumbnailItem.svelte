@@ -273,27 +273,26 @@
     padding: 6px;
     border-radius: 0px;
     cursor: grab;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-raw);
+    background: var(--card);
+    border: 1px solid var(--border);
     border-left: 2px solid transparent;
     position: relative;
-    font-family: var(--font-mono);
   }
 
   .thumb-item:hover {
-    border-color: var(--border-focus);
-    background: var(--bg-panel);
+    border-color: var(--ring);
+    background: var(--secondary);
   }
 
   .thumb-item.active {
-    border-left: 2px solid var(--accent-industrial);
-    border-color: var(--border-focus);
-    background: var(--bg-panel);
+    border-left: 2px solid var(--primary);
+    border-color: var(--ring);
+    background: var(--secondary);
   }
 
   .thumb-item.drag-over {
-    border-color: var(--accent-industrial);
-    background: var(--bg-panel);
+    border-color: var(--primary);
+    background: var(--secondary);
   }
 
   .thumb-canvas-wrapper {
@@ -302,8 +301,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-raw);
+    background: var(--background);
+    border: 1px solid var(--border);
     overflow: hidden;
     position: relative;
   }
@@ -314,9 +313,9 @@
     right: 4px;
     width: 20px;
     height: 20px;
-    background: var(--error-color);
+    background: var(--destructive);
     color: white;
-    border: 1px solid var(--border-raw);
+    border: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -330,7 +329,7 @@
   }
 
   .delete-btn:hover {
-    background: var(--error-color);
+    background: var(--destructive);
   }
 
   canvas {
@@ -350,14 +349,14 @@
     justify-content: center;
     width: 100%;
     height: 100%;
-    color: var(--text-muted);
+    color: var(--muted-foreground);
   }
 
   .thumb-spinner {
     width: 16px;
     height: 16px;
-    border: 2px solid var(--border-raw);
-    border-top-color: var(--accent-industrial);
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
     animation: spin 0.6s linear infinite;
   }
 
@@ -369,11 +368,11 @@
     margin-top: 4px;
     font-size: 10px;
     font-weight: 700;
-    color: var(--text-muted);
+    color: var(--muted-foreground);
     letter-spacing: 0.5px;
   }
 
   .thumb-item.active .thumb-label {
-    color: var(--accent-industrial);
+    color: var(--primary);
   }
 </style>

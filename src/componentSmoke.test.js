@@ -48,7 +48,6 @@ vi.mock("./services/app/viewerRuntime.js", () => ({
 vi.mock("./services/app/featureRuntime.js", () => ({
   createFeatureRuntime: vi.fn(() => ({
     featureUi: () => ({ visible: false, runnable: false, warning: "" }),
-    featureControlLabel: (_id, label) => label,
     runUiAction: vi.fn(),
     commandRouter: { handleEvent: vi.fn() },
     invalidateSearch: vi.fn(), handleSearchQuery: vi.fn(), searchNext: vi.fn(), searchPrevious: vi.fn(),
@@ -201,14 +200,14 @@ describe("7R.6 component smoke behavior", () => {
       },
     });
 
-    expect(view.queryByPlaceholderText("BELGE İÇİNDE ARA...")).toBeNull();
+    expect(view.queryByPlaceholderText("Belgede ara")).toBeNull();
     ui.setPanel("search", true);
     flushSync();
-    expect(view.getByPlaceholderText("BELGE İÇİNDE ARA...")).toBeTruthy();
+    expect(view.getByPlaceholderText("Belgede ara")).toBeTruthy();
 
     await fireEvent.click(view.getByTitle("Aramayı Kapat (Esc)"));
     expect(ui.panels.search).toBe(false);
-    expect(view.queryByPlaceholderText("BELGE İÇİNDE ARA...")).toBeNull();
+    expect(view.queryByPlaceholderText("Belgede ara")).toBeNull();
   });
 
   it("routes two typed AI modal identities and never mounts assistant with settings", async () => {

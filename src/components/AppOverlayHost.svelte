@@ -1,4 +1,5 @@
 <script>
+  import FileDownIcon from "@lucide/svelte/icons/file-down";
   import PasswordModal from "./PasswordModal.svelte";
   import AsyncPromptDialog from "./AsyncPromptDialog.svelte";
 
@@ -18,15 +19,16 @@
 {#if ui.isDraggingFileOver}
   <div class="drag-overlay">
     <div class="drag-box">
-      <h3>// SÜRÜKLENEN_BELGEYİ_BIRAKIN</h3>
-      <p>Mevcut belge kapatılacak ve yeni dosya yüklenecektir</p>
+      <FileDownIcon class="mb-3 size-10 text-primary" strokeWidth={1.5} />
+      <h3>Belgeyi bırakın</h3>
+      <p>Mevcut belge kapatılacak ve yeni dosya açılacak.</p>
     </div>
   </div>
 {/if}
 
 {#if toastMsg}
-  <div class="toast-notification">
-    <span>// {toastMsg.toLocaleUpperCase("tr-TR")}</span>
+  <div class="toast-notification" role="status">
+    <span>{toastMsg}</span>
   </div>
 {/if}
 
@@ -48,8 +50,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 24px;
     pointer-events: none;
-    background: var(--bg-primary);
+    background: color-mix(in srgb, var(--background) 70%, transparent);
     animation: fadeIn 0.15s ease-out;
   }
 
@@ -57,23 +60,28 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 40px 50px;
+    padding: 36px 48px;
     text-align: center;
-    border: 2px dashed var(--accent-industrial);
-    background: var(--bg-surface);
+    border: 2px dashed color-mix(in srgb, var(--primary) 60%, transparent);
+    border-radius: calc(var(--radius) * 2);
+    background: var(--card);
+    box-shadow: 0 8px 32px rgb(0 0 0 / 0.12);
   }
 
   .drag-box h3 {
-    margin: 0 0 6px;
-    color: var(--accent-industrial);
-    font-size: 16px;
-    font-weight: 700;
-    text-transform: uppercase;
+    margin: 0 0 4px;
+    font-size: 15px;
+    font-weight: 600;
   }
 
   .drag-box p {
     margin: 0;
-    color: var(--text-muted);
+    color: var(--muted-foreground);
     font-size: 12px;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 </style>

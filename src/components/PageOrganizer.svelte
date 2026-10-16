@@ -459,7 +459,7 @@
           ></canvas>
           {#if page.status !== "ready"}
             <div class="thumbnail-placeholder" class:error={page.status === "error"} title={page.error || undefined}>
-              <span>{page.status === "error" ? "ÖNİZLEME YÜKLENEMEDİ" : "YÜKLENİYOR…"}</span>
+              <span>{page.status === "error" ? "Önizleme yüklenemedi" : "Yükleniyor…"}</span>
             </div>
           {/if}
         </div>

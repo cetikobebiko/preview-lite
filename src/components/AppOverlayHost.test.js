@@ -15,15 +15,15 @@ function renderOverlay(toastMsg) {
 }
 
 describe("AppOverlayHost toast", () => {
-  it("uppercases Turkish toast text with Turkish casing rules", () => {
+  it("shows the toast text as written, as a status message", () => {
     const view = renderOverlay("Sürüklenen dosya açıldı: rapor.pdf. Diğer 2 dosya yok sayıldı.");
 
-    expect(view.getByText("// SÜRÜKLENEN DOSYA AÇILDI: RAPOR.PDF. DİĞER 2 DOSYA YOK SAYILDI.")).toBeTruthy();
+    const toast = view.getByRole("status");
+    expect(toast.textContent.trim()).toBe("Sürüklenen dosya açıldı: rapor.pdf. Diğer 2 dosya yok sayıldı.");
   });
 
-  it("keeps dotted and dotless i distinct", () => {
-    const view = renderOverlay("ilk ışık");
-
-    expect(view.getByText("// İLK IŞIK")).toBeTruthy();
+  it("renders nothing without a message", () => {
+    const view = renderOverlay("");
+    expect(view.queryByRole("status")).toBeNull();
   });
 });

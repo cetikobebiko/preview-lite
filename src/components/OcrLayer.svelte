@@ -183,38 +183,35 @@
     gap: 12px;
     padding: 12px 24px;
     border-radius: 4px;
-    background: var(--bg-surface, #18181b);
-    border: 1px solid var(--accent-industrial, #ff5500);
+    background: var(--card);
+    border: 1px solid var(--primary);
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     font-size: 13px;
-    font-family: var(--font-mono);
-    color: var(--text-primary, #f4f4f5);
+    color: var(--foreground);
     pointer-events: auto; /* Tıklanabilir olsun */
   }
   
   .lang-select {
-    background: var(--bg-panel, #202023);
-    border: 1px solid var(--border-raw, #3f3f46);
-    color: var(--text-primary, #f4f4f5);
+    background: var(--secondary);
+    border: 1px solid var(--border);
+    color: var(--foreground);
     padding: 4px 8px;
     border-radius: 2px;
-    font-family: var(--font-mono);
   }
 
   .tech-button {
-    background: var(--bg-panel, #202023);
-    border: 1px solid var(--border-raw, #3f3f46);
-    color: var(--text-primary, #f4f4f5);
+    background: var(--secondary);
+    border: 1px solid var(--border);
+    color: var(--foreground);
     padding: 4px 12px;
-    font-family: var(--font-mono);
     cursor: pointer;
     font-weight: 600;
     transition: all 0.1s;
   }
 
   .tech-button:hover:not(:disabled) {
-    background: var(--accent-industrial, #ff5500);
-    border-color: var(--accent-industrial, #ff5500);
+    background: var(--primary);
+    border-color: var(--primary);
     color: #000;
   }
   
