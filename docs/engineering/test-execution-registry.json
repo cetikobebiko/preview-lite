@@ -568,7 +568,7 @@
       "artifactRequirement": null,
       "expectedTestCount": 19,
       "expectedTestPresence": "exact",
-      "notes": "Fake worker via CARGO_BIN_EXE_pdfium-worker-test-helper; realWorker=false canonical (see test-execution-architecture.md §5)"
+      "notes": "Fake worker via CARGO_BIN_EXE_pdfium-worker-test-helper (bin gated by required-features worker-test-support, enabled for test builds by the self dev-dependency in src-tauri/Cargo.toml so it is never bundled); realWorker=false canonical (see test-execution-architecture.md §5)"
     },
     {
       "id": "rust:worker_pdfium_integration",

@@ -112,4 +112,47 @@ describe("cross-platform build architecture", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("keeps test helper binaries out of the app bundle", () => {
+    // tauri-cli bundles every binary of the package whose required features
+    // are enabled, including ones auto-discovered under src/bin.
+    const manifest = readFileSync(
+      resolve(repositoryRoot, "src-tauri", "Cargo.toml"),
+      "utf8",
+    );
+    const binEntries = manifest
+      .split(/^\[\[bin\]\]\s*$/m)
+      .slice(1)
+      .map((block) => block.split(/^\[/m)[0])
+      .map((block) => ({
+        path: block.match(/^path\s*=\s*"([^"]+)"/m)?.[1],
+        requiredFeatures: [
+          ...(block.match(/^required-features\s*=\s*\[([^\]]*)\]/m)?.[1] ?? "")
+            .matchAll(/"([^"]+)"/g),
+        ].map((match) => match[1]),
+      }));
+    const defaultFeatures = [
+      ...(manifest.match(/^default\s*=\s*\[([^\]]*)\]/m)?.[1] ?? "").matchAll(
+        /"([^"]+)"/g,
+      ),
+    ].map((match) => match[1]);
+    const helperSources = readdirSync(resolve(repositoryRoot, "src-tauri", "src", "bin"))
+      .filter((name) => name.endsWith(".rs"))
+      .map((name) => `src/bin/${name}`);
+
+    const offenders = helperSources.filter((path) => {
+      const entry = binEntries.find((bin) => bin.path === path);
+      return (
+        !entry ||
+        entry.requiredFeatures.length === 0 ||
+        entry.requiredFeatures.some(
+          (feature) =>
+            !feature.endsWith("-test-support") || defaultFeatures.includes(feature),
+        )
+      );
+    });
+
+    expect(helperSources.length).toBeGreaterThan(0);
+    expect(offenders).toEqual([]);
+  });
 });

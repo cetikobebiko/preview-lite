@@ -20,6 +20,11 @@ sanitization-test-support = []
 # Compile-only real-process adversarial seams for plugin worker supervisor
 # acceptance tests. Never enabled by the production or release Tauri build.
 plugin-test-support = []
+# Builds the fake PDFium worker used by tests/worker_broker_process.rs. Enabled
+# only through the self dev-dependency below, so `cargo test` builds the helper
+# while `cargo build` and `tauri build` (which bundles every package binary
+# whose required features are met) leave it out of the app bundle.
+worker-test-support = []
 
 [[bin]]
 name = "preview-alternative"
@@ -29,6 +34,11 @@ path = "src/main.rs"
 name = "plugin-worker-test-helper"
 path = "src/bin/plugin-worker-test-helper.rs"
 required-features = ["plugin-test-support"]
+
+[[bin]]
+name = "pdfium-worker-test-helper"
+path = "src/bin/pdfium-worker-test-helper.rs"
+required-features = ["worker-test-support"]
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
@@ -86,6 +96,8 @@ windows-sys = { version = "0.61.2", features = [
 
 [dev-dependencies]
 tauri = { version = "2.0.0", features = ["test"] }
+# Self-reference: turns on test-only features for test/bench/example builds.
+preview-alternative = { path = ".", features = ["worker-test-support"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 serde = { version = "1.0", features = ["derive"] }

@@ -3113,6 +3113,7 @@ dependencies = [
  "miniz_oxide",
  "parking_lot",
  "pdfium-render",
+ "preview-alternative",
  "quick-xml",
  "regex",
  "reqwest 0.12.28",
