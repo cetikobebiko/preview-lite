@@ -15,6 +15,9 @@ pub mod error;
 pub mod export;
 pub mod external_validation;
 pub mod job_worker;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod macos_helper;
 pub mod manipulation;
 pub mod ocr;
 pub(crate) mod output_names;
@@ -126,77 +129,114 @@ fn trigger_continuity_camera_scan(_source_pdf_path: String) -> Result<String, St
 fn run_child_with_timeout(
     command: &mut std::process::Command,
     timeout: std::time::Duration,
-) -> Result<std::process::ExitStatus, String> {
+) -> Result<(std::process::ExitStatus, Vec<u8>), String> {
+    use std::io::Read;
+
+    command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|error| format!("Platform süreci başlatılamadı: {error}"))?;
+    // Pipe tamponu dolup çocuk süreç bloklanmasın diye stderr eşzamanlı okunur.
+    let stderr_reader = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes);
+            bytes
+        })
+    });
+    let collect_stderr = |reader: Option<std::thread::JoinHandle<Vec<u8>>>| {
+        reader
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default()
+    };
     let deadline = std::time::Instant::now() + timeout;
 
     loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("Platform süreci izlenemedi: {error}"))?
-        {
-            return Ok(status);
-        }
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("Platform süreci zaman aşımına uğradı".to_string());
+        let polled = child.try_wait();
+        match polled {
+            Ok(Some(status)) => return Ok((status, collect_stderr(stderr_reader))),
+            Ok(None) if std::time::Instant::now() < deadline => {}
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                // Okuyucu beklenmez: pipe'ı tutan bir torun süreç join'i bloklayabilir.
+                drop(stderr_reader);
+                return Err(match polled {
+                    Err(error) => format!("Platform süreci izlenemedi: {error}"),
+                    Ok(_) => "Platform süreci zaman aşımına uğradı".to_string(),
+                });
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
 #[cfg(target_os = "macos")]
-fn macos_share_command(path: &str) -> Result<std::process::Command, String> {
-    if !Path::new(path).is_file() {
-        return Err(format!("Paylaşılacak dosya bulunamadı: {path}"));
+fn macos_share_command(
+    path: &Path,
+    anchor: Option<macos_helper::ShareAnchor>,
+) -> Result<std::process::Command, String> {
+    if !path.is_file() {
+        return Err(format!("Paylaşılacak dosya bulunamadı: {}", path.display()));
     }
+    macos_helper::helper_command(macos_helper::share_command_args(path, anchor)?)
+}
 
-    let script = r#"
-        import AppKit
+/// Komutu çağıran pencerenin içerik alanı; picker bu pencereye bağlanır.
+/// Pencere küçültülmüş/gizliyse veya konum okunamazsa `None` (ekran ortası).
+#[cfg(target_os = "macos")]
+fn share_anchor_for_window(window: &tauri::WebviewWindow) -> Option<macos_helper::ShareAnchor> {
+    if window.is_minimized().unwrap_or(true) || !window.is_visible().unwrap_or(false) {
+        return None;
+    }
+    let position = window.inner_position().ok()?;
+    let size = window.inner_size().ok()?;
+    let scale_factor = window.scale_factor().ok()?;
+    macos_helper::ShareAnchor::from_physical(
+        position.x,
+        position.y,
+        size.width,
+        size.height,
+        scale_factor,
+    )
+}
 
-        class PickerDelegate: NSObject, NSSharingServicePickerDelegate {
-            func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, didChoose service: NSSharingService?) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    exit(0)
-                }
-            }
-        }
-
-        let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
-        let fileURL = URL(fileURLWithPath: CommandLine.arguments[1])
-        let picker = NSSharingServicePicker(items: [fileURL])
-        let delegate = PickerDelegate()
-        picker.delegate = delegate
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        window.makeKeyAndOrderFront(nil)
-        app.activate(ignoringOtherApps: true)
-        picker.show(relativeTo: .zero, of: window.contentView!, preferredEdge: .minY)
-        app.run()
-    "#;
-    let mut command = std::process::Command::new("swift");
-    command.arg("-e").arg(script).arg(path);
-    Ok(command)
+fn child_stderr_detail(stderr: &[u8]) -> String {
+    const MAX_CHARS: usize = 500;
+    let text = String::from_utf8_lossy(stderr);
+    let text = text.trim();
+    if text.chars().count() > MAX_CHARS {
+        format!("{}…", text.chars().take(MAX_CHARS).collect::<String>())
+    } else {
+        text.to_string()
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn share_external_path_macos(path: &str) -> Result<(), String> {
-    let status = run_child_with_timeout(
-        &mut macos_share_command(path)?,
-        std::time::Duration::from_secs(120),
+fn share_exit_error(status: std::process::ExitStatus, stderr: &[u8]) -> String {
+    let detail = child_stderr_detail(stderr);
+    if detail.is_empty() {
+        format!("macOS Paylaşım menüsü {status} durumuyla kapandı")
+    } else {
+        format!("macOS Paylaşım menüsü {status} durumuyla kapandı: {detail}")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn share_external_path_macos(
+    path: &str,
+    anchor: Option<macos_helper::ShareAnchor>,
+) -> Result<(), String> {
+    let (status, stderr) = run_child_with_timeout(
+        &mut macos_share_command(Path::new(path), anchor)?,
+        macos_helper::SHARE_PROCESS_TIMEOUT,
     )?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("macOS Paylaşım menüsü {status} durumuyla kapandı"))
+        Err(share_exit_error(status, &stderr))
     }
 }
 
@@ -226,28 +266,41 @@ async fn share_file_macos(
     job_id: String,
     session_id: String,
     expected_content_generation: u64,
+    window: tauri::WebviewWindow,
     store: tauri::State<'_, document_session::DocumentSessionStore>,
 ) -> Result<document_session::SessionJobOutcome<()>, document_session::DocumentSessionError> {
+    let anchor = share_anchor_for_window(&window);
+    // Alıcı "snapshot.pdf" yerine belgenin kendi adını görsün. Oturum
+    // bulunamazsa run_snapshot_job aynı hatayı zaten döndürür.
+    let display_path = store
+        .session_snapshot(&session_id)
+        .await
+        .ok()
+        .map(|snapshot| snapshot.display_path);
+    let file_name = macos_helper::sanitize_share_file_name(display_path.as_deref());
     share_session_snapshot_with(
         &store,
         &job_id,
         &session_id,
         expected_content_generation,
-        |context| {
+        move |context| {
             context.cancellation.check_cancelled()?;
-            let mut command = macos_share_command(&context.snapshot_path.to_string_lossy())
+            // Kopya job dizinindedir: süreç bitene (servis delegesi sonuç
+            // bildirene) kadar yaşar, iptal/kapanışta job ile birlikte silinir.
+            let share_path = document_session::stage_job_share_copy(&context, &file_name)?;
+            let mut command = macos_share_command(&share_path, anchor)
                 .map_err(document_session::SessionJobOperationError::from)?;
-            let status = context.child_processes.run_with_timeout(
+            let output = context.child_processes.run_with_output_timeout(
                 &mut command,
-                std::time::Duration::from_secs(120),
+                macos_helper::SHARE_PROCESS_TIMEOUT,
                 &context.cancellation,
             )?;
-            if status.success() {
+            if output.status.success() {
                 Ok(())
             } else {
-                Err(document_session::SessionJobOperationError::failed(format!(
-                    "macOS Paylaşım menüsü {status} durumuyla kapandı"
-                )))
+                Err(document_session::SessionJobOperationError::failed(
+                    share_exit_error(output.status, &output.stderr),
+                ))
             }
         },
     )
@@ -267,15 +320,23 @@ async fn share_file_macos(
     ))
 }
 
+// Paylaşım servisi sonucu bildirene kadar (en fazla SHARE_PROCESS_TIMEOUT) çocuk süreci bekler; senkron
+// Tauri komutları ana thread'de çalıştığından bekleme blocking havuzunda yapılır.
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn share_external_file_macos(path: String) -> Result<(), String> {
-    share_external_path_macos(&path)
+async fn share_external_file_macos(
+    path: String,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let anchor = share_anchor_for_window(&window);
+    tauri::async_runtime::spawn_blocking(move || share_external_path_macos(&path, anchor))
+        .await
+        .map_err(|error| format!("macOS Paylaşım menüsü görevi tamamlanamadı: {error}"))?
 }
 
 #[cfg(not(target_os = "macos"))]
 #[tauri::command]
-fn share_external_file_macos(_path: String) -> Result<(), String> {
+async fn share_external_file_macos(_path: String) -> Result<(), String> {
     Err(
         "FEATURE_UNAVAILABLE: Harici dosya paylaşımı yalnızca macOS üzerinde desteklenmektedir."
             .to_string(),
@@ -1453,7 +1514,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn platform_process_runner_handles_success_and_timeout() {
-        let success = run_child_with_timeout(
+        let (success, _) = run_child_with_timeout(
             std::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg("exit 0"),
@@ -1461,6 +1522,19 @@ mod tests {
         )
         .unwrap();
         assert!(success.success());
+
+        let (failure, stderr) = run_child_with_timeout(
+            std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg("echo 'Paylaşım başarısız: test' >&2; exit 1"),
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(!failure.success());
+        assert_eq!(
+            share_exit_error(failure, &stderr),
+            format!("macOS Paylaşım menüsü {failure} durumuyla kapandı: Paylaşım başarısız: test")
+        );
 
         let timeout = run_child_with_timeout(
             std::process::Command::new("/bin/sh")

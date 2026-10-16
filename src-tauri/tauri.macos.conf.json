@@ -7,6 +7,9 @@
     ],
     "resources": [
       "lib/libpdfium.dylib"
+    ],
+    "externalBin": [
+      "binaries/antigravity-macos-helper"
     ]
   }
 }

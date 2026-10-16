@@ -324,6 +324,65 @@ describe("backend service boundaries", () => {
     expect(handlerRegistry).not.toMatch(/\bshare_session_macos\b/);
   });
 
+  it("keeps synchronous Tauri commands to an audited, non-blocking allowlist", () => {
+    // Senkron Tauri komutları ana (UI) thread'de çalışır. Yeni komutlar async olmalı;
+    // senkron kalanlar yalnız hızlı, bloklamayan işler yapar ve burada gerekçelendirilir.
+    const syncCommandAllowlist = {
+      // Anında FEATURE_UNAVAILABLE döndürür.
+      trigger_continuity_camera_scan: "lib.rs",
+      // Yalnız bellek içi mutex/LRU işlemleri; generate_handler! içinde kayıtlı değiller.
+      set_active_render_document: "pdf_engine/mod.rs",
+      cancel_render_request: "pdf_engine/mod.rs",
+      clear_search_cache: "pdf_engine/mod.rs",
+    };
+    const blockingCall =
+      /std::thread::sleep|std::fs::|std::process::Command|\.try_wait\(|\.wait\(|\.join\(\)|run_child_with_timeout|run_with_timeout|reqwest::blocking|block_on\(/;
+    const commandDefinition =
+      /#\[tauri::command\]\s*(?:#\[[^\]]*\]\s*|\/\/[^\n]*\n\s*)*(?:pub(?:\([^)]*\))?\s+)?(async\s+)?fn\s+(\w+)/g;
+
+    let attributeCount = 0;
+    const commands = rustSourceFiles(rustSourceRoot).flatMap((path) => {
+      const source = readFileSync(path, "utf8");
+      attributeCount += (source.match(/#\[tauri::command\]/g) ?? []).length;
+      return [...source.matchAll(commandDefinition)].map((match) => {
+        const opening = source.indexOf("{", match.index + match[0].length);
+        let depth = 0;
+        let end = opening;
+        for (; end < source.length; end += 1) {
+          if (source[end] === "{") depth += 1;
+          if (source[end] === "}" && --depth === 0) break;
+        }
+        return {
+          file: relative(rustSourceRoot, path),
+          name: match[2],
+          isAsync: Boolean(match[1]),
+          body: source.slice(opening, end + 1),
+        };
+      });
+    });
+
+    // Ayrıştırıcı her komut özniteliğini bir fonksiyona bağlayabilmeli.
+    expect(commands.length).toBe(attributeCount);
+    expect(commands.length).toBeGreaterThan(0);
+
+    const syncCommands = commands.filter((command) => !command.isAsync);
+    expect(
+      Object.fromEntries(syncCommands.map((command) => [command.name, command.file])),
+    ).toEqual(syncCommandAllowlist);
+
+    const blockingSyncCommands = syncCommands
+      .filter((command) => blockingCall.test(command.body))
+      .map((command) => `${command.file}:${command.name}`);
+    expect(blockingSyncCommands).toEqual([]);
+
+    const externalShare = commands.filter(
+      (command) => command.name === "share_external_file_macos",
+    );
+    expect(externalShare).toHaveLength(2);
+    expect(externalShare.every((command) => command.isAsync)).toBe(true);
+    expect(externalShare.some((command) => /spawn_blocking/.test(command.body))).toBe(true);
+  });
+
   it("keeps unsupported metadata writes session-native and removes accessibility write bypasses", () => {
     const handlerRegistry = readFileSync(rustLibPath, "utf8");
     const sessionSource = readFileSync(

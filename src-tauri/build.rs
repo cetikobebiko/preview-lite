@@ -1,4 +1,6 @@
 fn main() {
+    // tauri-build externalBin dosyasının var olmasını bekler; önce derlenmeli.
+    compile_macos_helper();
     tauri_build::build();
 
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -315,6 +317,145 @@ fn main() {
     println!("cargo:rerun-if-changed=../docs/engineering/platform-support.json");
     println!("cargo:rerun-if-changed=../src-tauri/lib/pdfium.dll");
     println!("cargo:rerun-if-changed=../src-tauri/lib/libpdfium.so");
+}
+
+/// `antigravity-macos-helper` adı `src/macos_helper.rs` ve
+/// `tauri.macos.conf.json` externalBin girdisiyle aynı olmalıdır.
+const MACOS_HELPER_NAME: &str = "antigravity-macos-helper";
+const MACOS_HELPER_SOURCE: &str = "macos-helper/main.swift";
+
+/// Yardımcının derlendiği mimari dilimleri: (Rust hedefi, swiftc mimarisi).
+const MACOS_HELPER_SLICES: [(&str, &str); 2] = [
+    ("aarch64-apple-darwin", "arm64"),
+    ("x86_64-apple-darwin", "x86_64"),
+];
+/// tauri-cli `--target universal-apple-darwin` paketlemesinde externalBin'i bu
+/// sonekle arar.
+const MACOS_HELPER_UNIVERSAL_TRIPLE: &str = "universal-apple-darwin";
+
+/// Vision OCR ve paylaşım menüsü yardımcısını swiftc ile derleyip Tauri
+/// externalBin konumuna (`binaries/<ad>-<target>`) yazar. tauri-build bunu
+/// geliştirme/test için `target/<profil>/` altına, paket için
+/// `Contents/MacOS/` altına kopyalar.
+///
+/// Hangi macOS hedefi derlenirse derlensin arm64 ve x86_64 dilimleri ile
+/// lipo'lanmış universal binary birlikte üretilir: universal paketleme cargo'yu
+/// her mimari için ayrı çalıştırır (her biri kendi `-<target>` dosyasını
+/// ister), bundler ise `-universal-apple-darwin` dosyasını paketler. Kaynak ve
+/// deployment target değişmedikçe yeniden derlenmez; iki mimari çağrısı aynı
+/// stamp'i ürettiğinden universal build'de ikinci çağrı derleme yapmaz.
+fn compile_macos_helper() {
+    use sha2::{Digest, Sha256};
+
+    println!("cargo:rerun-if-changed={MACOS_HELPER_SOURCE}");
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+    let target = std::env::var("TARGET").expect("TARGET tanımlı değil");
+    if !MACOS_HELPER_SLICES
+        .iter()
+        .any(|(triple, _)| *triple == target)
+    {
+        panic!("MACOS_HELPER_BUILD_FAILED: desteklenmeyen macOS hedefi: {target}");
+    }
+    // tauri-cli minimumSystemVersion'ı (varsayılan 10.13) her mimariye aynı
+    // geçirir. arm64 macOS 11'den eskisini desteklemez; o dilim 11.0'a
+    // yükseltilir, çıktı aynıdır.
+    let deployment_target =
+        std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "10.13".to_string());
+    let deployment_major = deployment_target
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u32>().ok())
+        .unwrap_or(0);
+    let swift_targets: Vec<(&str, String)> = MACOS_HELPER_SLICES
+        .iter()
+        .map(|(triple, arch)| {
+            let version = if *arch == "arm64" && deployment_major < 11 {
+                "11.0"
+            } else {
+                deployment_target.as_str()
+            };
+            (*triple, format!("{arch}-apple-macos{version}"))
+        })
+        .collect();
+
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join(MACOS_HELPER_SOURCE);
+    let source = std::fs::read(&source_path).unwrap_or_else(|error| {
+        panic!("MACOS_HELPER_BUILD_FAILED: {MACOS_HELPER_SOURCE} okunamadı: {error}")
+    });
+    let mut hasher = Sha256::new();
+    hasher.update(&source);
+    for (_, swift_target) in &swift_targets {
+        hasher.update(swift_target.as_bytes());
+    }
+    let stamp = hex::encode(hasher.finalize());
+
+    let binaries_dir = manifest_dir.join("binaries");
+    let output_for = |triple: &str| binaries_dir.join(format!("{MACOS_HELPER_NAME}-{triple}"));
+    let universal_output = output_for(MACOS_HELPER_UNIVERSAL_TRIPLE);
+    let stamp_path = binaries_dir.join(format!(".{MACOS_HELPER_NAME}.stamp"));
+    let outputs_exist = universal_output.is_file()
+        && swift_targets
+            .iter()
+            .all(|(triple, _)| output_for(triple).is_file());
+    if outputs_exist
+        && std::fs::read_to_string(&stamp_path).is_ok_and(|existing| existing.trim() == stamp)
+    {
+        return;
+    }
+
+    std::fs::create_dir_all(&binaries_dir).unwrap_or_else(|error| {
+        panic!("MACOS_HELPER_BUILD_FAILED: binaries dizini oluşturulamadı: {error}")
+    });
+    let out_dir =
+        std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR tanımlı değil"));
+    let mut slices = Vec::new();
+    for (triple, swift_target) in &swift_targets {
+        let compiled = out_dir.join(format!("{MACOS_HELPER_NAME}-{triple}"));
+        let status = std::process::Command::new("swiftc")
+            .args(["-O", "-swift-version", "5", "-target", swift_target, "-o"])
+            .arg(&compiled)
+            .arg(&source_path)
+            .status()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "MACOS_HELPER_BUILD_FAILED: swiftc çalıştırılamadı ({error}). \
+                     Xcode Command Line Tools kurulu olmalıdır: xcode-select --install"
+                )
+            });
+        if !status.success() {
+            panic!("MACOS_HELPER_BUILD_FAILED: swiftc ({swift_target}) {status} durumuyla başarısız oldu");
+        }
+        slices.push((*triple, compiled));
+    }
+    let compiled_universal = out_dir.join(format!(
+        "{MACOS_HELPER_NAME}-{MACOS_HELPER_UNIVERSAL_TRIPLE}"
+    ));
+    let status = std::process::Command::new("lipo")
+        .arg("-create")
+        .args(slices.iter().map(|(_, compiled)| compiled))
+        .arg("-output")
+        .arg(&compiled_universal)
+        .status()
+        .unwrap_or_else(|error| panic!("MACOS_HELPER_BUILD_FAILED: lipo çalıştırılamadı: {error}"));
+    if !status.success() {
+        panic!("MACOS_HELPER_BUILD_FAILED: lipo {status} durumuyla başarısız oldu");
+    }
+    slices.push((MACOS_HELPER_UNIVERSAL_TRIPLE, compiled_universal));
+
+    // Eski stamp önce silinir: kopyalama yarıda kalırsa sonraki build eksik
+    // dosyaları geçerli saymaz.
+    let _ = std::fs::remove_file(&stamp_path);
+    for (triple, compiled) in &slices {
+        std::fs::copy(compiled, output_for(triple)).unwrap_or_else(|error| {
+            panic!("MACOS_HELPER_BUILD_FAILED: helper ({triple}) kopyalanamadı: {error}")
+        });
+    }
+    std::fs::write(&stamp_path, &stamp)
+        .unwrap_or_else(|error| panic!("MACOS_HELPER_BUILD_FAILED: stamp yazılamadı: {error}"));
 }
 
 fn verify_windows_runtime_pre_package(

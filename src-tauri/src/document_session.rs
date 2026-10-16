@@ -2912,9 +2912,7 @@ impl SessionJobChildProcessOwner {
         after_spawn: impl FnOnce(),
     ) -> Result<ExitStatus, SessionJobOperationError> {
         cancellation.check_cancelled()?;
-        let child = command.spawn().map_err(|error| {
-            SessionJobOperationError::failed(format!("Platform süreci başlatılamadı: {error}"))
-        })?;
+        let child = command.spawn().map_err(child_spawn_error)?;
         let child_guard = SessionJobChildRegistrationGuard::register(self, child);
         after_spawn();
         let deadline = std::time::Instant::now() + timeout;
@@ -2951,9 +2949,7 @@ impl SessionJobChildProcessOwner {
         signal_cancellation: impl FnOnce() -> Result<(), SessionJobOperationError>,
     ) -> Result<ExitStatus, SessionJobOperationError> {
         cancellation.check_cancelled()?;
-        let child = command.spawn().map_err(|error| {
-            SessionJobOperationError::failed(format!("Platform süreci başlatılamadı: {error}"))
-        })?;
+        let child = command.spawn().map_err(child_spawn_error)?;
         let child_guard = SessionJobChildRegistrationGuard::register(self, child);
         let deadline = std::time::Instant::now() + timeout;
         let mut cancellation_deadline = None;
@@ -3001,11 +2997,29 @@ impl SessionJobChildProcessOwner {
         timeout: Duration,
         cancellation: &SessionJobCancellationCheckpoint,
     ) -> Result<Output, SessionJobOperationError> {
+        self.run_with_bounded_output_timeout(
+            command,
+            timeout,
+            cancellation,
+            ChildOutputLimits::UNBOUNDED,
+        )
+    }
+
+    /// `run_with_output_timeout` ile aynı; stdout `limits.max_stdout_bytes`
+    /// baytı aşarsa süreç beklenmeden öldürülür ve
+    /// `SESSION_JOB_CHILD_OUTPUT_TOO_LARGE` döner. stderr
+    /// `limits.max_stderr_bytes` baytta kesilir (geri kalanı okunup atılır,
+    /// böylece çocuk dolu pipe'ta bloklanmaz).
+    pub fn run_with_bounded_output_timeout(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancellation: &SessionJobCancellationCheckpoint,
+        limits: ChildOutputLimits,
+    ) -> Result<Output, SessionJobOperationError> {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
         cancellation.check_cancelled()?;
-        let child = command.spawn().map_err(|error| {
-            SessionJobOperationError::failed(format!("Platform süreci başlatılamadı: {error}"))
-        })?;
+        let child = command.spawn().map_err(child_spawn_error)?;
         let child_guard = SessionJobChildRegistrationGuard::register(self, child);
         let (stdout, stderr) = child_guard.take_output_pipes();
         #[cfg(test)]
@@ -3015,11 +3029,36 @@ impl SessionJobChildProcessOwner {
             .swap(false, Ordering::AcqRel);
         #[cfg(not(test))]
         let fail_output_read = false;
-        let stdout_reader =
-            std::thread::spawn(move || drain_child_output(stdout, fail_output_read, "stdout"));
-        let stderr_reader = std::thread::spawn(move || drain_child_output(stderr, false, "stderr"));
+        let stdout_overflow = Arc::new(AtomicBool::new(false));
+        let stdout_reader = {
+            let overflow = Arc::clone(&stdout_overflow);
+            std::thread::spawn(move || {
+                drain_child_output(
+                    stdout,
+                    fail_output_read,
+                    "stdout",
+                    OutputCap::Reject {
+                        max_bytes: limits.max_stdout_bytes,
+                        overflow,
+                    },
+                )
+            })
+        };
+        let stderr_reader = std::thread::spawn(move || {
+            drain_child_output(
+                stderr,
+                false,
+                "stderr",
+                OutputCap::Truncate {
+                    max_bytes: limits.max_stderr_bytes,
+                },
+            )
+        });
         let deadline = std::time::Instant::now() + timeout;
         let status_result = loop {
+            if stdout_overflow.load(Ordering::Acquire) {
+                break Err(child_output_too_large(limits.max_stdout_bytes));
+            }
             if cancellation.is_cancel_requested() {
                 break Err(SessionJobOperationError::Cancelled(
                     cancellation
@@ -3045,8 +3084,15 @@ impl SessionJobChildProcessOwner {
             std::thread::sleep(Duration::from_millis(50));
         };
         drop(child_guard);
-        let stdout_bytes = join_child_output_reader(stdout_reader, "stdout")?;
-        let stderr_bytes = join_child_output_reader(stderr_reader, "stderr")?;
+        let stdout_bytes = join_child_output_reader(stdout_reader, "stdout");
+        let stderr_bytes = join_child_output_reader(stderr_reader, "stderr");
+        // Süreç kendi kendine çıkmış olsa bile taşma, okuma hatasından önce
+        // raporlanır.
+        if stdout_overflow.load(Ordering::Acquire) {
+            return Err(child_output_too_large(limits.max_stdout_bytes));
+        }
+        let stdout_bytes = stdout_bytes?;
+        let stderr_bytes = stderr_bytes?;
         let status = status_result?;
         Ok(Output {
             status,
@@ -3122,25 +3168,95 @@ impl SessionJobChildProcessOwner {
     }
 }
 
+/// Çocuk süreç çıktı sınırları. `UNBOUNDED` eski
+/// `run_with_output_timeout` davranışıdır.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChildOutputLimits {
+    pub max_stdout_bytes: usize,
+    pub max_stderr_bytes: usize,
+}
+
+impl ChildOutputLimits {
+    pub const UNBOUNDED: Self = Self {
+        max_stdout_bytes: usize::MAX,
+        max_stderr_bytes: usize::MAX,
+    };
+}
+
+/// Program bulunamadığında ayrı bir kod döner; çağıran (ör. OCR) kullanıcıya
+/// "kurulu değil" mesajı gösterebilir. Mesaj metni değişmedi.
+pub(crate) const CHILD_PROGRAM_NOT_FOUND_CODE: &str = "SESSION_JOB_CHILD_PROGRAM_NOT_FOUND";
+
+fn child_spawn_error(error: std::io::Error) -> SessionJobOperationError {
+    let message = format!("Platform süreci başlatılamadı: {error}");
+    if error.kind() == std::io::ErrorKind::NotFound {
+        SessionJobOperationError::failed_with_code(CHILD_PROGRAM_NOT_FOUND_CODE, message)
+    } else {
+        SessionJobOperationError::failed(message)
+    }
+}
+
+fn child_output_too_large(max_bytes: usize) -> SessionJobOperationError {
+    SessionJobOperationError::failed_with_code(
+        "SESSION_JOB_CHILD_OUTPUT_TOO_LARGE",
+        format!("Child stdout çıktısı {max_bytes} bayt sınırını aşıyor"),
+    )
+}
+
+enum OutputCap {
+    /// Sınır aşılırsa okuma durur, `overflow` işaretlenir ve pipe kapatılır.
+    Reject {
+        max_bytes: usize,
+        overflow: Arc<AtomicBool>,
+    },
+    /// Sınırdan sonrası okunup atılır.
+    Truncate { max_bytes: usize },
+}
+
 fn drain_child_output<R: Read>(
     reader: Option<R>,
     force_failure: bool,
     stream_name: &str,
+    cap: OutputCap,
 ) -> Result<Vec<u8>, SessionJobOperationError> {
-    let mut bytes = Vec::new();
-    if let Some(mut reader) = reader {
-        reader.read_to_end(&mut bytes).map_err(|_| {
-            SessionJobOperationError::failed_with_code(
-                "SESSION_JOB_CHILD_OUTPUT_READ_FAILED",
-                format!("Child {stream_name} çıktısı okunamadı"),
-            )
-        })?;
-    }
-    if force_failure {
-        return Err(SessionJobOperationError::failed_with_code(
+    let read_failed = || {
+        SessionJobOperationError::failed_with_code(
             "SESSION_JOB_CHILD_OUTPUT_READ_FAILED",
             format!("Child {stream_name} çıktısı okunamadı"),
-        ));
+        )
+    };
+    let mut bytes = Vec::new();
+    if let Some(mut reader) = reader {
+        match cap {
+            OutputCap::Reject {
+                max_bytes,
+                overflow,
+            } => {
+                let probe_limit = u64::try_from(max_bytes)
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1);
+                (&mut reader)
+                    .take(probe_limit)
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| read_failed())?;
+                if bytes.len() > max_bytes {
+                    overflow.store(true, Ordering::Release);
+                    bytes.clear();
+                    return Ok(bytes);
+                }
+            }
+            OutputCap::Truncate { max_bytes } => {
+                let limit = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+                (&mut reader)
+                    .take(limit)
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| read_failed())?;
+                std::io::copy(&mut reader, &mut std::io::sink()).map_err(|_| read_failed())?;
+            }
+        }
+    }
+    if force_failure {
+        return Err(read_failed());
     }
     Ok(bytes)
 }
@@ -3200,6 +3316,38 @@ impl SessionJobContext {
             child_processes: SessionJobChildProcessOwner::default(),
         }
     }
+}
+
+/// Copies the job snapshot to `<job_dir>/share/<file_name>` so a platform share
+/// service sees the document's real name. The copy lives inside the job
+/// directory, so job cancellation, shutdown and normal cleanup remove it
+/// together with the snapshot.
+pub(crate) fn stage_job_share_copy(
+    context: &SessionJobContext,
+    file_name: &str,
+) -> Result<PathBuf, SessionJobOperationError> {
+    let mut components = Path::new(file_name).components();
+    if !matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    ) {
+        return Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_SHARE_NAME_INVALID",
+            "Paylaşım dosya adı tek bir yol bileşeni olmalıdır",
+        ));
+    }
+    let job_dir = context.snapshot_path.parent().ok_or_else(|| {
+        SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_SHARE_STAGING_FAILED",
+            "Job snapshot dizini çözümlenemedi",
+        )
+    })?;
+    let share_dir = job_dir.join("share");
+    create_secure_dir(&share_dir)
+        .map_err(|error| SessionJobOperationError::failed_with_code(error.code, error.message))?;
+    let target = share_dir.join(file_name);
+    copy_with_digest_cancellable(&context.snapshot_path, &target, &context.cancellation)?;
+    Ok(target)
 }
 
 fn session_job_context(job: &Arc<SessionJobRecord>) -> SessionJobContext {
@@ -3902,6 +4050,16 @@ impl DocumentSessionStore {
 
     pub fn worker_broker(&self) -> PdfiumWorkerBroker {
         self.worker_broker.clone()
+    }
+
+    pub(crate) async fn session_snapshot(
+        &self,
+        session_id: &str,
+    ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+        let entry = self.entry(session_id)?;
+        let _lease = entry.operation.clone().read_owned().await;
+        let result = snapshot(&entry.state.lock());
+        Ok(result)
     }
 
     fn entry(&self, session_id: &str) -> Result<Arc<SessionEntry>, DocumentSessionError> {
@@ -7770,10 +7928,7 @@ pub async fn get_document_session_snapshot(
     session_id: String,
     store: State<'_, DocumentSessionStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    let entry = store.entry(&session_id)?;
-    let _lease = entry.operation.clone().read_owned().await;
-    let result = snapshot(&entry.state.lock());
-    Ok(result)
+    store.session_snapshot(&session_id).await
 }
 
 #[tauri::command]
@@ -14009,6 +14164,71 @@ mod tests {
         assert!(owner.children.lock().is_empty());
     }
 
+    fn failure_code(result: Result<Output, SessionJobOperationError>) -> String {
+        match result {
+            Err(SessionJobOperationError::Failed(failure)) => failure.code,
+            other => panic!("expected failure, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_child_stdout_overflow_kills_the_process_early() {
+        let owner = SessionJobChildProcessOwner::default();
+        let (_, checkpoint) = test_cancellation_checkpoint();
+        let started = std::time::Instant::now();
+        // `yes` hiç bitmez; yalnız taşma tespiti süreci durdurabilir.
+        let result = owner.run_with_bounded_output_timeout(
+            &mut shell_command("yes"),
+            Duration::from_secs(20),
+            &checkpoint,
+            ChildOutputLimits {
+                max_stdout_bytes: 4096,
+                max_stderr_bytes: 4096,
+            },
+        );
+        assert_eq!(failure_code(result), "SESSION_JOB_CHILD_OUTPUT_TOO_LARGE");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(owner.children.lock().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_child_stdout_at_limit_is_accepted_and_stderr_is_truncated() {
+        let owner = SessionJobChildProcessOwner::default();
+        let (_, checkpoint) = test_cancellation_checkpoint();
+        let output = owner
+            .run_with_bounded_output_timeout(
+                &mut shell_command(
+                    "printf 12345678; i=0; while [ $i -lt 5000 ]; do printf 'stderr-line\\n' >&2; i=$((i+1)); done",
+                ),
+                Duration::from_secs(10),
+                &checkpoint,
+                ChildOutputLimits {
+                    max_stdout_bytes: 8,
+                    max_stderr_bytes: 16,
+                },
+            )
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"12345678");
+        assert_eq!(output.stderr, b"stderr-line\nstde");
+        assert!(owner.children.lock().is_empty());
+    }
+
+    #[test]
+    fn missing_child_program_has_a_distinct_error_code() {
+        let owner = SessionJobChildProcessOwner::default();
+        let (_, checkpoint) = test_cancellation_checkpoint();
+        let result = owner.run_with_output_timeout(
+            &mut Command::new("antigravity-definitely-missing-program"),
+            Duration::from_secs(5),
+            &checkpoint,
+        );
+        assert_eq!(failure_code(result), CHILD_PROGRAM_NOT_FOUND_CODE);
+        assert!(owner.children.lock().is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn repeated_child_cancel_does_not_leave_or_double_own_process() {
@@ -14421,6 +14641,62 @@ mod tests {
         assert!(!snapshot_path.exists());
         assert!(!snapshot_path.parent().unwrap().exists());
         assert!(store.job_registry.lock().active.is_empty());
+    }
+
+    #[tokio::test]
+    async fn share_copy_uses_display_name_and_is_removed_with_job() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("Yıllık Rapor.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+        let display_path = store
+            .session_snapshot(&session_id)
+            .await
+            .unwrap()
+            .display_path;
+        let file_name = crate::macos_helper::sanitize_share_file_name(Some(&display_path));
+        assert_eq!(file_name, "Yıllık Rapor.pdf");
+        let observed = Arc::new(Mutex::new(None::<(PathBuf, PathBuf)>));
+        let observed_from_job = Arc::clone(&observed);
+
+        let outcome = store
+            .run_snapshot_job(
+                &Uuid::new_v4().to_string(),
+                &session_id,
+                1,
+                move |context| {
+                    let invalid = stage_job_share_copy(&context, "../escape.pdf").unwrap_err();
+                    assert!(matches!(
+                        invalid,
+                        SessionJobOperationError::Failed(ref failure)
+                            if failure.code == "SESSION_JOB_SHARE_NAME_INVALID"
+                    ));
+                    let shared = stage_job_share_copy(&context, &file_name)?;
+                    assert_eq!(shared.file_name().unwrap(), "Yıllık Rapor.pdf");
+                    assert_eq!(
+                        shared.parent().unwrap().parent().unwrap(),
+                        context.snapshot_path.parent().unwrap()
+                    );
+                    assert_eq!(
+                        fs::read(&shared).unwrap(),
+                        fs::read(&context.snapshot_path).unwrap()
+                    );
+                    *observed_from_job.lock() = Some((shared, context.snapshot_path.clone()));
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            matches!(outcome, SessionJobOutcome::Completed { .. }),
+            "{outcome:?}"
+        );
+        let (shared, snapshot_path) = observed.lock().clone().unwrap();
+        assert!(!shared.exists());
+        assert!(!snapshot_path.parent().unwrap().exists());
+        assert!(fs::read(&original).is_ok());
     }
 
     #[test]
