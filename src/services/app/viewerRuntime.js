@@ -5,6 +5,8 @@ import { paintAnnotations } from "./annotationCanvasRenderer.js";
 import { createViewerController } from "./viewerController.js";
 import { createViewerEditActions } from "./viewerEditActions.js";
 import { createViewerNavigationController } from "./viewerNavigationController.js";
+import { createPageLayoutProvider } from "./pageLayoutModel.js";
+import { pageSizeStore } from "../pageSizeStore.js";
 
 /** Composes viewer render, navigation and canvas interaction around one viewer controller. */
 export function createViewerRuntime({
@@ -37,6 +39,7 @@ export function createViewerRuntime({
       onError("Görüntüleme hatası: " + error.toString());
     },
     onRenderFinished: () => { viewer.isRendering = false; },
+    onImagePainted: (size) => { viewer.imagePixelSize = size; },
   });
 
   function render(options = { silent: false }) {
@@ -71,9 +74,17 @@ export function createViewerRuntime({
     render,
     saveSettings: () => callbacks.saveSettings(),
     onToast,
+    getPageLayout: createPageLayoutProvider({
+      viewer,
+      documentSession,
+      peekPageSizes: pageSizeStore.peekAll,
+    }),
   });
 
-  const edits = createViewerEditActions({ viewer, annotation, render, onToast });
+  const edits = createViewerEditActions({
+    viewer, annotation, render, onToast,
+    preserveViewportAnchor: navigation.preserveViewportAnchor,
+  });
   const annotationCanvas = createAnnotationCanvasController({
     annotation,
     viewer,

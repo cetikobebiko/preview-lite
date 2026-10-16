@@ -10,7 +10,7 @@ vi.mock("./PdfPage.svelte", async () => import("./ViewerShell.pdfPageProbe.svelt
 
 const PAGE_COUNT = 4;
 
-function setup() {
+function setup({ isPdf = true } = {}) {
   const viewer = createViewerState();
   viewer.pageOrder = Array.from({ length: PAGE_COUNT }, (_, index) => index);
   const searchState = createSearchState();
@@ -25,7 +25,7 @@ function setup() {
 
   render(ViewerShell, {
     props: {
-      isPdf: true,
+      isPdf,
       viewer,
       annotation: { activeTool: "pointer", activeColor: "#fff" },
       documentSession,
@@ -145,5 +145,43 @@ describe("ViewerShell per-page props", () => {
     for (let page = 0; page < PAGE_COUNT; page += 1) {
       expect(latest(page, "approximateCoveragePreview")).toBeNull();
     }
+  });
+});
+
+describe("ViewerShell image canvas", () => {
+  it("lays out the image canvas at its bitmap size times the committed scale", () => {
+    const { viewer } = setup({ isPdf: false });
+    viewer.activeImageSourcePath = "photo.png";
+    flushSync();
+    const canvas = document.querySelector(".page-wrapper canvas");
+    expect(canvas.style.width).toBe("");
+
+    viewer.imagePixelSize = { width: 800, height: 600 };
+    flushSync();
+    expect([canvas.style.width, canvas.style.height]).toEqual(["800px", "600px"]);
+
+    viewer.scale = 1.5;
+    flushSync();
+    expect([canvas.style.width, canvas.style.height]).toEqual(["1200px", "900px"]);
+  });
+});
+
+describe("ViewerShell zoom transform", () => {
+  it("snaps the gesture transform back to scale(1) without a transition when the zoom commits", () => {
+    const { viewer } = setup();
+    const container = document.querySelector(".canvas-container");
+
+    viewer.visualScale = 1.3;
+    viewer.isZooming = true;
+    flushSync();
+    expect(container.style.transform).toBe("scale(1.3)");
+
+    // Commit: the new scale is laid out in the same update that drops the transform.
+    viewer.scale = 1.3;
+    viewer.visualScale = 1;
+    viewer.isZooming = false;
+    flushSync();
+    expect(container.style.transform).toBe("scale(1)");
+    expect(container.style.transition).toBe("");
   });
 });

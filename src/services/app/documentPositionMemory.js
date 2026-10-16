@@ -1,5 +1,4 @@
-const MIN_SCALE = 0.25;
-const MAX_SCALE = 4;
+import { normalizeScale } from "./zoomLimits.js";
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -41,7 +40,7 @@ export function createDocumentPositionMemory({
       viewer.currentPageIndex = clamp(state.pageIndex, 0, viewer.pageOrder.length - 1);
     }
     if (Number.isFinite(state.scale)) {
-      viewer.scale = clamp(state.scale, MIN_SCALE, MAX_SCALE);
+      viewer.scale = normalizeScale(state.scale);
     }
     if (typeof state.isBookMode === "boolean") viewer.isBookMode = state.isBookMode;
     if (typeof state.isSinglePageMode === "boolean") viewer.isSinglePageMode = state.isSinglePageMode;

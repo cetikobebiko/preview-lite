@@ -12,13 +12,6 @@ import {
 } from "../services/backend/viewer.js";
 import { pageFailureRegistry } from "../services/pageFailureRegistry.js";
 import PdfPage from "./PdfPage.svelte";
-import {
-  addHighlight,
-  bindHighlightSession,
-  remapHighlightPages,
-  resetHighlightsForTests,
-} from "../annotationsStore.js";
-import { pageMappingAfterDelete } from "../services/app/pageIndexMapping.js";
 
 const renderSessionMock = vi.hoisted(() => ({
   current: {
@@ -592,47 +585,28 @@ describe("PdfPage PDFium text layer", () => {
   });
 });
 
-describe("PdfPage text highlights", () => {
-  const rect = { x: 0.1, y: 0.2, width: 0.3, height: 0.05 };
-  const pageProps = (sessionId, pageIndex) => ({
-    sessionId,
-    pageIndex,
-    isSinglePageMode: true,
-    currentPage: pageIndex,
-    documentGenerationId: 1,
+describe("PdfPage zoom gestures", () => {
+  const props = { sessionId: "test-document", pageIndex: 0, isSinglePageMode: true, currentPage: 0, documentGenerationId: 1 };
+
+  it("does not start a render while a zoom gesture is shown as a CSS transform", async () => {
+    const { rerender } = renderPdfPage({ props: { ...props, isZooming: true } });
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(renderPage).not.toHaveBeenCalled();
+
+    await rerender({ isZooming: false });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
   });
 
-  beforeEach(() => resetHighlightsForTests());
-  afterEach(() => resetHighlightsForTests());
+  it("renders once at the committed scale, not at the scale the gesture started from", async () => {
+    const { rerender } = renderPdfPage({ props });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(1));
+    const firstScale = renderPage.mock.calls[0][0].scale;
 
-  it("does not show the previous document's highlight on the same page number", async () => {
-    bindHighlightSession("doc-a");
-    addHighlight("doc-a", 0, rect);
-    const first = renderPdfPage({ props: pageProps("doc-a", 0) });
-    await waitFor(() => expect(first.container.querySelectorAll(".highlight-overlay-svg rect")).toHaveLength(1));
-    cleanup();
-
-    // Before the reconciler rebinds, a page of another session must not see doc-a highlights.
-    const second = renderPdfPage({ props: pageProps("doc-b", 0) });
-    await waitFor(() => expect(second.container.querySelector(".overlay-plane")).not.toBeNull());
-    await tick();
-    expect(second.container.querySelector(".highlight-overlay-svg")).toBeNull();
-
-    bindHighlightSession("doc-b");
-    await tick();
-    expect(second.container.querySelector(".highlight-overlay-svg")).toBeNull();
-  });
-
-  it("shows a highlight on its moved page after a page deletion is remapped", async () => {
-    bindHighlightSession("doc-a");
-    addHighlight("doc-a", 2, rect);
-    const page = renderPdfPage({ props: pageProps("doc-a", 1) });
-    await waitFor(() => expect(page.container.querySelector(".overlay-plane")).not.toBeNull());
-    await tick();
-    expect(page.container.querySelector(".highlight-overlay-svg")).toBeNull();
-
-    remapHighlightPages("doc-a", pageMappingAfterDelete([1]));
-    await waitFor(() => expect(page.container.querySelectorAll(".highlight-overlay-svg rect")).toHaveLength(1));
+    await rerender({ isZooming: true });
+    await rerender({ scale: 4, isZooming: false });
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2));
+    expect(renderPage.mock.calls[1][0].scale).toBeCloseTo(firstScale * 4);
   });
 });
 

@@ -8,7 +8,7 @@ import { normalizePageSizes } from "../utils/pageGeometry.js";
  * the worker is asked once per key. Only the latest key is kept: a new session or content
  * generation drops the previous sizes, and a late answer for an old key is ignored.
  * A failed load resolves to null and is not retried for that key; pages then fall back
- * to estimated sizes.
+ * to estimated sizes, and the page layout model (pageLayoutModel.js) has no layout.
  */
 export function createPageSizeStore({ load = getPageSizes } = {}) {
   let currentKey = "";
@@ -22,6 +22,12 @@ export function createPageSizeStore({ load = getPageSizes } = {}) {
     const key = keyOf(sessionId, contentGeneration);
     if (!key || key !== currentKey || !sizes) return null;
     return sizes[pageIndex] ?? null;
+  }
+
+  /** All loaded sizes of the document, or null until they are loaded. */
+  function peekAll(sessionId, contentGeneration) {
+    const key = keyOf(sessionId, contentGeneration);
+    return key && key === currentKey ? sizes : null;
   }
 
   async function request(sessionId, contentGeneration) {
@@ -58,7 +64,7 @@ export function createPageSizeStore({ load = getPageSizes } = {}) {
     return Array.isArray(loaded) ? loaded[pageIndex] ?? null : null;
   }
 
-  return Object.freeze({ peek, request, requestPage });
+  return Object.freeze({ peek, peekAll, request, requestPage });
 }
 
 export const pageSizeStore = createPageSizeStore();

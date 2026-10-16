@@ -9,6 +9,8 @@ export function resolvePhysicalPageIndex(order, displayIndex) {
 export function createViewerState() {
   const state = $state({
     activeImageSourcePath: "",
+    // Bitmap size of the painted image canvas ({ width, height } in px); null until one is painted.
+    imagePixelSize: null,
     fileExt: "",
     pageOrder: [],
     currentPageIndex: 0,
@@ -41,9 +43,22 @@ export function createViewerState() {
     isSpeaking: false,
   });
 
+  const spreads = $derived.by(() => {
+    if (!state.isBookMode) return state.pageOrder.map((index) => [index]);
+    const rows = [];
+    let index = 0;
+    if (state.coverMode && state.pageOrder.length > 0) { rows.push([state.pageOrder[0]]); index = 1; }
+    while (index < state.pageOrder.length) {
+      rows.push(state.pageOrder.slice(index, index + 2));
+      index += 2;
+    }
+    return rows;
+  });
+
   return {
     get activeImageSourcePath() { return state.activeImageSourcePath; },
     set activeImageSourcePath(value) { state.activeImageSourcePath = value; },
+    get imagePixelSize() { return state.imagePixelSize; }, set imagePixelSize(value) { state.imagePixelSize = value; },
     get fileExt() { return state.fileExt; }, set fileExt(value) { state.fileExt = value; },
     get pageOrder() { return state.pageOrder; }, set pageOrder(value) { state.pageOrder = value; },
     get currentPageIndex() { return state.currentPageIndex; }, set currentPageIndex(value) { state.currentPageIndex = value; },
@@ -73,17 +88,8 @@ export function createViewerState() {
     get bionicSource() { return state.bionicSource; }, set bionicSource(value) { state.bionicSource = value; },
     get isSpeaking() { return state.isSpeaking; }, set isSpeaking(value) { state.isSpeaking = value; },
     get physicalPageIndex() { return resolvePhysicalPageIndex(state.pageOrder, state.currentPageIndex); },
-    get spreads() {
-      if (!state.isBookMode) return state.pageOrder.map((index) => [index]);
-      const spreads = [];
-      let index = 0;
-      if (state.coverMode && state.pageOrder.length > 0) { spreads.push([state.pageOrder[0]]); index = 1; }
-      while (index < state.pageOrder.length) {
-        spreads.push(state.pageOrder.slice(index, index + 2));
-        index += 2;
-      }
-      return spreads;
-    },
+    // Same array until pageOrder or the book layout changes; the page layout model keys on it.
+    get spreads() { return spreads; },
     resetPdfPresentation() {
       state.currentPageIndex = 0;
       state.scale = 1;

@@ -5,6 +5,7 @@
     pageFailureMessage,
     pageFailureRegistry,
   } from "../services/pageFailureRegistry.js";
+  import { imageCanvasStyle } from "../services/app/viewerController.js";
 
   let {
     isPdf, viewer, annotation, documentSession, searchState, spreads, physicalPageIndex,
@@ -56,7 +57,9 @@
       <span class="hud-btn active" style="padding: 4px 16px;">[ DOSYA SEÇ ]</span>
     </button>
   {:else}
-    <div class="canvas-container {viewer.isBookMode || viewer.isSplitView ? 'book-mode' : ''} {viewer.isSmartDarkMode ? 'smart-dark-mode' : ''}" style="transform: scale({viewer.visualScale}); transform-origin: 50% {viewer.zoomOriginY ?? 0}px; will-change: transform; transition: {viewer.isZooming ? 'none' : 'transform 0.2s ease-out'};">
+    <!-- No transform transition: visualScale only returns to 1 in the same update that lays out the
+         committed scale, so animating it would show the new layout at visualScale× for its duration. -->
+    <div class="canvas-container {viewer.isBookMode || viewer.isSplitView ? 'book-mode' : ''} {viewer.isSmartDarkMode ? 'smart-dark-mode' : ''}" style="transform: scale({viewer.visualScale}); transform-origin: 50% {viewer.zoomOriginY ?? 0}px; will-change: transform;">
       {#if viewer.isRendering}<div class="loading-overlay"><div class="spinner"></div><p style="font-size: 11px; font-weight: 700; color: var(--accent-industrial);">// RENDER_İŞLENİYOR...</p></div>{/if}
       {#if errorMsg}<div class="error-card"><p>{errorMsg}</p></div>{/if}
       {#if documentQuarantined}
@@ -70,12 +73,12 @@
           {#each spreads as spread (spread.join("-"))}
             <div class="book-spread-row {viewer.isBookMode ? 'book-mode' : ''}">
               {#each spread as pageIdx (pageIdx)}
-                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={singlePageCurrent} isSinglePageMode={viewer.isSinglePageMode} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={nonEmpty(searchState.matchesByPage[pageIdx])} sensitiveDataHighlights={nonEmpty(getSensitiveDataHighlights(pageIdx, viewer.rotation))} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={pendingRegionsByPage.get(pageIdx) ?? EMPTY} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} onsearchHighlightReady={(detail) => onSearchHighlightReady({ detail })} activeTool={annotation.activeTool} activeColor={annotation.activeColor} approximateCoveragePreview={pageIdx === physicalPageIndex ? coveragePreviewPayload : null} approximateProcessPreview={pageIdx === physicalPageIndex ? processPreviewPayload : null} approximateProcessChannels={prepress.channels} onsessionSnapshot={onSessionSnapshot} />
+                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={singlePageCurrent} isSinglePageMode={viewer.isSinglePageMode} isZooming={viewer.isZooming} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={nonEmpty(searchState.matchesByPage[pageIdx])} sensitiveDataHighlights={nonEmpty(getSensitiveDataHighlights(pageIdx, viewer.rotation))} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={pendingRegionsByPage.get(pageIdx) ?? EMPTY} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} onsearchHighlightReady={(detail) => onSearchHighlightReady({ detail })} activeTool={annotation.activeTool} activeColor={annotation.activeColor} approximateCoveragePreview={pageIdx === physicalPageIndex ? coveragePreviewPayload : null} approximateProcessPreview={pageIdx === physicalPageIndex ? processPreviewPayload : null} approximateProcessChannels={prepress.channels} onsessionSnapshot={onSessionSnapshot} />
               {/each}
             </div>
           {/each}
         {:else}
-          <div class="page-wrapper"><canvas bind:this={canvasRefLeft} class={annotation.activeTool === "pointer" ? "pointer-mode" : ""} onmousedown={onCanvasMouseDown} onmousemove={onCanvasMouseMove} onmouseup={onCanvasMouseUp} onmouseleave={onCanvasMouseUp}></canvas></div>
+          <div class="page-wrapper"><canvas bind:this={canvasRefLeft} style={imageCanvasStyle(viewer.imagePixelSize, viewer.scale)} class={annotation.activeTool === "pointer" ? "pointer-mode" : ""} onmousedown={onCanvasMouseDown} onmousemove={onCanvasMouseMove} onmouseup={onCanvasMouseUp} onmouseleave={onCanvasMouseUp}></canvas></div>
         {/if}
       </div>
     </div>

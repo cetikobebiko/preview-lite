@@ -55,4 +55,14 @@ describe("viewer edit actions", () => {
     expect(viewer).toMatchObject({ rotation: 270, flipH: true });
     expect(render).toHaveBeenCalledTimes(2);
   });
+
+  it("rotates inside the viewport anchor so the centre page stays in place", () => {
+    const viewer = { currentPageIndex: 0, pageOrder: [0], rotation: 0 };
+    const order = [];
+    const preserveViewportAnchor = vi.fn((mutate) => { order.push("capture"); mutate(); order.push(`restore:${viewer.rotation}`); });
+    const actions = createViewerEditActions({ viewer, annotation: {}, render: vi.fn(), preserveViewportAnchor });
+    actions.rotateRight();
+    expect(viewer.rotation).toBe(90);
+    expect(order).toEqual(["capture", "restore:90"]);
+  });
 });

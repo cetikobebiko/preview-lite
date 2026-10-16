@@ -4,7 +4,7 @@ import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
  * Coordinates user-initiated viewer edits. It owns no reactive data: viewer and
  * annotation stores remain authoritative, while render/toast stay injected side effects.
  */
-export function createViewerEditActions({ viewer, annotation, render, onToast = () => {} }) {
+export function createViewerEditActions({ viewer, annotation, render, onToast = () => {}, preserveViewportAnchor = (mutate) => mutate() }) {
   function requestRender(options) {
     if (options === undefined) {
       void render();
@@ -67,7 +67,8 @@ export function createViewerEditActions({ viewer, annotation, render, onToast = 
   }
 
   function rotate(delta) {
-    viewer.rotation = (viewer.rotation + delta + 360) % 360;
+    // Rotation changes every page height; keep the page under the viewport centre in place.
+    void preserveViewportAnchor(() => { viewer.rotation = (viewer.rotation + delta + 360) % 360; });
     requestRender();
   }
 

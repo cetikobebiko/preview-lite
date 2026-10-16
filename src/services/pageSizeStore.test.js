@@ -61,4 +61,14 @@ describe("createPageSizeStore", () => {
     await expect(store.requestPage("", 1, 0)).resolves.toBeNull();
     expect(load).not.toHaveBeenCalled();
   });
+
+  it("hands out every loaded size of the current document only", async () => {
+    const store = createPageSizeStore({ load: async () => [{ widthPt: 612, heightPt: 792 }, null] });
+    expect(store.peekAll("s1", 1)).toBeNull();
+    await store.request("s1", 1);
+    expect(store.peekAll("s1", 1)).toEqual([{ widthPt: 612, heightPt: 792 }, null]);
+    expect(store.peekAll("s1", 1)).toBe(store.peekAll("s1", 1));
+    expect(store.peekAll("s1", 2)).toBeNull();
+    expect(store.peekAll("", 1)).toBeNull();
+  });
 });

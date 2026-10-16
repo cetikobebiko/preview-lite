@@ -18,4 +18,20 @@ describe("viewer state", () => {
     expect(state.physicalPageIndex).toBe(0);
     expect(state.spreads).toEqual([[2], [0, 1]]);
   });
+
+  it("keeps the spreads array until page order or book layout changes", () => {
+    const state = createViewerState();
+    state.pageOrder = [0, 1, 2];
+    const continuous = state.spreads;
+    expect(continuous).toEqual([[0], [1], [2]]);
+    expect(state.spreads).toBe(continuous);
+    state.scale = 2;
+    expect(state.spreads).toBe(continuous);
+    state.isBookMode = true;
+    expect(state.spreads).toEqual([[0], [1, 2]]);
+    state.coverMode = false;
+    expect(state.spreads).toEqual([[0, 1], [2]]);
+    state.pageOrder = [2, 1, 0];
+    expect(state.spreads).toEqual([[2, 1], [0]]);
+  });
 });

@@ -83,6 +83,8 @@
     currentPage = 0,
     generationId = 0,
     documentGenerationId = 0,
+    // True while a pinch or button zoom is shown as a CSS transform and `scale` is not committed yet.
+    isZooming = false,
 
     approximateCoveragePreview = null,
     approximateProcessPreview = null,
@@ -325,9 +327,13 @@
   });
 
   // Render anahtarı temizlendiğinde veya değiştiğinde görünür sayfayı yeniden çiz.
+  // No new render during a zoom gesture: zooming out under the CSS transform brings many more
+  // pages into the buffer, and each would be rendered at the old, larger scale (~128 MB per A4
+  // page at 4x on a 2x display). They render once the new scale is committed.
   $effect.pre(() => {
     if (
       shouldRender &&
+      !isZooming &&
       desiredRenderKey &&
       !pageFailure($pageFailureRegistry, sessionId, documentGenerationId, pageIndex, "render") &&
       desiredRenderKey !== paintedRenderKey &&

@@ -1,4 +1,6 @@
 <script>
+  import { MAX_SCALE, MIN_SCALE } from "../services/app/zoomLimits.js";
+
   let {
     isPdf, viewer, onGoBack, onGoForward, onPreviousPage, onNextPage, onPageInputChange,
     onRotateLeft, onRotateRight, onFlipH, onFlipV, onZoomOut, onResetZoom, onZoomIn,
@@ -27,7 +29,7 @@
 {/if}
 
 <div class="hud-group">
-  <button class="hud-btn" onclick={onZoomOut} disabled={viewer.scale <= 0.25}>[Z:-]</button>
+  <button class="hud-btn" onclick={onZoomOut} disabled={viewer.scale <= MIN_SCALE}>[Z:-]</button>
   <button class="hud-btn" onclick={onResetZoom}>[Z: {Math.round(viewer.scale * viewer.visualScale * 100)}%]</button>
-  <button class="hud-btn" onclick={onZoomIn} disabled={viewer.scale >= 4}>[Z:+]</button>
+  <button class="hud-btn" onclick={onZoomIn} disabled={viewer.scale >= MAX_SCALE}>[Z:+]</button>
 </div>

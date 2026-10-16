@@ -53,6 +53,10 @@ export function createDocumentRuntime({
   onError,
   passwordPresentation,
   applyPageScopedMutation = () => {},
+  // viewerRuntime.navigation.scrollToPhysicalPage; also reaches pages that are not mounted.
+  scrollToPhysicalPage = (physicalIndex, options) => {
+    globalThis.document?.getElementById(`page-${physicalIndex}`)?.scrollIntoView(options);
+  },
 }) {
   const isPdf = () => Boolean(documentSession.active);
   const activeDisplayPath = () => documentSession.active?.displayPath ?? "";
@@ -83,7 +87,7 @@ export function createDocumentRuntime({
     scrollToPage: (displayIndex) => {
       const physicalIndex = toPhysicalPageIndex(viewer.pageOrder, displayIndex);
       if (physicalIndex < 0) return;
-      globalThis.document?.getElementById(`page-${physicalIndex}`)?.scrollIntoView({ behavior: "auto", block: "start" });
+      scrollToPhysicalPage(physicalIndex, { behavior: "auto", block: "start" });
     },
   });
 

@@ -102,7 +102,7 @@ export function createFeatureRuntime({
     setPageIndex: (index) => { viewer.currentPageIndex = index; },
     tick,
     scrollToPage: (pageIndex) => {
-      globalThis.document?.getElementById(`page-${pageIndex}`)?.scrollIntoView({ behavior: "auto", block: "center" });
+      viewerRuntime.navigation.scrollToPhysicalPage(pageIndex, { block: "center" });
     },
     onDroppedMatches: (count) => console.warn(`${count} PDF arama eşleşmesi geçerli kutusu olmadığı için gösterilmedi.`),
     onError: (error) => console.error("Arama hatası:", error),

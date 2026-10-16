@@ -89,6 +89,7 @@
       dismiss: presentation.dismissPasswordAttempt,
     },
     applyPageScopedMutation: documentScopedState.applyPageMutation,
+    scrollToPhysicalPage: viewerRuntime.navigation.scrollToPhysicalPage,
   });
   callbacks.savePosition = documentRuntime.savePosition;
   const featureRuntime = createFeatureRuntime({
