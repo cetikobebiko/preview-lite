@@ -30,7 +30,6 @@
 </script>
 
 <div class="sensitive-data-scan-panel">
-  <h3>Hassas veri tespiti</h3>
   <FeatureNotice featureId="sensitive_data_scan" compact />
 
   <div class="warnings-box">
@@ -108,57 +107,46 @@
 
 <style>
   .sensitive-data-scan-panel {
-    padding: 16px;
-    background: var(--bg-sidebar, #121212);
-    color: var(--text-color, #e0e0e0);
-    height: 100%;
+    padding: 12px;
+    color: var(--foreground);
     display: flex;
     flex-direction: column;
-    border-left: 1px solid var(--border-color, #333);
-    width: 300px;
-    overflow-y: auto;
-  }
-
-  h3 {
-    margin: 0 0 8px 0;
-    font-size: 16px;
-    color: white;
+    min-height: 100%;
+    font-size: 13px;
   }
 
   .warnings-box {
     font-size: 11px;
-    color: #a0a0a0;
-    background: rgba(255, 255, 255, 0.04);
+    color: var(--warning-foreground);
+    background: var(--warning);
     padding: 10px;
-    border-radius: 6px;
-    margin-bottom: 12px;
+    border-radius: var(--radius);
+    margin: 8px 0 12px;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .warnings-box p {
     margin: 0;
-    line-height: 1.3;
+    line-height: 1.35;
   }
 
   .desc {
     font-size: 12px;
-    color: #888;
-    margin-bottom: 16px;
+    color: var(--muted-foreground);
+    margin-bottom: 12px;
   }
 
   .warning-text {
-    color: #ef4444;
+    color: var(--destructive);
     font-size: 12px;
     margin: 2px 0;
   }
 
   .scan-warnings {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 6px;
+    background: color-mix(in srgb, var(--destructive) 10%, transparent);
+    border-radius: var(--radius);
     padding: 8px;
     margin-bottom: 12px;
   }
@@ -167,38 +155,41 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin-bottom: 16px;
-    background: rgba(255, 255, 255, 0.05);
-    padding: 12px;
-    border-radius: 6px;
+    margin-bottom: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    border-radius: var(--radius);
   }
 
   .pattern-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
     cursor: pointer;
+  }
+
+  .pattern-item input {
+    accent-color: var(--primary);
   }
 
   .scan-btn {
-    background: #3b82f6;
-    color: white;
+    background: var(--primary);
+    color: var(--primary-foreground);
     border: none;
-    padding: 10px;
-    border-radius: 6px;
+    padding: 7px 10px;
+    border-radius: calc(var(--radius) * 0.8);
     cursor: pointer;
     font-weight: 500;
     margin-bottom: 16px;
-    transition: background 0.2s;
   }
 
   .scan-btn:hover:not(:disabled) {
-    background: #2563eb;
+    filter: brightness(1.08);
   }
 
   .scan-btn:disabled {
-    background: #444;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 
@@ -206,66 +197,62 @@
     display: flex;
     flex-direction: column;
     flex: 1;
-    overflow: hidden;
   }
 
   h4 {
-    margin: 0 0 12px 0;
-    font-size: 14px;
-    border-bottom: 1px solid #333;
-    padding-bottom: 8px;
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
   }
 
   .item-list {
-    flex: 1;
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
   }
 
   .result-item {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid #333;
-    border-radius: 4px;
-    padding: 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
     cursor: pointer;
-    transition: background 0.2s;
   }
 
   .result-item:hover {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.3);
+    border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+    background: color-mix(in srgb, var(--primary) 6%, var(--card));
   }
 
   .item-type {
     font-size: 11px;
-    color: #3b82f6;
-    text-transform: uppercase;
+    color: var(--primary);
     font-weight: 600;
     margin-bottom: 4px;
   }
 
   .promote-btn {
-    margin-top: 7px;
-    border: 1px dashed #f59e0b;
-    background: rgba(245, 158, 11, 0.12);
-    color: #fbbf24;
-    padding: 5px 7px;
+    margin-top: 6px;
+    border: 1px dashed var(--warning-foreground);
+    border-radius: calc(var(--radius) * 0.6);
+    background: var(--warning);
+    color: var(--warning-foreground);
+    padding: 3px 8px;
     cursor: pointer;
     font-size: 11px;
   }
 
   .item-text {
-    font-family: monospace;
-    font-size: 13px;
+    font-family: var(--font-code);
+    font-size: 12px;
     word-break: break-all;
     margin-bottom: 4px;
   }
 
   .item-page {
     font-size: 11px;
-    color: #888;
+    color: var(--muted-foreground);
     text-align: right;
   }
 </style>

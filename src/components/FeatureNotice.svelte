@@ -37,19 +37,19 @@
   .feature-notice {
     display: grid;
     gap: 4px;
-    margin: 12px 0;
-    padding: 10px 12px;
-    border: 1px solid rgba(245, 158, 11, 0.45);
-    background: rgba(245, 158, 11, 0.1);
-    color: #fbbf24;
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    background: var(--warning);
+    color: var(--warning-foreground);
     font-size: 12px;
     line-height: 1.4;
   }
 
   .feature-notice.compact {
     margin: 6px 0;
-    padding: 7px 9px;
-    font-size: 10px;
+    padding: 6px 8px;
+    font-size: 11px;
   }
 
   .feature-notice span {

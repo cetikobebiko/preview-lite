@@ -1,13 +1,12 @@
 <script>
   import CommandPalette from "./CommandPalette.svelte";
-  import AiSidebar from "./AiSidebar.svelte";
   import AiContextMenu from "./AiContextMenu.svelte";
   import AiSettingsModal from "./AiSettingsModal.svelte";
   import PluginManagerModal from "./PluginManagerModal.svelte";
   import SanitizationPanel from "./SanitizationPanel.svelte";
 
   let {
-    ui, featureUi, sessionId, contentGeneration, displayPath, sanitizationState,
+    ui, featureUi, displayPath, sanitizationState,
     sanitization, onCommandSelect,
   } = $props();
 </script>
@@ -17,9 +16,6 @@
   <CommandPalette isOpen={ui.isModalOpen("command_palette")} onselect={onCommandSelect} onclose={() => ui.closeModal("command_palette")} />
 {/if}
 
-{#if ui.isModalOpen("ai_assistant") && featureUi("local_ai").visible}
-  <AiSidebar {sessionId} {contentGeneration} onopenSettings={() => ui.openModal("ai_settings")} onclose={() => ui.closeModal("ai_assistant")} />
-{/if}
 {#if ui.isModalOpen("ai_settings") && featureUi("local_ai").visible}
   <AiSettingsModal onclose={() => ui.closeModal("ai_settings")} />
 {/if}
@@ -38,7 +34,7 @@
   />
 {/if}
 {#if ui.isModalOpen("plugin_manager") && featureUi("plugin_system").visible}
-  <PluginManagerModal on:close={() => ui.closeModal("plugin_manager")} />
+  <PluginManagerModal onclose={() => ui.closeModal("plugin_manager")} />
 {/if}
 {#if featureUi("local_ai").visible}
   <AiContextMenu />

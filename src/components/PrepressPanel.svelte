@@ -106,7 +106,6 @@
 </script>
 
 <div class="prepress-panel">
-  <h3>Print Inspection & Approximate Preview</h3>
   <section>
     <h4>Print Resource Inspection</h4>
     <FeatureNotice featureId="print_resource_inspection" />
@@ -168,26 +167,28 @@
 </div>
 
 <style>
-  .prepress-panel { padding: 14px; color: var(--text-primary); font-size: 12px; }
-  h3 { margin: 0 0 14px; font-size: 15px; }
-  section { margin-bottom: 14px; padding: 12px; border: 1px solid var(--border-raw); background: var(--bg-surface); }
-  h4, h5 { margin: 0 0 9px; text-transform: uppercase; letter-spacing: .04em; }
-  h5 { margin-top: 12px; font-size: 11px; color: var(--text-muted); }
-  button { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--border-raw); background: var(--accent-industrial); color: #fff; cursor: pointer; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button.secondary { background: transparent; color: var(--text-primary); }
-  .permanent-warning { padding: 8px; border-left: 3px solid #f59e0b; background: rgba(245,158,11,.1); color: #fbbf24; }
-  .error { color: #ff6b6b; overflow-wrap: anywhere; }
-  .legend { margin: 9px 0; padding: 6px; background: #f59e0b; color: #111; font-weight: 800; text-align: center; }
+  .prepress-panel { padding: 12px; color: var(--foreground); font-size: 12px; }
+  section { margin-bottom: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+  h4, h5 { margin: 0 0 8px; font-weight: 600; }
+  h4 { font-size: 13px; }
+  h5 { margin-top: 12px; font-size: 11px; color: var(--muted-foreground); }
+  p { margin: 4px 0; }
+  button { width: 100%; margin-top: 8px; padding: 6px 10px; border: 1px solid transparent; border-radius: calc(var(--radius) * 0.8); background: var(--primary); color: var(--primary-foreground); font-weight: 500; cursor: pointer; }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.secondary { border-color: var(--border); background: var(--secondary); color: var(--secondary-foreground); }
+  .permanent-warning { padding: 8px 10px; border-radius: calc(var(--radius) * 0.8); background: var(--warning); color: var(--warning-foreground); }
+  .error { color: var(--destructive); overflow-wrap: anywhere; }
+  .legend { margin: 8px 0; padding: 4px 8px; border-radius: 999px; background: #ffcc00; color: #1d1d1f; font-size: 11px; font-weight: 600; text-align: center; }
   .report { overflow-wrap: anywhere; }
-  ul { padding-left: 18px; }
+  ul { padding-left: 18px; list-style: disc; }
   .boxes { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; }
-  .boxes dt { color: var(--text-muted); }
-  .boxes dd { margin: 0; font-family: var(--font-mono); }
-  .channels { display: flex; gap: 5px; }
-  .channels label { flex: 1; padding: 5px; border: 1px solid var(--border-raw); text-align: center; opacity: .5; }
-  .channels label.active { opacity: 1; border-color: var(--accent-industrial); }
+  .boxes dt { color: var(--muted-foreground); }
+  .boxes dd { margin: 0; font-family: var(--font-code); font-variant-numeric: tabular-nums; }
+  .channels { display: flex; gap: 4px; }
+  .channels label { flex: 1; padding: 4px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 0.6); text-align: center; color: var(--muted-foreground); cursor: pointer; }
+  .channels label.active { border-color: var(--primary); color: var(--foreground); background: color-mix(in srgb, var(--primary) 10%, transparent); }
   .channels input { display: none; }
   .threshold { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .threshold input { width: 70px; }
+  .threshold input { width: 70px; padding: 2px 6px; border: 1px solid var(--input); border-radius: calc(var(--radius) * 0.6); background: var(--background); }
 </style>

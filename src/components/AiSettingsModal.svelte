@@ -1,6 +1,8 @@
 <script>
   import { onDestroy, onMount } from "svelte";
-  import { fade, fly } from "svelte/transition";
+  import AppDialog from "./AppDialog.svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { aiController } from "../services/app/aiController.js";
   import { aiState } from "../stores/aiState.svelte.js";
@@ -102,209 +104,75 @@
   }
 </script>
 
-<dialog
-  open
-  class="modal-overlay"
-  transition:fade={{ duration: 150 }}
-  oncancel={(event) => {
-    event.preventDefault();
-    onclose?.();
-  }}
->
-  <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }}>
-    <div class="modal-header">
-      <h3>Yapay Zeka Ayarları (Ollama)</h3>
-      <button type="button" class="close-btn" aria-label="Kapat" onclick={() => onclose?.()}>✕</button>
-    </div>
-    <div class="modal-body">
-      <FeatureNotice featureId="local_ai" />
-      <p class="privacy-warning">
-        {#if previewProfile?.mode === "Loopback" || (!previewProfile && aiState.activeProfile?.mode === "Loopback")}
-          İstek doğrulanmış loopback endpoint’ine gönderilir. Endpoint’i çalıştıran servis veriyi kendi yapılandırmasına göre işleyebilir veya saklayabilir.
-        {:else if previewProfile?.mode === "PrivateNetwork" || (!previewProfile && aiState.activeProfile?.mode === "PrivateNetwork")}
-          İstek yerel ağdaki (RFC1918 / IPv6 ULA) özel AI endpoint’ine gönderilir. Belge metni ve sorgular yerel ağdaki bu adrese iletilecektir.
-        {:else}
-          İstek yerel cihaz dışındaki uzak HTTPS AI endpoint’ine gönderilir. Belge metni ve sorgular cihaz dışına aktarılacaktır.
+<AppDialog title="Yapay Zeka Ayarları (Ollama)" onclose={() => onclose?.()}>
+  <div class="grid gap-4">
+    <FeatureNotice featureId="local_ai" />
+    <p class="rounded-md bg-warning px-3 py-2 text-xs text-warning-foreground">
+      {#if previewProfile?.mode === "Loopback" || (!previewProfile && aiState.activeProfile?.mode === "Loopback")}
+        İstek doğrulanmış loopback endpoint’ine gönderilir. Endpoint’i çalıştıran servis veriyi kendi yapılandırmasına göre işleyebilir veya saklayabilir.
+      {:else if previewProfile?.mode === "PrivateNetwork" || (!previewProfile && aiState.activeProfile?.mode === "PrivateNetwork")}
+        İstek yerel ağdaki (RFC1918 / IPv6 ULA) özel AI endpoint’ine gönderilir. Belge metni ve sorgular yerel ağdaki bu adrese iletilecektir.
+      {:else}
+        İstek yerel cihaz dışındaki uzak HTTPS AI endpoint’ine gönderilir. Belge metni ve sorgular cihaz dışına aktarılacaktır.
+      {/if}
+    </p>
+
+    {#if previewProfile}
+      <div class="flex items-center gap-2 text-xs">
+        <span class="rounded-sm bg-primary/10 px-1.5 py-0.5 font-medium text-primary">{previewProfile.mode}</span>
+        <span class="truncate font-mono text-muted-foreground">{previewProfile.canonical_origin}</span>
+      </div>
+    {/if}
+
+    {#if previewError}
+      <div class="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">Endpoint Hatası: {previewError}</div>
+    {/if}
+
+    {#if saveError && saveError !== previewError}
+      <div class="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{saveError}</div>
+    {/if}
+
+    <div class="grid gap-1.5">
+      <label for="ai-ollama-url" class="text-xs font-medium text-muted-foreground">
+        Ollama Endpoint URL
+        {#if isPreviewing}
+          <span class="ml-1 font-normal text-primary">Doğrulanıyor...</span>
         {/if}
-      </p>
-
-      {#if previewProfile}
-        <div class="profile-preview-badge">
-          <span class="badge-mode">{previewProfile.mode}</span>
-          <span class="badge-origin">{previewProfile.canonical_origin}</span>
-        </div>
-      {/if}
-
-      {#if previewError}
-        <div class="error-banner">Endpoint Hatası: {previewError}</div>
-      {/if}
-
-      {#if saveError && saveError !== previewError}
-        <div class="error-banner">{saveError}</div>
-      {/if}
-
-      <div class="form-group">
-        <label for="ai-ollama-url">
-          Ollama Endpoint URL
-          {#if isPreviewing}
-            <span class="preview-spinner">Doğrulanıyor...</span>
-          {/if}
-        </label>
-        <input id="ai-ollama-url" type="text" value={endpointDraft} oninput={handleEndpointInput} class="tech-input" />
-        <small class="hint">Ollama arka planda çalışıyor olmalıdır (Örn: http://127.0.0.1:11434).</small>
-      </div>
-
-      <div class="form-group consent-group">
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={remoteConsent} />
-          Uzak AI Endpoint Kullanımına Onay Ver (Remote Public)
-        </label>
-        <small class="hint">İsteklerin yerel makine dışındaki uzak HTTPS sunucularına gönderilmesine izin verir.</small>
-      </div>
-
-      <div class="form-group consent-group">
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={privateConsent} />
-          Özel Ağ Endpoint Kullanımına İkinci Onay Ver (Private Network)
-        </label>
-        <small class="hint">İsteklerin yerel ağdaki (RFC1918 / IPv6 ULA) sunuculara gönderilmesine izin verir (Açık 2. onay gereklidir).</small>
-      </div>
-
-      <div class="form-group">
-        <label for="ai-llm-model">LLM Modeli (Chat / Özetleme)</label>
-        <input id="ai-llm-model" type="text" bind:value={currentLlmModel} class="tech-input" placeholder="örn: llama3.2:latest" />
-      </div>
-
-      <div class="form-group">
-        <label for="ai-embed-model">Embedding Modeli (Semantik Arama)</label>
-        <input id="ai-embed-model" type="text" bind:value={currentEmbedModel} class="tech-input" placeholder="örn: nomic-embed-text:latest" />
-      </div>
+      </label>
+      <Input id="ai-ollama-url" type="text" value={endpointDraft} oninput={handleEndpointInput} />
+      <small class="text-[11px] text-muted-foreground">Ollama arka planda çalışıyor olmalıdır (Örn: http://127.0.0.1:11434).</small>
     </div>
-    <div class="modal-footer">
-      <button class="tech-button" onclick={() => onclose?.()}>İptal</button>
-      <button
-        class="tech-button primary"
-        onclick={handleSave}
-        disabled={Boolean(previewError) || isPreviewing}
-      >
-        Kaydet
-      </button>
+
+    <div class="grid gap-1">
+      <label class="flex items-center gap-2 text-[13px]">
+        <input type="checkbox" class="accent-primary" bind:checked={remoteConsent} />
+        Uzak AI Endpoint Kullanımına Onay Ver (Remote Public)
+      </label>
+      <small class="text-[11px] text-muted-foreground pl-5">İsteklerin yerel makine dışındaki uzak HTTPS sunucularına gönderilmesine izin verir.</small>
+    </div>
+
+    <div class="grid gap-1">
+      <label class="flex items-center gap-2 text-[13px]">
+        <input type="checkbox" class="accent-primary" bind:checked={privateConsent} />
+        Özel Ağ Endpoint Kullanımına İkinci Onay Ver (Private Network)
+      </label>
+      <small class="text-[11px] text-muted-foreground pl-5">İsteklerin yerel ağdaki (RFC1918 / IPv6 ULA) sunuculara gönderilmesine izin verir (Açık 2. onay gereklidir).</small>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <div class="grid gap-1.5">
+        <label for="ai-llm-model" class="text-xs font-medium text-muted-foreground">LLM Modeli (Chat / Özetleme)</label>
+        <Input id="ai-llm-model" type="text" bind:value={currentLlmModel} placeholder="örn: llama3.2:latest" />
+      </div>
+      <div class="grid gap-1.5">
+        <label for="ai-embed-model" class="text-xs font-medium text-muted-foreground">Embedding Modeli (Semantik Arama)</label>
+        <Input id="ai-embed-model" type="text" bind:value={currentEmbedModel} placeholder="örn: nomic-embed-text:latest" />
+      </div>
     </div>
   </div>
-</dialog>
 
-<style>
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-  }
-
-  .modal-content {
-    width: 440px;
-    padding: 20px;
-    border-radius: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .modal-header h3 {
-    margin: 0;
-    font-size: 18px;
-  }
-  .close-btn {
-    background: none;
-    border: none;
-    color: white;
-    cursor: pointer;
-    font-size: 18px;
-  }
-
-  .modal-body {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .form-group label {
-    font-size: 12px;
-    opacity: 0.8;
-    display: flex;
-    justify-content: space-between;
-  }
-  .preview-spinner {
-    font-size: 11px;
-    color: #60a5fa;
-  }
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    font-size: 12px;
-  }
-  .hint {
-    font-size: 10px;
-    opacity: 0.5;
-    margin-top: 2px;
-  }
-  .privacy-warning {
-    color: #fbbf24;
-    font-size: 11px;
-    line-height: 1.4;
-    margin: 0;
-  }
-  .profile-preview-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 11px;
-  }
-  .badge-mode {
-    background: rgba(96, 165, 250, 0.2);
-    color: #93c5fd;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-weight: bold;
-  }
-  .badge-origin {
-    font-family: monospace;
-    opacity: 0.8;
-  }
-  .error-banner {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-size: 12px;
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 8px;
-  }
-</style>
+  {#snippet footer()}
+    <Button variant="outline" size="sm" onclick={() => onclose?.()}>İptal</Button>
+    <Button size="sm" onclick={handleSave} disabled={Boolean(previewError) || isPreviewing}>Kaydet</Button>
+  {/snippet}
+</AppDialog>

@@ -1,13 +1,16 @@
 <script>
   import { onDestroy } from "svelte";
-  import { fly } from "svelte/transition";
+  import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
+  import SparklesIcon from "@lucide/svelte/icons/sparkles";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
   import { aiController } from "../services/app/aiController.js";
   import { aiState } from "../stores/aiState.svelte.js";
 
-  let { sessionId = "", contentGeneration = 0, onopenSettings, onclose } = $props();
+  let { sessionId = "", contentGeneration = 0 } = $props();
   const featureContext = getRuntimeFeatureContext();
   const featurePresentation = getFeaturePresentation("local_ai", featureContext);
 
@@ -113,15 +116,7 @@
   }
 </script>
 
-<div class="ai-sidebar glass-panel" in:fly={{ x: 300, duration: 300 }}>
-  <div class="header">
-    <h3>Yapay Zeka (Ollama)</h3>
-    <div class="header-actions">
-      <button class="icon-btn" onclick={() => onopenSettings?.()} title="Ayarlar">⚙️</button>
-      <button class="icon-btn" onclick={() => onclose?.()} title="Kapat">✕</button>
-    </div>
-  </div>
-
+<div class="ai-sidebar">
   <div class="chat-container" bind:this={chatContainer}>
     <FeatureNotice featureId="local_ai" />
     {#if messages.length === 0}
@@ -136,16 +131,12 @@
 
     {#if messages.length === 0}
       <div class="empty-state">
-        <div class="ai-icon">🧠</div>
+        <SparklesIcon class="size-8 text-muted-foreground" strokeWidth={1.5} />
         <h4>Belge ile Sohbet</h4>
         <p>Belgeyi indeksleyerek semantik arama ve özetleme özelliklerini başlatın.</p>
-        <button
-          class="tech-button primary"
-          onclick={handleIndexDocument}
-          disabled={aiState.isIndexing || !featurePresentation.runnable}
-        >
+        <Button size="sm" onclick={handleIndexDocument} disabled={aiState.isIndexing || !featurePresentation.runnable}>
           {aiState.isIndexing ? "İndeksleniyor..." : "Endpoint’e Göndererek İndeksle"}
-        </button>
+        </Button>
       </div>
     {/if}
 
@@ -165,89 +156,50 @@
   </div>
 
   <div class="input-area">
-    <input
+    <Input
       type="text"
       bind:value={inputMessage}
       onkeydown={(e) => e.key === "Enter" && handleSend()}
       placeholder="Belge hakkında soru sorun..."
-      class="tech-input"
+      class="h-8 text-[13px]"
       disabled={aiState.isStreaming || aiState.isIndexing || !featurePresentation.runnable}
     />
     {#if aiState.isStreaming}
-      <button class="tech-button cancel-btn" onclick={handleCancelRequest}>İptal Et</button>
+      <Button variant="outline" size="sm" onclick={handleCancelRequest}>İptal Et</Button>
     {:else}
-      <button
-        class="tech-button send-btn"
-        onclick={handleSend}
-        disabled={!inputMessage.trim() || !featurePresentation.runnable}
-      >
-        ↑
-      </button>
+      <Button size="icon-sm" aria-label="Gönder" onclick={handleSend} disabled={!inputMessage.trim() || !featurePresentation.runnable}>
+        <ArrowUpIcon />
+      </Button>
     {/if}
   </div>
 </div>
 
 <style>
   .ai-sidebar {
-    position: absolute;
-    top: 60px;
-    right: 16px;
-    bottom: 16px;
-    width: 380px;
-    background: rgba(15, 20, 25, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
     display: flex;
     flex-direction: column;
-    z-index: 1000;
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    box-shadow: -5px 0 25px rgba(0, 0, 0, 0.5);
+    height: 100%;
+    color: var(--foreground);
   }
 
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .header h3 {
-    margin: 0;
-    font-size: 16px;
-    color: var(--accent-industrial);
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 8px;
-  }
-  .icon-btn {
-    background: none;
-    border: none;
-    color: white;
-    cursor: pointer;
-    font-size: 16px;
-    opacity: 0.6;
-  }
-  .icon-btn:hover {
-    opacity: 1;
-  }
   .privacy-warning {
     margin: 0;
-    color: #fbbf24;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    background: var(--warning);
+    color: var(--warning-foreground);
     font-size: 11px;
     line-height: 1.4;
   }
 
   .chat-container {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 16px;
+    padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
 
   .empty-state {
@@ -255,13 +207,20 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    flex: 1;
     text-align: center;
-    opacity: 0.7;
-    gap: 16px;
+    gap: 10px;
+    padding: 16px 8px;
   }
-  .ai-icon {
-    font-size: 48px;
+
+  .empty-state h4 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .empty-state p {
+    color: var(--muted-foreground);
+    font-size: 12px;
   }
 
   .message {
@@ -277,38 +236,32 @@
   }
 
   .msg-bubble {
-    padding: 10px 14px;
+    padding: 8px 12px;
     border-radius: 16px;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.4;
     white-space: pre-wrap;
   }
   .message.user .msg-bubble {
-    background: var(--accent-industrial);
-    color: var(--bg-dark);
+    background: var(--primary);
+    color: var(--primary-foreground);
     border-bottom-right-radius: 4px;
   }
   .message.assistant .msg-bubble {
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
+    background: var(--muted);
+    color: var(--foreground);
     border-bottom-left-radius: 4px;
   }
   .thinking {
     font-style: italic;
-    opacity: 0.6;
+    color: var(--muted-foreground);
   }
 
   .input-area {
-    padding: 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
     display: flex;
-    gap: 8px;
-  }
-  .input-area input {
-    flex: 1;
-  }
-  .send-btn {
-    padding: 0 16px;
-    font-weight: bold;
+    align-items: center;
+    gap: 6px;
   }
 </style>

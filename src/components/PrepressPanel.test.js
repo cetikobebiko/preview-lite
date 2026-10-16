@@ -40,7 +40,6 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("Print inspection and approximate preview panel", () => {
   it("uses honest permanent terminology and has no editable page-box controls", () => {
     const { getByText, queryByText, queryByLabelText } = renderReady();
-    expect(getByText("Print Inspection & Approximate Preview")).toBeTruthy();
     expect(getByText(/Gerçek separasyon, spot plate, ICC transform veya RIP çıktısı değildir/)).toBeTruthy();
     expect(getByText(/gerçek Total Area Coverage veya mürekkep tüketimi değildir/)).toBeTruthy();
     expect(queryByText("Renk Ayrımları (Separation)")).toBeNull();

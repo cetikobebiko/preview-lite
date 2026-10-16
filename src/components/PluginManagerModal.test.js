@@ -57,7 +57,7 @@ describe('PluginManagerModal Svelte 5 component', () => {
     const installBtn = screen.getByText('İzinleri Onayla ve Yükle');
     expect(installBtn.hasAttribute('disabled')).toBe(true);
 
-    const checkbox = container.querySelector('#plugin-consent-acknowledgement');
+    const checkbox = document.querySelector('#plugin-consent-acknowledgement');
     expect(checkbox).toBeTruthy();
 
     await fireEvent.click(checkbox);

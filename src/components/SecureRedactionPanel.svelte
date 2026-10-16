@@ -49,12 +49,7 @@
 </script>
 
 <aside class="secure-redaction-panel" aria-label="Güvenli redaksiyon plan incelemesi">
-  <header>
-    <div>
-      <h3>Güvenli redaksiyon</h3>
-      <p class="status">Durum: {state?.status ?? "idle"}</p>
-    </div>
-  </header>
+  <p class="status">Durum: {state?.status ?? "idle"}</p>
 
   <div class="candidate-warning">
     <strong>Bekleyen adaylar PDF içeriğini kaldırmaz.</strong>
@@ -201,18 +196,27 @@
 </aside>
 
 <style>
-  .secure-redaction-panel { width: 340px; height: 100%; overflow-y: auto; padding: 16px; box-sizing: border-box; background: var(--bg-sidebar, #121212); color: var(--text-primary, #eee); border-left: 1px solid var(--border-raw, #333); font-size: 12px; }
-  header, .row, .split { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  h3, h4, h5, p { margin: 0; } h3 { font-size: 16px; } h4 { font-size: 13px; } h5 { margin: 8px 0 4px; }
-  section { padding: 12px 0; border-bottom: 1px solid var(--border-raw, #333); display: grid; gap: 9px; }
-  button, input { font: inherit; } button { padding: 6px 9px; border: 1px solid #555; color: inherit; background: #262626; cursor: pointer; } button:disabled { opacity: .5; cursor: not-allowed; }
-  button.primary, button.active { border-color: #d97706; background: #78350f; } button.link { border: 0; padding: 0; background: none; color: #f59e0b; }
-  .candidate-warning, .raster-wording { display: grid; gap: 4px; padding: 10px; margin-top: 10px; background: rgba(245, 158, 11, .12); border: 1px dashed #f59e0b; }
-  .candidate-warning strong { color: #fbbf24; } .muted, .status { color: var(--text-muted, #999); }
+  .secure-redaction-panel { padding: 12px; color: var(--foreground); font-size: 12px; }
+  .row, .split { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  h4, h5, p { margin: 0; } h4 { font-size: 13px; font-weight: 600; } h5 { margin: 8px 0 4px; font-weight: 600; }
+  section { padding: 12px 0; border-bottom: 1px solid var(--border); display: grid; gap: 8px; }
+  button, input { font: inherit; }
+  button { padding: 4px 10px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 0.8); color: var(--secondary-foreground); background: var(--secondary); cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary, button.active { border-color: transparent; background: var(--primary); color: var(--primary-foreground); }
+  button.link { border: 0; padding: 0; background: none; color: var(--primary); }
+  .candidate-warning, .raster-wording { display: grid; gap: 4px; padding: 10px; margin-top: 10px; border-radius: var(--radius); background: var(--warning); color: var(--warning-foreground); }
+  .muted, .status { color: var(--muted-foreground); }
   .regions { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; } .regions li { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; gap: 6px; }
-  .policy label { display: grid; grid-template-columns: 1fr 100px; align-items: center; gap: 8px; } input[type="number"] { width: 100%; box-sizing: border-box; background: #191919; color: inherit; border: 1px solid #555; padding: 5px; }
-  dl { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; margin: 0; } dt { color: var(--text-muted, #999); } dd { margin: 0; overflow-wrap: anywhere; }
-  .blockers, .failure { padding: 9px; background: rgba(239, 68, 68, .12); border: 1px solid #7f1d1d; } .warnings, .warning { color: #fbbf24; }
-  fieldset { margin: 0; border: 1px solid #555; display: grid; gap: 8px; } .ack { display: grid; grid-template-columns: auto 1fr; gap: 7px; align-items: start; }
-  .progress, .execution-progress { color: #fbbf24; } .success { border: 1px solid #166534; padding: 10px; background: rgba(34, 197, 94, .1); } .error { color: #f87171; }
+  .policy label { display: grid; grid-template-columns: 1fr 100px; align-items: center; gap: 8px; }
+  input[type="number"] { width: 100%; box-sizing: border-box; background: var(--background); color: inherit; border: 1px solid var(--input); border-radius: calc(var(--radius) * 0.6); padding: 3px 6px; }
+  dl { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; margin: 0; } dt { color: var(--muted-foreground); } dd { margin: 0; overflow-wrap: anywhere; }
+  .blockers, .failure { padding: 9px; border-radius: var(--radius); background: color-mix(in srgb, var(--destructive) 10%, transparent); border: 1px solid color-mix(in srgb, var(--destructive) 35%, transparent); }
+  .warnings, .warning { color: var(--warning-foreground); }
+  fieldset { margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); display: grid; gap: 8px; }
+  .ack { display: grid; grid-template-columns: auto 1fr; gap: 7px; align-items: start; } .ack input { accent-color: var(--primary); }
+  .progress, .execution-progress { color: var(--warning-foreground); }
+  .success { padding: 10px; border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) 10%, transparent); }
+  .error { color: var(--destructive); }
 </style>

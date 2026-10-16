@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { fade, fly } from "svelte/transition";
+  import AppDialog from "./AppDialog.svelte";
   import {
     installedPlugins,
     inspectionCandidate,
@@ -171,14 +171,8 @@
   }
 </script>
 
-<div class="modal-overlay" role="presentation" transition:fade={{ duration: 150 }} onclick={onclose}>
-  <div class="modal-content glass-panel" role="dialog" aria-modal="true" tabindex="-1" transition:fly={{ y: 20, duration: 250 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
-    <div class="modal-header">
-      <h3>Eklenti Yöneticisi (Plugin Manager)</h3>
-      <button class="close-btn" onclick={onclose}>✕</button>
-    </div>
-
-    <div class="modal-body">
+<AppDialog title="Eklenti Yöneticisi (Plugin Manager)" size="lg" onclose={() => onclose?.()}>
+    <div class="plugin-manager-body">
       <FeatureNotice featureId="plugin_system" />
 
       {#if errorMessage}
@@ -345,7 +339,7 @@
       </div>
     </div>
 
-    <div class="modal-footer">
+    {#snippet footer()}
       <button
         class="tech-button primary"
         onclick={handlePickPackage}
@@ -353,96 +347,59 @@
       >
         {isLoading ? "İnceleniyor..." : "Yeni Eklenti Paketi Seç..."}
       </button>
-    </div>
-  </div>
-</div>
+    {/snippet}
+</AppDialog>
 
 <style>
-  .modal-overlay {
-    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 1000;
-  }
-  .modal-content {
-    background: #1e1e24; color: #fff;
-    border-radius: 8px; width: 620px; max-width: 90vw; max-height: 85vh;
-    display: flex; flex-direction: column; border: 1px solid #333;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  }
-  .modal-header {
-    padding: 16px; border-bottom: 1px solid #333;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .modal-header h3 { margin: 0; font-size: 1.1rem; }
-  .close-btn { background: none; border: none; color: #888; font-size: 1.2rem; cursor: pointer; }
-  .close-btn:hover { color: #fff; }
-  .modal-body { padding: 16px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 12px; }
-  .plugin-warning { color: #f87171; background: rgba(248, 113, 113, 0.1); border: 1px solid #f87171; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; margin: 0; }
-  .plugin-success { color: #4ade80; background: rgba(74, 222, 128, 0.1); border: 1px solid #4ade80; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; margin: 0; }
+  .plugin-manager-body { display: flex; flex-direction: column; gap: 12px; }
+  .plugin-warning, .plugin-success { padding: 8px 12px; border-radius: var(--radius); font-size: 12px; margin: 0; }
+  .plugin-warning { color: var(--destructive); background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+  .plugin-success { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); }
   .inspection-card {
-    background: #25252b; border: 1px solid #3b82f6; border-radius: 6px; padding: 14px;
+    background: var(--card); border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent); border-radius: var(--radius); padding: 14px;
     display: flex; flex-direction: column; gap: 10px;
   }
-  .unsigned-warning-box {
-    background: rgba(234, 179, 8, 0.1); border: 1px solid #eab308; color: #fef08a;
-    padding: 8px 12px; border-radius: 4px; font-size: 0.8rem;
-  }
-  .permission-explanation-list {
-    margin: 6px 0 0 0; padding-left: 18px; font-size: 0.8rem; display: flex; flex-direction: column; gap: 4px;
-  }
-  .perm-desc { color: #cbd5e1; font-size: 0.8rem; }
-  .consent-checkbox-row {
-    margin-top: 10px; padding: 8px 10px; background: #1c1c22; border-radius: 4px; border: 1px solid #3f3f46;
-  }
-  .consent-label {
-    display: flex; align-items: center; gap: 8px; font-size: 0.8rem; cursor: pointer; color: #f4f4f5;
-  }
-  .consent-label input[type="checkbox"] { cursor: pointer; }
+  .unsigned-warning-box { background: var(--warning); color: var(--warning-foreground); padding: 8px 12px; border-radius: calc(var(--radius) * 0.8); font-size: 12px; }
+  .permission-explanation-list { margin: 6px 0 0 0; padding-left: 18px; list-style: disc; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .perm-desc { color: var(--muted-foreground); font-size: 12px; }
+  .consent-checkbox-row { margin-top: 10px; padding: 8px 10px; background: var(--muted); border-radius: calc(var(--radius) * 0.8); }
+  .consent-label { display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; }
+  .consent-label input[type="checkbox"] { cursor: pointer; accent-color: var(--primary); }
   .inspection-header { display: flex; justify-content: space-between; align-items: center; }
-  .inspection-header h4 { margin: 0; font-size: 0.95rem; color: #60a5fa; }
-  .inspection-details p { margin: 4px 0; font-size: 0.85rem; }
-  .digest { font-size: 0.75rem; word-break: break-all; color: #a3e635; }
-  .perms-section { margin-top: 6px; font-size: 0.85rem; }
+  .inspection-header h4 { margin: 0; font-size: 13px; font-weight: 600; }
+  .inspection-details p { margin: 4px 0; font-size: 12px; }
+  .digest { font-family: var(--font-code); font-size: 11px; word-break: break-all; color: var(--muted-foreground); }
+  .perms-section { margin-top: 6px; font-size: 12px; }
+  .dim { color: var(--muted-foreground); }
   .badge-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-  .badge { background: #333; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; }
-  .badge.permission { background: #1e3a8a; color: #93c5fd; }
-  .badge.hook { background: #065f46; color: #6ee7b7; }
-  .badge.warning { background: #854d0e; color: #fef08a; }
-  .badge.active-badge { background: #14532d; color: #86efac; }
-  .badge.inactive-badge { background: #3f3f46; color: #a1a1aa; }
-  .badge.small { font-size: 0.7rem; padding: 1px 4px; }
+  .badge { background: var(--muted); color: var(--muted-foreground); padding: 1px 6px; border-radius: calc(var(--radius) * 0.6); font-size: 11px; }
+  .badge.permission { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
+  .badge.hook { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+  .badge.warning { background: var(--warning); color: var(--warning-foreground); }
+  .badge.active-badge { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+  .badge.small { font-size: 10px; padding: 0 4px; }
   .inspection-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-  .plugin-list { display: flex; flex-direction: column; gap: 10px; }
-  .empty-state { text-align: center; color: #777; padding: 24px; font-size: 0.9rem; }
-  .plugin-card {
-    background: #282830; border: 1px solid #3a3a44; border-radius: 6px; padding: 12px;
-    display: flex; flex-direction: column; gap: 8px;
-  }
+  .plugin-list { display: flex; flex-direction: column; gap: 8px; }
+  .empty-state { text-align: center; color: var(--muted-foreground); padding: 24px; font-size: 13px; }
+  .plugin-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
   .plugin-title-row { display: flex; align-items: center; gap: 8px; }
-  .plugin-id { font-size: 0.75rem; color: #888; font-family: monospace; }
-  .plugin-desc { font-size: 0.8rem; color: #ccc; margin: 4px 0; }
+  .plugin-id { font-size: 11px; color: var(--muted-foreground); font-family: var(--font-code); }
+  .plugin-desc { font-size: 12px; color: var(--muted-foreground); margin: 4px 0; }
   .plugin-actions { display: flex; gap: 6px; justify-content: flex-end; }
-  .execution-box {
-    background: #18181b; border: 1px solid #27272a; border-radius: 4px; padding: 8px;
-    font-size: 0.8rem; display: flex; flex-direction: column; gap: 4px;
-  }
+  .execution-box { background: var(--muted); border-radius: calc(var(--radius) * 0.8); padding: 8px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
   .exec-info { display: flex; justify-content: space-between; align-items: center; }
-  .result-box { background: #09090b; padding: 6px; border-radius: 4px; font-size: 0.75rem; max-height: 120px; overflow: auto; margin: 0; }
-  .error-box { color: #f87171; font-size: 0.75rem; margin: 0; }
-  .modal-footer {
-    padding: 16px; border-top: 1px solid #333; display: flex; justify-content: flex-end;
-  }
+  .result-box { background: var(--background); border: 1px solid var(--border); padding: 6px; border-radius: calc(var(--radius) * 0.6); font-family: var(--font-code); font-size: 11px; max-height: 120px; overflow: auto; margin: 0; }
+  .error-box { color: var(--destructive); font-size: 11px; margin: 0; }
   .tech-button {
-    background: #3a3a44; color: #fff; border: 1px solid #4a4a55; border-radius: 4px;
-    padding: 6px 12px; font-size: 0.85rem; cursor: pointer;
+    background: var(--secondary); color: var(--secondary-foreground); border: 1px solid var(--border); border-radius: calc(var(--radius) * 0.8);
+    padding: 4px 12px; font-size: 12px; font-weight: 500; cursor: pointer;
   }
-  .tech-button:hover:not(:disabled) { background: #4a4a55; }
+  .tech-button:hover:not(:disabled) { background: var(--accent); }
   .tech-button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .tech-button.primary { background: #2563eb; border-color: #3b82f6; }
-  .tech-button.primary:hover:not(:disabled) { background: #1d4ed8; }
-  .tech-button.danger { background: #991b1b; border-color: #b91c1c; }
-  .tech-button.danger:hover:not(:disabled) { background: #7f1d1d; }
-  .tech-button.run { background: #047857; border-color: #059669; }
-  .tech-button.small { padding: 2px 6px; font-size: 0.75rem; }
+  .tech-button.primary { background: var(--primary); border-color: transparent; color: var(--primary-foreground); }
+  .tech-button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .tech-button.danger { background: color-mix(in srgb, var(--destructive) 10%, transparent); border-color: transparent; color: var(--destructive); }
+  .tech-button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--destructive) 18%, transparent); }
+  .tech-button.run { background: color-mix(in srgb, var(--success) 14%, transparent); border-color: transparent; color: var(--success); }
+  .tech-button.small { padding: 2px 6px; font-size: 11px; }
 </style>

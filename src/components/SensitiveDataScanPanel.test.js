@@ -23,12 +23,11 @@ describe("SensitiveDataScanPanel", () => {
     onScanMock = vi.fn();
   });
 
-  it("renders title 'Hassas veri tespiti' and 5 warning bullet points", () => {
+  it("renders the 5 warning bullet points", () => {
     const { getByText } = render(SensitiveDataScanPanel, {
       props: { scanState: state, onScan: onScanMock },
     });
 
-    expect(getByText("Hassas veri tespiti")).toBeTruthy();
     expect(getByText("• Tarama text extraction ve seçili pattern’lerle sınırlıdır.")).toBeTruthy();
     expect(getByText("• OCR yapılmamış görsel metni bulmayabilir.")).toBeTruthy();
     expect(getByText("• Sonuçlar eksik veya hatalı olabilir.")).toBeTruthy();

@@ -1,6 +1,10 @@
 <script>
   import { untrack } from "svelte";
-  import { fade, fly } from "svelte/transition";
+  import XIcon from "@lucide/svelte/icons/x";
+  import AppDialog from "./AppDialog.svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Label } from "$lib/components/ui/label";
   import { mergeSessionPdfs, splitSessionPdf } from "../pdfState.js";
   import { ask, open, save } from "@tauri-apps/plugin-dialog";
   import {
@@ -151,176 +155,50 @@
   }
 </script>
 
-<div class="modal-overlay" role="presentation" transition:fade={{ duration: 150 }} onclick={(event) => event.target === event.currentTarget && onclose?.()}>
-  <div class="modal-content glass-panel" role="dialog" aria-modal="true" aria-labelledby="merge-split-modal-title" transition:fly={{ y: 20, duration: 250 }}>
-      <div class="modal-header">
-          <h3 id="merge-split-modal-title">Belge Araçları</h3>
-          <div class="mode-tabs">
-            <button class:active={mode === 'merge'} onclick={() => selectMode('merge')}>Birleştir</button>
-            <button class:active={mode === 'split'} onclick={() => selectMode('split')}>Böl</button>
-          </div>
+<AppDialog title="Belge Araçları" dismissible={!isProcessing} onclose={() => onclose?.()}>
+  <div class="grid gap-3">
+    <div class="grid grid-cols-2 gap-0.5 rounded-md bg-black/5 p-0.5 dark:bg-white/10" role="group" aria-label="İşlem">
+      <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={mode === 'merge'} onclick={() => selectMode('merge')}>Birleştir</button>
+      <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={mode === 'split'} onclick={() => selectMode('split')}>Böl</button>
+    </div>
+
+    <FeatureNotice featureId="page_manipulation" />
+    {#if errorMsg}
+      <div class="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">{errorMsg}</div>
+    {/if}
+
+    {#if mode === 'merge'}
+      <p class="text-xs text-muted-foreground">Birleştirilecek PDF dosyalarını seçin ve sıralayın:</p>
+      <ol class="grid gap-1">
+        {#each filesToMerge as file, i}
+          <li class="flex items-center gap-2 rounded-md border bg-card px-2.5 py-1.5">
+            <span class="text-xs text-muted-foreground tabular-nums">{i+1}.</span>
+            <span class="min-w-0 flex-1 truncate">{file.split('/').pop().split('\\').pop()}</span>
+            <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Listeden çıkar" onclick={() => removeFile(i)}><XIcon class="size-3.5" /></button>
+          </li>
+        {/each}
+      </ol>
+      <Button variant="outline" size="sm" class="justify-self-start" onclick={handleAddFiles} disabled={!featurePresentation.runnable}>+ Dosya Ekle</Button>
+    {:else}
+      <p class="text-xs text-muted-foreground">Geçerli belgenin toplam sayfa sayısı: {maxPages}</p>
+      <div class="grid gap-1.5">
+        <Label for="split-ranges-input" class="text-xs text-muted-foreground">Bölünecek Aralıklar (Örn: 1-3, 5, 8-10)</Label>
+        <Input id="split-ranges-input" type="text" bind:value={splitRangesText} placeholder="1-5, 8, 11-13" />
       </div>
-      
-      <div class="modal-body">
-        <FeatureNotice featureId="page_manipulation" />
-        {#if errorMsg}
-          <div class="error-msg" role="alert">{errorMsg}</div>
-        {/if}
-        {#if mode === 'merge'}
-          <div class="merge-section">
-            <p class="hint">Birleştirilecek PDF dosyalarını seçin ve sıralayın:</p>
-            <div class="file-list">
-              {#each filesToMerge as file, i}
-                <div class="file-item">
-                  <span class="file-number">{i+1}.</span>
-                  <span class="file-name">{file.split('/').pop().split('\\').pop()}</span>
-                  <button class="remove-btn" onclick={() => removeFile(i)}>✕</button>
-                </div>
-              {/each}
-            </div>
-            <button class="tech-button add-file-btn" onclick={handleAddFiles} disabled={!featurePresentation.runnable}>+ Dosya Ekle</button>
-          </div>
-        {:else}
-          <div class="split-section">
-            <p class="hint">Geçerli belgenin toplam sayfa sayısı: {maxPages}</p>
-            <div class="form-group">
-                <label for="split-ranges-input">Bölünecek Aralıklar (Örn: 1-3, 5, 8-10)</label>
-                <input id="split-ranges-input" type="text" bind:value={splitRangesText} placeholder="1-5, 8, 11-13" class="tech-input" />
-            </div>
-            <p class="hint">Yukarıdaki her bir aralık için seçtiğiniz klasörde belge adı ve sayfa aralığıyla adlandırılan ayrı bir PDF oluşturulacaktır (ör. rapor_sayfa_1-3.pdf).</p>
-          </div>
-        {/if}
-      </div>
-      
-      <div class="modal-footer">
-          <button class="tech-button" onclick={() => onclose?.()} disabled={isProcessing}>İptal</button>
-          {#if mode === 'merge'}
-            <button class="tech-button primary" onclick={executeMerge} disabled={isProcessing || !featurePresentation.runnable}>
-              {isProcessing ? 'İşleniyor...' : 'Birleştir ve Kaydet'}
-            </button>
-          {:else}
-            <button class="tech-button primary" onclick={executeSplit} disabled={isProcessing || !featurePresentation.runnable}>
-              {isProcessing ? 'İşleniyor...' : 'Böl ve Kaydet'}
-            </button>
-          {/if}
-      </div>
+      <p class="text-xs text-muted-foreground">Yukarıdaki her bir aralık için seçtiğiniz klasörde belge adı ve sayfa aralığıyla adlandırılan ayrı bir PDF oluşturulacaktır (ör. rapor_sayfa_1-3.pdf).</p>
+    {/if}
   </div>
-</div>
 
-<style>
-  .modal-overlay {
-      position: fixed;
-      top: 0; left: 0; width: 100vw; height: 100vh;
-      background: rgba(10, 10, 15, 0.7);
-      backdrop-filter: blur(4px);
-      display: flex; align-items: center; justify-content: center;
-      z-index: 10000;
-  }
-  .modal-content {
-      width: 480px; max-width: 90vw;
-      border-radius: 12px;
-      display: flex; flex-direction: column;
-      background: var(--surface);
-      border: 1px solid var(--border-color);
-  }
-  .modal-header {
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--border-color);
-      display: flex; justify-content: space-between; align-items: center;
-  }
-  .modal-header h3 { margin: 0; font-size: 1.2rem; }
-  
-  .mode-tabs {
-    display: flex;
-    background: rgba(0,0,0,0.2);
-    border-radius: 8px;
-    padding: 4px;
-  }
-  
-  .mode-tabs button {
-    background: transparent;
-    border: none;
-    color: var(--text-secondary);
-    padding: 4px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.9rem;
-  }
-  
-  .mode-tabs button.active {
-    background: var(--primary);
-    color: white;
-  }
-  
-  .modal-body {
-      padding: 24px;
-  }
-  .form-group {
-      margin-bottom: 16px;
-      display: flex; flex-direction: column; gap: 8px;
-  }
-  .tech-input {
-      background: rgba(0,0,0,0.2);
-      border: 1px solid rgba(255,255,255,0.1);
-      color: var(--text-primary);
-      padding: 10px 12px;
-      border-radius: 8px;
-      font-size: 0.95rem;
-  }
-  .hint {
-      font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;
-  }
-  
-  .file-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 16px;
-    max-height: 200px;
-    overflow-y: auto;
-  }
-  
-  .file-item {
-    display: flex;
-    align-items: center;
-    background: rgba(255,255,255,0.05);
-    padding: 8px 12px;
-    border-radius: 6px;
-    gap: 8px;
-  }
-  
-  .file-name {
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  
-  .remove-btn {
-    background: transparent; border: none;
-    color: #ef4444; cursor: pointer;
-    font-size: 14px;
-  }
-  
-  .add-file-btn {
-    width: 100%;
-    border-style: dashed;
-    background: transparent;
-  }
-  
-  .add-file-btn:hover {
-    background: rgba(255,255,255,0.05);
-  }
-  
-  .error-msg {
-      background: rgba(255, 59, 48, 0.1); border: 1px solid rgba(255, 59, 48, 0.3);
-      color: #ff3b30; padding: 10px; border-radius: 6px; margin-bottom: 16px;
-      font-size: 0.9rem;
-  }
-
-  .modal-footer {
-      padding: 16px 24px;
-      border-top: 1px solid var(--border-color);
-      display: flex; justify-content: flex-end; gap: 12px;
-  }
-</style>
+  {#snippet footer()}
+    <Button variant="outline" size="sm" onclick={() => onclose?.()} disabled={isProcessing}>İptal</Button>
+    {#if mode === 'merge'}
+      <Button size="sm" onclick={executeMerge} disabled={isProcessing || !featurePresentation.runnable}>
+        {isProcessing ? 'İşleniyor...' : 'Birleştir ve Kaydet'}
+      </Button>
+    {:else}
+      <Button size="sm" onclick={executeSplit} disabled={isProcessing || !featurePresentation.runnable}>
+        {isProcessing ? 'İşleniyor...' : 'Böl ve Kaydet'}
+      </Button>
+    {/if}
+  {/snippet}
+</AppDialog>

@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe("ShortcutsModal", () => {
-  it("closes from the backdrop and Escape but not from clicks inside the dialog", async () => {
+  it("closes from the close button and Escape but not from clicks inside the dialog", async () => {
     const onclose = vi.fn();
     const view = render(ShortcutsModal, { onclose });
     const dialog = view.getByRole("dialog", { name: "Klavye Kısayolları" });
@@ -26,10 +26,10 @@ describe("ShortcutsModal", () => {
     await fireEvent.click(dialog);
     expect(onclose).not.toHaveBeenCalled();
 
-    await fireEvent.click(dialog.parentElement);
+    await fireEvent.click(view.getByRole("button", { name: "Kapat" }));
     expect(onclose).toHaveBeenCalledTimes(1);
 
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     expect(onclose).toHaveBeenCalledTimes(2);
   });
 });

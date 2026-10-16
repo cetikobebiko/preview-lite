@@ -34,7 +34,6 @@ describe("A11yPanel session reads", () => {
     expect(getSessionStructureTree).toHaveBeenCalledWith("a11y-session", 9);
     expect(view.queryByText(/\/100/)).toBeNull();
     expect(view.queryByText(/Screen Reader Preview/)).toBeNull();
-    expect(view.getByText("Basic accessibility audit")).toBeTruthy();
     expect(view.queryByText(/PDF\/UA compliant|PDF\/UA valid/i)).toBeNull();
     expect(view.queryByText(/Save Changes|Auto-Tag/i)).toBeNull();
   });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, fireEvent, render } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import BionicReadingModal from "./BionicReadingModal.svelte";
 import { splitBionicWord, toBionicLines } from "../utils/bionicText.js";
 
@@ -24,7 +24,7 @@ describe("BionicReadingModal XSS hardening", () => {
     const payload = "<img src=x onerror=alert(1)>";
     const { container, content } = renderModal({ text: payload });
 
-    expect(container.querySelector("img")).toBeNull();
+    expect(document.body.querySelector("img")).toBeNull();
     expect(content.textContent).toBe(payload);
   });
 
@@ -32,7 +32,7 @@ describe("BionicReadingModal XSS hardening", () => {
     const payload = "<script>alert(1)</script>";
     const { container, content } = renderModal({ text: payload });
 
-    expect(container.querySelector("script")).toBeNull();
+    expect(document.body.querySelector("script")).toBeNull();
     expect(content.textContent).toBe(payload);
   });
 
@@ -72,23 +72,23 @@ describe("BionicReadingModal rendering", () => {
     expect(content.querySelector("b")).toBeNull();
   });
 
-  it("calls onclose from the close button and the overlay, but not the dialog body", async () => {
+  it("calls onclose from the close button and Escape, but not the dialog body", async () => {
     const onclose = vi.fn();
-    const { getByRole, container } = renderModal({ text: "metin", onclose });
+    const { content } = renderModal({ text: "metin", onclose });
 
-    await fireEvent.click(container.querySelector(".bionic-dialog"));
+    await fireEvent.click(content);
     expect(onclose).not.toHaveBeenCalled();
 
-    await fireEvent.click(getByRole("button", { name: "✕" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Kapat" }));
     expect(onclose).toHaveBeenCalledTimes(1);
 
-    await fireEvent.click(container.querySelector(".bionic-overlay"));
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     expect(onclose).toHaveBeenCalledTimes(2);
   });
 
   it("renders nothing while closed", () => {
-    const { container } = render(BionicReadingModal, { props: { isOpen: false, text: "metin" } });
-    expect(container.querySelector(".bionic-overlay")).toBeNull();
+    render(BionicReadingModal, { props: { isOpen: false, text: "metin" } });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

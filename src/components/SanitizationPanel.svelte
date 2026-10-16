@@ -1,4 +1,5 @@
 <script>
+  import AppDialog from "./AppDialog.svelte";
   import {
     SANITIZATION_MINIMUM_PROFILE_CONTROL_IDS,
     SANITIZATION_SUPPORTED_CONTROL_IDS,
@@ -104,16 +105,8 @@
 </script>
 
 {#if show}
-  <div class="backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && onClose()}>
-    <div class="panel" role="dialog" aria-modal="true" aria-label="PDF sanitization workflow">
-      <header>
-        <div>
-          <p class="eyebrow">VERIFIED SANITIZATION WORKFLOW</p>
-          <h2>PDF sanitization</h2>
-        </div>
-        <button class="ghost" type="button" onclick={onClose}>Kapat</button>
-      </header>
-
+  <AppDialog title="PDF sanitization" description="Verified sanitization workflow" size="lg" onclose={onClose}>
+    <div class="sanitization">
       <div class="scope-note">
         Bu ön inceleme yalnız desteklenen PDF yapılarını tarar. Belgedeki bütün olası aktif veya gizli içeriğin bulunduğunu garanti etmez.
       </div>
@@ -248,7 +241,8 @@
         {/if}
       {/if}
 
-      <footer>
+    </div>
+    {#snippet footer()}
         {#if state?.executionStatus === "completed"}
           <button type="button" onclick={onReset}>Yeni sanitization</button>
         {:else if state?.inspectionStatus === "inspecting" || state?.executionStatus === "executing"}
@@ -257,32 +251,33 @@
           <button class="secondary" type="button" onclick={onInspect} disabled={!runnable || state?.saveDialogOpen}>Yeniden incele</button>
           <button type="button" onclick={onExecute} disabled={!runnable || !state?.readyForExecution || state?.saveDialogOpen}>Kaydet ve çalıştır</button>
         {/if}
-      </footer>
-    </div>
-  </div>
+    {/snippet}
+  </AppDialog>
 {/if}
 
 <style>
-  .backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.72); }
-  .panel { width: min(760px, 96vw); max-height: 92vh; overflow: auto; padding: 20px; border: 1px solid #34373d; border-radius: 12px; color: #e5e7eb; background: #17191d; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
-  header, footer, .control-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  h2, h3, p { margin: 0; } h2 { font-size: 1.2rem; } h3 { margin-bottom: 10px; font-size: .95rem; }
-  .eyebrow { color: #60a5fa; font-size: .68rem; letter-spacing: .12em; }
-  .scope-note, .standard-note, .disabled-note, .status, .error, .blockers, .result { margin-top: 12px; padding: 12px; border-radius: 8px; background: #23262c; line-height: 1.45; font-size: .84rem; }
-  .standard-note { border-left: 3px solid #f59e0b; } .disabled-note, .error, .blockers { border: 1px solid #7f1d1d; background: #2b191b; }
-  .review-section, .acknowledgements { margin-top: 18px; }
-  .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin: 0; }
-  .facts div, .result dl div { padding: 9px; border-radius: 7px; background: #23262c; }
-  dt { color: #9ca3af; font-size: .72rem; } dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: .82rem; } dd.present { color: #fbbf24; }
-  .profile, .acknowledgements label { display: flex; gap: 10px; margin-top: 8px; padding: 10px; border: 1px solid #34373d; border-radius: 8px; }
-  .profile span { display: grid; gap: 3px; } small { color: #aab1bd; }
-  .controls { display: grid; gap: 8px; } article { padding: 11px; border: 1px solid #34373d; border-radius: 8px; }
-  article.found { border-color: #9a6700; } article.blocking { border-color: #b91c1c; }
-  article p { margin-top: 5px; color: #b7bdc8; font-size: .75rem; } .control-title { justify-content: flex-start; }
-  .control-title span { margin-left: auto; color: #9ca3af; font-size: .72rem; }
-  .blocking-reason, .hard-block { color: #fca5a5; } .mandatory { color: #93c5fd; }
-  .result dl { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 12px 0; } .digest { font-family: monospace; font-size: .72rem; }
-  .warning { color: #fde68a; } footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid #34373d; justify-content: flex-end; }
-  button { padding: 8px 12px; border: 1px solid #4b5563; border-radius: 7px; color: white; background: #2563eb; }
-  button.secondary, button.ghost { background: transparent; } button:disabled { cursor: not-allowed; opacity: .45; }
+  .sanitization { font-size: 13px; }
+  .control-title { display: flex; align-items: center; gap: 12px; }
+  h3, p { margin: 0; } h3 { margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+  .scope-note, .standard-note, .disabled-note, .status, .error, .blockers, .result { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius); background: var(--muted); line-height: 1.45; font-size: 12px; }
+  .scope-note:first-child { margin-top: 0; }
+  .standard-note { background: var(--warning); color: var(--warning-foreground); }
+  .disabled-note, .error, .blockers { color: var(--destructive); background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+  .review-section, .acknowledgements { margin-top: 16px; }
+  .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 0; }
+  .facts div, .result dl div { padding: 8px; border-radius: calc(var(--radius) * 0.8); background: var(--muted); }
+  dt { color: var(--muted-foreground); font-size: 11px; } dd { margin: 2px 0 0; overflow-wrap: anywhere; font-size: 12px; } dd.present { color: var(--warning-foreground); }
+  .profile, .acknowledgements label { display: flex; gap: 10px; margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+  .profile input, .acknowledgements input { accent-color: var(--primary); }
+  .profile span { display: grid; gap: 3px; } small { color: var(--muted-foreground); }
+  .controls { display: grid; gap: 6px; } article { padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+  article.found { border-color: color-mix(in srgb, var(--warning-foreground) 50%, transparent); } article.blocking { border-color: color-mix(in srgb, var(--destructive) 60%, transparent); }
+  article p { margin-top: 4px; color: var(--muted-foreground); font-size: 11px; }
+  .control-title span { margin-left: auto; color: var(--muted-foreground); font-size: 11px; }
+  .blocking-reason, .hard-block { color: var(--destructive); } .mandatory { color: var(--primary); }
+  .result dl { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; } .digest { font-family: var(--font-code); font-size: 11px; }
+  .warning { color: var(--warning-foreground); }
+  button { padding: 5px 12px; border: 1px solid transparent; border-radius: calc(var(--radius) * 0.8); font-size: 12px; font-weight: 500; color: var(--primary-foreground); background: var(--primary); cursor: pointer; }
+  button.secondary { border-color: var(--border); color: var(--secondary-foreground); background: var(--secondary); }
+  button:disabled { cursor: not-allowed; opacity: .5; }
 </style>

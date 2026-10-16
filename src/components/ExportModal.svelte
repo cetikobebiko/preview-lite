@@ -1,5 +1,8 @@
 <script>
-  import { fade, fly } from "svelte/transition";
+  import AppDialog from "./AppDialog.svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Label } from "$lib/components/ui/label";
   import { ask, open, save } from "@tauri-apps/plugin-dialog";
   import {
     exportSessionPagesAsImages,
@@ -127,154 +130,59 @@
   }
 </script>
 
-<dialog
-  open
-  class="modal-overlay"
-  transition:fade={{ duration: 150 }}
-  oncancel={(event) => {
-    event.preventDefault();
-    onclose?.();
-  }}
->
-  <div class="modal-content glass-panel" transition:fly={{ y: 20, duration: 250 }}>
-      <div class="modal-header">
-          <h3>Dışa Aktar (Export)</h3>
-          <button type="button" class="close-btn" aria-label="Kapat" onclick={() => onclose?.()}>×</button>
-      </div>
-      
-      <div class="modal-body">
-          {#if errorMsg}
-              <div class="error-msg" role="alert">{errorMsg}</div>
-          {/if}
-          
-          <div class="form-group">
-              <label for="export-page-range">Sayfa Aralığı (Tümü için boş bırakın)</label>
-              <input id="export-page-range" type="text" bind:value={pageRange} placeholder="Örn: 1-5, 8, 11-13" class="tech-input" />
-              <small class="hint">Toplam Sayfa: {maxPages}</small>
-          </div>
-          
-          <div class="form-group type-tabs">
-              <button type="button" class="tab-btn {exportType === 'print' ? 'active' : ''}" onclick={() => exportType = 'print'}>Yazdır</button>
-              <button type="button" class="tab-btn {exportType === 'image' ? 'active' : ''}" onclick={() => exportType = 'image'}>Resim (Görsel)</button>
-              <button type="button" class="tab-btn {exportType === 'text' ? 'active' : ''}" onclick={() => exportType = 'text'}>Metin (StExt)</button>
-          </div>
-          
-          <div class="export-options">
-              {#if exportType === 'image'}
-                  <div class="form-group">
-                      <label for="export-image-format">Format</label>
-                      <select id="export-image-format" bind:value={imgFormat} class="tech-input">
-                          <option value="png">PNG (Yüksek Kalite)</option>
-                          <option value="jpeg">JPEG (Daha Küçük Boyut)</option>
-                      </select>
-                  </div>
-                  <div class="form-group">
-                      <label for="export-image-dpi">Çözünürlük (DPI)</label>
-                      <select id="export-image-dpi" bind:value={imgDpi} class="tech-input">
-                          <option value={150}>150 DPI (Standart Okuma)</option>
-                          <option value={300}>300 DPI (Baskı Kalitesi)</option>
-                          <option value={600}>600 DPI (Yüksek Detay)</option>
-                      </select>
-                  </div>
-              {:else if exportType === 'text'}
-                  <div class="form-group">
-                      <label for="export-text-format">Metin Formatı</label>
-                      <select id="export-text-format" bind:value={txtFormat} class="tech-input">
-                          <option value="markdown">Markdown (.md)</option>
-                          <option value="txt">Düz Metin (.txt)</option>
-                      </select>
-                  </div>
-              {:else}
-                  <div style="font-size: 0.9rem; color: var(--text-muted); text-align: center;">
-                      Belge doğrudan işletim sisteminin varsayılan yazdırma kuyruğuna gönderilecektir.
-                  </div>
-              {/if}
-          </div>
-          
-          <button type="button" class="submit-btn" disabled={isExporting} onclick={handleExport}>
-              {isExporting ? 'İşleniyor...' : (exportType === 'print' ? 'Yazdır' : 'Dışa Aktar')}
-          </button>
-      </div>
-  </div>
-</dialog>
+<AppDialog title="Dışa Aktar (Export)" dismissible={!isExporting} onclose={() => onclose?.()}>
+  <div class="grid gap-4">
+    {#if errorMsg}
+      <div class="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">{errorMsg}</div>
+    {/if}
 
-<style>
-  .modal-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(8px);
-      display: flex; align-items: center; justify-content: center;
-      z-index: 10000;
-  }
-  
-  .modal-content {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      width: 400px;
-      max-width: 90vw;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-      overflow: hidden;
-  }
-  
-  .modal-header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 16px 20px; border-bottom: 1px solid var(--border-color);
-      background: var(--bg-surface-hover);
-  }
-  
-  .modal-header h3 { margin: 0; font-size: 1.1rem; color: var(--text-primary); }
-  
-  .close-btn {
-      background: none; border: none; color: var(--text-secondary);
-      font-size: 1.5rem; cursor: pointer; transition: color 0.2s;
-  }
-  .close-btn:hover { color: var(--text-primary); }
-  
-  .modal-body { padding: 20px; }
-  
-  .form-group { margin-bottom: 16px; }
-  
-  .form-group label {
-      display: block; margin-bottom: 6px;
-      font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;
-  }
-  
-  .tech-input {
-      width: 100%; padding: 10px; background: rgba(0,0,0,0.2);
-      border: 1px solid var(--border-color); border-radius: 6px;
-      color: var(--text-primary); font-family: inherit; font-size: 0.95rem;
-      transition: all 0.2s;
-  }
-  .tech-input:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 2px rgba(138, 43, 226, 0.2); }
-  
-  .hint { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--text-muted); }
-  
-  .type-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
-  
-  .tab-btn {
-      flex: 1; padding: 10px; background: rgba(0,0,0,0.2);
-      border: 1px solid var(--border-color); border-radius: 6px;
-      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
-  }
-  .tab-btn.active { background: var(--accent-color); color: white; border-color: var(--accent-color); }
-  
-  .export-options {
-      padding: 16px; background: rgba(255,255,255,0.03);
-      border-radius: 8px; margin-bottom: 20px;
-  }
-  
-  .submit-btn {
-      width: 100%; padding: 12px; background: var(--accent-color);
-      color: white; border: none; border-radius: 6px; font-weight: 600;
-      cursor: pointer; transition: all 0.2s;
-  }
-  .submit-btn:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 0 15px var(--accent-color); }
-  .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  
-  .error-msg {
-      background: rgba(255, 59, 48, 0.1); border: 1px solid rgba(255, 59, 48, 0.3);
-      color: #ff3b30; padding: 10px; border-radius: 6px; margin-bottom: 16px;
-      font-size: 0.9rem; text-align: center;
-  }
-</style>
+    <div class="grid gap-1.5">
+      <Label for="export-page-range" class="text-xs text-muted-foreground">Sayfa Aralığı (Tümü için boş bırakın)</Label>
+      <Input id="export-page-range" type="text" bind:value={pageRange} placeholder="Örn: 1-5, 8, 11-13" />
+      <small class="text-xs text-muted-foreground">Toplam Sayfa: {maxPages}</small>
+    </div>
+
+    <div class="grid grid-cols-3 gap-0.5 rounded-md bg-black/5 p-0.5 dark:bg-white/10" role="group" aria-label="Dışa aktarma türü">
+      <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={exportType === 'print'} onclick={() => exportType = 'print'}>Yazdır</button>
+      <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={exportType === 'image'} onclick={() => exportType = 'image'}>Resim (Görsel)</button>
+      <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={exportType === 'text'} onclick={() => exportType = 'text'}>Metin (StExt)</button>
+    </div>
+
+    {#if exportType === 'image'}
+      <div class="grid grid-cols-2 gap-3">
+        <div class="grid gap-1.5">
+          <Label for="export-image-format" class="text-xs text-muted-foreground">Format</Label>
+          <select id="export-image-format" bind:value={imgFormat} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            <option value="png">PNG (Yüksek Kalite)</option>
+            <option value="jpeg">JPEG (Daha Küçük Boyut)</option>
+          </select>
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="export-image-dpi" class="text-xs text-muted-foreground">Çözünürlük (DPI)</Label>
+          <select id="export-image-dpi" bind:value={imgDpi} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            <option value={150}>150 DPI (Standart Okuma)</option>
+            <option value={300}>300 DPI (Baskı Kalitesi)</option>
+            <option value={600}>600 DPI (Yüksek Detay)</option>
+          </select>
+        </div>
+      </div>
+    {:else if exportType === 'text'}
+      <div class="grid gap-1.5">
+        <Label for="export-text-format" class="text-xs text-muted-foreground">Metin Formatı</Label>
+        <select id="export-text-format" bind:value={txtFormat} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+          <option value="markdown">Markdown (.md)</option>
+          <option value="txt">Düz Metin (.txt)</option>
+        </select>
+      </div>
+    {:else}
+      <p class="text-center text-xs text-muted-foreground">Belge doğrudan işletim sisteminin varsayılan yazdırma kuyruğuna gönderilecektir.</p>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button variant="outline" size="sm" disabled={isExporting} onclick={() => onclose?.()}>İptal</Button>
+    <Button size="sm" disabled={isExporting} onclick={handleExport}>
+      {isExporting ? 'İşleniyor...' : (exportType === 'print' ? 'Yazdır' : 'Dışa Aktar')}
+    </Button>
+  {/snippet}
+</AppDialog>

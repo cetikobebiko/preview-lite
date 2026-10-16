@@ -183,8 +183,6 @@
 <AppModalHost
   {ui}
   featureUi={featureRuntime.featureUi}
-  sessionId={documentSession.activeSessionId ?? ""}
-  contentGeneration={documentSession.contentGeneration}
   displayPath={documentRuntime.activeDisplayPath}
   {sanitizationState}
   sanitization={featureRuntime.sanitization}
@@ -238,34 +236,34 @@
       onProcessPreview={(event) => applyPrepress("applyProcessPreview", event)}
       onCoveragePreview={(event) => applyPrepress("applyCoveragePreview", event)}
       onChannels={(event) => applyPrepress("applyChannels", event)}
-    />
-
-    <ViewerShell
-      isPdf={documentRuntime.isPdf}
-      {viewer}
-      {annotation}
-      {documentSession}
-      {searchState}
-      spreads={viewer.spreads}
-      physicalPageIndex={viewer.physicalPageIndex}
-      {prepress}
-      featureUi={featureRuntime.featureUi}
-      errorMsg={ui.error}
-      {getActivePrepressPayload}
-      getSensitiveDataHighlights={featureRuntime.getSensitiveDataHighlightsForPage}
-      {secureRedactionState}
-      secureRedaction={featureRuntime.secureRedaction}
-      onSelectFile={documentRuntime.selectFile}
-      onReopenDocument={() => void documentRuntime.openFile(documentRuntime.activeDisplayPath)}
-      onPageIntersect={viewerRuntime.navigation.handlePageIntersect}
-      onSearchHighlightReady={featureRuntime.handleSearchHighlight}
-      onSessionSnapshot={(snapshot) => void documentRuntime.applyMutationSnapshot(snapshot)}
-      onCanvasMouseDown={viewerRuntime.annotationCanvas.handleMouseDown}
-      onCanvasMouseMove={viewerRuntime.annotationCanvas.handleMouseMove}
-      onCanvasMouseUp={viewerRuntime.annotationCanvas.handleMouseUp}
-      bind:viewerAreaRef
-      bind:canvasRefLeft
-    />
+    >
+      <ViewerShell
+        isPdf={documentRuntime.isPdf}
+        {viewer}
+        {annotation}
+        {documentSession}
+        {searchState}
+        spreads={viewer.spreads}
+        physicalPageIndex={viewer.physicalPageIndex}
+        {prepress}
+        featureUi={featureRuntime.featureUi}
+        errorMsg={ui.error}
+        {getActivePrepressPayload}
+        getSensitiveDataHighlights={featureRuntime.getSensitiveDataHighlightsForPage}
+        {secureRedactionState}
+        secureRedaction={featureRuntime.secureRedaction}
+        onSelectFile={documentRuntime.selectFile}
+        onReopenDocument={() => void documentRuntime.openFile(documentRuntime.activeDisplayPath)}
+        onPageIntersect={viewerRuntime.navigation.handlePageIntersect}
+        onSearchHighlightReady={featureRuntime.handleSearchHighlight}
+        onSessionSnapshot={(snapshot) => void documentRuntime.applyMutationSnapshot(snapshot)}
+        onCanvasMouseDown={viewerRuntime.annotationCanvas.handleMouseDown}
+        onCanvasMouseMove={viewerRuntime.annotationCanvas.handleMouseMove}
+        onCanvasMouseUp={viewerRuntime.annotationCanvas.handleMouseUp}
+        bind:viewerAreaRef
+        bind:canvasRefLeft
+      />
+    </WorkspacePanels>
   </div>
 
   <AppOverlayHost

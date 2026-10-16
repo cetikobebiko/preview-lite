@@ -39,10 +39,10 @@ describe("WorkspacePanels physical->display navigation", () => {
       {},
     );
 
-    const { getByText } = render(WorkspacePanels, {
+    const { getByText, getByRole } = render(WorkspacePanels, {
       props: {
         isPdf: true,
-        ui: { panels: { sensitiveDataScan: true, sidebar: false, a11y: false, prepress: false } },
+        ui: { panels: { sensitiveDataScan: true, sidebar: false, a11y: false, prepress: false }, isModalOpen: () => false, setPanel: vi.fn() },
         viewer: { pageOrder: [2, 0, 1], currentPageIndex: 0, scale: 1 },
         documentSession: { activeSessionId: "session-1", contentGeneration: 1 },
         sensitiveScanState,
@@ -59,6 +59,9 @@ describe("WorkspacePanels physical->display navigation", () => {
         onApplyBoxes: vi.fn(),
       },
     });
+
+    expect(getByRole("complementary", { name: "Denetçi" })).toBeTruthy();
+    expect(getByRole("heading", { name: "Hassas veri tespiti" })).toBeTruthy();
 
     const matchPhysical2 = getByText("Physical Page 2 Match");
     await fireEvent.click(matchPhysical2);
@@ -94,7 +97,7 @@ describe("WorkspacePanels physical->display navigation", () => {
     const { getByText } = render(WorkspacePanels, {
       props: {
         isPdf: true,
-        ui: { panels: { sensitiveDataScan: true, sidebar: false, a11y: false, prepress: false } },
+        ui: { panels: { sensitiveDataScan: true, sidebar: false, a11y: false, prepress: false }, isModalOpen: () => false, setPanel: vi.fn() },
         viewer: { pageOrder: [2, 0], currentPageIndex: 0, scale: 1 },
         documentSession: { activeSessionId: "session-1", contentGeneration: 1 },
         sensitiveScanState,

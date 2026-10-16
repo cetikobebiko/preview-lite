@@ -106,6 +106,7 @@ import AppModalHost from "./components/AppModalHost.svelte";
 import AppToolbar from "./components/AppToolbar.svelte";
 import SearchHost from "./components/SearchHost.svelte";
 import ViewerShell from "./components/ViewerShell.svelte";
+import WorkspacePanels from "./components/WorkspacePanels.svelte";
 import { pageFailureRegistry } from "./services/pageFailureRegistry.js";
 import { createDocumentSessionStore } from "./stores/documentSession.svelte.js";
 import { createUiState } from "./stores/uiState.svelte.js";
@@ -153,13 +154,24 @@ function createMemoryStorage(initialValues = {}) {
   };
 }
 
+// The AI assistant docks in the workspace inspector while its settings open as
+// a modal, so both hosts render against the same typed ui state.
 function renderModalHost(ui) {
+  render(WorkspacePanels, {
+    props: {
+      isPdf: false,
+      ui,
+      viewer: { pageOrder: [], currentPageIndex: 0, scale: 1 },
+      documentSession: { activeSessionId: "session-a", contentGeneration: 1 },
+      featureUi: feature(["local_ai"]),
+      physicalPageIndex: 0,
+      isLoadedPdfDocument: false,
+    },
+  });
   return render(AppModalHost, {
     props: {
       ui,
       featureUi: feature(["local_ai"]),
-      sessionId: "session-a",
-      contentGeneration: 1,
       displayPath: "/a.pdf",
       onCommandSelect: vi.fn(),
       onSanitize: vi.fn(),
