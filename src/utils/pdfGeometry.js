@@ -324,3 +324,107 @@ export function selectViewportHighlights(logicalHighlightsByPage, pageIndex, vie
   return viewportHighlights;
 }
 
+
+function clampUnit(value) {
+  return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Ekran (client) noktasını, CSS ile döndürülmüş/ölçeklenmiş bir katmanın yerel,
+ * normalize [0..1] koordinatına çevirir.
+ *
+ * `getBoundingClientRect` döndürülmüş bir elemanın yerel kutusunu değil, eksen hizalı
+ * sınır kutusunu verir; tüm atalardaki ölçek (ör. `scale(cssScale)`, `scale(visualScale)`)
+ * de bu kutuya yansır. Katmanın kendi `rotate(θ)` dönüşümü merkez etrafında olduğundan
+ * kutunun merkezi katmanın merkezidir: nokta merkeze göre −θ döndürülür, toplam ölçeğe
+ * bölünür ve transformsuz yerel boyuta (`offsetWidth/offsetHeight`) göre normalize edilir.
+ *
+ * Sonuç [0..1] dışına taşabilir (katman dışındaki nokta); kısma çağıranın işidir.
+ *
+ * @param {number} clientX
+ * @param {number} clientY
+ * @param {{
+ *   boundingRect: { left: number, top: number, width: number, height: number },
+ *   localWidth: number,
+ *   localHeight: number,
+ *   rotation?: number,
+ * }} frame `rotation`: katmana uygulanan CSS `rotate()` açısı (derece, saat yönü).
+ * @returns {{ x: number, y: number } | null}
+ */
+export function clientPointToLayerNormalized(clientX, clientY, frame) {
+  const left = finiteNumber(frame?.boundingRect?.left);
+  const top = finiteNumber(frame?.boundingRect?.top);
+  const boundsWidth = finiteNumber(frame?.boundingRect?.width);
+  const boundsHeight = finiteNumber(frame?.boundingRect?.height);
+  const localWidth = finiteNumber(frame?.localWidth);
+  const localHeight = finiteNumber(frame?.localHeight);
+  const rotation = finiteNumber(frame?.rotation ?? 0);
+  if (
+    finiteNumber(clientX) === null ||
+    finiteNumber(clientY) === null ||
+    left === null ||
+    top === null ||
+    boundsWidth === null ||
+    boundsHeight === null ||
+    rotation === null ||
+    !(boundsWidth > 0) ||
+    !(boundsHeight > 0) ||
+    !(localWidth > 0) ||
+    !(localHeight > 0)
+  ) {
+    return null;
+  }
+
+  const radians = (rotation * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  // Döndürülmüş w×h kutusunun sınır genişliği s·(w|cos θ| + h|sin θ|)'dır.
+  const scale = boundsWidth / (localWidth * Math.abs(cos) + localHeight * Math.abs(sin));
+  if (!Number.isFinite(scale) || scale <= 0) return null;
+
+  const dx = clientX - (left + boundsWidth / 2);
+  const dy = clientY - (top + boundsHeight / 2);
+  // CSS rotate(θ), y aşağı ekran uzayında saat yönündedir: ekran = s·R(θ)·yerel.
+  const localX = (dx * cos + dy * sin) / scale;
+  const localY = (-dx * sin + dy * cos) / scale;
+
+  return {
+    x: (localX + localWidth / 2) / localWidth,
+    y: (localY + localHeight / 2) / localHeight,
+  };
+}
+
+/**
+ * İki normalize nokta arasındaki dikdörtgen; noktalar önce [0..1]'e kısılır.
+ * @returns {{ x: number, y: number, width: number, height: number }}
+ */
+export function normalizedRectBetween(start, end) {
+  const x0 = clampUnit(start.x);
+  const y0 = clampUnit(start.y);
+  const x1 = clampUnit(end.x);
+  const y1 = clampUnit(end.y);
+  return {
+    x: Math.min(x0, x1),
+    y: Math.min(y0, y1),
+    width: Math.abs(x1 - x0),
+    height: Math.abs(y1 - y0),
+  };
+}
+
+/**
+ * Sol-üst köşesi `point` olan, PDF point cinsinden sabit boyutlu normalize dikdörtgen.
+ * Sayfa sınırına taşarsa içeri kaydırılır. `pageWidthPt/pageHeightPt` görüntü
+ * uzayındaki sayfa boyutudur (page /Rotate uygulanmış).
+ * @returns {{ x: number, y: number, width: number, height: number } | null}
+ */
+export function fixedSizeNormalizedRect(point, sizePt, pageWidthPt, pageHeightPt) {
+  if (!(sizePt > 0) || !(pageWidthPt > 0) || !(pageHeightPt > 0)) return null;
+  const width = Math.min(1, sizePt / pageWidthPt);
+  const height = Math.min(1, sizePt / pageHeightPt);
+  return {
+    x: Math.min(clampUnit(point.x), 1 - width),
+    y: Math.min(clampUnit(point.y), 1 - height),
+    width,
+    height,
+  };
+}

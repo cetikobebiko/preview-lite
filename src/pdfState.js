@@ -131,12 +131,13 @@ export async function getPageAnnotations(
   );
 }
 
+// `normalizedRect`: sayfa görüntü uzayında normalize dikdörtgen (bkz. contracts.js).
 export async function addAnnotation(
   sessionId,
   generation,
   pageIndex,
   annotType,
-  rect,
+  normalizedRect,
   color,
   contents,
   context = getRuntimeFeatureContext(),
@@ -151,7 +152,7 @@ export async function addAnnotation(
           generation,
           pageIndex,
           annotType,
-          rect,
+          normalizedRect,
           color,
           contents,
         );

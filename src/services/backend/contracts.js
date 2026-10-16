@@ -94,12 +94,30 @@ const chatMessage = objectOf({
   content: stringType,
 });
 
-const annotationRect = objectOf({
-  x: numberType,
-  y: numberType,
-  width: numberType,
-  height: numberType,
+// Sayfanın görüntü uzayında (page /Rotate ve CropBox uygulanmış, viewer rotation
+// kaldırılmış) sol-üst kökenli normalize dikdörtgen. PDF user space'e dönüşüm job
+// worker'da PDFium ile yapılır; bkz. `NormalizedPageRect` (src-tauri/src/annotations.rs).
+const NORMALIZED_RECT_EPSILON = 1e-4;
+const unitIntervalType = Object.freeze({ type: "number", min: 0, max: 1 });
+const unitExtentType = Object.freeze({
+  type: "number",
+  min: Number.MIN_VALUE,
+  max: 1,
 });
+const normalizedPageRect = objectOf(
+  {
+    x: unitIntervalType,
+    y: unitIntervalType,
+    width: unitExtentType,
+    height: unitExtentType,
+  },
+  {},
+  (rect) =>
+    rect.x + rect.width > 1 + NORMALIZED_RECT_EPSILON ||
+    rect.y + rect.height > 1 + NORMALIZED_RECT_EPSILON
+      ? "normalized rect must stay inside the unit page square"
+      : null,
+);
 
 const redactionArea = objectOf({
   page_index: u32Type,
@@ -413,7 +431,7 @@ export const CONTRACTS = Object.freeze({
       expectedContentGeneration: safeIntegerType,
       pageIndex: u32Type,
       annotType: stringType,
-      rect: annotationRect,
+      normalizedRect: normalizedPageRect,
       color: stringType,
     },
     {

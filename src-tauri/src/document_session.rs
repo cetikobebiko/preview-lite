@@ -4,7 +4,7 @@
 //! Mutable working paths, credentials, recovery artifacts, and content digests stay
 //! inside this module.
 
-use crate::annotations::{self, RectData};
+use crate::annotations::{self, NormalizedPageRect};
 use crate::document_io::{
     atomic_commit_prevalidated_pdf, atomic_copy_pdf, same_persistence_target, sha256_file,
     AtomicWriteReport, CommitState, DocumentIoError, DocumentIoStage, TargetExpectation,
@@ -9181,6 +9181,8 @@ pub async fn insert_session_blank_page(
     Ok(snapshot)
 }
 
+/// `normalized_rect` sayfanın görüntü uzayındadır (bkz. [`NormalizedPageRect`]); PDF user
+/// space'e dönüşüm job worker'da PDFium ile yapılır.
 #[tauri::command]
 // Tauri IPC contract intentionally exposes each frontend field as a top-level argument.
 #[allow(clippy::too_many_arguments)]
@@ -9189,7 +9191,7 @@ pub async fn add_session_annotation(
     expected_content_generation: u64,
     page_index: u32,
     annot_type: String,
-    rect: RectData,
+    normalized_rect: NormalizedPageRect,
     color: String,
     contents: Option<String>,
     store: State<'_, DocumentSessionStore>,
@@ -9202,7 +9204,7 @@ pub async fn add_session_annotation(
             MutationRecipe::AddAnnotation {
                 page_index,
                 annot_type,
-                rect,
+                normalized_rect,
                 color,
                 contents,
             },

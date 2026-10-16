@@ -103,7 +103,7 @@
     {
       "featureId": "annotation",
       "fixtureId": "core-annotations",
-      "testId": "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+      "testId": "rust_unit:annotations::document_io_annotation_add_and_delete_are_atomic",
       "relation": "direct",
       "dimensions": [
         "positive",
@@ -112,7 +112,7 @@
       "evidence": {
         "sourcePath": "src-tauri/src/annotations.rs",
         "verificationType": "unit_assertion",
-        "notes": "Direct annotation mutation and atomic save on annotations.pdf"
+        "notes": "Direct annotation add and delete on annotations.pdf, each committed in place via atomic_write_pdf and re-read from disk"
       }
     },
     {
@@ -1934,7 +1934,7 @@
     {
       "featureId": "atomic_save_persistence",
       "fixtureId": "core-annotations",
-      "testId": "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+      "testId": "rust_unit:annotations::document_io_annotation_add_and_delete_are_atomic",
       "relation": "direct",
       "dimensions": [
         "positive",
@@ -1943,7 +1943,7 @@
       "evidence": {
         "sourcePath": "src-tauri/src/annotations.rs",
         "verificationType": "unit_assertion",
-        "notes": "Direct atomic annotation save on annotations.pdf"
+        "notes": "Direct in-place atomic commits (atomic_write_pdf) of annotation add and delete on annotations.pdf, verified by reopening the file"
       }
     },
     {
@@ -2273,7 +2273,7 @@
       "testIds": [
         "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
         "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
-        "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+        "rust_unit:annotations::document_io_annotation_add_and_delete_are_atomic",
         "rust_unit:annotations::document_io_invalid_annotation_id_preserves_original_bytes",
         "rust_unit:annotations::document_io_invalid_annotation_type_preserves_original_bytes"
       ],
@@ -3118,7 +3118,7 @@
       ],
       "testIds": [
         "rust:b4_integration_gaps::b4_atomic_save_persistence_merge_roundtrip_verifies_digest_and_no_original_corruption",
-        "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+        "rust_unit:annotations::document_io_annotation_add_and_delete_are_atomic",
         "rust_unit:document_session::clean_save_and_canonical_same_target_save_as_are_identical_no_ops",
         "rust_unit:document_session::isolated_mutation_validates_before_atomic_commit_and_advances_generation",
         "rust_unit:document_session::open_mutate_save_preserves_original_until_commit_and_cleans_dirty",
@@ -3328,7 +3328,7 @@
       "sourcePath": "src-tauri/src/manipulation.rs"
     },
     {
-      "id": "rust_unit:annotations::document_io_annotation_add_delete_and_same_path_save_are_atomic",
+      "id": "rust_unit:annotations::document_io_annotation_add_and_delete_are_atomic",
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/annotations.rs"

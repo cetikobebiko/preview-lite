@@ -1,4 +1,4 @@
-use crate::annotations::RectData;
+use crate::annotations::NormalizedPageRect;
 use crate::document_session::{SessionJobContext, SessionJobOperationError};
 use crate::prepress::{
     PrepressResultIdentity, PrintResourceInspectionReport, RgbDerivedCoveragePreview,
@@ -56,7 +56,8 @@ pub enum MutationRecipe {
     AddAnnotation {
         page_index: u32,
         annot_type: String,
-        rect: RectData,
+        /// Sayfa görüntü uzayında normalize dikdörtgen; bkz. [`NormalizedPageRect`].
+        normalized_rect: NormalizedPageRect,
         color: String,
         contents: Option<String>,
     },
@@ -1398,13 +1399,19 @@ fn execute_mutation(
         MutationRecipe::AddAnnotation {
             page_index,
             annot_type,
-            rect,
+            normalized_rect,
             color,
             contents,
         } => {
             copy_mutation_input(snapshot_path, output_path)?;
             crate::annotations::add_annotation_report(
-                output, page_index, annot_type, rect, color, contents, password,
+                output,
+                page_index,
+                annot_type,
+                normalized_rect,
+                color,
+                contents,
+                password,
             )
         }
         MutationRecipe::DeleteAnnotation {
@@ -2136,6 +2143,71 @@ mod tests {
             assert_eq!(f.code, "SESSION_JOB_WORKER_PROTOCOL_ERROR");
         } else {
             panic!("Expected SessionJobOperationError::Failed");
+        }
+    }
+
+    #[test]
+    fn add_annotation_mutation_round_trips_rect_through_job_worker_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf/annotations.pdf"),
+            &snapshot,
+        )
+        .unwrap();
+        // Asimetrik rect: x≠y ve width≠height olmalı ki eksen takası yakalansın.
+        // 612x792 sayfada user space [100 500 150 520]'ye denk gelir.
+        let rect = crate::annotations::NormalizedPageRect {
+            x: 100.0 / 612.0,
+            y: 272.0 / 792.0,
+            width: 50.0 / 612.0,
+            height: 20.0 / 792.0,
+        };
+
+        for (index, annot_type) in ["Highlight", "Underline", "Text"].into_iter().enumerate() {
+            let output_name = format!("annotation-{index}.pdf");
+            let result = execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "annotation-round-trip-job",
+                "annotation-round-trip-session",
+                JobCommand::MutatePdf {
+                    recipe: MutationRecipe::AddAnnotation {
+                        page_index: 0,
+                        annot_type: annot_type.to_string(),
+                        normalized_rect: rect.clone(),
+                        color: "#FFCC00".to_string(),
+                        contents: Some(format!("{annot_type} worker round-trip")),
+                    },
+                    output_name: output_name.clone(),
+                },
+            )
+            .unwrap_or_else(|error| panic!("{annot_type} mutation başarısız: {error:?}"));
+            let output = directory.path().join(&output_name);
+            assert!(matches!(result, JobResult::File(ref path) if path == &output));
+
+            let annotations = crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+                let document = pdfium
+                    .load_pdf_from_file(&output, None)
+                    .map_err(|error| error.to_string())?;
+                crate::annotations::read_page_annotations(&document, 0)
+            })
+            .unwrap();
+            let added = annotations.last().unwrap();
+            assert_eq!(added.annot_type, annot_type);
+            let read = added.normalized_rect.as_ref().unwrap();
+            for (field, read, written) in [
+                ("x", read.x, rect.x),
+                ("y", read.y, rect.y),
+                ("width", read.width, rect.width),
+                ("height", read.height, rect.height),
+            ] {
+                assert!(
+                    (read - written).abs() <= 1e-5,
+                    "{annot_type} {field}: okunan {read}, yazılan {written}"
+                );
+            }
         }
     }
 }

@@ -179,6 +179,46 @@ describe("validated backend client", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("accepts only unit-square display-space annotation rects", async () => {
+    const base = {
+      sessionId: "document",
+      expectedContentGeneration: 1,
+      pageIndex: 0,
+      annotType: "Highlight",
+      color: "#FFCC00",
+    };
+    invokeMock.mockResolvedValue({});
+    await callBackend("addSessionAnnotation", {
+      ...base,
+      normalizedRect: { x: 0.25, y: 0.5, width: 0.75, height: 0.5 },
+    });
+    expect(invokeMock).toHaveBeenCalledWith("add_session_annotation", {
+      ...base,
+      normalizedRect: { x: 0.25, y: 0.5, width: 0.75, height: 0.5 },
+    });
+    invokeMock.mockReset();
+
+    for (const [normalizedRect, field] of [
+      // Eski sözleşmenin PDF point değerleri.
+      [{ x: 100, y: 500, width: 50, height: 20 }, "x"],
+      [{ x: -0.1, y: 0.1, width: 0.2, height: 0.2 }, "x"],
+      [{ x: 0.1, y: 0.1, width: 0, height: 0.2 }, "width"],
+      [{ x: 0.9, y: 0.1, width: 0.2, height: 0.2 }, "unit page square"],
+      [{ x: 0.1, y: 0.9, width: 0.2, height: 0.2 }, "unit page square"],
+    ]) {
+      await expect(
+        callBackend("addSessionAnnotation", { ...base, normalizedRect }),
+      ).rejects.toMatchObject({ message: expect.stringContaining(field) });
+    }
+    await expect(
+      callBackend("addSessionAnnotation", {
+        ...base,
+        rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("rect: unknown field") });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("requires a valid session identifier and allows idempotent deactivation", async () => {
     await expect(
       callBackend("setActiveSessionRenderDocument", {

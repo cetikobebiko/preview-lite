@@ -934,7 +934,7 @@
                   {sessionId}
                   contentGeneration={documentGenerationId}
                     {pageIndex}
-                    {scale}
+                    rotation={normalizedRotation}
                     pageWidth={unscaledWidth}
                     pageHeight={unscaledHeight}
                     {activeTool}

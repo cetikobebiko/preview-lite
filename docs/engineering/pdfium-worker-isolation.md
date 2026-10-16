@@ -327,6 +327,39 @@ Render cache keys continue to include session identity, content generation, page
 rotation, and render scope. A worker restart alone does not change content generation or require
 cache invalidation.
 
+### Annotation coordinate contract
+
+`add_session_annotation` (`normalizedRect`) and `get_session_page_annotations`
+(`normalized_rect`) exchange rectangles in the page's **display space**: the bitmap PDFium
+renders for the page with its own `/Rotate` and CropBox applied and no viewer rotation. The origin
+is the top-left corner, y grows downward, and values are normalized to `[0, 1]` by the display
+width/height (`NormalizedPageRect` in `src-tauri/src/annotations.rs`; validated in
+`src/services/backend/contracts.js` and again before any write).
+
+Normalized values rather than display-space PDF points were chosen because the frontend only knows
+the page size through the rounded render bitmap (`baseImgWidth / lastRenderedScale`), while the
+annotation overlay's layout box is exactly the display space. Normalized coordinates therefore need
+no page size on the frontend, stay independent of zoom and device pixel ratio, and match the
+existing top-left normalized text-layout convention. The only point-based value left in the
+frontend is the 24 pt default size of a click-placed note.
+
+The display ↔ PDF user space conversion happens only where PDFium already has the snapshot open:
+in the job worker for writes (`add_annotation_report`) and in the session worker for reads
+(`read_page_annotations`). `PageDisplayTransform` samples `FPDF_DeviceToPage` (pdfium-render
+`pixels_to_points`) at three corners of an unrotated device rectangle, so `/Rotate`, CropBox
+origin, and MediaBox fallback come from PDFium's own display matrix instead of formulas. Reads map
+`/Rect` back through the inverse of that same affine transform.
+
+On the frontend, `clientPointToLayerNormalized` (`src/utils/pdfGeometry.js`) maps pointer
+coordinates into the annotation layer's untransformed local box. It rotates around the layer's
+bounding-box centre by the inverse viewer rotation, divides by the total scale measured from the
+bounding box, and so absorbs `scale(cssScale)` and the canvas container's `scale(visualScale)`.
+
+Known limits: the annotation `/Rect` is axis-aligned in user space, so text-markup QuadPoints
+assume text runs along the user-space x axis. Text-layout extraction (`extract_text_layout`)
+normalizes user-space character bounds by the display page size without applying `/Rotate` or the
+CropBox origin, so its output is not yet in this display space.
+
 ## Timeout and cancellation
 
 | Command class | Timeout |

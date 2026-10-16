@@ -242,7 +242,7 @@ export const addSessionAnnotation = (
   expectedContentGeneration,
   pageIndex,
   annotType,
-  rect,
+  normalizedRect,
   color,
   contents,
 ) =>
@@ -251,7 +251,7 @@ export const addSessionAnnotation = (
     expectedContentGeneration,
     pageIndex,
     annotType,
-    rect,
+    normalizedRect,
     color,
     contents,
   });

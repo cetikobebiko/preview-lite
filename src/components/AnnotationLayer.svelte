@@ -2,27 +2,40 @@
   import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { getPageAnnotations, addAnnotation, deleteAnnotation } from "../pdfState.js";
   import { requireAsyncPromptCoordinator } from "../services/asyncPrompt.svelte.js";
+  import {
+    clientPointToLayerNormalized,
+    fixedSizeNormalizedRect,
+    normalizedRectBetween,
+  } from "../utils/pdfGeometry.js";
 
+  // Koordinat sözleşmesi: bu katmanın yerel kutusu sayfanın görüntü uzayıdır (page
+  // /Rotate uygulanmış, viewer rotation kaldırılmış). Çizim, önizleme ve backend'e
+  // giden/gelen dikdörtgenler bu uzayda sol-üst kökenli normalize [0..1] değerlerdir;
+  // PDF user space'e dönüşüm job worker'da PDFium ile yapılır.
   let {
     sessionId = "",
     contentGeneration = 0,
     pageIndex = 0,
-    scale = 1.0,
+    // Üst kaba uygulanan CSS rotate() açısı (viewer rotation).
+    rotation = 0,
+    // Görüntü uzayında sayfa boyutu (pt); yalnız sabit boyutlu not için.
     pageWidth = 0,
     pageHeight = 0,
     activeTool = "pointer",
     activeColor = "#facc15",
     onsessionSnapshot,
   } = $props();
-  
+
+  const NOTE_SIZE_PT = 24;
+  const MIN_DRAG_PX = 5;
+
   const asyncPrompt = requireAsyncPromptCoordinator();
 
   let annotations = $state([]);
   let isDrawing = $state(false);
-  let startX = $state(0);
-  let startY = $state(0);
+  let startPoint = $state(null);
   let currentRect = $state(null);
-  
+
   let layerRef = $state();
 
   $effect(() => {
@@ -45,59 +58,48 @@
     }
   }
 
-  // PDF koordinatlarını DOM koordinatlarına dönüştür (Yüzde bazlı)
-  function pdfToDomRect(pdfRect) {
-    if (!pdfRect || !pageWidth || !pageHeight) return { left: 0, top: 0, width: 0, height: 0 };
-    return {
-      left: (pdfRect.x / pageWidth) * 100,
-      top: ((pageHeight - pdfRect.y - pdfRect.height) / pageHeight) * 100,
-      width: (pdfRect.width / pageWidth) * 100,
-      height: (pdfRect.height / pageHeight) * 100
-    };
+  function percentStyle(rect) {
+    if (!rect) return "left: 0%; top: 0%; width: 0%; height: 0%;";
+    return `left: ${rect.x * 100}%; top: ${rect.y * 100}%; width: ${rect.width * 100}%; height: ${rect.height * 100}%;`;
   }
 
-  // DOM koordinatlarını PDF koordinatlarına dönüştür (Pixel bazlı girişten)
-  function domToPdfRect(domRect) {
-    let x = domRect.left / scale;
-    let width = domRect.width / scale;
-    let height = domRect.height / scale;
-    let y = pageHeight - (domRect.top / scale) - height; // bottom
-    return { x, y, width, height };
+  function localPoint(event) {
+    return clientPointToLayerNormalized(event.clientX, event.clientY, {
+      boundingRect: layerRef.getBoundingClientRect(),
+      localWidth: layerRef.offsetWidth,
+      localHeight: layerRef.offsetHeight,
+      rotation,
+    });
   }
 
   function handlePointerDown(e) {
     if (activeTool === "pointer") return;
     if (e.button !== 0) return; // Sadece sol tık
 
-    const rect = layerRef.getBoundingClientRect();
-    startX = e.clientX - rect.left;
-    startY = e.clientY - rect.top;
+    const point = localPoint(e);
+    if (!point) return;
+    startPoint = point;
     isDrawing = true;
-
-    currentRect = { left: startX, top: startY, width: 0, height: 0 };
+    currentRect = normalizedRectBetween(point, point);
   }
 
   function handlePointerMove(e) {
     if (!isDrawing || activeTool === "pointer") return;
-    
-    const rect = layerRef.getBoundingClientRect();
-    const currentX = e.clientX - rect.left;
-    const currentY = e.clientY - rect.top;
-    
-    const left = Math.min(startX, currentX);
-    const top = Math.min(startY, currentY);
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
-    
-    currentRect = { left, top, width, height };
+
+    const point = localPoint(e);
+    if (point) currentRect = normalizedRectBetween(startPoint, point);
   }
 
-  async function handlePointerUp(e) {
+  async function handlePointerUp() {
     if (!isDrawing) return;
     isDrawing = false;
-    
-    if (currentRect && currentRect.width > 5 && currentRect.height > 5) {
-      const pdfRect = domToPdfRect(currentRect);
+
+    const isDrag =
+      currentRect &&
+      currentRect.width * layerRef.offsetWidth > MIN_DRAG_PX &&
+      currentRect.height * layerRef.offsetHeight > MIN_DRAG_PX;
+    if (isDrag) {
+      const normalizedRect = { ...currentRect };
       const annotType = activeTool === "highlight" ? "Highlight" 
                       : activeTool === "underline" ? "Underline" 
                       : activeTool === "text" ? "Text" 
@@ -121,7 +123,7 @@
           contentGeneration,
           pageIndex,
           annotType,
-          pdfRect,
+          normalizedRect,
           activeColor,
           contents,
         );
@@ -133,18 +135,25 @@
       }
     } else if (activeTool === "text") {
        // Küçük tıklama ise sabit boyutlu not ekle
-       const pdfRect = domToPdfRect({ left: startX, top: startY, width: 24, height: 24 });
-       const contents = await asyncPrompt.request({
-         title: "Not Açıklaması",
-         label: "Notunuz",
-       });
+       const normalizedRect = fixedSizeNormalizedRect(
+         startPoint,
+         NOTE_SIZE_PT,
+         pageWidth,
+         pageHeight,
+       );
+       const contents = normalizedRect
+         ? await asyncPrompt.request({
+             title: "Not Açıklaması",
+             label: "Notunuz",
+           })
+         : null;
        if (contents) {
          const sessionSnapshot = await addAnnotation(
            sessionId,
            contentGeneration,
            pageIndex,
            "Text",
-           pdfRect,
+           normalizedRect,
            activeColor,
            contents,
          );
@@ -191,11 +200,10 @@
   onpointerup={handlePointerUp}
 >
   {#each annotations as ann (ann.id)}
-    {@const domRect = pdfToDomRect(ann.rect)}
     <button
       type="button"
       class="annot-item {ann.annot_type.toLowerCase()}"
-      style="left: {domRect.left}%; top: {domRect.top}%; width: {domRect.width}%; height: {domRect.height}%; --annot-color: {ann.color}"
+      style="{percentStyle(ann.normalized_rect)} --annot-color: {ann.color}"
       title={ann.contents || ann.annot_type}
       onclick={(event) => {
         event.stopPropagation();
@@ -213,7 +221,7 @@
   {#if currentRect}
     <div 
       class="annot-preview {activeTool}"
-      style="left: {currentRect.left}px; top: {currentRect.top}px; width: {currentRect.width}px; height: {currentRect.height}px; --annot-color: {activeColor}"
+      style="{percentStyle(currentRect)} --annot-color: {activeColor}"
     ></div>
   {/if}
 </div>
