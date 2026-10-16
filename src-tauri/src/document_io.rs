@@ -358,24 +358,32 @@ fn metadata_link_count(metadata: &Metadata) -> Option<u64> {
     Some(metadata.nlink())
 }
 
-#[cfg(not(unix))]
+// Windows reads identity and link count from an open handle instead
+// (windows_identity_and_link_count), so these fallbacks exclude it.
+#[cfg(not(any(unix, windows)))]
 fn metadata_identity(_metadata: &Metadata) -> Option<FileIdentity> {
     None
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn metadata_link_count(_metadata: &Metadata) -> Option<u64> {
     None
 }
 
 #[cfg(windows)]
 fn windows_identity_and_link_count(path: &Path) -> Result<(FileIdentity, u64), String> {
+    use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
     };
 
-    let file = File::open(path)
+    // Identity needs no data access. An attribute-only handle (access mask 0,
+    // as std::fs::metadata uses) is not subject to other openers' share modes,
+    // so a reader holding the document open cannot fail identity checks.
+    let file = fs::OpenOptions::new()
+        .access_mode(0)
+        .open(path)
         .map_err(|error| format!("Windows file identity handle açılamadı: {error}"))?;
     let mut information = BY_HANDLE_FILE_INFORMATION::default();
     let succeeded =
@@ -653,7 +661,20 @@ fn apply_target_permissions(
 }
 
 fn sync_temp(path: &Path) -> Result<(), std::io::Error> {
-    File::open(path)?.sync_all()
+    open_for_flush(path)?.sync_all()
+}
+
+/// Windows File::sync_all is FlushFileBuffers, which requires GENERIC_WRITE;
+/// a read-only handle fails with ERROR_ACCESS_DENIED. Unix fsync works on a
+/// read-only descriptor, and the temp may already carry a read-only target mode.
+#[cfg(windows)]
+fn open_for_flush(path: &Path) -> Result<File, std::io::Error> {
+    fs::OpenOptions::new().write(true).open(path)
+}
+
+#[cfg(not(windows))]
+fn open_for_flush(path: &Path) -> Result<File, std::io::Error> {
+    File::open(path)
 }
 
 pub(crate) fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
@@ -689,6 +710,487 @@ fn sync_parent_directory(_parent: &Path) -> Result<DirectoryDurability, std::io:
 #[cfg(not(any(unix, windows)))]
 fn sync_parent_directory(_parent: &Path) -> Result<DirectoryDurability, std::io::Error> {
     Ok(DirectoryDurability::Unsupported)
+}
+
+const ATOMIC_WRITE_PREFIX: &str = ".antigravity-write-";
+
+/// Stage at which [`write_atomically`] failed. Every variant leaves `target`
+/// untouched; `Write` carries the caller's own error.
+#[derive(Debug)]
+pub(crate) enum AtomicWriteError<E> {
+    CreateTemp(std::io::Error),
+    Write(E),
+    Sync(std::io::Error),
+    Persist(std::io::Error),
+}
+
+impl<E: fmt::Display> fmt::Display for AtomicWriteError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Write(error) => error.fmt(formatter),
+            Self::CreateTemp(error) | Self::Sync(error) | Self::Persist(error) => {
+                error.fmt(formatter)
+            }
+        }
+    }
+}
+
+/// Writes a non-PDF-transaction output (image, job artifact) through a sibling
+/// temp file: `write` fills it, the temp is fsynced, then renamed over `target`.
+/// A failure at any stage removes the temp and leaves an existing `target` as it
+/// was. On Unix an existing target's permission bits are kept; a new target gets
+/// the umask default, as a direct `File::create` would. A symlinked target is
+/// resolved and the file it points to is replaced, leaving the link intact; a
+/// dangling or looping link is refused because its destination cannot be checked.
+///
+/// This is not a PDF document transaction: there is no path lock, snapshot
+/// revalidation, or post-commit verification (see [`atomic_write_pdf`]).
+pub(crate) fn write_atomically<E>(
+    target: &Path,
+    write: impl FnOnce(&mut File) -> Result<(), E>,
+) -> Result<(), AtomicWriteError<E>> {
+    let resolved;
+    let target = match fs::symlink_metadata(target) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            resolved = fs::canonicalize(target).map_err(|error| {
+                AtomicWriteError::CreateTemp(std::io::Error::new(
+                    error.kind(),
+                    format!("hedef sembolik bağı çözümlenemedi: {error}"),
+                ))
+            })?;
+            resolved.as_path()
+        }
+        _ => target,
+    };
+    let parent = match target.parent() {
+        Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+        Some(parent) => parent,
+        None => {
+            return Err(AtomicWriteError::CreateTemp(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "hedef dizini çözümlenemedi",
+            )))
+        }
+    };
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(ATOMIC_WRITE_PREFIX);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    let mut staged = builder
+        .tempfile_in(parent)
+        .map_err(AtomicWriteError::CreateTemp)?;
+    #[cfg(unix)]
+    if let Ok(existing) = fs::metadata(target) {
+        if existing.is_file() {
+            fs::set_permissions(staged.path(), existing.permissions())
+                .map_err(AtomicWriteError::CreateTemp)?;
+        }
+    }
+    write(staged.as_file_mut()).map_err(AtomicWriteError::Write)?;
+    staged
+        .as_file_mut()
+        .sync_all()
+        .map_err(AtomicWriteError::Sync)?;
+    staged
+        .persist(target)
+        .map_err(|error| AtomicWriteError::Persist(error.error))?;
+    // The rename is already visible; a failed directory fsync must not be
+    // reported as if the previous target were still in place.
+    let _ = sync_parent_directory(parent);
+    Ok(())
+}
+
+const OUTPUT_SET_BACKUP_PREFIX: &str = ".antigravity-backup-";
+
+/// Phase in which [`publish_output_set`] calls its checkpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OutputSetPhase {
+    Stage,
+    Commit,
+}
+
+/// One file of a multi-file output: `source` is copied to `target`.
+#[derive(Clone, Debug)]
+pub(crate) struct OutputSetEntry {
+    pub(crate) source: PathBuf,
+    pub(crate) target: PathBuf,
+}
+
+/// Why [`publish_output_set`] did not publish. Except for `RollbackFailed`,
+/// every variant leaves the target directories as they were before the call.
+// The PDFium-free `document_io_fs` target has no session caller to read the payloads.
+#[cfg_attr(test, allow(dead_code))]
+#[derive(Debug)]
+pub(crate) enum OutputSetError<E> {
+    /// Targets that already exist while overwrite was not allowed. Nothing was
+    /// written. Also reported, after rollback, when a target appears during commit.
+    Conflict(Vec<PathBuf>),
+    /// Existing entries that are not regular files (directory, symlink, reparse
+    /// point). They are never replaced, even with overwrite.
+    UnsupportedTarget(Vec<PathBuf>),
+    InvalidPlan(String),
+    /// The checkpoint stopped the publish; everything was rolled back.
+    Interrupted(E),
+    /// An I/O step failed; everything was rolled back.
+    Io {
+        target: PathBuf,
+        error: std::io::Error,
+    },
+    /// Rolling back after `cause` did not complete; `failures` names what is
+    /// left behind, including the path of any backup kept for a target that
+    /// could not be restored.
+    RollbackFailed {
+        cause: Box<OutputSetError<E>>,
+        failures: Vec<String>,
+    },
+}
+
+fn output_set_parent(target: &Path) -> &Path {
+    match target.parent() {
+        Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+        Some(parent) => parent,
+        None => Path::new("."),
+    }
+}
+
+/// Classifies the targets of an output set without writing anything. Returns,
+/// per target, whether an existing regular file would be replaced.
+pub(crate) fn inspect_output_set_targets<E>(
+    targets: &[PathBuf],
+    overwrite: bool,
+) -> Result<Vec<bool>, OutputSetError<E>> {
+    let mut seen = BTreeSet::new();
+    for target in targets {
+        if target.file_name().is_none() {
+            return Err(OutputSetError::InvalidPlan(format!(
+                "çıktı hedefi dosya adı taşımıyor: {}",
+                target.display()
+            )));
+        }
+        if !seen.insert(target) {
+            return Err(OutputSetError::InvalidPlan(format!(
+                "aynı çıktı hedefi birden fazla kez planlandı: {}",
+                target.display()
+            )));
+        }
+    }
+    let mut replaces = Vec::with_capacity(targets.len());
+    let mut existing = Vec::new();
+    let mut unsupported = Vec::new();
+    for target in targets {
+        match fs::symlink_metadata(target) {
+            Ok(metadata) => {
+                if !metadata.file_type().is_file() || is_reparse_point(&metadata) {
+                    unsupported.push(target.clone());
+                }
+                existing.push(target.clone());
+                replaces.push(true);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => replaces.push(false),
+            Err(error) => {
+                return Err(OutputSetError::Io {
+                    target: target.clone(),
+                    error,
+                })
+            }
+        }
+    }
+    // Reported in both modes so the user is never asked to confirm an
+    // overwrite that cannot happen.
+    if !unsupported.is_empty() {
+        return Err(OutputSetError::UnsupportedTarget(unsupported));
+    }
+    if !overwrite && !existing.is_empty() {
+        return Err(OutputSetError::Conflict(existing));
+    }
+    Ok(replaces)
+}
+
+fn stage_output_entry(
+    entry: &OutputSetEntry,
+    replaces: bool,
+) -> Result<tempfile::NamedTempFile, std::io::Error> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(ATOMIC_WRITE_PREFIX);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    let mut staged = builder.tempfile_in(output_set_parent(&entry.target))?;
+    #[cfg(unix)]
+    if replaces {
+        fs::set_permissions(staged.path(), fs::metadata(&entry.target)?.permissions())?;
+    }
+    let _ = replaces;
+    let mut source = File::open(&entry.source)?;
+    std::io::copy(&mut source, staged.as_file_mut())?;
+    staged.as_file_mut().sync_all()?;
+    Ok(staged)
+}
+
+/// Keeps the previous content of a target that is about to be replaced. A hard
+/// link keeps the original file itself, so restoring it is a single rename;
+/// filesystems without hard links (FAT/exFAT, some network shares) get a copy.
+fn backup_output_target(target: &Path) -> Result<TempPath, std::io::Error> {
+    let parent = output_set_parent(target);
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(OUTPUT_SET_BACKUP_PREFIX);
+    if let Ok(linked) = builder.make_in(parent, |path| fs::hard_link(target, path)) {
+        return Ok(linked.into_temp_path());
+    }
+    let mut copy = builder.tempfile_in(parent)?;
+    let mut original = File::open(target)?;
+    std::io::copy(&mut original, copy.as_file_mut())?;
+    #[cfg(unix)]
+    fs::set_permissions(copy.path(), original.metadata()?.permissions())?;
+    copy.as_file_mut().sync_all()?;
+    Ok(copy.into_temp_path())
+}
+
+/// Publishes `staged` to a target that did not exist at inspection time
+/// without replacing anything that appeared since. Filesystems that support
+/// neither an exclusive rename nor hard links fall back to an existence check
+/// followed by a plain rename, which leaves a narrow race window.
+fn persist_new_output(
+    staged: tempfile::NamedTempFile,
+    target: &Path,
+) -> Result<(), tempfile::PersistError> {
+    match staged.persist_noclobber(target) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => Err(error),
+        Err(error) => {
+            if fs::symlink_metadata(target).is_ok() {
+                return Err(tempfile::PersistError {
+                    error: std::io::Error::from(std::io::ErrorKind::AlreadyExists),
+                    file: error.file,
+                });
+            }
+            error.file.persist(target).map(drop)
+        }
+    }
+}
+
+fn sync_output_set_parents(entries: &[OutputSetEntry]) {
+    let parents: BTreeSet<&Path> = entries
+        .iter()
+        .map(|entry| output_set_parent(&entry.target))
+        .collect();
+    for parent in parents {
+        let _ = sync_parent_directory(parent);
+    }
+}
+
+/// Undoes the first `committed` publications in reverse order: new targets are
+/// removed and replaced targets get their backup renamed back.
+fn rollback_output_set<E>(
+    entries: &[OutputSetEntry],
+    replaces: &[bool],
+    backups: &mut [Option<TempPath>],
+    committed: usize,
+    cause: OutputSetError<E>,
+) -> OutputSetError<E> {
+    let mut failures = Vec::new();
+    for index in (0..committed).rev() {
+        let target = &entries[index].target;
+        if !replaces[index] {
+            if let Err(error) = fs::remove_file(target) {
+                failures.push(format!(
+                    "{} kaldırılamadı: {error}",
+                    target.display()
+                ));
+            }
+            continue;
+        }
+        let Some(backup) = backups[index].take() else {
+            continue;
+        };
+        if let Err(error) = backup.persist(target) {
+            let kept = match error.path.keep() {
+                Ok(path) => path.display().to_string(),
+                Err(keep_error) => format!("yedek korunamadı: {}", keep_error.error),
+            };
+            failures.push(format!(
+                "{} geri yüklenemedi ({}); önceki içerik: {kept}",
+                target.display(),
+                error.error
+            ));
+        }
+    }
+    sync_output_set_parents(entries);
+    if failures.is_empty() {
+        cause
+    } else {
+        OutputSetError::RollbackFailed {
+            cause: Box::new(cause),
+            failures,
+        }
+    }
+}
+
+/// Publishes a set of output files all-or-nothing.
+///
+/// Targets are inspected first; with `overwrite == false` any existing target is
+/// a [`OutputSetError::Conflict`] and nothing is written. Every source is then
+/// copied to a hidden, fsynced temp file beside its target, and only after all
+/// of them are staged are they renamed into place one by one. Targets that did
+/// not exist are created with a no-clobber rename, so a file that appears after
+/// inspection is never replaced. Targets being overwritten are first preserved
+/// as hidden backups; if any later step fails, already published files are
+/// removed and backups are renamed back, then the backups are discarded.
+///
+/// `checkpoint` runs before each entry is staged and before each is committed;
+/// an error from it rolls back like any other failure.
+///
+/// Like [`write_atomically`] this is not a PDF document transaction. A process
+/// abort or crash during commit can leave a partial set, hidden temps, or
+/// backups behind; they are not scavenged by name.
+pub(crate) fn publish_output_set<E>(
+    entries: &[OutputSetEntry],
+    overwrite: bool,
+    mut checkpoint: impl FnMut(OutputSetPhase, usize) -> Result<(), E>,
+) -> Result<(), OutputSetError<E>> {
+    let targets: Vec<PathBuf> = entries.iter().map(|entry| entry.target.clone()).collect();
+    let replaces = inspect_output_set_targets(&targets, overwrite)?;
+
+    let mut staged = Vec::with_capacity(entries.len());
+    for (index, (entry, &replace)) in entries.iter().zip(&replaces).enumerate() {
+        checkpoint(OutputSetPhase::Stage, index).map_err(OutputSetError::Interrupted)?;
+        let file = stage_output_entry(entry, replace).map_err(|error| OutputSetError::Io {
+            target: entry.target.clone(),
+            error,
+        })?;
+        staged.push(Some(file));
+    }
+    let mut backups = Vec::with_capacity(entries.len());
+    for (entry, &replace) in entries.iter().zip(&replaces) {
+        let backup = if replace {
+            Some(
+                backup_output_target(&entry.target).map_err(|error| OutputSetError::Io {
+                    target: entry.target.clone(),
+                    error,
+                })?,
+            )
+        } else {
+            None
+        };
+        backups.push(backup);
+    }
+
+    for (index, entry) in entries.iter().enumerate() {
+        if let Err(error) = checkpoint(OutputSetPhase::Commit, index) {
+            return Err(rollback_output_set(
+                entries,
+                &replaces,
+                &mut backups,
+                index,
+                OutputSetError::Interrupted(error),
+            ));
+        }
+        let file = staged[index].take().expect("each entry is staged once");
+        let result = if replaces[index] {
+            file.persist(&entry.target).map(drop)
+        } else {
+            persist_new_output(file, &entry.target)
+        };
+        if let Err(error) = result {
+            let cause = if !replaces[index] && error.error.kind() == std::io::ErrorKind::AlreadyExists
+            {
+                OutputSetError::Conflict(vec![entry.target.clone()])
+            } else {
+                OutputSetError::Io {
+                    target: entry.target.clone(),
+                    error: error.error,
+                }
+            };
+            return Err(rollback_output_set(
+                entries,
+                &replaces,
+                &mut backups,
+                index,
+                cause,
+            ));
+        }
+    }
+    sync_output_set_parents(entries);
+    // Every target now holds its new content; a backup that cannot be removed
+    // is a hidden copy of the old content, not a failed publish.
+    for backup in backups.into_iter().flatten() {
+        let _ = backup.close();
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommittedBackupDisposition {
+    Remove,
+    Retain { reason: &'static str },
+}
+
+/// Decides the fate of a platform recovery backup once the committed target
+/// has already matched the validated replacement by identity and digest.
+///
+/// The backup only protects the replace call itself; after verification it is
+/// a full copy of the previous document (possibly redacted or deleted content)
+/// sitting next to the user's file. An unsupported durability model is a known
+/// platform limitation, not an observed failure, so the backup is removed while
+/// the commit state stays `NewCommittedDurabilityUnconfirmed`. An observed
+/// directory sync failure keeps the backup for recovery.
+fn committed_backup_disposition(
+    directory_sync: &Result<DirectoryDurability, std::io::Error>,
+) -> CommittedBackupDisposition {
+    match directory_sync {
+        Ok(DirectoryDurability::Confirmed | DirectoryDurability::Unsupported) => {
+            CommittedBackupDisposition::Remove
+        }
+        Err(_) => CommittedBackupDisposition::Retain {
+            reason: "directory_sync_failed",
+        },
+    }
+}
+
+fn flush_committed_target(target: &Path) -> Result<(), std::io::Error> {
+    open_for_flush(target)?.sync_all()
+}
+
+/// Returns the backup path when it is still on disk after disposition.
+fn dispose_committed_backup(
+    operation: &str,
+    target: &Path,
+    backup: PathBuf,
+    disposition: CommittedBackupDisposition,
+) -> Option<PathBuf> {
+    match disposition {
+        CommittedBackupDisposition::Remove => match fs::remove_file(&backup) {
+            Ok(()) => None,
+            Err(error) => {
+                tracing::warn!(
+                    code = "DOCUMENT_IO_COMMITTED_BACKUP_RETAINED",
+                    operation,
+                    target = %target.display(),
+                    recovery_path = %backup.display(),
+                    reason = "remove_failed",
+                    error = %error,
+                    "Commit doğrulandı ancak recovery backup silinemedi"
+                );
+                Some(backup)
+            }
+        },
+        CommittedBackupDisposition::Retain { reason } => {
+            tracing::warn!(
+                code = "DOCUMENT_IO_COMMITTED_BACKUP_RETAINED",
+                operation,
+                target = %target.display(),
+                recovery_path = %backup.display(),
+                reason,
+                "Recovery backup otomatik silinmedi"
+            );
+            Some(backup)
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -1156,21 +1658,10 @@ where
         } else {
             sync_parent_directory(parent)
         };
+        let backup_disposition = committed_backup_disposition(&directory_sync);
         match directory_sync {
             Ok(DirectoryDurability::Confirmed) => {
                 outcome.report.state = CommitState::NewCommitted;
-                if let Some(backup) = outcome.recovery_backup.take() {
-                    if let Err(error) = fs::remove_file(&backup) {
-                        tracing::warn!(
-                            code = "DOCUMENT_IO_COMMITTED_BACKUP_RETAINED",
-                            operation,
-                            target = %target.display(),
-                            recovery_path = %backup.display(),
-                            error = %error,
-                            "Commit doğrulandı ancak recovery backup silinemedi"
-                        );
-                    }
-                }
             }
             Ok(DirectoryDurability::Unsupported) => {
                 outcome.report.state = CommitState::NewCommittedDurabilityUnconfirmed;
@@ -1180,16 +1671,6 @@ where
                     target = %target.display(),
                     "Atomic replacement doğrulandı ancak platform rename durability garantisi sunmuyor"
                 );
-                if let Some(backup) = outcome.recovery_backup.as_ref() {
-                    tracing::warn!(
-                        code = "DOCUMENT_IO_COMMITTED_BACKUP_RETAINED",
-                        operation,
-                        target = %target.display(),
-                        recovery_path = %backup.display(),
-                        reason = "durability_unconfirmed",
-                        "Recovery backup otomatik silinmedi"
-                    );
-                }
             }
             Err(error) => {
                 outcome.report.state = CommitState::NewCommittedDurabilityUnconfirmed;
@@ -1200,17 +1681,26 @@ where
                     error = %error,
                     "Atomic replacement committed but parent directory sync failed"
                 );
-                if let Some(backup) = outcome.recovery_backup.as_ref() {
+            }
+        }
+        if let Some(backup) = outcome.recovery_backup.take() {
+            if backup_disposition == CommittedBackupDisposition::Remove
+                && outcome.report.state == CommitState::NewCommittedDurabilityUnconfirmed
+            {
+                // Best effort only: a successful flush narrows the crash window
+                // before the backup disappears but never confirms rename
+                // durability, so the reported state stays unconfirmed.
+                if let Err(error) = flush_committed_target(target) {
                     tracing::warn!(
-                        code = "DOCUMENT_IO_COMMITTED_BACKUP_RETAINED",
+                        code = "DOCUMENT_IO_COMMITTED_TARGET_FLUSH_FAILED",
                         operation,
                         target = %target.display(),
-                        recovery_path = %backup.display(),
-                        reason = "directory_sync_failed",
-                        "Recovery backup otomatik silinmedi"
+                        error = %error,
+                        "Commit doğrulandı ancak target best-effort flush başarısız oldu"
                     );
                 }
             }
+            dispose_committed_backup(operation, target, backup, backup_disposition);
         }
         return Ok(outcome.report);
     }
@@ -2066,7 +2556,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(report.state, CommitState::NewCommitted);
+        // Windows has no confirmed rename durability model; never expect it.
+        let expected_state = if cfg!(windows) {
+            CommitState::NewCommittedDurabilityUnconfirmed
+        } else {
+            CommitState::NewCommitted
+        };
+        assert_eq!(report.state, expected_state);
         assert_eq!(fs::read(&target).unwrap(), b"replacement");
         assert!(temp_artifacts(dir.path()).is_empty());
     }
@@ -2487,6 +2983,7 @@ mod tests {
             &target,
             |_temp| Ok(()),
             |_temp, _| Ok(()),
+            |_| Ok(()),
         )
         .unwrap_err();
 
@@ -2520,6 +3017,7 @@ mod tests {
                 Ok(())
             },
             |_temp, _| Ok(()),
+            |_| Ok(()),
         )
         .unwrap_err();
 
@@ -2564,6 +3062,104 @@ mod tests {
     }
 
     #[test]
+    fn document_io_verified_commit_backup_removed_unless_directory_sync_failed() {
+        assert_eq!(
+            committed_backup_disposition(&Ok(DirectoryDurability::Confirmed)),
+            CommittedBackupDisposition::Remove
+        );
+        assert_eq!(
+            committed_backup_disposition(&Ok(DirectoryDurability::Unsupported)),
+            CommittedBackupDisposition::Remove
+        );
+        assert_eq!(
+            committed_backup_disposition(&Err(std::io::Error::other("sync failed"))),
+            CommittedBackupDisposition::Retain {
+                reason: "directory_sync_failed"
+            }
+        );
+    }
+
+    #[test]
+    fn document_io_committed_backup_disposition_removes_or_reports_retained_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.pdf");
+        let backup = dir.path().join(".antigravity-recovery-test.pdf.bak");
+
+        fs::write(&backup, b"original").unwrap();
+        assert_eq!(
+            dispose_committed_backup(
+                "test_backup_remove",
+                &target,
+                backup.clone(),
+                CommittedBackupDisposition::Remove,
+            ),
+            None
+        );
+        assert!(!backup.exists());
+
+        let missing = dir.path().join(".antigravity-recovery-missing.pdf.bak");
+        assert_eq!(
+            dispose_committed_backup(
+                "test_backup_remove_failed",
+                &target,
+                missing.clone(),
+                CommittedBackupDisposition::Remove,
+            ),
+            Some(missing)
+        );
+
+        fs::write(&backup, b"original").unwrap();
+        assert_eq!(
+            dispose_committed_backup(
+                "test_backup_retain",
+                &target,
+                backup.clone(),
+                CommittedBackupDisposition::Retain {
+                    reason: "directory_sync_failed"
+                },
+            ),
+            Some(backup.clone())
+        );
+        assert_eq!(fs::read(&backup).unwrap(), b"original");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn document_io_windows_verified_replace_removes_recovery_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.pdf");
+        fs::write(&target, b"original").unwrap();
+
+        let report = atomic_write_with(
+            "test_windows_backup_cleanup",
+            std::slice::from_ref(&target),
+            &target,
+            |temp| {
+                fs::write(temp, b"replacement").unwrap();
+                Ok(())
+            },
+            |_temp, _| Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(report.state, CommitState::NewCommittedDurabilityUnconfirmed);
+        assert_eq!(fs::read(&target).unwrap(), b"replacement");
+        assert!(temp_artifacts(dir.path()).is_empty());
+        let recovery_artifacts = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(".antigravity-recovery-"))
+            })
+            .count();
+        assert_eq!(recovery_artifacts, 0);
+    }
+
+    #[test]
     fn test_windows_dacl_negative_rejects_broad_untrusted_access() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("dacl_test.pdf");
@@ -2574,6 +3170,341 @@ mod tests {
         if let Err(err) = result {
             assert!(err.contains("UNSAFE_WINDOWS_DACL"));
         }
+    }
+
+    fn atomic_write_temps(parent: &Path) -> Vec<PathBuf> {
+        fs::read_dir(parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(ATOMIC_WRITE_PREFIX))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn write_atomically_replaces_existing_target_and_cleans_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("out.png");
+        fs::write(&target, b"original").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
+        }
+
+        write_atomically::<std::io::Error>(&target, |file| file.write_all(b"replacement"))
+            .unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"replacement");
+        assert!(atomic_write_temps(dir.path()).is_empty());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&target).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o640);
+        }
+
+        let created = dir.path().join("new.png");
+        write_atomically::<std::io::Error>(&created, |file| file.write_all(b"new")).unwrap();
+        assert_eq!(fs::read(&created).unwrap(), b"new");
+    }
+
+    #[test]
+    fn write_atomically_write_failure_keeps_target_and_cleans_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("out.png");
+        fs::write(&target, b"original").unwrap();
+
+        let error = write_atomically(&target, |file| {
+            file.write_all(b"partial").unwrap();
+            Err("encoder failed")
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, AtomicWriteError::Write("encoder failed")));
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert!(atomic_write_temps(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn write_atomically_persist_failure_keeps_target_and_cleans_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("occupied");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep.txt"), b"keep").unwrap();
+
+        let error =
+            write_atomically::<std::io::Error>(&target, |file| file.write_all(b"replacement"))
+                .unwrap_err();
+
+        assert!(matches!(error, AtomicWriteError::Persist(_)), "{error:?}");
+        assert_eq!(fs::read(target.join("keep.txt")).unwrap(), b"keep");
+        assert!(atomic_write_temps(dir.path()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomically_replaces_symlink_destination_and_keeps_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_dir = dir.path().join("real");
+        fs::create_dir(&real_dir).unwrap();
+        let real = real_dir.join("image.png");
+        fs::write(&real, b"original").unwrap();
+        let link = dir.path().join("link.png");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        write_atomically::<std::io::Error>(&link, |file| file.write_all(b"replacement"))
+            .unwrap();
+
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&link).unwrap(), real);
+        assert_eq!(fs::read(&real).unwrap(), b"replacement");
+        assert!(atomic_write_temps(dir.path()).is_empty());
+        assert!(atomic_write_temps(&real_dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomically_refuses_dangling_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("elsewhere").join("image.png");
+        let link = dir.path().join("dangling.png");
+        std::os::unix::fs::symlink(&destination, &link).unwrap();
+
+        let error =
+            write_atomically::<std::io::Error>(&link, |_| unreachable!("no temp to write"))
+                .unwrap_err();
+
+        assert!(matches!(error, AtomicWriteError::CreateTemp(_)), "{error:?}");
+        assert!(error.to_string().contains("sembolik bağ"), "{error}");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(!destination.exists());
+        assert!(atomic_write_temps(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn write_atomically_reports_missing_parent_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("missing").join("out.png");
+
+        let error =
+            write_atomically::<std::io::Error>(&target, |_| unreachable!("no temp to write"))
+                .unwrap_err();
+
+        assert!(matches!(error, AtomicWriteError::CreateTemp(_)), "{error:?}");
+        assert!(!target.exists());
+    }
+
+    fn output_set_leftovers(parent: &Path) -> Vec<PathBuf> {
+        fs::read_dir(parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with(ATOMIC_WRITE_PREFIX)
+                            || name.starts_with(OUTPUT_SET_BACKUP_PREFIX)
+                    })
+            })
+            .collect()
+    }
+
+    /// Sources live in their own directory, as job outputs do.
+    fn output_set_fixture(names: &[&str]) -> (tempfile::TempDir, PathBuf, Vec<OutputSetEntry>) {
+        let root = tempfile::tempdir().unwrap();
+        let sources = root.path().join("job");
+        let output = root.path().join("output");
+        fs::create_dir(&sources).unwrap();
+        fs::create_dir(&output).unwrap();
+        let entries = names
+            .iter()
+            .map(|name| {
+                let source = sources.join(name);
+                fs::write(&source, format!("new {name}")).unwrap();
+                OutputSetEntry {
+                    source,
+                    target: output.join(name),
+                }
+            })
+            .collect();
+        (root, output, entries)
+    }
+
+    fn sorted_dir_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn no_checkpoint(_: OutputSetPhase, _: usize) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    #[test]
+    fn output_set_publishes_every_file_into_empty_directory() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png", "c.png"]);
+
+        publish_output_set(&entries, false, no_checkpoint).unwrap();
+
+        assert_eq!(sorted_dir_names(&output), ["a.png", "b.png", "c.png"]);
+        for entry in &entries {
+            let name = entry.target.file_name().unwrap().to_string_lossy();
+            assert_eq!(fs::read_to_string(&entry.target).unwrap(), format!("new {name}"));
+        }
+        assert!(output_set_leftovers(&output).is_empty());
+    }
+
+    #[test]
+    fn output_set_reports_every_conflict_without_writing() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png", "c.png"]);
+        fs::write(output.join("a.png"), b"old a").unwrap();
+        fs::write(output.join("c.png"), b"old c").unwrap();
+
+        let error = publish_output_set(&entries, false, no_checkpoint).unwrap_err();
+
+        let OutputSetError::Conflict(paths) = error else {
+            panic!("expected conflict, got {error:?}");
+        };
+        assert_eq!(paths, [output.join("a.png"), output.join("c.png")]);
+        assert_eq!(sorted_dir_names(&output), ["a.png", "c.png"]);
+        assert_eq!(fs::read(output.join("a.png")).unwrap(), b"old a");
+        assert_eq!(fs::read(output.join("c.png")).unwrap(), b"old c");
+    }
+
+    #[test]
+    fn output_set_overwrite_replaces_existing_files_and_removes_backups() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png"]);
+        fs::write(output.join("a.png"), b"old a").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(output.join("a.png"), fs::Permissions::from_mode(0o640)).unwrap();
+        }
+
+        publish_output_set(&entries, true, no_checkpoint).unwrap();
+
+        assert_eq!(fs::read(output.join("a.png")).unwrap(), b"new a.png");
+        assert_eq!(fs::read(output.join("b.png")).unwrap(), b"new b.png");
+        assert_eq!(sorted_dir_names(&output), ["a.png", "b.png"]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(output.join("a.png")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o640);
+        }
+    }
+
+    #[test]
+    fn output_set_commit_failure_in_the_middle_leaves_no_new_file() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png", "c.png"]);
+
+        let error = publish_output_set(&entries, false, |phase, index| {
+            if phase == OutputSetPhase::Commit && index == 1 {
+                // a.png is already published at this point.
+                assert!(output.join("a.png").exists());
+                Err("simulated failure")
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+
+        assert!(
+            matches!(error, OutputSetError::Interrupted("simulated failure")),
+            "{error:?}"
+        );
+        assert!(sorted_dir_names(&output).is_empty());
+    }
+
+    #[test]
+    fn output_set_overwrite_failure_restores_previous_content() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png", "c.png"]);
+        fs::write(output.join("a.png"), b"old a").unwrap();
+        fs::write(output.join("b.png"), b"old b").unwrap();
+
+        let error = publish_output_set(&entries, true, |phase, index| {
+            if phase == OutputSetPhase::Commit && index == 2 {
+                Err("simulated failure")
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, OutputSetError::Interrupted(_)), "{error:?}");
+        assert_eq!(sorted_dir_names(&output), ["a.png", "b.png"]);
+        assert_eq!(fs::read(output.join("a.png")).unwrap(), b"old a");
+        assert_eq!(fs::read(output.join("b.png")).unwrap(), b"old b");
+    }
+
+    #[test]
+    fn output_set_does_not_clobber_a_file_that_appears_during_commit() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png", "c.png"]);
+
+        let error = publish_output_set(&entries, false, |phase, index| {
+            if phase == OutputSetPhase::Commit && index == 1 {
+                fs::write(output.join("b.png"), b"someone else").unwrap();
+            }
+            Ok::<(), &str>(())
+        })
+        .unwrap_err();
+
+        let OutputSetError::Conflict(paths) = error else {
+            panic!("expected conflict, got {error:?}");
+        };
+        assert_eq!(paths, [output.join("b.png")]);
+        assert_eq!(sorted_dir_names(&output), ["b.png"]);
+        assert_eq!(fs::read(output.join("b.png")).unwrap(), b"someone else");
+    }
+
+    #[test]
+    fn output_set_staging_failure_in_the_middle_writes_nothing() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png", "c.png"]);
+        fs::remove_file(&entries[1].source).unwrap();
+
+        let error = publish_output_set(&entries, false, no_checkpoint).unwrap_err();
+
+        let OutputSetError::Io { target, .. } = error else {
+            panic!("expected io error, got {error:?}");
+        };
+        assert_eq!(target, output.join("b.png"));
+        assert!(sorted_dir_names(&output).is_empty());
+    }
+
+    #[test]
+    fn output_set_refuses_to_replace_non_file_entries_even_with_overwrite() {
+        let (_root, output, entries) = output_set_fixture(&["a.png", "b.png"]);
+        fs::create_dir(output.join("b.png")).unwrap();
+
+        for overwrite in [false, true] {
+            let error = publish_output_set(&entries, overwrite, no_checkpoint).unwrap_err();
+            let OutputSetError::UnsupportedTarget(paths) = error else {
+                panic!("expected unsupported target, got {error:?}");
+            };
+            assert_eq!(paths, [output.join("b.png")]);
+            assert_eq!(sorted_dir_names(&output), ["b.png"]);
+        }
+    }
+
+    #[test]
+    fn output_set_rejects_duplicate_targets() {
+        let (_root, _output, mut entries) = output_set_fixture(&["a.png", "b.png"]);
+        entries[1].target = entries[0].target.clone();
+
+        let error = publish_output_set(&entries, true, no_checkpoint).unwrap_err();
+
+        assert!(matches!(error, OutputSetError::InvalidPlan(_)), "{error:?}");
+        assert!(!entries[0].target.exists());
     }
 }
 #[test]

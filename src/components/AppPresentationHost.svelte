@@ -11,10 +11,10 @@
   let { ui, viewer, documentSession, featureUi, activePdfDisplayPath, fileName, onToast, onSessionMutation } = $props();
 </script>
 
-{#if ui.isModalOpen("export")}<ExportModal sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} maxPages={viewer.pageOrder.length} onclose={() => ui.closeModal("export")} onsuccess={(message) => onToast(message)} />{/if}
+{#if ui.isModalOpen("export")}<ExportModal sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} maxPages={viewer.pageOrder.length} pageOrder={viewer.pageOrder} onclose={() => ui.closeModal("export")} onsuccess={(message) => onToast(message)} />{/if}
 {#if ui.isModalOpen("shortcuts")}<ShortcutsModal onclose={() => ui.closeModal("shortcuts")} />{/if}
 {#if ui.isModalOpen("page_organizer") && featureUi("page_manipulation").visible}<PageOrganizer sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} pageCount={viewer.pageOrder.length} onclose={() => ui.closeModal("page_organizer")} onorderSaved={(detail) => onSessionMutation(detail.snapshot, detail)} onpageMutated={(detail) => onSessionMutation(detail.snapshot, detail)} />{/if}
-{#if ui.isModalOpen("merge_split") && featureUi("page_manipulation").visible}<MergeSplitModal currentFilePath={activePdfDisplayPath} maxPages={viewer.pageOrder.length} sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} onclose={() => ui.closeModal("merge_split")} />{/if}
+{#if ui.isModalOpen("merge_split") && featureUi("page_manipulation").visible}<MergeSplitModal currentFilePath={activePdfDisplayPath} maxPages={viewer.pageOrder.length} pageOrder={viewer.pageOrder} sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} onclose={() => ui.closeModal("merge_split")} onsuccess={(message) => onToast(message)} />{/if}
 <ReadingRuler isActive={ui.panels.readingRuler} />
 <MetadataModal isOpen={ui.isModalOpen("metadata")} metadata={viewer.pdfMetadata} onclose={() => ui.closeModal("metadata")} />
 <BionicReadingModal isOpen={ui.isModalOpen("bionic")} text={viewer.bionicText} source={viewer.bionicSource} onclose={() => ui.closeModal("bionic")} />

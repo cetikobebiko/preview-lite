@@ -49,4 +49,30 @@ describe("documentExportController", () => {
     await controller.splitPdf();
     expect(extractPages).toHaveBeenCalledWith("session-a", 5, [2, 1], "/tmp/out.pdf");
   });
+
+  it("keeps the typed order when extracting", async () => {
+    const extractPages = vi.fn(async () => undefined);
+    const { controller } = setup({ extractPages, requestInput: vi.fn(async () => "3, 1-2") });
+    await controller.splitPdf();
+    expect(extractPages).toHaveBeenCalledWith("session-a", 5, [2, 0, 1], "/tmp/out.pdf");
+  });
+
+  it.each([
+    ["5", '"5" sınır dışında'],
+    ["0", '"0" sınır dışında'],
+    ["3-1", '"3-1" ters aralık'],
+    ["1-2-3", '"1-2-3" geçersiz'],
+    ["2.5", '"2.5" geçersiz'],
+    ["1,,2", "2. parça boş"],
+    ["1-2, 2", '"2" sayfa 2 tekrar ediyor'],
+  ])("rejects %j with the offending part instead of dropping it", async (input, message) => {
+    const extractPages = vi.fn(async () => undefined);
+    const saveFile = vi.fn(async () => "/tmp/out.pdf");
+    const onToast = vi.fn();
+    const { controller } = setup({ extractPages, saveFile, onToast, requestInput: vi.fn(async () => input) });
+    await controller.splitPdf();
+    expect(onToast).toHaveBeenCalledWith(expect.stringContaining(message));
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(extractPages).not.toHaveBeenCalled();
+  });
 });

@@ -17,6 +17,7 @@ pub mod external_validation;
 pub mod job_worker;
 pub mod manipulation;
 pub mod ocr;
+pub(crate) mod output_names;
 pub mod pdf_engine;
 pub mod plugins;
 pub mod prepress;
@@ -555,11 +556,26 @@ fn convert_image_file(
         _ => return Err(format!("Desteklenmeyen format: {}", format)),
     };
 
-    transformed
-        .save_with_format(target_path, img_format)
-        .map_err(|e| format!("Görsel kaydetme hatası: {}", e))?;
+    write_image_target(target_path, "Görsel kaydetme hatası", |file| {
+        let mut writer = std::io::BufWriter::new(file);
+        transformed.write_to(&mut writer, img_format)?;
+        writer
+            .into_inner()
+            .map(drop)
+            .map_err(|e| image::ImageError::IoError(e.into_error()))
+    })
+}
 
-    Ok(())
+/// Replaces `target_path` only after the encoded output is fully on disk. The
+/// source image is already decoded into memory, so converting a file onto its
+/// own path is safe.
+fn write_image_target<E: std::fmt::Display>(
+    target_path: &str,
+    error_prefix: &str,
+    write: impl FnOnce(&mut std::fs::File) -> Result<(), E>,
+) -> Result<(), String> {
+    document_io::write_atomically(Path::new(target_path), write)
+        .map_err(|error| format!("{}: {}", error_prefix, error))
 }
 
 #[tauri::command]
@@ -570,7 +586,32 @@ async fn convert_and_save_image(
     rotation: i32,
     flip_h: bool,
     flip_v: bool,
+    store: tauri::State<'_, document_session::DocumentSessionStore>,
 ) -> Result<(), String> {
+    convert_and_save_image_outside(
+        &store.temp_root,
+        source_path,
+        target_path,
+        format,
+        rotation,
+        flip_h,
+        flip_v,
+    )
+    .await
+}
+
+async fn convert_and_save_image_outside(
+    private_root: &Path,
+    source_path: String,
+    target_path: String,
+    format: String,
+    rotation: i32,
+    flip_h: bool,
+    flip_v: bool,
+) -> Result<(), String> {
+    // Session/job temp roots hold decrypted working copies; never export there.
+    document_session::reject_private_target(Path::new(&target_path), private_root)
+        .map_err(|error| error.to_string())?;
     run_image_job(move || {
         convert_image_file(
             &source_path,
@@ -1557,8 +1598,9 @@ mod tests {
         for format in ["png", "bmp", "pdf"] {
             let async_target = directory.path().join(format!("async.{format}"));
             let sync_target = directory.path().join(format!("sync.{format}"));
-            convert_and_save_image(
-                source.clone(),
+            convert_and_save_image_outside(
+                Path::new(UNRELATED_PRIVATE_ROOT),
+source.clone(),
                 async_target.to_str().unwrap().to_string(),
                 format.to_uppercase(),
                 90,
@@ -1594,8 +1636,9 @@ mod tests {
         let corrupt = directory.path().join("corrupt.png");
         std::fs::write(&corrupt, b"not an image").unwrap();
         let target = directory.path().join("out.png");
-        let error = convert_and_save_image(
-            corrupt.to_str().unwrap().to_string(),
+        let error = convert_and_save_image_outside(
+            Path::new(UNRELATED_PRIVATE_ROOT),
+corrupt.to_str().unwrap().to_string(),
             target.to_str().unwrap().to_string(),
             "png".to_string(),
             0,
@@ -1608,8 +1651,9 @@ mod tests {
         assert!(!target.exists());
 
         let source = write_test_png(directory.path());
-        let error = convert_and_save_image(
-            source.to_str().unwrap().to_string(),
+        let error = convert_and_save_image_outside(
+            Path::new(UNRELATED_PRIVATE_ROOT),
+source.to_str().unwrap().to_string(),
             target.to_str().unwrap().to_string(),
             "tiff".to_string(),
             0,
@@ -1620,6 +1664,176 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, "Desteklenmeyen format: tiff");
         assert!(!target.exists());
+    }
+
+    /// Does not exist anywhere, so it never covers a test target.
+    const UNRELATED_PRIVATE_ROOT: &str = "/nonexistent/antigravity-private-root";
+
+    fn leftover_write_temps(directory: &Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(directory)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".antigravity-write-"))
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn convert_and_save_image_replaces_existing_target_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = write_test_png(directory.path());
+        for format in ["png", "pdf"] {
+            let target = directory.path().join(format!("existing.{format}"));
+            std::fs::write(&target, b"previous contents").unwrap();
+            convert_and_save_image_outside(
+                Path::new(UNRELATED_PRIVATE_ROOT),
+                source.to_str().unwrap().to_string(),
+                target.to_str().unwrap().to_string(),
+                format.to_string(),
+                0,
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+            let written = std::fs::read(&target).unwrap();
+            assert_ne!(written, b"previous contents", "{format}");
+            if format == "pdf" {
+                assert!(written.starts_with(b"%PDF-1.5"));
+            } else {
+                assert_eq!(image::open(&target).unwrap().to_rgba8().dimensions(), (2, 3));
+            }
+        }
+        assert!(leftover_write_temps(directory.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn convert_and_save_image_onto_its_own_source_is_safe() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = write_test_png(directory.path());
+        let path = source.to_str().unwrap().to_string();
+
+        convert_and_save_image_outside(
+            Path::new(UNRELATED_PRIVATE_ROOT),
+            path.clone(),
+            path.clone(),
+            "png".to_string(),
+            90,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // The whole source was decoded before the target was replaced, so the
+        // result is the complete rotated image rather than a truncated file.
+        let rotated = image::open(&source).unwrap().to_rgba8();
+        assert_eq!(rotated.dimensions(), (3, 2));
+        // rotate90: destination (x, y) comes from source (y, height - 1 - x).
+        assert_eq!(rotated.get_pixel(0, 0).0, pixel(0, 2));
+        assert_eq!(rotated.get_pixel(2, 1).0, pixel(1, 0));
+        assert!(leftover_write_temps(directory.path()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn convert_and_save_image_keeps_existing_target_when_directory_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let source = write_test_png(directory.path());
+        let locked = directory.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        let targets = [
+            (locked.join("out.png"), "png", "Görsel kaydetme hatası"),
+            (locked.join("out.pdf"), "pdf", "PDF olarak kaydetme hatası"),
+        ];
+        for (target, _, _) in &targets {
+            std::fs::write(target, b"original contents").unwrap();
+        }
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Privileged runs (root, permissive ACLs) can still create files here.
+        let probe = locked.join("probe");
+        if std::fs::write(&probe, b"").is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            eprintln!("skipped: read-only directory is still writable for this user");
+            return;
+        }
+
+        let mut outcomes = Vec::new();
+        for (target, format, _) in &targets {
+            outcomes.push(
+                convert_and_save_image_outside(
+                    Path::new(UNRELATED_PRIVATE_ROOT),
+                    source.to_str().unwrap().to_string(),
+                    target.to_str().unwrap().to_string(),
+                    format.to_string(),
+                    0,
+                    false,
+                    false,
+                )
+                .await,
+            );
+        }
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        for ((target, format, prefix), outcome) in targets.iter().zip(outcomes) {
+            let error = outcome.unwrap_err();
+            assert!(error.starts_with(prefix), "{format}: {error}");
+            assert_eq!(std::fs::read(target).unwrap(), b"original contents", "{format}");
+        }
+        assert!(leftover_write_temps(&locked).is_empty());
+    }
+
+    #[tokio::test]
+    async fn convert_and_save_image_rejects_session_temp_root_targets() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = write_test_png(directory.path());
+        // Like the session store's temp_root, this comes from
+        // std::env::temp_dir() unresolved (on macOS: under the /var symlink).
+        let private = tempfile::tempdir().unwrap();
+        let nested = private.path().join("instance-x").join("sessions");
+        std::fs::create_dir_all(&nested).unwrap();
+        let existing = nested.join("working.png");
+        std::fs::write(&existing, b"working copy").unwrap();
+        let canonical_root = private.path().canonicalize().unwrap();
+
+        let targets = [
+            private.path().join("out.png"),
+            nested.join("out.pdf"),
+            existing.clone(),
+            canonical_root.join("instance-x").join("resolved.png"),
+        ];
+        for root in [private.path(), canonical_root.as_path()] {
+            for target in &targets {
+                let format = target.extension().unwrap().to_str().unwrap().to_string();
+                let error = convert_and_save_image_outside(
+                    root,
+                    source.to_str().unwrap().to_string(),
+                    target.to_str().unwrap().to_string(),
+                    format,
+                    0,
+                    false,
+                    false,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(
+                    error, "Session/job temp root'u Save veya Save As hedefi olamaz",
+                    "{}",
+                    target.display()
+                );
+            }
+        }
+        assert_eq!(std::fs::read(&existing).unwrap(), b"working copy");
+        assert!(!private.path().join("out.png").exists());
+        assert!(!nested.join("out.pdf").exists());
+        assert!(!canonical_root.join("instance-x").join("resolved.png").exists());
     }
 
     /// Header-only 24-bit BMP: the decoder reports these dimensions without
@@ -1661,8 +1875,9 @@ mod tests {
             assert_eq!(error, image_too_large_error(), "{source}");
 
             let target = directory.path().join("out.png");
-            let error = convert_and_save_image(
-                source.clone(),
+            let error = convert_and_save_image_outside(
+                Path::new(UNRELATED_PRIVATE_ROOT),
+source.clone(),
                 target.to_str().unwrap().to_string(),
                 "png".to_string(),
                 0,

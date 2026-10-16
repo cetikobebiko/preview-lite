@@ -2107,7 +2107,7 @@
       "evidence": {
         "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
         "verificationType": "integration_assertion",
-        "notes": "Direct reorder persistence save→close→reopen→observe via atomic_write_pdf on reorder-rich.pdf with temp cleanup verification"
+        "notes": "Direct reorder persistence save\u2192close\u2192reopen\u2192observe via atomic_write_pdf on reorder-rich.pdf with temp cleanup verification"
       }
     },
     {
@@ -2169,6 +2169,81 @@
         "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs",
         "verificationType": "worker_error_recovery",
         "notes": "Real PDFium render and thumbnail timeouts on the shading page of heavy-page.pdf quarantine only that page; light pages keep rendering without worker kills"
+      }
+    },
+    {
+      "featureId": "page_image_export",
+      "fixtureId": "core-large-page-dimensions",
+      "testId": "rust:job_worker_process::image_export_worker_rejects_large_page_at_600_dpi_without_allocating_the_bitmap",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Exports large-page-dimensions.pdf at 600 DPI in the job worker; expects SESSION_JOB_RENDER_LIMIT_EXCEEDED, an empty output directory and worker peak RSS below MAX_RENDER_BYTES"
+      }
+    },
+    {
+      "featureId": "page_image_export",
+      "fixtureId": "core-large-page-dimensions",
+      "testId": "rust:job_worker_process::image_export_worker_keeps_near_limit_jpeg_within_two_bitmap_buffers",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Exports large-page-dimensions.pdf as JPEG at the suggested 81 DPI (8100x8100 px); asserts output size and worker peak RSS below two bitmap buffers plus headroom"
+      }
+    },
+    {
+      "featureId": "page_image_export",
+      "fixtureId": "core-release-smoke",
+      "testId": "rust:job_worker_process::image_export_worker_renders_a4_at_300_dpi_dedupes_pages_and_rotates_sizes",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Exports A4 release-smoke.pdf page 1 twice at 300 DPI; expects a single 2479x3508 PNG"
+      }
+    },
+    {
+      "featureId": "page_image_export",
+      "fixtureId": "redaction-rotations",
+      "testId": "rust:job_worker_process::image_export_worker_renders_a4_at_300_dpi_dedupes_pages_and_rotates_sizes",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Exports rotations.pdf (/Rotate 0/90/180/270) at 300 DPI; output sizes follow the rotated page size"
+      }
+    },
+    {
+      "featureId": "page_image_export",
+      "fixtureId": "core-release-smoke",
+      "testId": "rust:job_worker_process::image_export_worker_rejects_invalid_dpi_and_out_of_range_pages",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "job_worker_test",
+        "notes": "Rejects negative, zero, 1e30 and 1200.5 DPI with SESSION_JOB_INVALID_EXPORT_DPI and out-of-range or u16-overflowing pages with SESSION_JOB_INVALID_PAGE on release-smoke.pdf"
       }
     }
   ],
@@ -3216,6 +3291,36 @@
         "linux": "not_run",
         "windows": "not_run"
       }
+    },
+    {
+      "id": "page_image_export",
+      "name": "Page Image Export",
+      "statusObservation": "stable",
+      "fixtureIds": [
+        "core-large-page-dimensions",
+        "core-release-smoke",
+        "redaction-rotations"
+      ],
+      "testIds": [
+        "rust:job_worker_process::image_export_worker_keeps_near_limit_jpeg_within_two_bitmap_buffers",
+        "rust:job_worker_process::image_export_worker_rejects_invalid_dpi_and_out_of_range_pages",
+        "rust:job_worker_process::image_export_worker_rejects_large_page_at_600_dpi_without_allocating_the_bitmap",
+        "rust:job_worker_process::image_export_worker_renders_a4_at_300_dpi_dedupes_pages_and_rotates_sizes"
+      ],
+      "dimensions": {
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_covered",
+        "encrypted": "not_covered",
+        "unicode": "not_applicable",
+        "persistence": "not_applicable",
+        "worker": "covered"
+      },
+      "platformEvidence": {
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
+      }
     }
   ],
   "tests": [
@@ -4028,6 +4133,30 @@
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/worker_pdfium_integration.rs"
+    },
+    {
+      "id": "rust:job_worker_process::image_export_worker_keeps_near_limit_jpeg_within_two_bitmap_buffers",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:job_worker_process::image_export_worker_rejects_invalid_dpi_and_out_of_range_pages",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:job_worker_process::image_export_worker_rejects_large_page_at_600_dpi_without_allocating_the_bitmap",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:job_worker_process::image_export_worker_renders_a4_at_300_dpi_dedupes_pages_and_rotates_sizes",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
     }
   ],
   "gaps": [

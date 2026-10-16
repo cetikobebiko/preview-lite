@@ -2064,3 +2064,192 @@ fn secure_redaction_verifier_rejects_large_object_bounds_placement_translation()
         "placement diagnostic must characterize the rejected object-bounds translation: {placement}"
     );
 }
+
+/// Runs one job worker and returns its response plus the worker's own peak
+/// resident set size in bytes (`wait4` rusage of that child only).
+#[cfg(unix)]
+fn run_worker_with_peak_rss(
+    directory: &std::path::Path,
+    id: u64,
+    request_body: serde_json::Value,
+) -> (serde_json::Value, u64) {
+    let request = directory.join(format!("worker-request-{id}.json"));
+    let response = directory.join(format!("worker-response-{id}.json"));
+    fs::write(&request, serde_json::to_vec(&request_body).unwrap()).unwrap();
+    // Reaped below with `wait4`, which also returns this child's rusage.
+    #[allow(clippy::zombie_processes)]
+    let child = Command::new(env!("CARGO_BIN_EXE_preview-alternative"))
+        .arg("--run-job-worker")
+        .arg("--job-request")
+        .arg(&request)
+        .arg("--job-response")
+        .arg(&response)
+        .spawn()
+        .unwrap();
+    let mut status = 0;
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    let waited = unsafe { libc::wait4(child.id() as libc::pid_t, &mut status, 0, &mut usage) };
+    assert_eq!(waited, child.id() as libc::pid_t);
+    assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
+    // macOS reports ru_maxrss in bytes, Linux in KiB.
+    let peak_rss = if cfg!(target_os = "macos") {
+        usage.ru_maxrss as u64
+    } else {
+        usage.ru_maxrss as u64 * 1024
+    };
+    (
+        serde_json::from_slice(&fs::read(response).unwrap()).unwrap(),
+        peak_rss,
+    )
+}
+
+fn image_export_request(snapshot: &std::path::Path, pages: Value, dpi: f64) -> Value {
+    json!({
+        "protocol_version": JOB_WORKER_PROTOCOL_VERSION,
+        "snapshot_path": snapshot,
+        "credential": null,
+        "authoritative_job_id": "image-export-test-job",
+        "authoritative_session_id": "image-export-test-session",
+        "command": { "ExportPagesAsImages": { "pages": pages, "format": "png", "dpi": dpi } }
+    })
+}
+
+fn copy_fixture_snapshot(directory: &std::path::Path, fixture: &str) -> PathBuf {
+    let snapshot = directory.join("snapshot.pdf");
+    fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(fixture),
+        &snapshot,
+    )
+    .unwrap();
+    snapshot
+}
+
+#[cfg(unix)]
+#[test]
+fn image_export_worker_rejects_large_page_at_600_dpi_without_allocating_the_bitmap() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = copy_fixture_snapshot(directory.path(), "pdf/large-page-dimensions.pdf");
+    // 7200×7200 pt × 600/72 = 60000×60000 px ≈ 14.4 GB RGBA if unbounded.
+    let (response, peak_rss) = run_worker_with_peak_rss(
+        directory.path(),
+        1,
+        image_export_request(&snapshot, json!([0]), 600.0),
+    );
+    let failure = &response["result"]["Err"];
+    assert_eq!(failure["code"], "SESSION_JOB_RENDER_LIMIT_EXCEEDED");
+    let message = failure["message"].as_str().unwrap();
+    assert!(message.contains("60000×60000"), "{message}");
+    assert!(message.contains("en fazla 81 DPI"), "{message}");
+    let output_dir = directory.path().join("worker-output-images");
+    assert_eq!(fs::read_dir(output_dir).unwrap().count(), 0);
+    // A single bounded bitmap is at most MAX_RENDER_BYTES; the rejected worker
+    // must stay below even that.
+    assert!(
+        peak_rss < MAX_RENDER_BYTES as u64,
+        "worker peak RSS {peak_rss} bytes"
+    );
+}
+
+#[test]
+fn image_export_worker_renders_a4_at_300_dpi_dedupes_pages_and_rotates_sizes() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = copy_fixture_snapshot(directory.path(), "pdf/release-smoke.pdf");
+    // A repeated page is exported once, not written twice under one name.
+    let response = run_worker(
+        directory.path(),
+        1,
+        image_export_request(&snapshot, json!([0, 0]), 300.0),
+    );
+    let files = response["result"]["Ok"]["Files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    // 595×842 pt × 300/72.
+    let image = image::open(files[0].as_str().unwrap()).unwrap();
+    assert_eq!((image.width(), image.height()), (2479, 3508));
+
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = copy_fixture_snapshot(directory.path(), "redaction/rotations.pdf");
+    let response = run_worker(
+        directory.path(),
+        2,
+        image_export_request(&snapshot, json!([0, 1, 2, 3]), 300.0),
+    );
+    let files = response["result"]["Ok"]["Files"].as_array().unwrap();
+    // MediaBox 600×800 pt with /Rotate 0, 90, 180, 270.
+    let sizes: Vec<(u32, u32)> = files
+        .iter()
+        .map(|file| {
+            let image = image::open(file.as_str().unwrap()).unwrap();
+            (image.width(), image.height())
+        })
+        .collect();
+    assert_eq!(
+        sizes,
+        vec![(2500, 3333), (3333, 2500), (2500, 3333), (3333, 2500)]
+    );
+}
+
+#[test]
+fn image_export_worker_rejects_invalid_dpi_and_out_of_range_pages() {
+    // Each worker run creates its own output directory, so each case gets a
+    // fresh job directory.
+    for (id, dpi) in [(1, -300.0), (2, 0.0), (3, 1e30), (4, 1200.5)] {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = copy_fixture_snapshot(directory.path(), "pdf/release-smoke.pdf");
+        let response = run_worker(
+            directory.path(),
+            id,
+            image_export_request(&snapshot, json!([0]), dpi),
+        );
+        assert_eq!(
+            response["result"]["Err"]["code"], "SESSION_JOB_INVALID_EXPORT_DPI",
+            "dpi {dpi}"
+        );
+    }
+    // release-smoke.pdf has two pages. Out-of-range pages used to be skipped
+    // silently; 65536 would wrap to 0 under an `as u16` cast.
+    for (id, page) in [(5, 2_u64), (6, 65_536), (7, u64::from(u32::MAX))] {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = copy_fixture_snapshot(directory.path(), "pdf/release-smoke.pdf");
+        let response = run_worker(
+            directory.path(),
+            id,
+            image_export_request(&snapshot, json!([0, page]), 150.0),
+        );
+        assert_eq!(
+            response["result"]["Err"]["code"], "SESSION_JOB_INVALID_PAGE",
+            "page {page}"
+        );
+        let output_dir = directory.path().join("worker-output-images");
+        assert_eq!(fs::read_dir(output_dir).unwrap().count(), 0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn image_export_worker_keeps_near_limit_jpeg_within_two_bitmap_buffers() {
+    let _guard = HIGH_DPI_WORKER_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = copy_fixture_snapshot(directory.path(), "pdf/large-page-dimensions.pdf");
+    // 81 DPI is the suggested maximum for 7200×7200 pt: 8100×8100 px, 250 MiB RGBA.
+    let mut request = image_export_request(&snapshot, json!([0]), 81.0);
+    request["command"]["ExportPagesAsImages"]["format"] = json!("jpeg");
+    let (response, peak_rss) = run_worker_with_peak_rss(directory.path(), 1, request);
+    let files = response["result"]["Ok"]["Files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(
+        image::image_dimensions(files[0].as_str().unwrap()).unwrap(),
+        (8100, 8100)
+    );
+    // PDFium bitmap + its copy, plus process headroom. Converting RGBA to RGB
+    // in a separate buffer (or keeping the bitmap alive while encoding) would
+    // push the peak to roughly 2.75 bitmaps.
+    let budget = 2 * MAX_RENDER_BYTES as u64 + 64 * 1024 * 1024;
+    assert!(
+        peak_rss < budget,
+        "worker peak RSS {peak_rss} bytes exceeds {budget}"
+    );
+}

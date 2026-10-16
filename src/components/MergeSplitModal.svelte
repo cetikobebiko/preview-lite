@@ -2,12 +2,19 @@
   import { untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { mergeSessionPdfs, splitSessionPdf } from "../pdfState.js";
-  import { open, save } from "@tauri-apps/plugin-dialog";
+  import { ask, open, save } from "@tauri-apps/plugin-dialog";
+  import {
+    outputConflictMessage,
+    publishWithOverwriteConfirmation,
+  } from "../services/app/outputConflict.js";
+  import { exportErrorMessage } from "../services/app/exportErrorMessage.js";
   import FeatureNotice from "./FeatureNotice.svelte";
+  import { parsePageRanges, toPhysicalRanges } from "../utils/pageRanges.js";
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
 
-  let { currentFilePath = "", maxPages = 0, sessionId = "", contentGeneration = 0, onclose } = $props();
+  // pageOrder is the display order (viewer.pageOrder); typed numbers are display positions.
+  let { currentFilePath = "", maxPages = 0, pageOrder = null, sessionId = "", contentGeneration = 0, onclose, onsuccess } = $props();
 
   const featureContext = getRuntimeFeatureContext();
   const featurePresentation = getFeaturePresentation("page_manipulation", featureContext);
@@ -19,14 +26,21 @@
   let filesToMerge = $state(untrack(() => (currentFilePath ? [currentFilePath] : [])));
   
   // Split state
-  let splitRangesText = $state("1-1"); 
+  let splitRangesText = $state("1-1");
+
+  let errorMsg = $state("");
+
+  function selectMode(nextMode) {
+    mode = nextMode;
+    errorMsg = "";
+  }
 
   async function runPageAction(callback) {
     try {
       return await guardFeatureAction("page_manipulation", featureContext, callback);
     } catch (error) {
       if (error instanceof FeatureUnavailableError) {
-        alert(error.presentation?.warning || error.message);
+        errorMsg = error.presentation?.warning || error.message;
         return;
       }
       throw error;
@@ -38,6 +52,7 @@
   }
 
   async function performAddFiles() {
+    errorMsg = "";
     try {
       const selected = await open({
         multiple: true,
@@ -49,6 +64,7 @@
       }
     } catch(e) {
       console.error(e);
+      errorMsg = "Dosya seçilemedi: " + exportErrorMessage(e);
     }
   }
 
@@ -62,8 +78,9 @@
   }
 
   async function performMerge() {
+    errorMsg = "";
     if (filesToMerge.length < 2) {
-      alert("En az iki dosya seçmelisiniz.");
+      errorMsg = "En az iki dosya seçmelisiniz.";
       return;
     }
     isProcessing = true;
@@ -76,11 +93,11 @@
         if (!sessionId) throw new Error("Aktif document session bulunamadı.");
         const extraFiles = filesToMerge.filter(f => f !== currentFilePath);
         await mergeSessionPdfs(sessionId, contentGeneration, extraFiles, savePath);
-        alert("Dosyalar başarıyla birleştirildi!");
+        onsuccess?.("Dosyalar başarıyla birleştirildi!");
         onclose?.();
       }
     } catch(e) {
-      alert("Birleştirme hatası: " + e);
+      errorMsg = "Birleştirme hatası: " + exportErrorMessage(e);
     }
     isProcessing = false;
   }
@@ -90,25 +107,15 @@
   }
 
   async function performSplit() {
-    if (!splitRangesText.trim()) return;
-    
-    // Basit ayrıştırma: "1-3, 5-7" -> [[1,3], [5,7]]
-    let ranges = [];
-    try {
-      const parts = splitRangesText.split(",");
-      for (const p of parts) {
-        const bounds = p.trim().split("-");
-        let start = parseInt(bounds[0]) - 1; // 0-based index
-        let end = bounds.length > 1 ? parseInt(bounds[1]) - 1 : start;
-        if (isNaN(start) || isNaN(end) || start < 0 || end >= maxPages) {
-          throw new Error("Geçersiz aralık: " + p);
-        }
-        ranges.push([start, end]);
-      }
-    } catch(e) {
-      alert("Hata: Sayfa aralığı formatı hatalı veya sınırların dışında. Örn: 1-5, 8, 11-13");
+    errorMsg = "";
+    const parsed = parsePageRanges(splitRangesText, maxPages, { mode: "ranges" });
+    // The backend splits physical PDF page ranges.
+    const physical = parsed.ok ? toPhysicalRanges(parsed.ranges, pageOrder) : parsed;
+    if (!physical.ok) {
+      errorMsg = physical.error;
       return;
     }
+    const ranges = physical.ranges;
 
     isProcessing = true;
     try {
@@ -120,12 +127,25 @@
       if (saveDir) {
         let outDir = Array.isArray(saveDir) ? saveDir[0] : saveDir;
         if (!sessionId) throw new Error("Aktif document session bulunamadı.");
-        await splitSessionPdf(sessionId, contentGeneration, ranges, outDir);
-        alert("PDF başarıyla bölündü ve klasöre kaydedildi!");
-        onclose?.();
+        const result = await publishWithOverwriteConfirmation(
+          (overwrite) => splitSessionPdf(sessionId, contentGeneration, ranges, outDir, overwrite),
+          (names) =>
+            ask(outputConflictMessage(names), {
+              title: "Dosyalar Zaten Var",
+              kind: "warning",
+              okLabel: "Üzerine Yaz",
+              cancelLabel: "İptal",
+            }),
+        );
+        if (result.status === "declined") {
+          errorMsg = "Bölme iptal edildi; mevcut dosyalara dokunulmadı.";
+        } else if (result.status === "completed") {
+          onsuccess?.("PDF başarıyla bölündü ve klasöre kaydedildi!");
+          onclose?.();
+        }
       }
     } catch(e) {
-      alert("Bölme hatası: " + e);
+      errorMsg = "Bölme hatası: " + exportErrorMessage(e);
     }
     isProcessing = false;
   }
@@ -136,13 +156,16 @@
       <div class="modal-header">
           <h3 id="merge-split-modal-title">Belge Araçları</h3>
           <div class="mode-tabs">
-            <button class:active={mode === 'merge'} onclick={() => mode='merge'}>Birleştir</button>
-            <button class:active={mode === 'split'} onclick={() => mode='split'}>Böl</button>
+            <button class:active={mode === 'merge'} onclick={() => selectMode('merge')}>Birleştir</button>
+            <button class:active={mode === 'split'} onclick={() => selectMode('split')}>Böl</button>
           </div>
       </div>
       
       <div class="modal-body">
         <FeatureNotice featureId="page_manipulation" />
+        {#if errorMsg}
+          <div class="error-msg" role="alert">{errorMsg}</div>
+        {/if}
         {#if mode === 'merge'}
           <div class="merge-section">
             <p class="hint">Birleştirilecek PDF dosyalarını seçin ve sıralayın:</p>
@@ -164,7 +187,7 @@
                 <label for="split-ranges-input">Bölünecek Aralıklar (Örn: 1-3, 5, 8-10)</label>
                 <input id="split-ranges-input" type="text" bind:value={splitRangesText} placeholder="1-5, 8, 11-13" class="tech-input" />
             </div>
-            <p class="hint">Yukarıdaki her bir aralık için seçtiğiniz klasörde ayrı bir PDF oluşturulacaktır.</p>
+            <p class="hint">Yukarıdaki her bir aralık için seçtiğiniz klasörde belge adı ve sayfa aralığıyla adlandırılan ayrı bir PDF oluşturulacaktır (ör. rapor_sayfa_1-3.pdf).</p>
           </div>
         {/if}
       </div>
@@ -289,6 +312,12 @@
     background: rgba(255,255,255,0.05);
   }
   
+  .error-msg {
+      background: rgba(255, 59, 48, 0.1); border: 1px solid rgba(255, 59, 48, 0.3);
+      color: #ff3b30; padding: 10px; border-radius: 6px; margin-bottom: 16px;
+      font-size: 0.9rem;
+  }
+
   .modal-footer {
       padding: 16px 24px;
       border-top: 1px solid var(--border-color);

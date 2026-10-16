@@ -1,3 +1,5 @@
+import { parsePageRanges, toPhysicalPages } from "../../utils/pageRanges.js";
+
 /** Coordinates output-file dialogs, native exports, and stale session-result protection. */
 export function createDocumentExportController({
   getContext, saveFile, requestInput, exportPage, extractPages, convertImage, onToast, onError,
@@ -68,29 +70,16 @@ export function createDocumentExportController({
     }
   }
 
-  function parsePageIndices(input, pageCount) {
-    const pageIndices = [];
-    for (const part of input.split(",")) {
-      const trimmed = part.trim();
-      if (trimmed.includes("-")) {
-        const [start, end] = trimmed.split("-").map((value) => Number.parseInt(value, 10));
-        if (Number.isInteger(start) && Number.isInteger(end)) for (let page = start; page <= end; page += 1) if (page >= 1 && page <= pageCount) pageIndices.push(page - 1);
-      } else {
-        const page = Number.parseInt(trimmed, 10);
-        if (Number.isInteger(page) && page >= 1 && page <= pageCount) pageIndices.push(page - 1);
-      }
-    }
-    return pageIndices;
-  }
-
   async function splitPdf() {
     const input = await requestInput({ title: "Sayfaları Dışa Aktar", label: "Sayfa numaraları", placeholder: "Örn: 1, 2, 5 veya 1-3" });
     if (!input) return;
     const context = getContext();
     if (!context.sessionId) return;
-    // The user types page numbers as displayed; the backend extracts physical pages.
-    const pageIndices = parsePageIndices(input, context.pageOrder.length).map((displayIndex) => context.pageOrder[displayIndex]);
-    if (pageIndices.length === 0) { onToast("Geçerli sayfa numarası girilmedi!"); return; }
+    // Typed order is the output order; the user types page numbers as displayed and
+    // the backend extracts physical pages.
+    const parsed = parsePageRanges(input, context.pageOrder.length, { mode: "sequence" });
+    if (!parsed.ok) { onToast(parsed.error); return; }
+    const pageIndices = toPhysicalPages(parsed.pages, context.pageOrder);
     try {
       const savePath = await saveFile({
         title: "Bölünen Sayfaları Yeni PDF Olarak Kaydet", defaultPath: `${baseName(context.fileName)}_Bölünmüş.pdf`,

@@ -255,6 +255,9 @@ export const CONTRACTS = Object.freeze({
     outputDir: stringType,
     format: stringType,
     dpi: numberType,
+    // false: an existing file with a planned name fails the job with
+    // SESSION_JOB_OUTPUT_CONFLICT and `conflictingNames`; nothing is written.
+    overwrite: booleanType,
   }),
   exportSessionTextContent: command("export_session_text_content", {
     jobId: renderIdentifierType,
@@ -518,6 +521,8 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     ranges: arrayOf(tupleOf(u32Type, u32Type)),
     outputDir: stringType,
+    // See exportSessionPagesAsImages.
+    overwrite: booleanType,
   }),
   detectScannedPages: command("detect_scanned_pages", {
     jobId: renderIdentifierType,

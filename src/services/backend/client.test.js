@@ -103,6 +103,7 @@ describe("validated backend client", () => {
         expectedContentGeneration: 1,
         ranges: [[0, 1, 2]],
         outputDir: "/tmp",
+        overwrite: false,
       }),
     ).rejects.toMatchObject({
       command: "split_session_pdf",

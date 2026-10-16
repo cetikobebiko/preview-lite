@@ -463,8 +463,20 @@ pub struct SessionJobFailure {
     pub message: String,
     pub commit_state: Option<String>,
     pub recovery_path: Option<String>,
-    pub replacement_digest: Option<String>,
+    // Boxed like `DocumentSessionError` so `SessionJobOperationError` stays
+    // under clippy's large-error threshold.
+    pub replacement_digest: Option<Box<str>>,
+    /// File names already present in the output directory of a multi-file
+    /// export (`SESSION_JOB_OUTPUT_CONFLICT`); the caller may retry with
+    /// `overwrite: true` after the user confirms.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflicting_names: Option<Box<ConflictingOutputNames>>,
 }
+
+/// Boxed so the rarely used list keeps `SessionJobOperationError` small.
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
+pub struct ConflictingOutputNames(pub Vec<String>);
 
 impl SessionJobFailure {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
@@ -474,6 +486,7 @@ impl SessionJobFailure {
             commit_state: None,
             recovery_path: None,
             replacement_digest: None,
+            conflicting_names: None,
         }
     }
 
@@ -493,7 +506,8 @@ impl SessionJobFailure {
                 .recovery_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
-            replacement_digest: error.replacement_digest,
+            replacement_digest: error.replacement_digest.map(String::into_boxed_str),
+            conflicting_names: None,
         }
     }
 }
@@ -8025,15 +8039,24 @@ pub async fn export_session_pages_as_images(
     output_dir: String,
     format: String,
     dpi: f32,
+    overwrite: bool,
     store: State<'_, DocumentSessionStore>,
 ) -> Result<SessionJobOutcome<Vec<String>>, DocumentSessionError> {
     reject_private_target(Path::new(&output_dir), &store.temp_root)?;
+    let stem = session_output_name_stem(&store, &session_id).await;
     store
         .run_snapshot_job(
             &job_id,
             &session_id,
             expected_content_generation,
             move |context| {
+                // Geçersiz DPI için worker başlatılmaz; sayfa başına piksel
+                // sınırı worker içinde PDFium sayfa boyutuyla kontrol edilir.
+                crate::export::validate_export_dpi(dpi)?;
+                let output_dir = PathBuf::from(output_dir);
+                let planned = crate::export::planned_export_image_outputs(&pages, &format, &stem);
+                // Çakışma render'dan önce raporlanır; yayın sırasında yeniden denetlenir.
+                preflight_job_output_set(&output_dir, &planned, overwrite)?;
                 let result = crate::job_worker::run_job(
                     &context,
                     crate::job_worker::JobCommand::ExportPagesAsImages { pages, format, dpi },
@@ -8045,22 +8068,11 @@ pub async fn export_session_pages_as_images(
                         "Image export worker beklenmeyen sonuç döndürdü",
                     ));
                 };
-                let output_dir = PathBuf::from(output_dir);
-                files
-                    .into_iter()
-                    .map(|source| {
-                        context.cancellation.check_cancelled()?;
-                        let file_name = source.file_name().ok_or_else(|| {
-                            SessionJobOperationError::failed_with_code(
-                                "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                                "Image export worker geçersiz çıktı yolu döndürdü",
-                            )
-                        })?;
-                        let target = output_dir.join(file_name);
-                        accept_job_output_file(&context, &source, &target)?;
-                        Ok(target.to_string_lossy().to_string())
-                    })
-                    .collect()
+                let sources = files
+                    .iter()
+                    .map(|source| crate::job_worker::validate_output_file(&context, source))
+                    .collect::<Result<Vec<_>, _>>()?;
+                accept_job_output_set(&context, sources, &planned, &output_dir, overwrite)
             },
         )
         .await
@@ -8073,9 +8085,11 @@ pub async fn split_session_pdf(
     expected_content_generation: u64,
     ranges: Vec<(u32, u32)>,
     output_dir: String,
+    overwrite: bool,
     store: State<'_, DocumentSessionStore>,
 ) -> Result<SessionJobOutcome<Vec<String>>, DocumentSessionError> {
     reject_private_target(Path::new(&output_dir), &store.temp_root)?;
+    let stem = session_output_name_stem(&store, &session_id).await;
     store
         .run_snapshot_job(
             &job_id,
@@ -8083,6 +8097,9 @@ pub async fn split_session_pdf(
             expected_content_generation,
             move |context| {
                 context.cancellation.check_cancelled()?;
+                let output_dir = PathBuf::from(output_dir);
+                let planned = planned_split_outputs(&ranges, &stem)?;
+                preflight_job_output_set(&output_dir, &planned, overwrite)?;
                 let result = crate::job_worker::run_job(
                     &context,
                     JobCommand::SplitPdf { ranges },
@@ -8094,22 +8111,11 @@ pub async fn split_session_pdf(
                         "Split worker beklenmeyen sonuç döndürdü",
                     ));
                 };
-                let output_dir = PathBuf::from(output_dir);
-                files
-                    .into_iter()
-                    .map(|source| {
-                        let source = validate_job_pdf_output(&context, &source)?;
-                        let file_name = source.file_name().ok_or_else(|| {
-                            SessionJobOperationError::failed_with_code(
-                                "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                                "Split worker geçersiz çıktı adı döndürdü",
-                            )
-                        })?;
-                        let target = output_dir.join(file_name);
-                        accept_job_output_file(&context, &source, &target)?;
-                        Ok(target.to_string_lossy().to_string())
-                    })
-                    .collect()
+                let sources = files
+                    .iter()
+                    .map(|source| validate_job_pdf_output(&context, source))
+                    .collect::<Result<Vec<_>, _>>()?;
+                accept_job_output_set(&context, sources, &planned, &output_dir, overwrite)
             },
         )
         .await
@@ -11519,16 +11525,38 @@ fn validate_basic_pdf_bytes(path: &Path) -> Result<(), DocumentSessionError> {
     Ok(())
 }
 
+/// Resolves the longest existing prefix of `path` (following symlinks) and
+/// re-appends the missing remainder, so targets inside folders that do not
+/// exist yet still compare in the resolved namespace.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(resolved) = current.canonicalize() {
+            return missing
+                .iter()
+                .rev()
+                .fold(resolved, |resolved, name| resolved.join(name));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+/// `private_root` may be stored unresolved (`std::env::temp_dir()` is under the
+/// `/var` symlink on macOS) while the target is resolved, so both forms of the
+/// root are checked.
 pub fn reject_private_target(path: &Path, private_root: &Path) -> Result<(), DocumentSessionError> {
-    let normalized = if path.exists() {
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-    } else {
-        path.parent()
-            .and_then(|parent| parent.canonicalize().ok())
-            .and_then(|parent| path.file_name().map(|name| parent.join(name)))
-            .unwrap_or_else(|| path.to_path_buf())
-    };
-    if normalized.starts_with(private_root) {
+    let normalized = resolve_existing_prefix(path);
+    let resolved_root = private_root.canonicalize().ok();
+    if normalized.starts_with(private_root)
+        || resolved_root.is_some_and(|root| normalized.starts_with(root))
+    {
         Err(DocumentSessionError::new(
             "DOCUMENT_SESSION_PRIVATE_TARGET",
             "Session/job temp root'u Save veya Save As hedefi olamaz",
@@ -11545,46 +11573,199 @@ fn accept_job_output_file(
 ) -> Result<(), SessionJobOperationError> {
     context.cancellation.check_cancelled()?;
     let canonical_source = crate::job_worker::validate_output_file(context, source)?;
-    let target_parent = target.parent().ok_or_else(|| {
-        SessionJobOperationError::failed_with_code(
-            "SESSION_JOB_OUTPUT_WRITE_FAILED",
-            "Hedef çıktı dizini çözümlenemedi",
-        )
-    })?;
-    let mut staged = tempfile::Builder::new()
-        .prefix(".antigravity-job-output-")
-        .tempfile_in(target_parent)
-        .map_err(|error| {
-            SessionJobOperationError::failed_with_code(
-                "SESSION_JOB_OUTPUT_WRITE_FAILED",
-                format!("Hedef çıktı staging dosyası oluşturulamadı: {error}"),
-            )
-        })?;
     let mut input = File::open(&canonical_source).map_err(|error| {
         SessionJobOperationError::failed_with_code(
             "SESSION_JOB_OUTPUT_READ_FAILED",
             format!("Job worker çıktısı açılamadı: {error}"),
         )
     })?;
-    std::io::copy(&mut input, staged.as_file_mut()).map_err(|error| {
-        SessionJobOperationError::failed_with_code(
+    crate::document_io::write_atomically(target, |staged| {
+        std::io::copy(&mut input, staged).map(drop)
+    })
+    .map_err(|error| {
+        use crate::document_io::AtomicWriteError;
+        let message = match error {
+            AtomicWriteError::CreateTemp(error) => {
+                format!("Hedef çıktı staging dosyası oluşturulamadı: {error}")
+            }
+            AtomicWriteError::Write(error) => {
+                format!("Job worker çıktısı staging dosyasına kopyalanamadı: {error}")
+            }
+            AtomicWriteError::Sync(error) => {
+                format!("Job worker çıktısı diske yazılamadı: {error}")
+            }
+            AtomicWriteError::Persist(error) => {
+                format!("Job worker çıktısı hedefe kabul edilemedi: {error}")
+            }
+        };
+        SessionJobOperationError::failed_with_code("SESSION_JOB_OUTPUT_WRITE_FAILED", message)
+    })
+}
+
+pub(crate) const SESSION_JOB_OUTPUT_CONFLICT_CODE: &str = "SESSION_JOB_OUTPUT_CONFLICT";
+
+fn output_set_file_names(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned())
+        })
+        .collect()
+}
+
+fn output_set_failure(
+    error: crate::document_io::OutputSetError<SessionJobOperationError>,
+) -> SessionJobOperationError {
+    use crate::document_io::OutputSetError;
+    match error {
+        OutputSetError::Conflict(paths) => {
+            let names = output_set_file_names(&paths);
+            let mut failure = SessionJobFailure::new(
+                SESSION_JOB_OUTPUT_CONFLICT_CODE,
+                format!(
+                    "Hedef klasörde aynı adlı {} dosya zaten var: {}",
+                    names.len(),
+                    names.join(", ")
+                ),
+            );
+            failure.conflicting_names = Some(Box::new(ConflictingOutputNames(names)));
+            SessionJobOperationError::Failed(failure)
+        }
+        OutputSetError::UnsupportedTarget(paths) => SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_OUTPUT_TARGET_UNSUPPORTED",
+            format!(
+                "Hedef klasörde dosya olmayan aynı adlı öğeler var ve üzerine yazılamaz: {}",
+                output_set_file_names(&paths).join(", ")
+            ),
+        ),
+        OutputSetError::InvalidPlan(detail) => SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+            format!("Çıktı planı geçersiz: {detail}"),
+        ),
+        OutputSetError::Interrupted(error) => error,
+        OutputSetError::Io { target, error } => SessionJobOperationError::failed_with_code(
             "SESSION_JOB_OUTPUT_WRITE_FAILED",
-            format!("Job worker çıktısı staging dosyasına kopyalanamadı: {error}"),
-        )
-    })?;
-    staged.as_file_mut().sync_all().map_err(|error| {
-        SessionJobOperationError::failed_with_code(
-            "SESSION_JOB_OUTPUT_WRITE_FAILED",
-            format!("Job worker çıktısı diske yazılamadı: {error}"),
-        )
-    })?;
-    staged.persist(target).map_err(|error| {
-        SessionJobOperationError::failed_with_code(
-            "SESSION_JOB_OUTPUT_WRITE_FAILED",
-            format!("Job worker çıktısı hedefe kabul edilemedi: {}", error.error),
-        )
-    })?;
-    Ok(())
+            format!(
+                "{} yayınlanamadı; bu işlemin yazdığı dosyalar geri alındı: {error}",
+                target.display()
+            ),
+        ),
+        OutputSetError::RollbackFailed { cause, failures } => {
+            let cause = match output_set_failure(*cause) {
+                SessionJobOperationError::Failed(failure) => failure.message,
+                SessionJobOperationError::Cancelled(_) => "işlem iptal edildi".to_string(),
+            };
+            SessionJobOperationError::failed_with_code(
+                "SESSION_JOB_OUTPUT_ROLLBACK_FAILED",
+                format!(
+                    "Çıktılar yayınlanamadı ({cause}) ve geri alma tamamlanamadı: {}",
+                    failures.join("; ")
+                ),
+            )
+        }
+    }
+}
+
+/// Document part of multi-file output names, from the session's current save
+/// target. A missing session falls back to the default stem; the job itself
+/// then reports the missing session.
+async fn session_output_name_stem(store: &DocumentSessionStore, session_id: &str) -> String {
+    let file_name = store
+        .session_snapshot(session_id)
+        .await
+        .map(|snapshot| snapshot.file_name)
+        .unwrap_or_default();
+    crate::output_names::output_name_stem(&file_name)
+}
+
+/// Split outputs in range order: the worker's `split_{index}_{start}.pdf` is
+/// published as `{stem}_sayfa_{start}-{end}.pdf`. The same range twice would
+/// publish two files under one name, so it is rejected before any work.
+fn planned_split_outputs(
+    ranges: &[(u32, u32)],
+    stem: &str,
+) -> Result<Vec<crate::output_names::PlannedOutput>, SessionJobOperationError> {
+    let mut seen = HashSet::with_capacity(ranges.len());
+    if let Some(&(start, end)) = ranges.iter().find(|range| !seen.insert(**range)) {
+        return Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_INVALID_SPLIT_RANGES",
+            format!(
+                "Aynı aralık birden fazla kez girildi: {}",
+                if start == end {
+                    format!("{}", u64::from(start) + 1)
+                } else {
+                    format!("{}-{}", u64::from(start) + 1, u64::from(end) + 1)
+                }
+            ),
+        ));
+    }
+    Ok(ranges
+        .iter()
+        .enumerate()
+        .map(|(range_index, &(start, end))| crate::output_names::PlannedOutput {
+            worker_name: crate::job_worker::split_output_file_name(range_index, start),
+            target_name: crate::output_names::split_range_output_name(stem, start, end),
+        })
+        .collect())
+}
+
+/// Rejects a multi-file output whose planned names collide with existing
+/// entries before any work is done. [`accept_job_output_set`] repeats the check
+/// at publish time.
+fn preflight_job_output_set(
+    output_dir: &Path,
+    planned: &[crate::output_names::PlannedOutput],
+    overwrite: bool,
+) -> Result<(), SessionJobOperationError> {
+    let targets: Vec<PathBuf> = planned
+        .iter()
+        .map(|output| output_dir.join(&output.target_name))
+        .collect();
+    crate::document_io::inspect_output_set_targets(&targets, overwrite)
+        .map(drop)
+        .map_err(output_set_failure)
+}
+
+/// Publishes validated job outputs into `output_dir` all-or-nothing under
+/// their planned target names (see [`crate::document_io::publish_output_set`]).
+/// The worker must have produced exactly the planned files, in order.
+fn accept_job_output_set(
+    context: &SessionJobContext,
+    sources: Vec<PathBuf>,
+    planned: &[crate::output_names::PlannedOutput],
+    output_dir: &Path,
+    overwrite: bool,
+) -> Result<Vec<String>, SessionJobOperationError> {
+    let produced_planned_names = sources.len() == planned.len()
+        && sources.iter().zip(planned).all(|(source, output)| {
+            source
+                .file_name()
+                .is_some_and(|file_name| file_name == output.worker_name.as_str())
+        });
+    if !produced_planned_names {
+        return Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+            "Job worker planlanan çıktı dosyalarından farklı dosyalar döndürdü",
+        ));
+    }
+    let entries: Vec<crate::document_io::OutputSetEntry> = sources
+        .into_iter()
+        .zip(planned)
+        .map(|(source, output)| crate::document_io::OutputSetEntry {
+            source,
+            target: output_dir.join(&output.target_name),
+        })
+        .collect();
+    crate::document_io::publish_output_set(&entries, overwrite, |_, _| {
+        context.cancellation.check_cancelled()
+    })
+    .map_err(output_set_failure)?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| entry.target.to_string_lossy().into_owned())
+        .collect())
 }
 
 fn validate_job_pdf_output(
@@ -12238,6 +12419,193 @@ mod tests {
                 reason: Arc::new(Mutex::new(None)),
             },
         )
+    }
+
+    /// Job directory with worker outputs under the planned worker names, plus
+    /// an empty user output directory.
+    fn job_output_set_fixture(
+        planned: &[crate::output_names::PlannedOutput],
+    ) -> (tempfile::TempDir, SessionJobContext, Vec<PathBuf>, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let job_dir = root.path().join("job");
+        let output_dir = root.path().join("output");
+        fs::create_dir(&job_dir).unwrap();
+        fs::create_dir(&output_dir).unwrap();
+        let snapshot_path = job_dir.join("snapshot.pdf");
+        fs::write(&snapshot_path, b"%PDF-snapshot").unwrap();
+        let sources = planned
+            .iter()
+            .map(|output| {
+                let source = job_dir.join(&output.worker_name);
+                fs::write(&source, format!("new {}", output.worker_name)).unwrap();
+                source.canonicalize().unwrap()
+            })
+            .collect();
+        let context = SessionJobContext::detached(snapshot_path, None, "output-set-test");
+        (root, context, sources, output_dir)
+    }
+
+    fn sorted_output_names(output_dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(output_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn job_output_set_conflict_reports_names_without_writing() {
+        let planned = crate::export::planned_export_image_outputs(&[0, 1, 2], "png", "rapor");
+        let (_root, context, sources, output_dir) = job_output_set_fixture(&planned);
+        fs::write(output_dir.join("rapor_sayfa_2.png"), b"previous export").unwrap();
+
+        let preflight = preflight_job_output_set(&output_dir, &planned, false).unwrap_err();
+        let error =
+            accept_job_output_set(&context, sources, &planned, &output_dir, false).unwrap_err();
+
+        for error in [preflight, error] {
+            let SessionJobOperationError::Failed(failure) = error else {
+                panic!("expected failure, got {error:?}");
+            };
+            assert_eq!(failure.code, SESSION_JOB_OUTPUT_CONFLICT_CODE);
+            assert_eq!(
+                failure.conflicting_names.as_ref().map(|names| names.0.as_slice()),
+                Some(&["rapor_sayfa_2.png".to_string()][..])
+            );
+            let wire = serde_json::to_value(&failure).unwrap();
+            assert_eq!(wire["conflictingNames"], serde_json::json!(["rapor_sayfa_2.png"]));
+        }
+        assert_eq!(sorted_output_names(&output_dir), ["rapor_sayfa_2.png"]);
+        assert_eq!(
+            fs::read(output_dir.join("rapor_sayfa_2.png")).unwrap(),
+            b"previous export"
+        );
+    }
+
+    #[test]
+    fn job_output_set_overwrite_after_confirmation_publishes_under_document_names() {
+        let planned = planned_split_outputs(&[(0, 0), (3, 5)], "rapor").unwrap();
+        let (_root, context, sources, output_dir) = job_output_set_fixture(&planned);
+        fs::write(output_dir.join("rapor_sayfa_4-6.pdf"), b"previous split").unwrap();
+
+        preflight_job_output_set(&output_dir, &planned, true).unwrap();
+        let published =
+            accept_job_output_set(&context, sources, &planned, &output_dir, true).unwrap();
+
+        assert_eq!(
+            published,
+            ["rapor_sayfa_1.pdf", "rapor_sayfa_4-6.pdf"]
+                .iter()
+                .map(|name| output_dir.join(name).to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            sorted_output_names(&output_dir),
+            ["rapor_sayfa_1.pdf", "rapor_sayfa_4-6.pdf"]
+        );
+        assert_eq!(
+            fs::read(output_dir.join("rapor_sayfa_1.pdf")).unwrap(),
+            b"new split_0_0.pdf"
+        );
+        assert_eq!(
+            fs::read(output_dir.join("rapor_sayfa_4-6.pdf")).unwrap(),
+            b"new split_1_3.pdf"
+        );
+    }
+
+    #[test]
+    fn job_output_set_rejects_outputs_that_differ_from_the_plan() {
+        let produced = crate::export::planned_export_image_outputs(&[0, 1], "png", "rapor");
+        let (_root, context, sources, output_dir) = job_output_set_fixture(&produced);
+        let expected = crate::export::planned_export_image_outputs(&[0, 2], "png", "rapor");
+
+        let error =
+            accept_job_output_set(&context, sources, &expected, &output_dir, false).unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                SessionJobOperationError::Failed(SessionJobFailure { ref code, .. })
+                    if code == "SESSION_JOB_WORKER_PROTOCOL_ERROR"
+            ),
+            "{error:?}"
+        );
+        assert!(sorted_output_names(&output_dir).is_empty());
+    }
+
+    #[test]
+    fn job_output_set_cancellation_publishes_nothing() {
+        let planned = crate::export::planned_export_image_outputs(&[0, 1], "png", "rapor");
+        let (_root, context, sources, output_dir) = job_output_set_fixture(&planned);
+        context.cancellation.token.cancel();
+
+        let error =
+            accept_job_output_set(&context, sources, &planned, &output_dir, false).unwrap_err();
+
+        assert!(
+            matches!(error, SessionJobOperationError::Cancelled(_)),
+            "{error:?}"
+        );
+        assert!(sorted_output_names(&output_dir).is_empty());
+    }
+
+    fn worker_and_target_names(
+        planned: &[crate::output_names::PlannedOutput],
+    ) -> Vec<(&str, &str)> {
+        planned
+            .iter()
+            .map(|output| (output.worker_name.as_str(), output.target_name.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn planned_image_outputs_follow_worker_order_and_document_name() {
+        assert_eq!(
+            worker_and_target_names(&crate::export::planned_export_image_outputs(
+                &[2, 0, 2, 5],
+                "jpeg",
+                "rapor"
+            )),
+            [
+                ("sayfa_3.jpg", "rapor_sayfa_3.jpg"),
+                ("sayfa_1.jpg", "rapor_sayfa_1.jpg"),
+                ("sayfa_6.jpg", "rapor_sayfa_6.jpg"),
+            ]
+        );
+        assert_eq!(
+            worker_and_target_names(&crate::export::planned_export_image_outputs(
+                &[u32::MAX],
+                "png",
+                "belge"
+            )),
+            [("sayfa_4294967296.png", "belge_sayfa_4294967296.png")]
+        );
+    }
+
+    #[test]
+    fn planned_split_outputs_name_ranges_and_reject_repeats() {
+        assert_eq!(
+            worker_and_target_names(
+                &planned_split_outputs(&[(0, 2), (4, 4), (7, 9)], "rapor").unwrap()
+            ),
+            [
+                ("split_0_0.pdf", "rapor_sayfa_1-3.pdf"),
+                ("split_1_4.pdf", "rapor_sayfa_5.pdf"),
+                ("split_2_7.pdf", "rapor_sayfa_8-10.pdf"),
+            ]
+        );
+        for (ranges, shown) in [
+            (vec![(0, 2), (4, 4), (0, 2)], "1-3"),
+            (vec![(4, 4), (4, 4)], "5"),
+        ] {
+            let error = planned_split_outputs(&ranges, "rapor").unwrap_err();
+            let SessionJobOperationError::Failed(failure) = error else {
+                panic!("expected failure, got {error:?}");
+            };
+            assert_eq!(failure.code, "SESSION_JOB_INVALID_SPLIT_RANGES");
+            assert!(failure.message.ends_with(shown), "{}", failure.message);
+        }
     }
 
     #[tokio::test]
@@ -13832,27 +14200,24 @@ mod tests {
     #[tokio::test]
     async fn encrypted_active_session_merge_uses_snapshot_credential() {
         let documents = tempfile::tempdir().unwrap();
+        let additional = documents.path().join("additional.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &additional).unwrap();
         let output = documents.path().join("merged.pdf");
-        let store = DocumentSessionStore::initialize().unwrap();
+        let app = test_command_app();
+        let store = app.state::<DocumentSessionStore>();
         let session_id = open_encrypted_test_session(&store, &documents);
-        let outcome = store
-            .run_snapshot_job(
-                &Uuid::new_v4().to_string(),
-                &session_id,
-                1,
-                move |context| {
-                    crate::manipulation::merge_pdfs_internal(
-                        vec![context.snapshot_path.to_string_lossy().to_string()],
-                        output.to_string_lossy().to_string(),
-                        context.credential.map(SessionJobCredential::into_inner),
-                        &context.cancellation,
-                    )
-                },
-            )
-            .await
-            .unwrap();
+        let outcome = merge_session_pdfs(
+            Uuid::new_v4().to_string(),
+            session_id,
+            1,
+            vec![additional.to_string_lossy().to_string()],
+            output.to_string_lossy().to_string(),
+            app.state(),
+        )
+        .await
+        .unwrap();
         assert!(matches!(outcome, SessionJobOutcome::Completed { .. }));
-        assert!(documents.path().join("merged.pdf").exists());
+        assert!(output.is_file());
         assert!(store.job_registry.lock().active.is_empty());
     }
 
@@ -18511,5 +18876,67 @@ mod tests {
         assert_eq!(accumulator.failed_pre_commit, 1);
         assert_eq!(accumulator.commit_indeterminate, 1);
         assert_eq!(accumulator.processed_ids.len(), 4);
+    }
+
+    /// The store keeps `temp_root` as `std::env::temp_dir()` returns it, which
+    /// on macOS sits under the `/var -> /private/var` symlink; a tempdir root
+    /// has the same shape.
+    #[test]
+    fn private_target_rejection_covers_resolved_and_unresolved_forms() {
+        let private = tempfile::tempdir().unwrap();
+        let root = private.path();
+        let resolved_root = root.canonicalize().unwrap();
+        let sessions = root.join("instance-x").join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::write(sessions.join("working.pdf"), b"%PDF-").unwrap();
+
+        let inside = [
+            root.to_path_buf(),
+            root.join("out.pdf"),
+            sessions.join("working.pdf"),
+            sessions.join("missing").join("deeper").join("out.pdf"),
+            resolved_root.join("out.pdf"),
+            resolved_root.join("missing").join("out.pdf"),
+            sessions.join("..").join("sessions").join("out.pdf"),
+        ];
+        for target in &inside {
+            let error = reject_private_target(target, root).unwrap_err();
+            assert_eq!(
+                error.code,
+                "DOCUMENT_SESSION_PRIVATE_TARGET",
+                "{}",
+                target.display()
+            );
+            assert!(
+                reject_private_target(target, &resolved_root).is_err(),
+                "{}",
+                target.display()
+            );
+        }
+
+        let outside = tempfile::tempdir().unwrap();
+        for target in [
+            outside.path().join("out.pdf"),
+            outside.path().join("missing").join("out.pdf"),
+        ] {
+            reject_private_target(&target, root).unwrap();
+            reject_private_target(&target, &resolved_root).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_target_rejection_follows_symlinked_folders() {
+        let private = tempfile::tempdir().unwrap();
+        let sessions = private.path().join("sessions");
+        fs::create_dir(&sessions).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let alias = outside.path().join("alias");
+        std::os::unix::fs::symlink(&sessions, &alias).unwrap();
+
+        for target in [alias.join("out.pdf"), alias.join("missing").join("out.pdf")] {
+            let error = reject_private_target(&target, private.path()).unwrap_err();
+            assert_eq!(error.code, "DOCUMENT_SESSION_PRIVATE_TARGET");
+        }
     }
 }

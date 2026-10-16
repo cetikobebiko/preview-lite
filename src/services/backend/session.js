@@ -53,6 +53,7 @@ export const exportSessionPagesAsImages = (
   outputDir,
   format,
   dpi,
+  overwrite = false,
 ) =>
   runSessionJob(sessionId, (jobId) =>
     callBackend("exportSessionPagesAsImages", {
@@ -63,6 +64,7 @@ export const exportSessionPagesAsImages = (
       outputDir,
       format,
       dpi,
+      overwrite,
     }),
   ).promise;
 

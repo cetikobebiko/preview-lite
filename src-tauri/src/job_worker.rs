@@ -1440,6 +1440,11 @@ fn copy_mutation_input(snapshot_path: &Path, output_path: &Path) -> Result<(), J
     Ok(())
 }
 
+/// Output file name of the `range_index`-th split range starting at `start`.
+pub(crate) fn split_output_file_name(range_index: usize, start: u32) -> String {
+    format!("split_{range_index}_{start}.pdf")
+}
+
 fn split_pdf(
     snapshot_path: &Path,
     credential: Option<&str>,
@@ -1466,7 +1471,7 @@ fn split_pdf(
             ));
         }
         let output_path =
-            checked_output_path(job_dir, &format!("split_{range_index}_{start}.pdf"))?;
+            checked_output_path(job_dir, &split_output_file_name(range_index, start))?;
         let mut output = pdfium.create_new_pdf().map_err(|error| {
             job_failed(
                 "SESSION_JOB_SPLIT_FAILED",

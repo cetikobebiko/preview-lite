@@ -55,8 +55,8 @@ export async function mergeSessionPdfs(sessionId, expectedContentGeneration, add
   return await manipulationBackend.mergeSessionPdfs(sessionId, expectedContentGeneration, additionalPaths, targetPath);
 }
 
-export async function splitSessionPdf(sessionId, expectedContentGeneration, ranges, outputDir) {
-  return await manipulationBackend.splitSessionPdf(sessionId, expectedContentGeneration, ranges, outputDir);
+export async function splitSessionPdf(sessionId, expectedContentGeneration, ranges, outputDir, overwrite = false) {
+  return await manipulationBackend.splitSessionPdf(sessionId, expectedContentGeneration, ranges, outputDir, overwrite);
 }
 
 // ==========================================

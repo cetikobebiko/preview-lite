@@ -1,17 +1,24 @@
 <script>
-  import { SvelteSet } from "svelte/reactivity";
   import { fade, fly } from "svelte/transition";
-  import { open, save } from "@tauri-apps/plugin-dialog";
+  import { ask, open, save } from "@tauri-apps/plugin-dialog";
   import {
     exportSessionPagesAsImages,
     exportSessionTextContent,
     printSessionPdf,
   } from "../services/backend/index.js";
+  import { exportErrorMessage } from "../services/app/exportErrorMessage.js";
+  import {
+    outputConflictMessage,
+    publishWithOverwriteConfirmation,
+  } from "../services/app/outputConflict.js";
+  import { parsePageRanges, toPhysicalPages } from "../utils/pageRanges.js";
 
   let {
     sessionId = "",
     contentGeneration = 0,
     maxPages = 1,
+    // Display order (viewer.pageOrder); typed numbers are display positions.
+    pageOrder = null,
     onclose,
     onsuccess,
   } = $props();
@@ -29,41 +36,25 @@
   let isExporting = $state(false);
   let errorMsg = $state("");
 
-  function parsePageRange(rangeStr, maxP) {
-      if (!rangeStr || !rangeStr.trim()) {
-          // Empty means all pages
-          return Array.from({ length: maxP }, (_, i) => i);
+  // Empty input means every page; anything else must parse cleanly or nothing is exported.
+  function selectPages() {
+      if (!pageRange.trim()) {
+          return { ok: true, pages: Array.from({ length: maxPages }, (_, i) => i) };
       }
-      let pages = new SvelteSet();
-      const parts = rangeStr.split(',');
-      for (const part of parts) {
-          const t = part.trim();
-          if (t.includes('-')) {
-              const bounds = t.split('-');
-              if (bounds.length === 2) {
-                  let start = parseInt(bounds[0], 10);
-                  let end = parseInt(bounds[1], 10);
-                  if (!isNaN(start) && !isNaN(end)) {
-                      if (start > end) { let tmp = start; start = end; end = tmp; }
-                      for (let i = start; i <= end; i++) {
-                          if (i >= 1 && i <= maxP) pages.add(i - 1);
-                      }
-                  }
-              }
-          } else {
-              let p = parseInt(t, 10);
-              if (!isNaN(p) && p >= 1 && p <= maxP) pages.add(p - 1);
-          }
-      }
-      return Array.from(pages).sort((a, b) => a - b);
+      return parsePageRanges(pageRange, maxPages, { mode: "pages" });
   }
 
   async function handleExport() {
       errorMsg = "";
-      const selectedPages = parsePageRange(pageRange, maxPages);
-      
+      const selection = selectPages();
+      if (!selection.ok) {
+          errorMsg = selection.error;
+          return;
+      }
+      // The backend addresses physical PDF pages.
+      const selectedPages = toPhysicalPages(selection.pages, pageOrder);
       if (selectedPages.length === 0) {
-          errorMsg = "Geçerli bir sayfa aralığı girmediniz.";
+          errorMsg = "Belgede dışa aktarılacak sayfa yok.";
           return;
       }
       
@@ -77,14 +68,29 @@
               });
               
               if (outputDir) {
-                  await exportSessionPagesAsImages(
-                    sessionId,
-                    contentGeneration,
-                    selectedPages,
-                    outputDir,
-                    imgFormat,
-                    imgDpi,
+                  const result = await publishWithOverwriteConfirmation(
+                    (overwrite) =>
+                      exportSessionPagesAsImages(
+                        sessionId,
+                        contentGeneration,
+                        selectedPages,
+                        outputDir,
+                        imgFormat,
+                        imgDpi,
+                        overwrite,
+                      ),
+                    (names) =>
+                      ask(outputConflictMessage(names), {
+                        title: "Dosyalar Zaten Var",
+                        kind: "warning",
+                        okLabel: "Üzerine Yaz",
+                        cancelLabel: "İptal",
+                      }),
                   );
+                  if (result.status === "declined") {
+                      errorMsg = "Dışa aktarma iptal edildi; mevcut dosyalara dokunulmadı.";
+                      return;
+                  }
                   onsuccess?.("Görseller başarıyla dışa aktarıldı!");
                   onclose?.();
               }
@@ -114,7 +120,7 @@
               onclose?.();
           }
       } catch (err) {
-          errorMsg = err.toString();
+          errorMsg = exportErrorMessage(err);
       } finally {
           isExporting = false;
       }
@@ -138,7 +144,7 @@
       
       <div class="modal-body">
           {#if errorMsg}
-              <div class="error-msg">{errorMsg}</div>
+              <div class="error-msg" role="alert">{errorMsg}</div>
           {/if}
           
           <div class="form-group">

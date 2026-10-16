@@ -226,6 +226,51 @@ has a bounded timeout and kills/reaps a timed-out child.
 | `extract_session_pages` | `boundary-only` | existing atomic document-IO pipeline |
 | `build_semantic_index` | `cooperative` | page/chunk/request boundaries |
 
+### Multi-file output publication
+
+`export_session_pages_as_images` and `split_session_pdf` write several files
+into a user-chosen folder. Both take a required `overwrite: bool` and publish
+through `document_io::publish_output_set`:
+
+- **Planned names.** The worker writes private names inside the job directory
+  (`sayfa_{n}.{png|jpg}`, `split_{rangeIndex}_{start}.pdf`) and must return
+  exactly the planned files, in order, or the job fails with
+  `SESSION_JOB_WORKER_PROTOCOL_ERROR`. The main process publishes each one under
+  a document-based name (`output_names.rs`): `{stem}_sayfa_{n}.{png|jpg}` for
+  images and `{stem}_sayfa_{start}-{end}.pdf` (`{stem}_sayfa_{n}.pdf` for a
+  single page) for split ranges, all 1-based. `stem` is the session's current
+  save-target file name without `.pdf`, with `< > : " / \ | ? *`, control and
+  bidi characters replaced by `_`, edge dots/spaces trimmed, at most 120 bytes,
+  Windows device names (`CON`, `NUL`, `COM1`…) suffixed with `_`, and `belge`
+  when nothing is left. The same split range given twice is rejected with
+  `SESSION_JOB_INVALID_SPLIT_RANGES` before any work.
+- **Conflict policy.** Before the worker runs, and again at publish time, every
+  planned target is inspected. With `overwrite: false` any existing entry fails
+  the job with `SESSION_JOB_OUTPUT_CONFLICT` and `error.conflictingNames`
+  (file names) and nothing is written. The frontend
+  (`services/app/outputConflict.js`) asks the user and, on confirmation,
+  repeats the call once with `overwrite: true`. Existing entries that are not
+  regular files (directory, symlink, reparse point) fail with
+  `SESSION_JOB_OUTPUT_TARGET_UNSUPPORTED` in both modes and are never replaced.
+- **All-or-nothing.** Every output is first copied to a hidden, fsynced
+  `.antigravity-write-*` temp beside its target. Only after all are staged are
+  they renamed into place. Targets that did not exist are created with a
+  no-clobber rename (`persist_noclobber`), so a file that appears after
+  inspection is reported as a conflict instead of being replaced; on
+  filesystems without exclusive rename or hard links this degrades to an
+  existence check plus rename. Targets being overwritten are first kept as
+  hidden `.antigravity-backup-*` hard links (a copy where hard links are
+  unsupported). If staging, a rename, or cancellation fails mid-way, files
+  already created by this job are removed and overwritten targets are restored
+  from their backups; the job reports `SESSION_JOB_OUTPUT_WRITE_FAILED`,
+  `SESSION_JOB_OUTPUT_CONFLICT`, or `Cancelled`. If the rollback itself fails,
+  the job reports `SESSION_JOB_OUTPUT_ROLLBACK_FAILED` naming each leftover file
+  and any backup kept for a target that could not be restored.
+- **Limits.** This is not a PDF document transaction: there is no path lock and
+  no post-commit verification. A process abort or machine crash during the
+  rename phase can leave a partial set, temps, or backups; they are not
+  scavenged by name.
+
 ## Temp ownership and platform security
 
 Each process owns a sibling lock and instance directory:
