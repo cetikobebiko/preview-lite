@@ -3118,7 +3118,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "rhai",
- "rusty-tesseract",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -3711,19 +3710,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "rusty-tesseract"
-version = "1.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "781e2d6ed8bb85607de972e6c174902953da1f682b1d43004f0e66bf419b798f"
-dependencies = [
- "image",
- "subprocess",
- "substring",
- "tempfile",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4259,25 +4245,6 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
-
-[[package]]
-name = "subprocess"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c56e8662b206b9892d7a5a3f2ecdbcb455d3d6b259111373b7e08b8055158a8"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "substring"
-version = "1.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ee6433ecef213b2e72f587ef64a2f5943e7cd16fbd82dbe8bc07486c534c86"
-dependencies = [
- "autocfg",
-]
 
 [[package]]
 name = "subtle"

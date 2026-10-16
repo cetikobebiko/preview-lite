@@ -292,101 +292,65 @@ async fn perform_ocr_on_page(
     page_index: u32,
     store: tauri::State<'_, document_session::DocumentSessionStore>,
 ) -> Result<document_session::SessionJobOutcome<String>, document_session::DocumentSessionError> {
-    store.run_snapshot_job(&job_id, &session_id, expected_content_generation, move |context| {
-        tauri::async_runtime::block_on(async move {
-            context.cancellation.check_cancelled()?;
-            let temp_img_path = match job_worker::run_job(
-                &context,
-                job_worker::JobCommand::RenderOcrPage {
-                    page_index,
-                    output_name: "vision-ocr-input.png".to_string(),
-                    scale: 1.5,
-                },
-                std::time::Duration::from_secs(120),
-            )? {
-                job_worker::JobResult::File(path) => path,
-                _ => {
-                    return Err(document_session::SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Vision OCR preparation worker beklenmeyen sonuç döndürdü",
-                    ))
-                }
-            };
-            let temp_img_path = job_worker::validate_output_file(&context, &temp_img_path)?;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                tauri::async_runtime::block_on(async move {
+                    context.cancellation.check_cancelled()?;
+                    let temp_img_path = match job_worker::run_job(
+                        &context,
+                        job_worker::JobCommand::RenderOcrPage {
+                            page_index,
+                            output_name: "vision-ocr-input.png".to_string(),
+                            scale: 1.5,
+                        },
+                        std::time::Duration::from_secs(120),
+                    )? {
+                        job_worker::JobResult::File(path) => path,
+                        _ => {
+                            return Err(
+                                document_session::SessionJobOperationError::failed_with_code(
+                                    "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                                    "Vision OCR preparation worker beklenmeyen sonuç döndürdü",
+                                ),
+                            )
+                        }
+                    };
+                    let temp_img_path = job_worker::validate_output_file(&context, &temp_img_path)?;
 
-            let output = context.child_processes.run_with_output_timeout(
-                std::process::Command::new("swift").arg("-e").arg(format!(
-                    r#"
-                    import Vision
-                    import AppKit
+                    let mut command = macos_helper::ocr_command_args(&temp_img_path)
+                        .and_then(macos_helper::helper_command)
+                        .map_err(document_session::SessionJobOperationError::from)?;
+                    let output = context.child_processes.run_with_output_timeout(
+                        &mut command,
+                        std::time::Duration::from_secs(120),
+                        &context.cancellation,
+                    )?;
 
-                    let imageURL = URL(fileURLWithPath: "{}")
-                    guard let image = NSImage(contentsOf: imageURL),
-                          let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {{
-                        exit(1)
-                    }}
-
-                    let request = VNRecognizeTextRequest {{ request, error in
-                        guard let observations = request.results as? [VNRecognizedTextObservation] else {{ return }}
-                        let text = observations.compactMap {{ $0.topCandidates(1).first?.string }}.joined(separator: "\n")
-                        print(text)
-                    }}
-                    request.recognitionLevel = .accurate
-
-                    let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                    try? handler.perform([request])
-                    "#,
-                    temp_img_path.to_string_lossy()
-                )),
-                std::time::Duration::from_secs(120),
-                &context.cancellation,
-            )?;
-
-            if output.status.success() {
-                let recognized = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if recognized.is_empty() {
-                    Ok("Sayfada metin tespit edilemedi.".to_string())
-                } else {
-                    Ok(recognized)
-                }
-            } else {
-                Err(document_session::SessionJobOperationError::failed(
-                    "macOS Apple Vision OCR yürütülemedi.",
-                ))
-            }
-        })
-    }).await
-}
-
-#[cfg(target_os = "macos")]
-#[cfg_attr(not(test), allow(dead_code))]
-fn write_vision_ocr_temp_image(rendered: RenderedPage) -> Result<tempfile::NamedTempFile, String> {
-    write_vision_ocr_temp_image_in(rendered, None)
-}
-
-#[cfg(target_os = "macos")]
-#[cfg_attr(not(test), allow(dead_code))]
-fn write_vision_ocr_temp_image_in(
-    rendered: RenderedPage,
-    directory: Option<&Path>,
-) -> Result<tempfile::NamedTempFile, String> {
-    let mut builder = tempfile::Builder::new();
-    builder.prefix("antigravity-vision-ocr-").suffix(".png");
-    let temp_image = match directory {
-        Some(directory) => builder.tempfile_in(directory),
-        None => builder.tempfile(),
-    }
-    .map_err(|error| format!("Geçici OCR resmi oluşturulamadı: {error}"))?;
-    let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-        rendered.width,
-        rendered.height,
-        rendered.data,
-    )
-    .ok_or("ImageData dönüşüm hatası")?;
-    image
-        .save_with_format(temp_image.path(), image::ImageFormat::Png)
-        .map_err(|error| format!("Geçici OCR resmi kaydedilemedi: {error}"))?;
-    Ok(temp_image)
+                    if output.status.success() {
+                        let recognized = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if recognized.is_empty() {
+                            Ok("Sayfada metin tespit edilemedi.".to_string())
+                        } else {
+                            Ok(recognized)
+                        }
+                    } else {
+                        let detail = child_stderr_detail(&output.stderr);
+                        Err(document_session::SessionJobOperationError::failed(
+                            if detail.is_empty() {
+                                format!("macOS Apple Vision OCR yürütülemedi ({}).", output.status)
+                            } else {
+                                format!("macOS Apple Vision OCR yürütülemedi: {detail}")
+                            },
+                        ))
+                    }
+                })
+            },
+        )
+        .await
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1930,36 +1894,5 @@ source.clone(),
             .await
             .unwrap_err();
         assert!(error.starts_with("Görsel işlemi tamamlanamadı"), "{error}");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn vision_ocr_temp_image_is_removed_on_drop() {
-        let temp_image = write_vision_ocr_temp_image(RenderedPage {
-            width: 1,
-            height: 1,
-            data: vec![255, 255, 255, 255],
-        })
-        .unwrap();
-        let path = temp_image.path().to_path_buf();
-        assert!(path.is_file());
-        drop(temp_image);
-        assert!(!path.exists());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn vision_ocr_temp_image_is_removed_when_encoding_input_is_invalid() {
-        let directory = tempfile::tempdir().unwrap();
-        let result = write_vision_ocr_temp_image_in(
-            RenderedPage {
-                width: 2,
-                height: 2,
-                data: vec![255, 255, 255, 255],
-            },
-            Some(directory.path()),
-        );
-        assert!(result.is_err());
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 }
