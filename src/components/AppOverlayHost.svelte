@@ -26,7 +26,7 @@
 
 {#if toastMsg}
   <div class="toast-notification">
-    <span>// {toastMsg.toUpperCase()}</span>
+    <span>// {toastMsg.toLocaleUpperCase("tr-TR")}</span>
   </div>
 {/if}
 

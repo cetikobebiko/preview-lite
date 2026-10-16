@@ -69,6 +69,7 @@ vi.mock("./services/app/presentationController.js", () => ({
 
 vi.mock("./services/platform/events.js", () => ({
   listen: vi.fn(async () => vi.fn()),
+  onDragDropEvent: vi.fn(async () => vi.fn()),
 }));
 
 vi.mock("./services/backend/ai.js", () => ({

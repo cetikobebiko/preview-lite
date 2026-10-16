@@ -292,7 +292,7 @@ Event'ler command sayılarına dahil edilmemiştir.
 |---|---|---|---|---|---|
 | `ai_stream_event` | `src-tauri/src/ai/stream_parser.rs` | `AiStreamEvent` (schema v1) | `src/services/app/aiController.js` | Tam uyumlu (Canonical) | Security Acceptance suite (`security_acceptance_tests.rs`, `aiController.test.js`) |
 | `batch_job_status` | `src-tauri/src/batch.rs:40,49` | `JobStatus` object | Consumer bulunmadı | **backend-only** | Test yok / runtime çalışmadı |
-| `tauri://drag-drop` | Tauri sistem event'i | frontend `.paths` okur | `src/App.svelte:658` | Sistem producer'ı bekleniyor | Runtime test edilmedi |
+| `tauri://drag-enter`, `tauri://drag-over`, `tauri://drag-leave`, `tauri://drag-drop` | Tauri sistem event'leri (`dragDropEnabled: true`, webview hedefli) | `getCurrentWebview().onDragDropEvent` ile `{ type, paths?, position? }` | `src/services/platform/events.js` → `src/services/app/applicationLifecycleController.js` | Sistem producer'ı bekleniyor; DOM `drop` yolu kaldırıldı | `applicationLifecycleController.test.js` (mock event akışı); runtime doğrulaması ayrıca raporlanır |
 
 ### AI Streaming Event Sözleşmesi (`ai_stream_event`)
 Prompt 9A kapsamında eski global eventler (`ai_chat_token`, `ai_chat_done`, `ai_summary_token`, `ai_summary_done`) tamamen kaldırılmış ve yerini request-scoped, yapılandırılmış tekil event kanalı almıştır:

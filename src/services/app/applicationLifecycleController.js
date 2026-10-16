@@ -1,7 +1,17 @@
 import { initConfig, getConfigRecentFiles } from "../../configManager.js";
-import { listen } from "../platform/events.js";
+import { onDragDropEvent } from "../platform/events.js";
+import { fileBaseName, isOpenableFilePath } from "./openableFiles.js";
+import { normalizeScale } from "./zoomLimits.js";
 
-/** Owns startup restore plus native/browser drag listener setup and teardown. */
+/**
+ * Owns startup restore plus native drag-drop listener setup and teardown.
+ *
+ * File drops are handled only through Tauri's webview drag-drop events. With the
+ * native handler enabled (Tauri's default, pinned in tauri.conf.json) the webview
+ * never receives external file drags, so DOM dragover/drop listeners would see
+ * nothing useful: WebKit's File has no absolute path, and a window-level dragover
+ * listener would also light the file overlay during in-page HTML5 drags.
+ */
 export function createApplicationLifecycleController({
   viewer,
   ui,
@@ -11,11 +21,10 @@ export function createApplicationLifecycleController({
   isDocumentOpen,
   initializeConfig = initConfig,
   getRecentFiles = getConfigRecentFiles,
-  listenToEvent = listen,
-  browserWindow = window,
+  listenToDragDrop = onDragDropEvent,
 }) {
   let interval = null;
-  let unlistenDrop = null;
+  let unlistenDragDrop = null;
   let lifecycleEpoch = 0;
   let activeStart = null;
   let running = false;
@@ -28,7 +37,7 @@ export function createApplicationLifecycleController({
       const parsed = JSON.parse(saved);
       const savedViewer = parsed.viewer ?? parsed;
       if (savedViewer.isSmartDarkMode !== undefined) viewer.isSmartDarkMode = savedViewer.isSmartDarkMode;
-      if (savedViewer.scale !== undefined) viewer.scale = savedViewer.scale;
+      if (savedViewer.scale !== undefined) viewer.scale = normalizeScale(savedViewer.scale);
     } catch (error) { onError("Ayarlar okunamadı", error); }
   }
 
@@ -55,18 +64,7 @@ export function createApplicationLifecycleController({
     const recent = getRecentFiles()?.[0];
     if (recent) void onOpenFile(recent);
     interval = setInterval(() => { if (isDocumentOpen()) viewer.readingTimeSeconds += 1; }, 1000);
-    void listenToEvent("tauri://drag-drop", (event) => {
-      const path = event.payload?.paths?.[0];
-      if (path && isCurrent(epoch)) { void onOpenFile(path); onToast("Sürüklenen dosya açıldı."); }
-    }).then((dispose) => {
-      if (!isCurrent(epoch)) dispose();
-      else unlistenDrop = dispose;
-    }).catch((error) => {
-      if (isCurrent(epoch)) onError("Dosya bırakma dinleyicisi kurulamadı", error);
-    });
-    browserWindow.addEventListener("dragover", onDragOver);
-    browserWindow.addEventListener("dragleave", onDragLeave);
-    browserWindow.addEventListener("drop", onDrop);
+    subscribeDragDrop(epoch);
     running = true;
     return { status: "started" };
   }
@@ -87,20 +85,65 @@ export function createApplicationLifecycleController({
     return pending;
   }
 
-  function onDragOver(event) { event.preventDefault(); ui.isDraggingFileOver = true; }
-  function onDragLeave(event) { if (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= browserWindow.innerWidth || event.clientY >= browserWindow.innerHeight) ui.isDraggingFileOver = false; }
-  function onDrop(event) {
-    event.preventDefault(); ui.isDraggingFileOver = false;
-    const file = event.dataTransfer?.files?.[0];
-    const path = file?.path || file?.name;
-    if (path) { void onOpenFile(path); onToast(`Dosya yüklendi: ${file.name || "Yeni Belge"}`); }
+  function subscribeDragDrop(epoch) {
+    let pending;
+    try {
+      pending = Promise.resolve(listenToDragDrop((event) => handleDragDrop(epoch, event?.payload)));
+    } catch (error) {
+      pending = Promise.reject(error);
+    }
+    pending.then((dispose) => {
+      if (!isCurrent(epoch)) dispose();
+      else unlistenDragDrop = dispose;
+    }).catch((error) => {
+      if (isCurrent(epoch)) onError("Dosya bırakma dinleyicisi kurulamadı", error);
+    });
   }
+
+  function handleDragDrop(epoch, payload) {
+    if (!isCurrent(epoch)) return;
+    switch (payload?.type) {
+      case "enter":
+        // In-page HTML5 drags and non-file drags arrive without openable paths.
+        ui.isDraggingFileOver = droppedPaths(payload.paths).some(isOpenableFilePath);
+        break;
+      case "leave":
+        ui.isDraggingFileOver = false;
+        break;
+      case "drop":
+        ui.isDraggingFileOver = false;
+        openDroppedPaths(droppedPaths(payload.paths));
+        break;
+      default:
+        // "over" only carries a cursor position.
+        break;
+    }
+  }
+
+  function droppedPaths(paths) {
+    return Array.isArray(paths) ? paths.filter((path) => typeof path === "string" && path.length > 0) : [];
+  }
+
+  function openDroppedPaths(paths) {
+    if (paths.length === 0) return;
+    const target = paths.find(isOpenableFilePath);
+    if (!target) {
+      onToast("Desteklenmeyen dosya türü. PDF veya görsel bırakın.");
+      return;
+    }
+    void onOpenFile(target);
+    const ignored = paths.length - 1;
+    onToast(ignored > 0
+      ? `Sürüklenen dosya açıldı: ${fileBaseName(target)}. Diğer ${ignored} dosya yok sayıldı.`
+      : `Sürüklenen dosya açıldı: ${fileBaseName(target)}`);
+  }
+
   function stop() {
     stopped = true;
     running = false;
     lifecycleEpoch += 1;
-    unlistenDrop?.(); unlistenDrop = null;
-    browserWindow.removeEventListener("dragover", onDragOver); browserWindow.removeEventListener("dragleave", onDragLeave); browserWindow.removeEventListener("drop", onDrop);
+    unlistenDragDrop?.(); unlistenDragDrop = null;
+    ui.isDraggingFileOver = false;
     if (interval !== null) clearInterval(interval); interval = null;
   }
   return Object.freeze({ start, stop, saveViewerSettings });

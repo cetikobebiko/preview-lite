@@ -1,4 +1,5 @@
 import { ask, open, save } from "../platform/dialogs.js";
+import { OPENABLE_FILE_EXTENSIONS } from "./openableFiles.js";
 import {
   addRecentFile,
   getDocumentState,
@@ -186,7 +187,7 @@ export function createDocumentRuntime({
       multiple: false,
       filters: [{
         name: "Desteklenen Belgeler ve Görseller",
-        extensions: ["pdf", "png", "jpg", "jpeg", "webp", "bmp", "svg"],
+        extensions: [...OPENABLE_FILE_EXTENSIONS],
       }],
     }),
     setError: onError,
