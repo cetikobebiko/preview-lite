@@ -13,7 +13,11 @@
     isExpectedRenderCancellation,
     validateRenderResponse,
   } from "../utils/renderRequestCoordinator.js";
-  import { fade, fly } from "svelte/transition";
+  import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
+  import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import AppDialog from "./AppDialog.svelte";
+  import { Button } from "$lib/components/ui/button";
   import { SvelteMap } from "svelte/reactivity";
   import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { rotatePage, deletePages, reorderPages } from "../pdfState.js";
@@ -59,6 +63,13 @@
       }));
     }
     return pageCoordinators.get(pageIndex);
+  }
+
+  // Release a thumbnail canvas when its element is removed. The canvases live
+  // inside the dialog's snippet, which tears down before onDestroy runs, so
+  // their bound references are already null by then.
+  function releaseOnRemoval(canvas) {
+    return () => releaseCanvasBackingStore(canvas);
   }
 
   function releaseCanvasBackingStore(canvas) {
@@ -416,118 +427,85 @@
   }
 </script>
 
-<div class="organizer-overlay" transition:fade={{duration: 200}}>
-  <div class="organizer-container glass-panel" transition:fly={{y: 30, duration: 300}}>
-    <FeatureNotice featureId="page_manipulation" compact />
-    <div class="header">
-      <h2>Sayfa Düzenleyici (Organizer)</h2>
-      <div class="actions">
-        <button class="tech-button primary" onclick={handleSaveOrder} disabled={isSaving}>
-          {isSaving ? 'Kaydediliyor...' : 'Sıralamayı Kaydet'}
-        </button>
-        <button class="tech-button" onclick={() => onclose?.()} disabled={isSaving}>
-          Kapat
-        </button>
-      </div>
-    </div>
+<AppDialog
+  title="Sayfa Düzenleyici (Organizer)"
+  description="Sıralamak için sayfaları sürükleyin."
+  size="xl"
+  class="h-[85vh] sm:max-w-[min(1100px,92vw)]"
+  bodyClass="pt-1"
+  dismissible={!isSaving}
+  onclose={() => onclose?.()}
+>
+  <FeatureNotice featureId="page_manipulation" compact />
 
-    <div class="grid-container" role="list">
-      {#each pages as page, i (page.id)}
-        <div
-          class="page-card"
-          role="listitem"
-          draggable="true"
-          ondragstart={(e) => handleDragStart(e, i)}
-          ondragover={(e) => handleDragOver(e, i)}
-          ondrop={(e) => handleDrop(e, i)}
-          ondragend={() => draggedIndex = null}
-          class:dragging={draggedIndex === i}
-        >
-          <div class="card-number">{i + 1}</div>
-          <div class="thumbnail-frame">
-            <canvas
-              bind:this={page.canvas}
-              class:hidden={page.status !== "ready"}
-              aria-label="Sayfa {page.index + 1} minyatürü"
-            ></canvas>
-            {#if page.status !== "ready"}
-              <div class="thumbnail-placeholder" class:error={page.status === "error"} title={page.error || undefined}>
-                <span>{page.status === "error" ? "ÖNİZLEME YÜKLENEMEDİ" : "YÜKLENİYOR…"}</span>
-              </div>
-            {/if}
-          </div>
+  <div class="grid-container" role="list">
+    {#each pages as page, i (page.id)}
+      <div
+        class="page-card"
+        role="listitem"
+        draggable="true"
+        ondragstart={(e) => handleDragStart(e, i)}
+        ondragover={(e) => handleDragOver(e, i)}
+        ondrop={(e) => handleDrop(e, i)}
+        ondragend={() => draggedIndex = null}
+        class:dragging={draggedIndex === i}
+      >
+        <div class="thumbnail-frame">
+          <canvas
+            bind:this={page.canvas}
+            {@attach releaseOnRemoval}
+            class:hidden={page.status !== "ready"}
+            aria-label="Sayfa {page.index + 1} minyatürü"
+          ></canvas>
+          {#if page.status !== "ready"}
+            <div class="thumbnail-placeholder" class:error={page.status === "error"} title={page.error || undefined}>
+              <span>{page.status === "error" ? "ÖNİZLEME YÜKLENEMEDİ" : "YÜKLENİYOR…"}</span>
+            </div>
+          {/if}
+        </div>
 
+        <div class="card-footer">
+          <span class="card-number">{i + 1}</span>
           <div class="card-actions">
-            <button class="icon-btn" onclick={() => handleRotate(i, -90)} title="Sola Döndür">⤺</button>
-            <button class="icon-btn" onclick={() => handleRotate(i, 90)} title="Sağa Döndür">⤻</button>
-            <button class="icon-btn delete-btn" onclick={() => handleDelete(i)} title="Sayfayı Sil">✕</button>
+            <button type="button" class="icon-btn" onclick={() => handleRotate(i, -90)} title="Sola Döndür" aria-label="Sola Döndür"><RotateCcwIcon class="size-3.5" /></button>
+            <button type="button" class="icon-btn" onclick={() => handleRotate(i, 90)} title="Sağa Döndür" aria-label="Sağa Döndür"><RotateCwIcon class="size-3.5" /></button>
+            <button type="button" class="icon-btn delete-btn" onclick={() => handleDelete(i)} title="Sayfayı Sil" aria-label="Sayfayı Sil"><Trash2Icon class="size-3.5" /></button>
           </div>
         </div>
-      {/each}
-    </div>
+      </div>
+    {/each}
   </div>
-</div>
+
+  {#snippet footer()}
+    <Button variant="outline" size="sm" onclick={() => onclose?.()} disabled={isSaving}>Kapat</Button>
+    <Button size="sm" onclick={handleSaveOrder} disabled={isSaving}>
+      {isSaving ? 'Kaydediliyor...' : 'Sıralamayı Kaydet'}
+    </Button>
+  {/snippet}
+</AppDialog>
 
 <style>
-  .organizer-overlay {
-    position: fixed;
-    top: 0; left: 0; width: 100vw; height: 100vh;
-    background: rgba(10, 10, 15, 0.85);
-    backdrop-filter: blur(8px);
-    z-index: 9000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .organizer-container {
-    width: 90vw;
-    height: 90vh;
-    display: flex;
-    flex-direction: column;
-    padding: 24px;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 24px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
   .grid-container {
-    flex: 1;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 24px;
-    overflow-y: auto;
-    padding: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 16px;
+    padding: 4px 2px;
   }
 
   .page-card {
-    background: rgba(30, 30, 40, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    overflow: hidden;
     position: relative;
-    cursor: grab;
-    transition: all 0.2s;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 12px;
+    gap: 8px;
+    padding: 10px 10px 8px;
+    border-radius: var(--radius);
+    cursor: grab;
+    transition: background-color 0.1s;
   }
 
   .page-card:hover {
-    transform: translateY(-4px) scale(1.02);
-    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
-    border-color: rgba(255,255,255,0.3);
-  }
-
-  .page-card:hover .card-actions {
-    opacity: 1;
+    background: var(--muted);
   }
 
   .page-card:active {
@@ -535,37 +513,24 @@
   }
 
   .dragging {
-    opacity: 0.5;
-    transform: scale(0.95);
-  }
-
-  .card-number {
-    position: absolute;
-    top: 8px; left: 8px;
-    background: rgba(0,0,0,0.6);
-    color: white;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 12px;
+    opacity: 0.4;
   }
 
   .thumbnail-frame {
+    position: relative;
     width: 100%;
-    height: 200px;
+    height: 180px;
     display: flex;
     align-items: center;
     justify-content: center;
-    position: relative;
-    margin-bottom: 40px;
   }
 
   .thumbnail-frame canvas {
     max-width: 100%;
-    max-height: 200px;
+    max-height: 180px;
     object-fit: contain;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-    background: white;
+    background: #ffffff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.1), 0 1px 3px rgb(0 0 0 / 0.12);
   }
 
   .thumbnail-frame canvas.hidden {
@@ -578,61 +543,67 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px dashed rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.55);
-    font-family: var(--font-mono);
+    border-radius: calc(var(--radius) * 0.6);
+    background: var(--muted);
+    color: var(--muted-foreground);
     font-size: 10px;
     text-align: center;
   }
 
   .thumbnail-placeholder.error {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.45);
+    color: var(--destructive);
+    background: color-mix(in srgb, var(--destructive) 8%, transparent);
+  }
+
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 26px;
+  }
+
+  .card-number {
+    min-width: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
 
   .card-actions {
-    position: absolute;
-    bottom: 8px;
-    left: 0; width: 100%;
     display: flex;
-    justify-content: center;
-    gap: 8px;
+    gap: 2px;
     opacity: 0;
-    transition: opacity 0.2s;
+    transition: opacity 0.1s;
+  }
+
+  .page-card:hover .card-actions,
+  .page-card:focus-within .card-actions {
+    opacity: 1;
   }
 
   .icon-btn {
-    width: 32px; height: 32px;
-    border-radius: 50%;
-    border: none;
-    background: rgba(255,255,255,0.1);
-    color: white;
-    cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    transition: all 0.2s;
+    width: 26px;
+    height: 26px;
+    border-radius: calc(var(--radius) * 0.8);
+    color: var(--muted-foreground);
+    cursor: pointer;
   }
 
   .icon-btn:hover {
-    background: rgba(255,255,255,0.2);
-    transform: scale(1.1);
+    background: var(--accent);
+    color: var(--foreground);
   }
 
   .delete-btn:hover {
-    background: #ef4444;
-  }
-
-  /* Scrollbar for grid */
-  .grid-container::-webkit-scrollbar {
-    width: 8px;
-  }
-  .grid-container::-webkit-scrollbar-track {
-    background: rgba(0,0,0,0.1);
-  }
-  .grid-container::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.2);
-    border-radius: 4px;
+    background: color-mix(in srgb, var(--destructive) 12%, transparent);
+    color: var(--destructive);
   }
 </style>

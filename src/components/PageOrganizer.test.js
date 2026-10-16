@@ -19,10 +19,13 @@ const renderSessionMock = vi.hoisted(() => ({
 
 vi.mock("svelte", async () => {
   const client = await import("../../node_modules/svelte/src/index-client.js");
+  const { RENDER_SESSION_CONTEXT } = await import("../services/renderSession.js");
   return {
     ...client,
+    // Only the render session is stubbed; other contexts (bits-ui's own) stay real.
     getContext(key) {
-      return client.getContext(key) ?? renderSessionMock;
+      const value = client.getContext(key);
+      return value === undefined && key === RENDER_SESSION_CONTEXT ? renderSessionMock : value;
     },
   };
 });
@@ -325,7 +328,7 @@ describe("PageOrganizer worker-safety failures", () => {
     await flushAsyncWork();
     expect(renderThumbnail.mock.calls.slice(3).map(([request]) => request.pageIndex))
       .toEqual([0, 2]);
-    const failed = container.querySelectorAll(".thumbnail-placeholder.error");
+    const failed = document.querySelectorAll(".thumbnail-placeholder.error");
     expect(failed).toHaveLength(1);
     expect(failed[0].getAttribute("title")).toBe("Sayfa 2 işlenirken zaman aşımı oluştu.");
   });
