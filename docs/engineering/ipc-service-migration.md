@@ -299,7 +299,7 @@ critical boundaries.
 `App.svelte` creates one stable render-session object during component
 initialization and calls `setContext()` once. Document changes replace the
 immutable snapshot inside that object only after backend activation resolves.
-`PdfPage`, `Thumbnail`, `ThumbnailItem`, and `PageOrganizer` take a fresh
+`PdfPage`, `Thumbnail`, and `PageOrganizer` take a fresh
 snapshot at the start of each request.
 
 The backend active slot is:
@@ -350,9 +350,9 @@ document_id
 ```
 
 Thumbnail keys therefore use the dimensions resulting from the actual
-call-site target width. Existing targets were preserved: `ThumbnailItem` uses
-150 px, `PageOrganizer` uses 180 px, and `Thumbnail.svelte` continues to derive
-its target from measured CSS width and device pixel ratio.
+call-site target width. Existing targets were preserved: `PageOrganizer` uses
+180 px, and `Thumbnail.svelte` continues to derive its target from measured CSS
+width and device pixel ratio.
 
 The LRU is constrained by both a 128 MiB total byte budget and a 32 MiB
 per-entry limit. Oversized results are returned but not cached. Activation

@@ -108,7 +108,7 @@
 
 {#if isVisible}
   <div
-    class="ai-context-menu glass-panel"
+    class="ai-context-menu"
     style="left: {menuX}px; top: {menuY}px;"
     transition:fly={{ y: -10, duration: 200 }}
   >
@@ -138,11 +138,12 @@
   .ai-context-menu {
     position: absolute;
     z-index: 9999;
-    background: rgba(20, 25, 30, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 8px;
-    padding: 8px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    background: var(--popover);
+    color: var(--popover-foreground);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
     min-width: 200px;
     max-width: 350px;
   }
@@ -150,44 +151,50 @@
   .actions {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
   }
 
   .privacy-warning {
-    color: #fbbf24;
-    font-size: 10px;
-    line-height: 1.35;
     margin: 4px;
+    padding: 6px 8px;
+    border-radius: calc(var(--radius) * 0.8);
+    background: var(--warning);
+    color: var(--warning-foreground);
+    font-size: 11px;
+    line-height: 1.35;
   }
 
   .actions button {
     background: none;
     border: none;
-    color: white;
+    color: inherit;
     text-align: left;
-    padding: 8px 12px;
-    border-radius: 4px;
+    padding: 6px 10px;
+    border-radius: calc(var(--radius) * 0.6);
     cursor: pointer;
     font-size: 13px;
-    transition: background 0.2s;
   }
 
-  .actions button:hover {
-    background: rgba(255, 255, 255, 0.1);
+  .actions button:hover:not(:disabled) {
+    background: var(--accent);
+  }
+
+  .actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .ai-response-box {
     padding: 8px;
     font-size: 13px;
     line-height: 1.5;
-    color: #eee;
     max-height: 250px;
     overflow-y: auto;
   }
 
   .loader {
     font-size: 11px;
-    opacity: 0.6;
+    color: var(--muted-foreground);
     margin-top: 8px;
     font-style: italic;
   }

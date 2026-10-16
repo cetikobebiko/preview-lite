@@ -59,6 +59,6 @@
   .ruler-guide-line {
     width: 100%;
     height: 100%;
-    background: rgba(0, 113, 227, 0.05);
+    background: color-mix(in srgb, var(--primary) 6%, transparent);
   }
 </style>

@@ -135,7 +135,7 @@
 
 <!-- Taranmış Sayfa Uyarısı -->
 {#if isScanned && !ocrData}
-  <div class="ocr-banner glass-panel" transition:fade>
+  <div class="ocr-banner" transition:fade>
     <span>Bu sayfa muhtemelen taranmış bir görsel. Metin seçimi için OCR çalıştırılsın mı?</span>
     <select bind:value={selectedLang} class="lang-select">
       {#each availableLangs as lang (lang)}
@@ -185,7 +185,7 @@
     border-radius: 4px;
     background: var(--card);
     border: 1px solid var(--primary);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
     font-size: 13px;
     color: var(--foreground);
     pointer-events: auto; /* Tıklanabilir olsun */
@@ -239,9 +239,9 @@
     overflow: hidden;
   }
   
-  /* Seçildiğinde şeffaf mavi görünsün */
+  /* Seçim, PDF metin katmanıyla aynı sistem vurgu rengini kullanır */
   .ocr-word::selection {
-    background: rgba(0, 120, 255, 0.4);
+    background: var(--text-selection);
     color: transparent;
   }
 </style>

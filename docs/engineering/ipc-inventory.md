@@ -8,6 +8,11 @@
 > contracts/wrappers/facades are removed from `contracts.js`, backend barrels,
 > and `pdfState.js`.
 
+> Current-state note — 2026-10-16: the unused `ThumbnailItem.svelte` (no importer
+> since the initial project commit; the sidebar uses `Thumbnail.svelte`) and
+> `SanitizationInspectionPanel.svelte` (inspection facts render inside
+> `SanitizationPanel.svelte`) were deleted. Their rows below are historical.
+
 > Current-state note — 2026-10-16: the never-registered Rust commands
 > `export_pdf_page_to_image` and `burn_annotations_to_pdf` were deleted together
 > with the `burnAnnotationsToPdf` contract/wrapper. Their rows in the historical

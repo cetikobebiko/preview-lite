@@ -544,8 +544,8 @@ runtime normalizer'ı kullanır. Svelte 5 Runes store yalnız `idle`, `inspectin
 generation, job ID ve local revision token'ın tamamını capture eder; document/session/
 generation değişimi, yeni inspection veya destroy eski sonucu discard eder ve active
 job'ı best-effort cancel eder. App yalnız composition ve context reconciliation yapar.
-`SanitizationInspectionPanel.svelte` read-only facts/control/blocker sunumudur; payload
-göstermez, destructive control, acknowledgement, Save veya sanitize action sunmaz.
+Inspection facts/control/blocker sunumu `SanitizationPanel.svelte` içindedir; ayrı
+salt okunur `SanitizationInspectionPanel.svelte` bileşeni kullanılmadığı için kaldırıldı.
 Feature gate kapalı olduğundan production kullanıcı akışı runnable değildir.
 
 Fixture kabulü clean-minimal, metadata paths, JavaScript/name-tree/OpenAction
