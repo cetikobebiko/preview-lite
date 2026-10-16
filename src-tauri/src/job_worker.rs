@@ -1969,7 +1969,9 @@ mod tests {
         assert!(is_scanned_page_text("   \n\t  "));
         assert!(is_scanned_page_text("  nineteen characters "));
         assert!(!is_scanned_page_text("twenty characters!!!"));
-        assert!(!is_scanned_page_text("Bu sayfa gerçek bir metin katmanı içerir."));
+        assert!(!is_scanned_page_text(
+            "Bu sayfa gerçek bir metin katmanı içerir."
+        ));
     }
 
     #[test]

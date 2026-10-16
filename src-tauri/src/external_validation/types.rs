@@ -293,10 +293,8 @@ impl OverallValidationStatus {
             };
         }
 
-        let outcome_map: BTreeMap<&ValidatorId, &ValidationOutcome> = outcomes
-            .iter()
-            .map(|o| (&o.validator_id, o))
-            .collect();
+        let outcome_map: BTreeMap<&ValidatorId, &ValidationOutcome> =
+            outcomes.iter().map(|o| (&o.validator_id, o)).collect();
 
         for req in required_reqs {
             match outcome_map.get(&req.id) {
@@ -654,7 +652,10 @@ mod tests {
         assert_eq!(evidence.source_fixture_id, "core-release-smoke");
         assert_eq!(evidence.output_sha256, "dummy-sha256");
         assert_eq!(evidence.output_byte_length, 1234);
-        assert_eq!(evidence.overall_status, OverallValidationStatus::NotExecuted);
+        assert_eq!(
+            evidence.overall_status,
+            OverallValidationStatus::NotExecuted
+        );
         assert_eq!(evidence.timestamp, "2026-09-04T12:00:00Z");
     }
 }

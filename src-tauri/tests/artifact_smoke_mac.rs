@@ -75,7 +75,11 @@ fn artifact_smoke_macos() {
 #[test]
 fn harness_script_exists() {
     let harness = harness_script_path();
-    assert!(harness.exists(), "Harness script must exist at {}", harness.display());
+    assert!(
+        harness.exists(),
+        "Harness script must exist at {}",
+        harness.display()
+    );
 }
 
 #[test]
@@ -132,4 +136,3 @@ fn fast_local_macos_harness_tests_pass() {
 fn join<P: AsRef<std::path::Path>>(base: P, rel: &str) -> PathBuf {
     base.as_ref().join(rel)
 }
-

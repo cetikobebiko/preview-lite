@@ -174,8 +174,7 @@ fn contract_optional_diagnostic_absence_does_not_block_release() {
     };
 
     // When all requirements are optional, tool unavailability yields DiagnosticOnly (NOT NonCompliant)
-    let status =
-        OverallValidationStatus::compute(&reqs, &[offline_outcome_1, offline_outcome_2]);
+    let status = OverallValidationStatus::compute(&reqs, &[offline_outcome_1, offline_outcome_2]);
     assert_eq!(status, OverallValidationStatus::DiagnosticOnly);
 }
 
@@ -218,7 +217,10 @@ fn contract_path_safety_rejects_dangerous_paths() {
 #[test]
 fn contract_validate_artifact_output_with_real_fixture_offline() {
     let fixture_path = fixtures_dir().join("release-smoke.pdf");
-    assert!(fixture_path.exists(), "release-smoke.pdf fixture must exist");
+    assert!(
+        fixture_path.exists(),
+        "release-smoke.pdf fixture must exist"
+    );
 
     let config = ExternalValidationConfig {
         requirements: ExternalValidationConfig::documented_requirements(),
@@ -261,7 +263,10 @@ fn contract_validate_artifact_output_with_real_fixture_offline() {
     }
 
     // Because all documented requirements are OptionalDiagnostic, the overall status is DiagnosticOnly
-    assert_eq!(evidence.overall_status, OverallValidationStatus::DiagnosticOnly);
+    assert_eq!(
+        evidence.overall_status,
+        OverallValidationStatus::DiagnosticOnly
+    );
 
     // Serialization round-trip
     let json = serde_json::to_string_pretty(&evidence).expect("Must serialize evidence");

@@ -466,7 +466,12 @@ impl VerapdfHarness {
                 rules.push(ValidationRuleFinding {
                     rule_id: rule.id.unwrap_or_default(),
                     spec_reference: rule.specification,
-                    status: match rule.status.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
+                    status: match rule
+                        .status
+                        .as_deref()
+                        .map(|s| s.to_ascii_lowercase())
+                        .as_deref()
+                    {
                         Some("passed") => RuleFindingStatus::Pass,
                         Some("failed") => RuleFindingStatus::Fail,
                         Some("warning") => RuleFindingStatus::Warning,
@@ -578,7 +583,10 @@ pub fn validate_artifact_output(
                 profile: req.profile.clone(),
                 machine_result: None,
                 stdout_truncated: None,
-                stderr_truncated: Some(format!("Validator '{}' unsupported offline", req.validator)),
+                stderr_truncated: Some(format!(
+                    "Validator '{}' unsupported offline",
+                    req.validator
+                )),
                 duration_ms: 0,
                 error: Some(format!("Validator '{}' unsupported offline", req.validator)),
                 is_mock: false,
@@ -639,7 +647,9 @@ impl MockVerapdfHarness {
                 profile: profile_id,
                 machine_result: None,
                 stdout_truncated: None,
-                stderr_truncated: Some("Mock: tool unavailable in strict offline environment".to_string()),
+                stderr_truncated: Some(
+                    "Mock: tool unavailable in strict offline environment".to_string(),
+                ),
                 duration_ms: start.elapsed().as_millis() as u64,
                 error: Some("Mock: tool unavailable in strict offline environment".to_string()),
                 is_mock: true,
@@ -885,7 +895,9 @@ mod tests {
     fn mock_offline_produces_tool_unavailable_offline() {
         let mut harness = MockVerapdfHarness::new();
         harness.should_be_offline = true;
-        let outcome = harness.validate(Path::new("dummy.pdf"), "PDF/A-2b").unwrap();
+        let outcome = harness
+            .validate(Path::new("dummy.pdf"), "PDF/A-2b")
+            .unwrap();
         assert_eq!(outcome.status, ToolAvailability::ToolUnavailableOffline);
         assert!(outcome.status.is_unavailable());
         assert!(!outcome.status.is_pass());

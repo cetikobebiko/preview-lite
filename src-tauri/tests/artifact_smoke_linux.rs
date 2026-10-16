@@ -49,8 +49,10 @@ fn artifact_smoke_linux() {
         .arg("--verbose");
 
     if let Ok(output_dir) = env::var("ARTIFACT_SMOKE_OUTPUT_DIR") {
-        cmd.arg("--output")
-            .arg(format!("{}/linux-smoke-evidence-linux_deb.json", output_dir));
+        cmd.arg("--output").arg(format!(
+            "{}/linux-smoke-evidence-linux_deb.json",
+            output_dir
+        ));
     }
 
     let status = cmd.status().expect("Failed to execute Linux smoke harness");
@@ -64,7 +66,11 @@ fn artifact_smoke_linux() {
 #[test]
 fn harness_script_exists() {
     let harness = harness_script_path();
-    assert!(harness.exists(), "Harness script must exist at {}", harness.display());
+    assert!(
+        harness.exists(),
+        "Harness script must exist at {}",
+        harness.display()
+    );
 }
 
 #[test]
