@@ -46,14 +46,8 @@ describe("documentRuntime.applyMutationSnapshot page remapping", () => {
     const { runtime, viewer, applyPageScopedMutation } = setup();
     const mapPageIndex = vi.fn();
     await runtime.applyMutationSnapshot({ id: "doc-a", contentGeneration: 2, stateRevision: 5 }, { mapPageIndex });
-    expect(applyPageScopedMutation).toHaveBeenCalledWith("doc-a", { mapPageIndex, rotation: null });
+    expect(applyPageScopedMutation).toHaveBeenCalledWith("doc-a", { mapPageIndex });
     expect(viewer.pageOrder).toEqual([0, 1, 2]);
-  });
-
-  it("forwards a page rotation so page-scoped geometry can follow it", async () => {
-    const { runtime, applyPageScopedMutation } = setup();
-    await runtime.applyMutationSnapshot({ id: "doc-a", contentGeneration: 2, stateRevision: 5 }, { rotation: { pageIndex: 1, degrees: 90 } });
-    expect(applyPageScopedMutation).toHaveBeenCalledWith("doc-a", { mapPageIndex: null, rotation: { pageIndex: 1, degrees: 90 } });
   });
 
   it("does not remap for mutations without a page mapping or for another session", async () => {

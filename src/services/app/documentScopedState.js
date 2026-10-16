@@ -2,14 +2,14 @@ import { remapPageKeyedDrawings } from "./pageIndexMapping.js";
 
 /**
  * Single owner for document-scoped transient viewer data: clears it when the active
- * document changes and keeps it on the right page when the backend renumbers or rotates
- * pages. Text (OCR-derived context and Bionic text) is tied to the (document,
- * contentGeneration) it was produced from; highlights and canvas drawings are tied to the
- * document and survive generation changes, since page mutations are applied explicitly.
- * Drawings must never reach another document's burn-in or notes export.
+ * document changes and keeps it on the right page when the backend renumbers pages.
+ * Text (OCR-derived context and Bionic text) is tied to the (document, contentGeneration)
+ * it was produced from; canvas drawings are tied to the document and survive generation
+ * changes, since page mutations are applied explicitly.
+ * Drawings must never reach another document's notes export.
  */
 export function createDocumentScopedStateReconciler({
-  viewer, annotation, bindHighlightSession, remapHighlightPages, rotateHighlightPage, closeDocumentModals = () => {},
+  viewer, annotation, closeDocumentModals = () => {},
 }) {
   let documentKey;
   let contentGeneration;
@@ -26,7 +26,6 @@ export function createDocumentScopedStateReconciler({
     viewer.documentTextPageIndex = -1;
     viewer.bionicText = "";
     viewer.bionicSource = null;
-    bindHighlightSession(sessionId ?? null);
     if (documentChanged) {
       clearDrawings();
       closeDocumentModals();
@@ -42,14 +41,11 @@ export function createDocumentScopedStateReconciler({
   }
 
   /** Applies a backend page mutation of the active session to page-scoped state. */
-  function applyPageMutation(sessionId, { mapPageIndex = null, rotation = null } = {}) {
+  function applyPageMutation(sessionId, { mapPageIndex = null } = {}) {
     if (!sessionId || keyFor(sessionId) !== documentKey) return false;
     if (typeof mapPageIndex === "function") {
-      remapHighlightPages(sessionId, mapPageIndex);
       annotation.annotationsMap = remapPageKeyedDrawings(annotation.annotationsMap, mapPageIndex);
     }
-    // Canvas drawings are only created on standalone images, so PDF page rotation has none to turn.
-    if (rotation) rotateHighlightPage(sessionId, rotation.pageIndex, rotation.degrees);
     return true;
   }
 

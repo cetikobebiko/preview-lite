@@ -8,6 +8,11 @@
 > contracts/wrappers/facades are removed from `contracts.js`, backend barrels,
 > and `pdfState.js`.
 
+> Current-state note — 2026-10-16: the never-registered Rust commands
+> `export_pdf_page_to_image` and `burn_annotations_to_pdf` were deleted together
+> with the `burnAnnotationsToPdf` contract/wrapper. Their rows in the historical
+> Prompt 0 tables below are retained only as evidence of the old surface.
+
 Current path exceptions are deliberate: session-open/encryption preflight,
 external operands such as merge inputs/images/batch inputs, and user-selected
 output targets. Active PDF sharing remains
@@ -228,7 +233,7 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/pluginStore.js` | `add_batch_job` | `{ jobType, filePath, parameters }` |
 
 `src/configManager.js` Tauri fs pluginini doğrudan kullanır, command invoke etmez.
-`src/annotationsStore.js` yalnızca frontend store'dur. `src/ipc_profiler.js`
+`src/ipc_profiler.js`
 dinamik `invoke(cmd, args)` sağlar; ancak repository içinde import/consumer
 bulunmadığı için üretebileceği command kümesi **unknown** kabul edildi.
 

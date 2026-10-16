@@ -22,7 +22,6 @@ export const COMMANDS = Object.freeze([
   { id: "split-pdf", title: "PDF Sayfalarını Böl / Seçili Sayfaları Dışa Aktar", icon: "✂️", category: "Düzenleme", featureId: "page_manipulation" },
   { id: "merge-pdf", title: "Başka Bir PDF ile Birleştir", icon: "➕", category: "Düzenleme", featureId: "page_merge_direct" },
   { id: "reset-zoom", title: "Yakınlaştırmayı Sıfırla (%100)", icon: "🎯", category: "Görünüm", featureId: "pdf_viewer" },
-  { id: "burn-in-pdf", title: "Annotation katmanını PDF'e kaydet", icon: "💾", category: "Dışa Aktar", featureId: "annotation_burn_export" },
 ].map((command) => Object.freeze(command)));
 
 export function validateCommandFeatureMappings(commands = COMMANDS) {

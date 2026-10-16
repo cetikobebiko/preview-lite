@@ -1796,22 +1796,6 @@
     {
       "featureId": "document_open_lifecycle",
       "fixtureId": "core-encrypted",
-      "testId": "rust_unit:document_session::pdf_validation_distinguishes_encrypted_wrong_password_and_corrupt_files",
-      "relation": "direct",
-      "dimensions": [
-        "positive",
-        "negative",
-        "encrypted"
-      ],
-      "evidence": {
-        "sourcePath": "src-tauri/src/document_session.rs",
-        "verificationType": "unit_assertion",
-        "notes": "Direct encrypted password lifecycle validation on encrypted.pdf"
-      }
-    },
-    {
-      "featureId": "document_open_lifecycle",
-      "fixtureId": "core-encrypted",
       "testId": "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
       "relation": "direct",
       "dimensions": [
@@ -2306,27 +2290,6 @@
         "macos": "source_only",
         "linux": "source_only",
         "windows": "source_only"
-      }
-    },
-    {
-      "id": "annotation_burn_export",
-      "name": "Annotation Burn Export",
-      "statusObservation": "disabled",
-      "fixtureIds": [],
-      "testIds": [],
-      "dimensions": {
-        "positive": "planned",
-        "negative": "not_covered",
-        "malformed": "not_applicable",
-        "encrypted": "not_applicable",
-        "unicode": "planned",
-        "persistence": "planned",
-        "worker": "planned"
-      },
-      "platformEvidence": {
-        "macos": "not_run",
-        "linux": "not_run",
-        "windows": "not_run"
       }
     },
     {
@@ -3127,7 +3090,6 @@
         "rust:session_worker_integration::production_session_commands_use_worker_identity_and_preserve_frontend_contracts",
         "rust:worker_pdfium_integration::encrypted_open_has_no_partial_document_on_failed_authentication",
         "rust:worker_pdfium_integration::interactive_document_reads_do_not_reopen_the_source_path",
-        "rust_unit:document_session::pdf_validation_distinguishes_encrypted_wrong_password_and_corrupt_files",
         "rust_unit:document_session::two_sessions_are_isolated_and_discard_removes_only_working_copy"
       ],
       "dimensions": {
@@ -3427,12 +3389,6 @@
     },
     {
       "id": "rust_unit:document_session::two_sessions_are_isolated_and_discard_removes_only_working_copy",
-      "kind": "unit_test",
-      "state": "current",
-      "sourcePath": "src-tauri/src/document_session.rs"
-    },
-    {
-      "id": "rust_unit:document_session::pdf_validation_distinguishes_encrypted_wrong_password_and_corrupt_files",
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/document_session.rs"
@@ -3858,12 +3814,6 @@
       "sourcePath": "src-tauri/tests/sanitization_inspection_acceptance.rs"
     },
     {
-      "id": "planned:annotation_burn::test_burn_annotations_to_raster_or_vector_stream",
-      "kind": "integration_test",
-      "state": "planned",
-      "plannedPrompt": "11I-B"
-    },
-    {
       "id": "planned:page_merge::test_direct_pdf_merge_conformance",
       "kind": "integration_test",
       "state": "planned",
@@ -4100,16 +4050,6 @@
       "plannedPrompt": "11I-B",
       "releaseBlocking": false,
       "description": "Verify annotation persistence synchronization with UI state"
-    },
-    {
-      "id": "gap-annotation-burn-export",
-      "featureId": "annotation_burn_export",
-      "dimension": "positive",
-      "severity": "medium",
-      "requiredLayer": "integration",
-      "plannedPrompt": "11I-B",
-      "releaseBlocking": false,
-      "description": "Implement and verify annotation burn export pipeline"
     },
     {
       "id": "gap-direct-page-merge",

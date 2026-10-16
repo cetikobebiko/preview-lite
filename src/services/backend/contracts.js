@@ -483,13 +483,6 @@ export const CONTRACTS = Object.freeze({
     flipH: booleanType,
     flipV: booleanType,
   }),
-  burnAnnotationsToPdf: command("burn_annotations_to_pdf", {
-    jobId: renderIdentifierType,
-    sessionId: renderIdentifierType,
-    expectedContentGeneration: safeIntegerType,
-    annotationsJson: stringType,
-    targetPath: stringType,
-  }),
   mergePdfs: command("merge_pdfs", {
     filePaths: arrayOf(stringType),
     outputPath: stringType,
@@ -699,7 +692,6 @@ export const CONTRACTS = Object.freeze({
 });
 
 export const PROTECTED_CONTRACT_IDS = Object.freeze([
-  "burnAnnotationsToPdf",
   "insertBlankPage",
   "getFormFields",
   "updateFormField",

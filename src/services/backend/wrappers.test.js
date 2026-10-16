@@ -94,7 +94,6 @@ const cases = [
 
   ["readImageFile", () => document.readImageFile("/a.png", 90, true, false), "read_image_file", { path: "/a.png", rotation: 90, flipH: true, flipV: false }],
   ["convertAndSaveImage", () => document.convertAndSaveImage("/a.png", "/b.webp", "webp", 90, true, false), "convert_and_save_image", { sourcePath: "/a.png", targetPath: "/b.webp", format: "webp", rotation: 90, flipH: true, flipV: false }],
-  ["burnAnnotationsToPdf", () => document.burnAnnotationsToPdf("sid", 1, "[]", "/b.pdf"), "burn_annotations_to_pdf", { sessionId: "sid", expectedContentGeneration: 1, annotationsJson: "[]", targetPath: "/b.pdf" }],
 
   ["mergePdfs", () => manipulation.mergePdfs(["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_pdfs", { filePaths: ["/a.pdf", "/b.pdf"], outputPath: "/out.pdf" }],
   ["mergeSessionPdfs", () => manipulation.mergeSessionPdfs("sid", 1, ["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_session_pdfs", { sessionId: "sid", expectedContentGeneration: 1, additionalPaths: ["/a.pdf", "/b.pdf"], targetPath: "/out.pdf" }],

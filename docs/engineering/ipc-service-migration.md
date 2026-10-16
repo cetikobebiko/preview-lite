@@ -248,8 +248,10 @@ RGBA service. `render_page` is the only public full-page render command used by
 the frontend. The PNG-returning `render_pdf_page` and
 `render_pdf_thumbnail` commands were removed from the Tauri handler registry;
 their old implementations are compiled out pending a later physical source
-cleanup. The internal `render_page_rgba` helper remains because export/OCR
-backend paths still use it.
+cleanup. The internal `render_page_rgba` helper remained at the time because export/OCR
+backend paths still used it. *(2026-10-16: export and OCR now render in the job
+worker; `render_page_rgba` and its last caller, the unregistered
+`export_pdf_page_to_image`, were removed.)*
 
 The canonical page response is:
 

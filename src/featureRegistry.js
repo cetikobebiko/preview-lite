@@ -56,15 +56,6 @@ const RAW_FEATURES = [
     documentation: "docs/engineering/feature-matrix.md#annotation",
   },
   {
-    id: "annotation_burn_export",
-    label: "Annotation burn/export",
-    status: "disabled",
-    enabled: false,
-    warning: "Bu eski dışa aktarma giriş noktasının IPC sözleşmesi eksiktir ve çalıştırılmaz.",
-    platform: ALL_DESKTOP_PLATFORMS,
-    documentation: "docs/engineering/feature-matrix.md#annotation",
-  },
-  {
     id: "page_manipulation",
     label: "Page manipulation",
     status: "experimental",

@@ -350,7 +350,7 @@
       if (Number.isSafeInteger(sessionSnapshot?.contentGeneration)) {
         contentGeneration = sessionSnapshot.contentGeneration;
       }
-      onpageMutated?.({ snapshot: sessionSnapshot, rotation: { pageIndex: page.index, degrees } });
+      onpageMutated?.({ snapshot: sessionSnapshot });
     } catch (e) {
       if (
         isMounted &&

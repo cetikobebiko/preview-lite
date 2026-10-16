@@ -63,14 +63,13 @@ describe("UI feature wiring source contracts", () => {
   it("gates annotation save controls separately from runnable annotation CRUD", () => {
     expect(appSource).toContain("createFeatureRuntime");
     expect(appSource).not.toContain("createDocumentExportController");
-    expect(documentExportControllerSource).toContain('guard("annotation_burn_export", featureContext, executeBurnIn)');
+    // The annotation burn-in export was removed with its unregistered backend command.
+    expect(documentExportControllerSource).not.toContain("annotation_burn_export");
     expect(appSource).toContain("<ViewerHudDock");
     expect(viewerHudSource).toContain("<AnnotationHudControls");
     expect(annotationHudSource).toContain("{#if isDirty}");
     expect(annotationHudSource).toContain('{featureControlLabel("annotation", "ANNOTATION")}');
-    expect(viewerHudSource).toContain(
-      '{#if featureUi("annotation_burn_export").visible}',
-    );
+    expect(viewerHudSource).not.toContain("annotation_burn_export");
     expect(appSource).toContain("onSave={documentRuntime.save}");
     expect(annotationHudSource).toContain("onclick={onSave}");
   });

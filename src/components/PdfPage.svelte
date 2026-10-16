@@ -51,7 +51,6 @@
     estimateRenderedPageCssSize,
     renderDevicePixelRatio,
   } from "../utils/pageGeometry.js";
-  import { annotationsStore, addHighlight, highlightsForPage } from "../annotationsStore.js";
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
   const renderCoordinator = createRenderRequestCoordinator({
     scope: "main_page",
@@ -243,9 +242,6 @@
         paintedPageRotation === normalizedRotation
       ? renderedCssHeight * (scale / lastRenderedScale)
       : estimatedPageCssSize?.height ?? DEFAULT_PAGE_SIZE_PT.heightPt * scale);
-
-  // --- Metin Vurgulama (Highlight) İşlemleri ---
-  const pageHighlights = $derived(highlightsForPage($annotationsStore, sessionId, pageIndex));
 
   // Worker-safety failures survive scrolling and zooming: the page is not
   // requested again until the user retries it or the generation changes.
@@ -700,67 +696,6 @@
     loadedTextLayoutKey = "";
   });
 
-  function getNormalizedLocalCoords(clientX, clientY, element, rot) {
-    const rect = element.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-
-    const dx = clientX - cx;
-    const dy = clientY - cy;
-
-    const rad = -rot * (Math.PI / 180);
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-
-    const rx = dx * cos - dy * sin;
-    const ry = dx * sin + dy * cos;
-
-    const ow = element.offsetWidth;
-    const oh = element.offsetHeight;
-
-    const localX = rx + ow / 2;
-    const localY = ry + oh / 2;
-
-    return {
-      x: localX / ow,
-      y: localY / oh
-    };
-  }
-
-  function handleTextSelection(e) {
-    if (activeTool !== 'highlight') return;
-
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-
-    const range = selection.getRangeAt(0);
-    const rects = range.getClientRects();
-    if (rects.length === 0) return;
-
-    const layerEl = e.currentTarget;
-
-    let added = false;
-    for (let i = 0; i < rects.length; i++) {
-      const r = rects[i];
-      const tlLocal = getNormalizedLocalCoords(r.left, r.top, layerEl, rotation);
-      const brLocal = getNormalizedLocalCoords(r.right, r.bottom, layerEl, rotation);
-
-      const x = Math.min(tlLocal.x, brLocal.x);
-      const y = Math.min(tlLocal.y, brLocal.y);
-      const width = Math.abs(brLocal.x - tlLocal.x);
-      const height = Math.abs(brLocal.y - tlLocal.y);
-
-      // Çok küçük rect'leri atla (artifacts)
-      if (width * layerEl.offsetWidth > 2 && height * layerEl.offsetHeight > 2) {
-         if (addHighlight(sessionId, pageIndex, { x, y, width, height }, activeColor)) added = true;
-      }
-    }
-
-    if (added) {
-      selection.removeAllRanges();
-    }
-  }
-
   function getViewportPoint(event, element) {
     const bounds = element.getBoundingClientRect();
     if (!(bounds.width > 0) || !(bounds.height > 0)) return null;
@@ -895,12 +830,10 @@
         {/if}
 
         {#if paintedRenderKey && textLayoutItems.length > 0}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="textLayer"
             class:is-interactive={isTextLayerInteractive}
             data-page-index={pageIndex}
-            onmouseup={handleTextSelection}
           >
             {#each textLayoutItems as item, itemIndex (`${loadedTextLayoutKey}:${itemIndex}`)}
               <span
@@ -984,21 +917,6 @@
 
             {#if unscaledWidth > 0 && unscaledHeight > 0}
               <div style="position: absolute; inset: 0; transform: rotate({normalizedRotation}deg); pointer-events: none;">
-                {#if pageHighlights.length > 0}
-                  <svg class="highlight-overlay-svg" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; mix-blend-mode: multiply; z-index: 1;">
-                    {#each pageHighlights as hl}
-                      <rect
-                        x="{hl.rect.x * 100}%"
-                        y="{hl.rect.y * 100}%"
-                        width="{hl.rect.width * 100}%"
-                        height="{hl.rect.height * 100}%"
-                        fill={hl.color}
-                        opacity="0.6"
-                      />
-                    {/each}
-                  </svg>
-                {/if}
-
                 {#if formPresentation.runnable}
                   <FormLayer {scale} />
                 {/if}

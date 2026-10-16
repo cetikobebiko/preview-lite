@@ -460,12 +460,6 @@ fn verify_linux_architecture(path: &std::path::Path) -> Result<(), AppError> {
     verify_elf_header_bytes(&elf_header, EXPECTED_ARCH)
 }
 
-#[cfg(not(target_os = "linux"))]
-#[allow(dead_code)]
-fn verify_linux_architecture(_path: &std::path::Path) -> Result<(), AppError> {
-    Ok(())
-}
-
 // Test-only reference parser: `verify_windows_architecture` reads the PE header inline.
 #[cfg(test)]
 fn verify_pe_header_bytes(bytes: &[u8], expected_arch: &str) -> Result<(), AppError> {
@@ -616,12 +610,6 @@ fn verify_windows_architecture(path: &std::path::Path) -> Result<(), AppError> {
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
-fn verify_windows_architecture(_path: &std::path::Path) -> Result<(), AppError> {
-    Ok(())
-}
-
 fn compute_sha256(path: &std::path::Path) -> Result<[u8; 32], std::io::Error> {
     use sha2::{Digest, Sha256};
     use std::fs::File;
@@ -660,65 +648,6 @@ pub fn open_pdfium_doc<'a>(
     pdfium.load_pdf_from_file(path, password).map_err(|e| {
         crate::error::AppError::Pdfium(format!("PDF açılırken hata oluştu: {:?}", e)).to_string()
     })
-}
-
-pub(crate) async fn render_page_rgba(
-    path: String,
-    page_index: u32,
-    scale: f64,
-    rotation: i32,
-    password: Option<String>,
-) -> Result<RenderedPage, String> {
-    if scale.is_nan() || scale.is_infinite() || scale <= 0.0 {
-        return Err("Geçersiz ölçek (scale) değeri".to_string());
-    }
-
-    let pdf_rotation = match rotation {
-        0 => PdfPageRenderRotation::None,
-        90 => PdfPageRenderRotation::Degrees90,
-        180 => PdfPageRenderRotation::Degrees180,
-        270 => PdfPageRenderRotation::Degrees270,
-        _ => return Err(format!("Geçersiz rotasyon (rotation) değeri: {}", rotation)),
-    };
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let span = tracing::Span::current();
-        let _enter = span.enter();
-        let _guard = PDFIUM_MUTEX.lock();
-        let pdfium = get_pdfium()?;
-        let document = open_pdfium_doc(&pdfium, &path, password.as_deref())?;
-
-        let pages = document.pages();
-        if page_index >= pages.len() as u32 {
-            return Err(format!("Geçersiz sayfa numarası: {}", page_index));
-        }
-
-        let page = pages.get(page_index as u16).map_err(|e| {
-            crate::error::AppError::Pdfium(format!("Sayfa alınamadı: {:?}", e)).to_string()
-        })?;
-
-        let target_width = (page.width().value as f64 * scale) as i32;
-
-        let mut render_config = PdfRenderConfig::new();
-        render_config = render_config.set_target_width(target_width);
-        render_config = render_config.rotate(pdf_rotation, true);
-        render_config = render_config.set_clear_color(PdfColor::WHITE);
-        // FPDF_REVERSE_BYTE_ORDER makes PDFium write straight RGBA, so the raw
-        // buffer needs no channel swap (same contract as the viewer worker).
-        render_config = render_config.set_reverse_byte_order(true);
-
-        let bitmap = page.render_with_config(&render_config).map_err(|e| {
-            crate::error::AppError::Image(format!("Sayfa render etme hatası: {:?}", e)).to_string()
-        })?;
-
-        Ok(RenderedPage {
-            width: bitmap.width() as u32,
-            height: bitmap.height() as u32,
-            data: bitmap.as_raw_bytes(),
-        })
-    })
-    .await
-    .map_err(|e| crate::error::AppError::Thread(format!("Thread hatası: {}", e)).to_string())?
 }
 
 #[derive(Clone, Copy)]
@@ -1261,33 +1190,6 @@ mod canonical_render_validation_tests {
         });
         document.trailer.set("Root", catalog_id);
         document.save(path).unwrap();
-    }
-
-    #[tokio::test]
-    async fn render_page_rgba_returns_rgba_for_pure_red_green_blue_pages() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("pure-rgb.pdf");
-        write_pure_rgb_pdf(&path);
-        for (page_index, expected) in PURE_RGB_PIXELS.into_iter().enumerate() {
-            let rendered = render_page_rgba(
-                path.to_string_lossy().to_string(),
-                page_index as u32,
-                1.0,
-                0,
-                None,
-            )
-            .await
-            .unwrap();
-            assert_eq!(
-                rendered.data.len(),
-                rendered.width as usize * rendered.height as usize * 4
-            );
-            assert!(
-                rendered.data.chunks_exact(4).all(|pixel| pixel == expected),
-                "page {page_index}: first pixel {:?}, expected {expected:?}",
-                &rendered.data[..4]
-            );
-        }
     }
 
     /// Characterizes the production page export (job worker →

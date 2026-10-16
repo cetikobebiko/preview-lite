@@ -98,16 +98,6 @@ describe("feature policy", () => {
     }
   });
 
-  it("hides annotation burn/export in production and only presents it disabled in development", () => {
-    expect(isFeatureVisible("annotation_burn_export", productionMac)).toBe(false);
-    expect(isFeatureRunnable("annotation_burn_export", productionMac)).toBe(false);
-
-    expect(getFeaturePresentation("annotation_burn_export", developmentMac)).toMatchObject({
-      visible: true,
-      runnable: false,
-    });
-  });
-
   it("evaluates enabled separately from runtime platform for disabled features", () => {
     const continuityCamera = getFeature("macos_continuity_camera");
     expect(continuityCamera.enabled).toBe(false);

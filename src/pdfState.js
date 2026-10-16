@@ -1,30 +1,8 @@
 import { guardFeatureAction } from "./featureActionGuard.js";
 import { getRuntimeFeatureContext } from "./featureRegistry.js";
-import { burnAnnotationsToPdf as burnAnnotationsToPdfBackend } from "./services/backend/document.js";
 import * as manipulationBackend from "./services/backend/manipulation.js";
 import * as ocrBackend from "./services/backend/ocr.js";
 import * as sessionBackend from "./services/backend/session.js";
-
-export async function burnAnnotationsToPdf(
-  sessionId,
-  expectedContentGeneration,
-  annotationsJson,
-  targetPath,
-) {
-  return await guardFeatureAction(
-    "annotation_burn_export",
-    getRuntimeFeatureContext(),
-    async () => {
-      await burnAnnotationsToPdfBackend(
-        sessionId,
-        expectedContentGeneration,
-        annotationsJson,
-        targetPath,
-      );
-      return true;
-    },
-  );
-}
 
 // ==========================================
 // AŞAMA 9: Belge Manipülasyonu

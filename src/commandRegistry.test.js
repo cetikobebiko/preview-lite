@@ -19,7 +19,7 @@ describe("Command Palette policy", () => {
     expect(() => validateCommandFeatureMappings([
       { id: "bad", featureId: "missing_feature" },
     ])).toThrow(/unknown feature/);
-    expect(getCommandById("burn-in-pdf")?.featureId).toBe("annotation_burn_export");
+    expect(getCommandById("burn-in-pdf")).toBeNull();
   });
 
   it("filters by query and hides production mock or disabled commands", () => {

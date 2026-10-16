@@ -214,7 +214,6 @@ has a bounded timeout and kills/reaps a timed-out child.
 | `scan_sensitive_data` | `cooperative` | cooperative ephemeral job-worker scan |
 | `share_file_macos` | `child-process-killable` | tracked Swift child |
 | `perform_ocr_on_page` | `child-process-killable` | render boundaries plus tracked Vision child |
-| `burn_annotations_to_pdf` | `cooperative` | page/annotation loops and before save |
 | `export_session_page_to_image` | `boundary-only` | single PDFium render/encode |
 | `export_session_pages_as_images` | `cooperative` | between pages; each page render remains a boundary |
 | `split_session_pdf` | `cooperative` | ranges, pages, staging and publish boundaries |

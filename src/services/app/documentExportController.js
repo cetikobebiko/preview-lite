@@ -1,7 +1,6 @@
 /** Coordinates output-file dialogs, native exports, and stale session-result protection. */
 export function createDocumentExportController({
-  getContext, saveFile, requestInput, exportPage, extractPages, convertImage, burnAnnotations,
-  guard, featureContext, reportUnavailable, onToast, onError,
+  getContext, saveFile, requestInput, exportPage, extractPages, convertImage, onToast, onError,
 }) {
   function isCurrent(context) {
     const current = getContext();
@@ -106,28 +105,5 @@ export function createDocumentExportController({
     }
   }
 
-  async function burnInPdf() {
-    try { return await guard("annotation_burn_export", featureContext, executeBurnIn); }
-    catch (error) { if (!reportUnavailable(error)) throw error; }
-  }
-
-  async function executeBurnIn() {
-    const context = getContext();
-    if (!context.isLoadedPdfDocument || !context.sessionId) return;
-    if (!context.annotations?.length) { onToast("Bu belgede PDF'e gömülecek çizim yok."); return; }
-    try {
-      const savePath = await saveFile({
-        title: "Açıklamalı PDF'i Kaydet", defaultPath: `${baseName(context.fileName)}_aciklamali.pdf`,
-        filters: [{ name: "PDF Belgesi (*.pdf)", extensions: ["pdf"] }],
-      });
-      if (!savePath) return;
-      await burnAnnotations(context.sessionId, context.contentGeneration, JSON.stringify(context.annotations), savePath);
-      if (isCurrent(context)) onToast("PDF başarıyla kaydedildi!");
-    } catch (error) {
-      console.error("Kayıt hatası:", error);
-      if (isCurrent(context)) onError("Kayıt başarısız: " + error.toString());
-    }
-  }
-
-  return Object.freeze({ exportCurrentPageImage, exportPdfStructure, exportImage, splitPdf, burnInPdf });
+  return Object.freeze({ exportCurrentPageImage, exportPdfStructure, exportImage, splitPdf });
 }

@@ -16,7 +16,6 @@ use crate::pdf_engine::render_service::{RenderRequestIdentity, RenderScope, Rend
 use crate::pdf_engine::subprocess_manager::{
     BrokerError, CommandTimeout, PdfiumWorkerBroker, WorkerAdmissionPermit, WorkerDocumentKey,
 };
-use crate::pdf_engine::with_pdfium;
 use crate::worker::ipc::{WorkerCommand, WorkerRenderTarget, WorkerResult};
 use crate::{
     ActiveRenderTasks, ActiveSearchId, PasswordCache, PdfMetadata, SearchCache, SearchResult,
@@ -2758,20 +2757,6 @@ impl std::fmt::Debug for SessionJobCredential {
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn reject_unsupported_encrypted_snapshot(
-    credential: Option<&SessionJobCredential>,
-    operation_name: &str,
-) -> Result<(), SessionJobOperationError> {
-    if credential.is_some() {
-        return Err(SessionJobOperationError::failed_with_code(
-            "SESSION_JOB_ENCRYPTED_INPUT_UNSUPPORTED",
-            format!("{operation_name} şifreli session snapshot girdisini desteklemiyor"),
-        ));
-    }
-    Ok(())
-}
-
 #[derive(Clone, Debug)]
 pub struct SessionJobCancellationCheckpoint {
     token: CancellationToken,
@@ -4066,7 +4051,7 @@ impl DocumentSessionStore {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     async fn mutate<F>(
         &self,
         session_id: String,
@@ -4126,7 +4111,6 @@ impl DocumentSessionStore {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn mutate_isolated(
         &self,
         session_id: String,
@@ -7524,6 +7508,7 @@ async fn execute_mutation_transaction(
     }
 }
 
+#[cfg(test)]
 fn apply_committed_mutation(
     state: &mut DocumentSession,
     report: AtomicWriteReport,
@@ -7544,6 +7529,7 @@ fn apply_committed_mutation(
     }
 }
 
+#[cfg(test)]
 fn apply_failed_mutation(
     state: &mut DocumentSession,
     before_digest: Option<&str>,
@@ -11341,49 +11327,6 @@ fn transition_expired(transition: &SessionTransition) -> bool {
         TransitionExecutionPhase::PendingUnclaimed
     );
     expirable && now_ms().saturating_sub(transition.created_at_ms) > TRANSITION_TTL_MS
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn validate_pdf_and_check_protection(
-    path: &Path,
-    password: Option<&str>,
-) -> Result<bool, DocumentSessionError> {
-    with_pdfium(|pdfium| {
-        let document = match pdfium.load_pdf_from_file(path, password) {
-            Ok(document) => document,
-            Err(pdfium_render::prelude::PdfiumError::PdfiumLibraryInternalError(
-                pdfium_render::prelude::PdfiumInternalError::PasswordError,
-            )) if password.is_none() => return Ok(true),
-            Err(pdfium_render::prelude::PdfiumError::PdfiumLibraryInternalError(
-                pdfium_render::prelude::PdfiumInternalError::PasswordError,
-            )) => {
-                return Err(DocumentSessionError::new(
-                    "DOCUMENT_SESSION_INVALID_PASSWORD",
-                    "PDF parolası geçersiz",
-                ))
-            }
-            Err(error) => {
-                return Err(DocumentSessionError::new(
-                    "DOCUMENT_SESSION_INVALID_PDF",
-                    format!("PDFium belgeyi açamadı: {error}"),
-                ))
-            }
-        };
-        if document.pages().is_empty() {
-            return Err(DocumentSessionError::new(
-                "DOCUMENT_SESSION_EMPTY_PDF",
-                "PDF en az bir sayfa içermeli",
-            ));
-        }
-        match document.permissions().security_handler_revision() {
-            Ok(pdfium_render::prelude::PdfSecurityHandlerRevision::Unprotected) => Ok(false),
-            Ok(_) => Ok(true),
-            Err(error) => Err(DocumentSessionError::new(
-                "DOCUMENT_SESSION_SECURITY_ERROR",
-                format!("PDF security-handler durumu belirlenemedi: {error}"),
-            )),
-        }
-    })
 }
 
 fn copy_source_consistent(source: &Path, working: &Path) -> Result<String, DocumentSessionError> {
@@ -15956,29 +15899,6 @@ mod tests {
         for error in [mutation, save, export, ocr, ai] {
             assert_eq!(error.code, "DOCUMENT_SESSION_INVALID_STATE");
         }
-    }
-
-    #[test]
-    fn pdf_validation_distinguishes_encrypted_wrong_password_and_corrupt_files() {
-        let encrypted = fixture_path("encrypted.pdf");
-        assert!(validate_pdf_and_check_protection(&encrypted, None).unwrap());
-        assert_eq!(
-            validate_pdf_and_check_protection(&encrypted, Some("wrong-password"))
-                .unwrap_err()
-                .code,
-            "DOCUMENT_SESSION_INVALID_PASSWORD"
-        );
-        assert!(validate_pdf_and_check_protection(&encrypted, Some("fixture-password")).unwrap());
-
-        let directory = tempfile::tempdir().unwrap();
-        let corrupt = directory.path().join("corrupt.pdf");
-        fs::write(&corrupt, b"%PDF-1.7\ncorrupt").unwrap();
-        assert_eq!(
-            validate_pdf_and_check_protection(&corrupt, None)
-                .unwrap_err()
-                .code,
-            "DOCUMENT_SESSION_INVALID_PDF"
-        );
     }
 
     #[tokio::test]

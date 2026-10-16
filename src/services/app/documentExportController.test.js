@@ -2,15 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createDocumentExportController } from "./documentExportController.js";
 
 function setup(overrides = {}) {
-  const context = { isPdf: true, isLoadedPdfDocument: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, displayPageIndex: 1, pageOrder: [0, 1, 2], fileName: "report.pdf", annotations: [{ tool_type: "pen" }], rotation: 0, flipH: false, flipV: false };
-  const guard = vi.fn(async (_feature, _runtime, action) => action());
+  const context = { isPdf: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, displayPageIndex: 1, pageOrder: [0, 1, 2], fileName: "report.pdf", rotation: 0, flipH: false, flipV: false };
   const extractPages = vi.fn(async () => undefined);
   const controller = createDocumentExportController({
     getContext: () => ({ ...context }), saveFile: vi.fn(async () => "/tmp/out.pdf"), requestInput: vi.fn(async () => "1-2, 3"),
-    exportPage: vi.fn(async () => undefined), extractPages, convertImage: vi.fn(async () => undefined), burnAnnotations: vi.fn(async () => undefined),
-    guard, featureContext: {}, reportUnavailable: () => false, onToast: vi.fn(), onError: vi.fn(), ...overrides,
+    exportPage: vi.fn(async () => undefined), extractPages, convertImage: vi.fn(async () => undefined),
+    onToast: vi.fn(), onError: vi.fn(), ...overrides,
   });
-  return { controller, context, guard, extractPages };
+  return { controller, context, extractPages };
 }
 
 describe("documentExportController", () => {
@@ -20,34 +19,16 @@ describe("documentExportController", () => {
     expect(extractPages).toHaveBeenCalledWith("session-a", 5, [0, 1, 2], "/tmp/out.pdf");
   });
 
-  it("uses one guarded transaction for burning captured annotations", async () => {
-    const { controller, guard } = setup();
-    await controller.burnInPdf();
-    expect(guard).toHaveBeenCalledWith("annotation_burn_export", {}, expect.any(Function));
-  });
-
   it("does not report a stale page-export completion", async () => {
-    const context = { isPdf: true, isLoadedPdfDocument: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, displayPageIndex: 1, pageOrder: [0, 1], fileName: "report.pdf", annotations: [], rotation: 0, flipH: false, flipV: false };
+    const context = { isPdf: true, sessionId: "session-a", contentGeneration: 5, imagePath: "", pageIndex: 1, displayPageIndex: 1, pageOrder: [0, 1], fileName: "report.pdf", rotation: 0, flipH: false, flipV: false };
     const onToast = vi.fn();
     const controller = createDocumentExportController({
       getContext: () => ({ ...context }), saveFile: vi.fn(async () => "/tmp/page.png"), requestInput: vi.fn(),
-      exportPage: vi.fn(async () => { context.contentGeneration += 1; }), extractPages: vi.fn(), convertImage: vi.fn(), burnAnnotations: vi.fn(),
-      guard: vi.fn(), featureContext: {}, reportUnavailable: () => false, onToast, onError: vi.fn(),
+      exportPage: vi.fn(async () => { context.contentGeneration += 1; }), extractPages: vi.fn(), convertImage: vi.fn(),
+      onToast, onError: vi.fn(),
     });
     await controller.exportCurrentPageImage();
     expect(onToast).not.toHaveBeenCalled();
-  });
-
-  it("does not offer a burn-in save when the document has no drawings", async () => {
-    const saveFile = vi.fn(async () => "/tmp/out.pdf");
-    const burnAnnotations = vi.fn(async () => undefined);
-    const onToast = vi.fn();
-    const { controller, context } = setup({ saveFile, burnAnnotations, onToast });
-    context.annotations = [];
-    await controller.burnInPdf();
-    expect(saveFile).not.toHaveBeenCalled();
-    expect(burnAnnotations).not.toHaveBeenCalled();
-    expect(onToast).toHaveBeenCalledWith("Bu belgede PDF'e gömülecek çizim yok.");
   });
 
   it("exports the physical page while labelling it with its displayed number", async () => {

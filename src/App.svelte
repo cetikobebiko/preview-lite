@@ -15,7 +15,6 @@
   import { createApplicationRuntime } from "./services/app/applicationRuntime.js";
   import { createDocumentRuntime } from "./services/app/documentRuntime.js";
   import { createDocumentScopedStateReconciler } from "./services/app/documentScopedState.js";
-  import { bindHighlightSession, remapHighlightPages, rotateHighlightPage } from "./annotationsStore.js";
   import { createFeatureRuntime } from "./services/app/featureRuntime.js";
   import { createPresentationController } from "./services/app/presentationController.js";
   import { createViewerRuntime } from "./services/app/viewerRuntime.js";
@@ -73,7 +72,7 @@
     onError: presentation.setError,
   });
   const documentScopedState = createDocumentScopedStateReconciler({
-    viewer, annotation, bindHighlightSession, remapHighlightPages, rotateHighlightPage,
+    viewer, annotation,
     closeDocumentModals: () => ui.closeModal("bionic"),
   });
   const documentRuntime = createDocumentRuntime({
@@ -272,7 +271,7 @@
     onZoomOut={viewerRuntime.navigation.zoomOut} onResetZoom={viewerRuntime.navigation.resetZoom} onZoomIn={viewerRuntime.navigation.zoomIn} onToggleSinglePage={viewerRuntime.navigation.toggleSinglePageMode}
     onToggleBookMode={viewerRuntime.navigation.toggleBookMode} onToggleDarkMode={featureRuntime.toggleDarkMode} onOpenBionic={featureRuntime.openBionicReading}
     onRunOcr={featureRuntime.runOcr} onSpeak={featureRuntime.speak} onStopSpeaking={featureRuntime.stopSpeaking}
-    onSave={documentRuntime.save} onBurnIn={featureRuntime.burnInPdf} onExportImage={featureRuntime.exportImage}
+    onSave={documentRuntime.save} onExportImage={featureRuntime.exportImage}
   />
 
   <AppOverlayHost

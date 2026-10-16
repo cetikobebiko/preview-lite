@@ -292,7 +292,7 @@ describe("backend service boundaries", () => {
     expect(annotationLayerSource).not.toMatch(/\bfilePath\b/);
   });
 
-  it("keeps prepress, search, and burn-in active identity pathless", () => {
+  it("keeps prepress and search active identity pathless", () => {
     const prepressSource = readFileSync(
       resolve(sourceRoot, "components/PrepressPanel.svelte"),
       "utf8",
@@ -301,26 +301,15 @@ describe("backend service boundaries", () => {
       resolve(sourceRoot, "utils/searchCoordinator.js"),
       "utf8",
     );
-    const burnControllerSource = readFileSync(
-      resolve(sourceRoot, "services/app/documentExportController.js"),
-      "utf8",
-    );
     const prepressStateSource = readFileSync(
       resolve(sourceRoot, "stores/prepressState.svelte.js"),
       "utf8",
     );
-    const burnStart = burnControllerSource.indexOf("async function executeBurnIn");
-    const burnBody = burnControllerSource.slice(burnStart, burnStart + 1600);
-
     expect(prepressSource).not.toMatch(/\bfilePath\b/);
     expect(searchSource).not.toMatch(/\bfilePath\b|\bdocumentGenerationId\b/);
     expect(prepressStateSource).toMatch(/createPrepressContextKey/);
     expect(prepressStateSource).toMatch(/isCurrentPrepressEvent/);
     expect(prepressStateSource).not.toMatch(/\bactivePdfDisplayPath\b|\bfilePath\b/);
-    expect(burnStart).toBeGreaterThanOrEqual(0);
-    expect(burnBody).toMatch(/\bcontext\.sessionId\b/);
-    expect(burnBody).toMatch(/\bcontext\.contentGeneration\b/);
-    expect(burnBody).not.toMatch(/\bactivePdfDisplayPath\b|\bsourcePath\b/);
   });
 
   it("registers existing session-native OCR names and separate external-file share", () => {

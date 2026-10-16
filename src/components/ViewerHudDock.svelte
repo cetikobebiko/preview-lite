@@ -7,7 +7,7 @@
     onFeatureAction, onGoBack, onGoForward, onPreviousPage, onNextPage, onPageInputChange,
     onRotateLeft, onRotateRight, onFlipH, onFlipV, onZoomOut, onResetZoom, onZoomIn,
     onToggleSinglePage, onToggleBookMode, onToggleDarkMode, onOpenBionic, onRunOcr,
-    onSpeak, onStopSpeaking, onSave, onBurnIn, onExportImage,
+    onSpeak, onStopSpeaking, onSave, onExportImage,
   } = $props();
 </script>
 
@@ -48,11 +48,7 @@
       {/if}
     </div>
 
-    {#if isPdf}
-      {#if featureUi("annotation_burn_export").visible}
-        <button class="hud-btn active" onclick={onBurnIn} disabled={!featureUi("annotation_burn_export").runnable} title={featureUi("annotation_burn_export").warning}>{featureControlLabel("annotation_burn_export", "SAVE ANNOTATIONS")}</button>
-      {/if}
-    {:else}
+    {#if !isPdf}
       <button class="hud-btn active" onclick={onExportImage}>[CONVERT]</button>
     {/if}
   </div>

@@ -33,7 +33,6 @@ pub mod secure_redaction_verifier;
 pub mod tts;
 pub mod worker;
 
-use pdf_engine::render_page_rgba;
 use pdf_engine::render_service::RenderService;
 pub use pdf_engine::{clear_search_cache, get_cached_password, get_pdfium, open_pdfium_doc};
 
@@ -92,31 +91,6 @@ pub struct TextLayoutData {
     pub text: String,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct AnnotationPoint {
-    pub x: f32,
-    pub y: f32,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct AnnotationItem {
-    pub page_index: u32,
-    pub tool_type: String,
-    pub points: Option<Vec<AnnotationPoint>>,
-    pub x: Option<f32>,
-    pub y: Option<f32>,
-    pub w: Option<f32>,
-    pub h: Option<f32>,
-    pub end_x: Option<f32>,
-    pub end_y: Option<f32>,
-    pub text: Option<String>,
-    pub color: String,
-    pub size: f32,
-    pub opacity: Option<f32>,
-    pub canvas_width: f32,
-    pub canvas_height: f32,
-}
-
 pub struct PasswordCache(pub std::sync::Arc<parking_lot::Mutex<HashMap<String, String>>>);
 pub struct SearchCache(pub parking_lot::Mutex<lru::LruCache<String, SearchResult>>);
 pub struct ActiveSearchId(pub std::sync::Arc<std::sync::atomic::AtomicU64>);
@@ -126,70 +100,6 @@ pub struct ActiveRenderTasks(
 pub struct AppShutdownToken(pub tokio_util::sync::CancellationToken);
 pub struct AppShutdownCoordinator(pub std::sync::atomic::AtomicBool);
 pub struct TextLayoutCache(pub parking_lot::Mutex<lru::LruCache<String, Vec<TextLayoutData>>>);
-
-// Görsele ve SVG'ye Dönüştürme (Export Pages to PNG, JPEG, SVG)
-#[tauri::command]
-#[allow(dead_code)]
-async fn export_pdf_page_to_image(
-    path: String,
-    page_index: u32,
-    target_path: String,
-    format: String,
-) -> Result<(), String> {
-    export_pdf_page_to_image_with_password(path, page_index, target_path, format, None).await
-}
-
-pub(crate) async fn export_pdf_page_to_image_with_password(
-    path: String,
-    page_index: u32,
-    target_path: String,
-    format: String,
-    password: Option<String>,
-) -> Result<(), String> {
-    let rendered = render_page_rgba(path, page_index, 2.0, 0, password).await?;
-    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-        rendered.width,
-        rendered.height,
-        rendered.data,
-    )
-    .ok_or("Görsel tamponu oluşturulamadı")?;
-
-    let fmt = format.to_lowercase();
-    if fmt == "svg" {
-        let mut png_bytes = Vec::new();
-        let dynamic_img = image::DynamicImage::ImageRgba8(img);
-        dynamic_img
-            .write_to(
-                &mut std::io::Cursor::new(&mut png_bytes),
-                image::ImageFormat::Png,
-            )
-            .map_err(|e| format!("PNG kodlama hatası: {}", e))?;
-
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-        let b64 = STANDARD.encode(&png_bytes);
-        let svg_content = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}">
-  <image width="{}" height="{}" href="data:image/png;base64,{}"/>
-</svg>"#,
-            rendered.width, rendered.height, rendered.width, rendered.height, b64
-        );
-        std::fs::write(&target_path, svg_content)
-            .map_err(|e| format!("SVG dosyası yazılamadı: {}", e))?;
-    } else {
-        let image_format = match fmt.as_str() {
-            "png" => image::ImageFormat::Png,
-            "jpg" | "jpeg" => image::ImageFormat::Jpeg,
-            "webp" => image::ImageFormat::WebP,
-            "bmp" => image::ImageFormat::Bmp,
-            _ => image::ImageFormat::Png,
-        };
-
-        img.save_with_format(&target_path, image_format)
-            .map_err(|e| format!("Görsel kaydetme hatası: {}", e))?;
-    }
-
-    Ok(())
-}
 
 // -----------------------------------------------------------------------------
 // Cross-Platform Native API Adaptations (macOS vs Windows/Linux Fallbacks)
@@ -749,207 +659,11 @@ fn save_image_as_pdf(img: &image::DynamicImage, target_path: &str) -> Result<(),
     });
     doc.trailer.set("Root", catalog_id);
 
-    doc.save(target_path)
-        .map_err(|e| format!("PDF olarak kaydetme hatası: {}", e))?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn hex_to_rgb(hex: &str) -> (f32, f32, f32) {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() >= 6 {
-        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0;
-        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0;
-        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32 / 255.0;
-        (r, g, b)
-    } else {
-        (1.0, 0.0, 0.0)
-    }
-}
-
-#[tauri::command]
-#[allow(dead_code)]
-async fn burn_annotations_to_pdf(
-    job_id: String,
-    session_id: String,
-    expected_content_generation: u64,
-    annotations_json: String,
-    target_path: String,
-    store: tauri::State<'_, document_session::DocumentSessionStore>,
-) -> Result<document_session::SessionJobOutcome<()>, document_session::DocumentSessionError> {
-    document_session::reject_private_target(Path::new(&target_path), &store.temp_root)?;
-    store
-        .run_snapshot_job(
-            &job_id,
-            &session_id,
-            expected_content_generation,
-            move |context| {
-                document_session::reject_unsupported_encrypted_snapshot(
-                    context.credential.as_ref(),
-                    "Annotation burn",
-                )?;
-                let items: Vec<AnnotationItem> =
-                    serde_json::from_str(&annotations_json).map_err(|e| {
-                        document_session::SessionJobOperationError::failed(format!(
-                            "Annotation JSON okuma hatası: {e}"
-                        ))
-                    })?;
-
-                let mut doc = Document::load(&context.snapshot_path).map_err(|e| {
-                    document_session::SessionJobOperationError::failed(format!(
-                        "PDF yüklenemedi: {e}"
-                    ))
-                })?;
-                let pages = doc.get_pages();
-
-                let mut page_map: HashMap<u32, Vec<&AnnotationItem>> = HashMap::new();
-                for item in &items {
-                    page_map.entry(item.page_index).or_default().push(item);
-                }
-
-                for (page_idx, annos) in page_map {
-                    context.cancellation.check_cancelled()?;
-                    let page_num = page_idx + 1;
-                    if let Some(&page_id) = pages.get(&page_num) {
-                        let mut ops = vec![Operation::new("q", vec![])];
-
-                        for anno in annos {
-                            context.cancellation.check_cancelled()?;
-                            let (r, g, b) = hex_to_rgb(&anno.color);
-                            ops.push(Operation::new("RG", vec![r.into(), g.into(), b.into()]));
-                            ops.push(Operation::new("rg", vec![r.into(), g.into(), b.into()]));
-
-                            let stroke_w = if anno.tool_type == "highlighter" {
-                                anno.size * 3.0
-                            } else {
-                                anno.size
-                            };
-                            ops.push(Operation::new("w", vec![stroke_w.into()]));
-
-                            let _cw = anno.canvas_width.max(1.0);
-                            let ch = anno.canvas_height.max(1.0);
-
-                            match anno.tool_type.as_str() {
-                                "pen" | "highlighter" => {
-                                    if let Some(pts) = &anno.points {
-                                        if pts.len() > 1 {
-                                            let first = &pts[0];
-                                            ops.push(Operation::new(
-                                                "m",
-                                                vec![first.x.into(), (ch - first.y).into()],
-                                            ));
-                                            for pt in &pts[1..] {
-                                                ops.push(Operation::new(
-                                                    "l",
-                                                    vec![pt.x.into(), (ch - pt.y).into()],
-                                                ));
-                                            }
-                                            ops.push(Operation::new("S", vec![]));
-                                        }
-                                    }
-                                }
-                                "rectangle" => {
-                                    if let (Some(x), Some(y), Some(w), Some(h)) =
-                                        (anno.x, anno.y, anno.w, anno.h)
-                                    {
-                                        let pdf_y = ch - y - h;
-                                        ops.push(Operation::new(
-                                            "re",
-                                            vec![x.into(), pdf_y.into(), w.into(), h.into()],
-                                        ));
-                                        ops.push(Operation::new("S", vec![]));
-                                    }
-                                }
-                                "arrow" => {
-                                    if let (Some(sx), Some(sy), Some(ex), Some(ey)) =
-                                        (anno.x, anno.y, anno.end_x, anno.end_y)
-                                    {
-                                        let pdf_sy = ch - sy;
-                                        let pdf_ey = ch - ey;
-                                        ops.push(Operation::new(
-                                            "m",
-                                            vec![sx.into(), pdf_sy.into()],
-                                        ));
-                                        ops.push(Operation::new(
-                                            "l",
-                                            vec![ex.into(), pdf_ey.into()],
-                                        ));
-                                        ops.push(Operation::new("S", vec![]));
-                                    }
-                                }
-                                "text" => {
-                                    if let (Some(x), Some(y), Some(txt)) =
-                                        (anno.x, anno.y, &anno.text)
-                                    {
-                                        let font_size = anno.size * 2.0;
-                                        let pdf_y = ch - y - font_size;
-                                        ops.push(Operation::new("BT", vec![]));
-                                        ops.push(Operation::new(
-                                            "Tf",
-                                            vec!["/F1".into(), font_size.into()],
-                                        ));
-                                        ops.push(Operation::new(
-                                            "Td",
-                                            vec![x.into(), pdf_y.into()],
-                                        ));
-                                        ops.push(Operation::new(
-                                            "Tj",
-                                            vec![Object::String(
-                                                txt.as_bytes().to_vec(),
-                                                lopdf::StringFormat::Literal,
-                                            )],
-                                        ));
-                                        ops.push(Operation::new("ET", vec![]));
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        ops.push(Operation::new("Q", vec![]));
-
-                        let content = lopdf::content::Content { operations: ops };
-                        let encoded = content.encode().unwrap_or_else(|_| vec![]);
-
-                        let content_id = doc.add_object(Object::Stream(lopdf::Stream::new(
-                            lopdf::Dictionary::new(),
-                            encoded,
-                        )));
-
-                        let page = doc.get_object_mut(page_id).unwrap().as_dict_mut().unwrap();
-                        let cur_contents = page.get(b"Contents");
-                        match cur_contents {
-                            Ok(Object::Array(arr)) => {
-                                let mut new_arr = arr.clone();
-                                new_arr.push(Object::Reference(content_id));
-                                page.set("Contents", Object::Array(new_arr));
-                            }
-                            Ok(Object::Reference(old_id)) => {
-                                page.set(
-                                    "Contents",
-                                    Object::Array(vec![
-                                        Object::Reference(*old_id),
-                                        Object::Reference(content_id),
-                                    ]),
-                                );
-                            }
-                            _ => {
-                                page.set("Contents", Object::Reference(content_id));
-                            }
-                        }
-                    }
-                }
-
-                context.cancellation.check_cancelled()?;
-                doc.save(&target_path).map_err(|e| {
-                    document_session::SessionJobOperationError::failed(format!(
-                        "Annotation kaydedilemedi: {e}"
-                    ))
-                })?;
-                Ok(())
-            },
-        )
-        .await
+    write_image_target(target_path, "PDF olarak kaydetme hatası", |file| {
+        let mut writer = std::io::BufWriter::new(file);
+        doc.save_to(&mut writer)?;
+        writer.into_inner().map(drop).map_err(|e| e.into_error())
+    })
 }
 
 pub fn run_smoke() {

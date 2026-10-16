@@ -53,7 +53,7 @@ vi.mock("./services/app/featureRuntime.js", () => ({
     commandRouter: { handleEvent: vi.fn() },
     invalidateSearch: vi.fn(), handleSearchQuery: vi.fn(), searchNext: vi.fn(), searchPrevious: vi.fn(),
     handleSearchHighlight: vi.fn(), sanitize: vi.fn(), toggleDarkMode: vi.fn(),
-    openBionicReading: vi.fn(), runOcr: vi.fn(), speak: vi.fn(), stopSpeaking: vi.fn(), burnInPdf: vi.fn(),
+    openBionicReading: vi.fn(), runOcr: vi.fn(), speak: vi.fn(), stopSpeaking: vi.fn(),
     exportImage: vi.fn(),
     scanSensitiveData: vi.fn(), reconcileSensitiveDataContext: vi.fn(),
     getSensitiveDataHighlightsForPage: vi.fn(() => []),
@@ -315,7 +315,7 @@ describe("7R.6 component smoke behavior", () => {
       onNextPage: vi.fn(), onPageInputChange: vi.fn(), onRotateLeft: vi.fn(), onRotateRight: vi.fn(),
       onFlipH: vi.fn(), onFlipV: vi.fn(), onZoomOut: vi.fn(), onResetZoom: vi.fn(), onZoomIn: vi.fn(),
       onToggleSinglePage: vi.fn(), onToggleBookMode: vi.fn(), onToggleDarkMode: vi.fn(), onOpenBionic: vi.fn(),
-      onRunOcr: vi.fn(), onSpeak: vi.fn(), onStopSpeaking: vi.fn(), onSave: vi.fn(), onBurnIn: vi.fn(), onExportImage: vi.fn(),
+      onRunOcr: vi.fn(), onSpeak: vi.fn(), onStopSpeaking: vi.fn(), onSave: vi.fn(), onExportImage: vi.fn(),
     };
     const view = render(ViewerHudDock, { props });
     expect(view.queryByTitle("Çalışma kopyasını atomik olarak kaydet")).toBeNull();

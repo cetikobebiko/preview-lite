@@ -188,10 +188,10 @@ export function createDocumentRuntime({
     setError: onError,
   });
 
-  async function applyMutationSnapshot(snapshot, { mapPageIndex = null, rotation = null } = {}) {
-    // The backend already renumbered/rotated the pages; apply even if a newer snapshot won the race.
-    if ((mapPageIndex || rotation) && snapshot?.id && snapshot.id === documentSession.activeSessionId) {
-      applyPageScopedMutation(snapshot.id, { mapPageIndex, rotation });
+  async function applyMutationSnapshot(snapshot, { mapPageIndex = null } = {}) {
+    // The backend already renumbered the pages; apply even if a newer snapshot won the race.
+    if (mapPageIndex && snapshot?.id && snapshot.id === documentSession.activeSessionId) {
+      applyPageScopedMutation(snapshot.id, { mapPageIndex });
     }
     if (!applyBackendSessionSnapshot(snapshot, { activateRender: true })) return;
     const pageCount = await getSessionPageCount(snapshot.id, snapshot.contentGeneration);

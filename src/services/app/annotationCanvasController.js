@@ -2,7 +2,7 @@ import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
 
 /**
  * Owns annotation-pointer state transitions while the annotation store remains authoritative.
- * Drawings are keyed by physical page index, the index burn-in export writes to.
+ * Drawings are keyed by physical page index.
  */
 export function createAnnotationCanvasController({ annotation, viewer, getCanvases, promptText, render }) {
   const currentPhysicalPage = () => toPhysicalPageIndex(viewer.pageOrder, viewer.currentPageIndex);

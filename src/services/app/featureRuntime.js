@@ -22,10 +22,7 @@ import {
   extractSessionPages,
   searchSessionPdfText,
 } from "../backend/session.js";
-import {
-  burnAnnotationsToPdf,
-  convertAndSaveImage,
-} from "../backend/document.js";
+import { convertAndSaveImage } from "../backend/document.js";
 import { selectViewportHighlights } from "../../utils/pdfGeometry.js";
 import { open, save } from "../platform/dialogs.js";
 import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
@@ -46,7 +43,6 @@ const defaultExportActions = Object.freeze({
   exportPage: exportSessionPageToImage,
   extractPages: extractSessionPages,
   convertImage: convertAndSaveImage,
-  burnAnnotations: burnAnnotationsToPdf,
 });
 
 /** Composes feature workflows and search without owning document lifecycle state. */
@@ -242,7 +238,6 @@ export function createFeatureRuntime({
   const documentExportController = createExportController({
     getContext: () => ({
       isPdf: documentRuntime.isPdf,
-      isLoadedPdfDocument: documentRuntime.isLoadedPdfDocument,
       sessionId: documentSession.activeSessionId,
       contentGeneration: documentSession.contentGeneration,
       imagePath: viewer.activeImageSourcePath,
@@ -250,16 +245,12 @@ export function createFeatureRuntime({
       displayPageIndex: viewer.currentPageIndex,
       pageOrder: viewer.pageOrder,
       fileName: documentRuntime.fileName,
-      annotations: Object.values(annotation.annotationsMap).flat(),
       rotation: viewer.rotation,
       flipH: viewer.flipH,
       flipV: viewer.flipV,
     }),
     saveFile: save,
     requestInput: (options) => asyncPrompt.request(options),
-    guard: guardFeatureAction,
-    featureContext,
-    reportUnavailable,
     onToast,
     onError,
     ...exportActions,
@@ -326,7 +317,6 @@ export function createFeatureRuntime({
       "split-pdf": documentExportController.splitPdf,
       "merge-pdf": transform.mergePdf,
       "reset-zoom": viewerRuntime.navigation.resetZoom,
-      "burn-in-pdf": documentExportController.burnInPdf,
     },
   });
 
@@ -392,6 +382,5 @@ export function createFeatureRuntime({
     exportPdfStructure: documentExportController.exportPdfStructure,
     exportImage: documentExportController.exportImage,
     splitPdf: documentExportController.splitPdf,
-    burnInPdf: documentExportController.burnInPdf,
   });
 }

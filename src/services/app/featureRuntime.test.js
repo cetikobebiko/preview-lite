@@ -41,7 +41,6 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       exportPage: vi.fn(),
       extractPages: vi.fn(),
       convertImage: vi.fn(),
-      burnAnnotations: vi.fn(),
     };
 
     const runtime = createFeatureRuntime({
@@ -168,7 +167,7 @@ describe("featureRuntime lifecycle & façade assertions", () => {
     expect(typeof runtime.getSensitiveDataHighlightsForPage).toBe("function");
   });
 
-  it("never hands drawings from a previously open document to burn-in or notes export", () => {
+  it("never hands drawings from a previously open document to notes export", () => {
     const annotation = createAnnotationState();
     const viewer = { activeImageSourcePath: "", currentPageIndex: 0, pageOrder: [0], rotation: 0, flipH: false, flipV: false, documentTextContext: "", bionicText: "" };
     const documentSession = { activeSessionId: null, contentGeneration: 0 };
@@ -177,12 +176,12 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       annotation, viewer, documentSession,
       createExportController: vi.fn(({ getContext }) => { exportContext = getContext; return { exportCurrentPageImage: vi.fn() }; }),
     });
-    const reconciler = createDocumentScopedStateReconciler({ viewer, annotation, bindHighlightSession: vi.fn() });
+    const reconciler = createDocumentScopedStateReconciler({ viewer, annotation });
 
     viewer.activeImageSourcePath = "/scan.png";
     reconciler.reconcile({ sessionId: null, contentGeneration: 0, imagePath: "/scan.png" });
     annotation.annotationsMap = { 0: [{ page_index: 0, tool_type: "text", text: "görsel notu", color: "#fff" }] };
-    expect(exportContext().annotations).toHaveLength(1);
+    expect(buildAnnotationMarkdown({ fileName: "scan.png", annotationsMap: annotation.annotationsMap }).totalNotes).toBe(1);
 
     viewer.activeImageSourcePath = "";
     documentSession.activeSessionId = "pdf-b";
@@ -190,7 +189,6 @@ describe("featureRuntime lifecycle & façade assertions", () => {
     reconciler.reconcile({ sessionId: "pdf-b", contentGeneration: 1, imagePath: "" });
 
     expect(exportContext().sessionId).toBe("pdf-b");
-    expect(exportContext().annotations).toEqual([]);
     expect(buildAnnotationMarkdown({ fileName: "b.pdf", annotationsMap: annotation.annotationsMap }).totalNotes).toBe(0);
   });
 
