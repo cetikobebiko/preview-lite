@@ -1227,6 +1227,8 @@ pub fn run() {
 
             app.state::<document_session::DocumentSessionStore>()
                 .start_job_reaper();
+            // Bitiş olaylarını yayınlamak için AppHandle gerekir; komutlar setup'tan sonra çalışır.
+            app.manage(tts::SpeechController::for_app(app.handle().clone()));
 
             if let Ok(resource_dir) = app.path().resource_dir() {
                 let runtime_path = resource_dir
@@ -1262,7 +1264,6 @@ pub fn run() {
         .manage(pdfium_worker_broker)
         .manage(document_sessions)
         .manage(plugins::PluginState::new())
-        .manage(tts::SpeechController::new())
         .invoke_handler(tauri::generate_handler![
             document_session::open_document_session,
             document_session::authenticate_document_session,

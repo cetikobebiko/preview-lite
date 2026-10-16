@@ -25,6 +25,7 @@ import {
 import { convertAndSaveImage } from "../backend/document.js";
 import { selectViewportHighlights } from "../../utils/pdfGeometry.js";
 import { open, save } from "../platform/dialogs.js";
+import { listen } from "../platform/events.js";
 import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
 import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
 import { createCommandActionRouter } from "./commandActionRouter.js";
@@ -68,6 +69,7 @@ export function createFeatureRuntime({
   createSensitiveDataScanController: createSensitiveScan = createSensitiveDataScanController,
   createSecureRedactionController: createSecureRedaction = createSecureRedactionController,
   createSanitizationController: createSanitization = createSanitizationController,
+  listenToEvent = listen,
 }) {
   const featureContext = getRuntimeFeatureContext();
   const featureUi = (featureId) => getFeaturePresentation(featureId, featureContext);
@@ -162,6 +164,7 @@ export function createFeatureRuntime({
     sensitiveScanController.start();
     secureRedactionController.start();
     sanitizationController.start();
+    tts.start();
   }
 
   function destroy() {
@@ -169,6 +172,7 @@ export function createFeatureRuntime({
     sensitiveScanController.destroy();
     secureRedactionController.destroy();
     sanitizationController.destroy();
+    tts.destroy();
   }
 
   const featureRequestContext = () => ({
@@ -211,6 +215,7 @@ export function createFeatureRuntime({
     featureContext,
     reportUnavailable,
     onToast,
+    listenToEvent,
   });
   const reading = createReadingPresentationController({
     getContext: featureRequestContext,

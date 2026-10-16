@@ -43,6 +43,9 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       convertImage: vi.fn(),
     };
 
+    const unlistenTts = vi.fn();
+    const listenToEvent = vi.fn(async () => unlistenTts);
+
     const runtime = createFeatureRuntime({
       viewer: { activeImageSourcePath: "", currentPageIndex: 0, pageOrder: [], rotation: 0, flipH: false, flipV: false },
       annotation: { annotationsMap: {} },
@@ -70,11 +73,14 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       createSensitiveDataScanController: createSensitiveScanControllerMock,
       createSecureRedactionController: createSecureRedactionControllerMock,
       createSanitizationController: createSanitizationControllerMock,
+      listenToEvent,
       ...overrides,
     });
 
     return {
       runtime,
+      listenToEvent,
+      unlistenTts,
       searchControllerMock,
       sensitiveScanControllerMock,
       secureRedactionControllerMock,
@@ -104,6 +110,18 @@ describe("featureRuntime lifecycle & façade assertions", () => {
     expect(searchControllerMock.destroy).toHaveBeenCalledTimes(1);
     expect(sensitiveScanControllerMock.destroy).toHaveBeenCalledTimes(1);
     expect(secureRedactionControllerMock.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("subscribes to TTS finished events on start and unsubscribes on destroy", async () => {
+    const { runtime, listenToEvent, unlistenTts } = setupTestRuntime();
+
+    runtime.start();
+    runtime.start();
+    await vi.waitFor(() => expect(listenToEvent).toHaveBeenCalledOnce());
+    expect(listenToEvent).toHaveBeenCalledWith("tts://finished", expect.any(Function));
+
+    runtime.destroy();
+    await vi.waitFor(() => expect(unlistenTts).toHaveBeenCalledOnce());
   });
 
   it("delegates scanSensitiveData to sensitiveScanController.scan with exact pattern arguments", () => {
