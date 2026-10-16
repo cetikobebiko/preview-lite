@@ -445,6 +445,53 @@ pub fn create_private_dir_all(path: &Path) -> Result<(), PluginError> {
     }
 }
 
+/// Returns true when `meta` describes a symlink, junction, or other Windows reparse point.
+pub fn is_link_like(meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x00000400;
+        if (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Like `create_private_dir_all`, but the final component must be a real directory.
+/// A pre-existing symlink is rejected before anything is created or chmod-ed through it,
+/// and the result is re-checked afterwards.
+pub fn create_private_real_dir(path: &Path) -> Result<(), PluginError> {
+    let reject = || {
+        PluginError::new(
+            PluginErrorCode::PluginSymlinkRejected,
+            format!(
+                "Eklenti dizini gerçek bir dizin değil (symlink veya reparse point): '{}'",
+                path.display()
+            ),
+        )
+    };
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if is_link_like(&meta) {
+            return Err(reject());
+        }
+    }
+    create_private_dir_all(path)?;
+    let meta = fs::symlink_metadata(path).map_err(|e| {
+        PluginError::new(
+            PluginErrorCode::PluginPathInvalid,
+            format!("Dizin metaverisi okunamadı ('{}'): {}", path.display(), e),
+        )
+    })?;
+    if is_link_like(&meta) || !meta.is_dir() {
+        return Err(reject());
+    }
+    Ok(())
+}
+
 /// Writes a file with private mode (0600 on Unix).
 pub fn write_private_file(path: &Path, content: &[u8]) -> Result<(), PluginError> {
     #[cfg(unix)]
@@ -595,6 +642,25 @@ mod tests {
 
         let err = verify_no_symlinks_in_path(dir.path()).unwrap_err();
         assert_eq!(err.code, PluginErrorCode::PluginSymlinkRejected);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_create_private_real_dir_rejects_symlink_without_touching_target() {
+        let dir = tempdir().unwrap();
+        let target = tempdir().unwrap();
+        fs::set_permissions(target.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let link = dir.path().join("staging");
+        std::os::unix::fs::symlink(target.path(), &link).unwrap();
+
+        let err = create_private_real_dir(&link).unwrap_err();
+        assert_eq!(err.code, PluginErrorCode::PluginSymlinkRejected);
+        let mode = fs::metadata(target.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755, "symlink target must not be chmod-ed");
+
+        let real = dir.path().join("real");
+        create_private_real_dir(&real).unwrap();
+        assert!(real.is_dir());
     }
 
     #[test]

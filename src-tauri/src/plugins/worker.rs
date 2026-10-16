@@ -3,7 +3,9 @@
 use super::error::{PluginError, PluginErrorCode, PluginErrorWire};
 use super::host_api::execute_plugin_script;
 use super::limits::*;
-use super::manifest::{PluginManifestV1, PluginPermission};
+use super::manifest::{
+    validate_plugin_id, validate_plugin_version, PluginManifestV1, PluginPermission,
+};
 use super::path_security::{
     compute_package_digest, compute_sha256_hex, scan_package_directory_safety,
     validate_and_canonicalize_contained_path, verify_no_symlinks_in_path,
@@ -281,6 +283,10 @@ fn revalidate_worker_target_directory(
         ));
     }
 
+    // id and version become path components below the installed root
+    validate_plugin_id(&req.plugin_id)?;
+    validate_plugin_version(&req.plugin_version)?;
+
     // Step 1 & 2 & 3: Containment and symlink checks
     if !target_dir.exists() {
         return Err(PluginError::new(
@@ -294,7 +300,13 @@ fn revalidate_worker_target_directory(
             format!("Hedef dizin canonicalize edilemedi: {}", e),
         )
     })?;
-    if !canonical_target.starts_with(canonical_root) {
+    // The target must be exactly <root>/installed/<id>/<version>; a symlink at any of
+    // those levels resolves elsewhere and fails the equality.
+    let expected_target = canonical_root
+        .join("installed")
+        .join(&req.plugin_id)
+        .join(&req.plugin_version);
+    if canonical_target != expected_target {
         return Err(PluginError::new(
             PluginErrorCode::PluginPathTraversal,
             "Hedef eklenti dizini izin verilen kök dışında.",

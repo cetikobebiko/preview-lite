@@ -327,3 +327,78 @@ fn test_worker_process_malformed_request_causes_clean_exit() {
     let status = child.wait().unwrap();
     assert!(status.success());
 }
+
+/// Runs one worker request for `plugin_id`/`plugin_version` against the fixture root.
+fn run_worker_for_identity(
+    fixture: &TestPluginFixture,
+    plugin_id: &str,
+    plugin_version: &str,
+) -> WorkerExecuteResponse {
+    let mut child = Command::new(preview_alternative_bin())
+        .arg("--run-plugin-worker")
+        .env("ANTIGRAVITY_PLUGIN_ROOT", &fixture.root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn plugin worker process");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    let req = WorkerExecuteRequest {
+        protocol_version: CURRENT_PLUGIN_PROTOCOL_VERSION,
+        request_id: "req-identity".to_string(),
+        execution_id: "exec-identity".to_string(),
+        plugin_id: plugin_id.to_string(),
+        plugin_version: plugin_version.to_string(),
+        expected_package_digest: fixture.package_digest.clone(),
+        expected_manifest_digest: fixture.manifest_digest.clone(),
+        expected_script_digest: fixture.script_digest.clone(),
+        hook_request: PluginHookRequestV1 {
+            schema_version: CURRENT_PLUGIN_HOOK_SCHEMA_VERSION,
+            execution_id: "exec-identity".to_string(),
+            plugin_id: plugin_id.to_string(),
+            hook: PluginHook::OnCustomCommand,
+            payload: serde_json::json!({ "command_name": "cmd", "parameters": {} }),
+        },
+        granted_permissions: vec![],
+        resource_profile_version: 1,
+    };
+    write_framed(&mut stdin, &serde_json::to_vec(&req).unwrap());
+
+    let resp_bytes = read_framed(&mut stdout).expect("Failed to read response frame");
+    let _ = child.wait();
+    serde_json::from_slice(&resp_bytes).unwrap()
+}
+
+#[test]
+fn test_worker_process_rejects_path_component_version() {
+    let fixture = create_test_plugin("dots", "1.0.0", "fn on_custom_command(p) {}", &[]);
+
+    for version in [".", ".."] {
+        let resp = run_worker_for_identity(&fixture, "dots", version);
+        assert_eq!(resp.status, WorkerTerminalStatus::Failed);
+        assert_eq!(resp.error.unwrap().code, "PLUGIN_VERSION_INVALID");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn test_worker_process_rejects_symlinked_plugin_dir_inside_root() {
+    // installed/alias -> installed/hidden: the resolved directory stays under the plugin
+    // root but is not installed/<id>/<version>, so it must be refused.
+    let fixture = create_test_plugin(
+        "alias",
+        "1.0.0",
+        "fn on_custom_command(p) { return \"ran\"; }",
+        &[],
+    );
+    let installed = fixture.root.join("installed");
+    fs::rename(installed.join("alias"), installed.join("hidden")).unwrap();
+    std::os::unix::fs::symlink(installed.join("hidden"), installed.join("alias")).unwrap();
+
+    let resp = run_worker_for_identity(&fixture, "alias", "1.0.0");
+    assert_eq!(resp.status, WorkerTerminalStatus::Failed);
+    assert_eq!(resp.error.unwrap().code, "PLUGIN_PATH_TRAVERSAL");
+}

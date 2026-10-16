@@ -146,22 +146,7 @@ impl PluginManifestV1 {
             ));
         }
 
-        // id validation (1..64 chars, [a-z0-9_-])
-        if self.id.is_empty()
-            || self.id.len() > 64
-            || !self
-                .id
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-        {
-            return Err(PluginError::new(
-                PluginErrorCode::PluginIdInvalid,
-                format!(
-                    "Eklenti ID'si geçersiz ('{}'). 1-64 karakter uzunluğunda olmalı ve yalnızca küçük harf, rakam, tire veya alt çizgi içermelidir.",
-                    self.id
-                ),
-            ));
-        }
+        validate_plugin_id(&self.id)?;
 
         // name validation (1..128 chars, non-empty after trim)
         let trimmed_name = self.name.trim();
@@ -172,22 +157,7 @@ impl PluginManifestV1 {
             ));
         }
 
-        // version validation (1..32 chars, semver-like: digits, dots, hyphens, alphanumeric)
-        if self.version.is_empty()
-            || self.version.len() > 32
-            || !self
-                .version
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+' || c == '_')
-        {
-            return Err(PluginError::new(
-                PluginErrorCode::PluginVersionInvalid,
-                format!(
-                    "Eklenti sürüm dizesi geçersiz ('{}'). 1-32 karakter uzunluğunda olmalıdır.",
-                    self.version
-                ),
-            ));
-        }
+        validate_plugin_version(&self.version)?;
 
         // description validation (max 512 chars)
         if let Some(desc) = &self.description {
@@ -234,6 +204,87 @@ impl PluginManifestV1 {
 
         Ok(())
     }
+}
+
+/// Returns true when `component` names a Windows reserved device (CON, NUL, COM1, ...).
+/// Windows treats the name as reserved regardless of case and of any extension, so only
+/// the part before the first dot is compared.
+fn is_windows_reserved_name(component: &str) -> bool {
+    let stem = component.split('.').next().unwrap_or("");
+    let upper = stem.to_ascii_uppercase();
+    match upper.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => {
+            (upper.starts_with("COM") || upper.starts_with("LPT"))
+                && upper.len() == 4
+                && upper.as_bytes()[3].is_ascii_digit()
+        }
+    }
+}
+
+/// Validates a plugin id. The id becomes a directory name under `plugins/installed`,
+/// so it must be a single plain path component: 1..64 chars of `[a-z0-9_-]` that is not
+/// a Windows reserved device name.
+pub fn validate_plugin_id(id: &str) -> Result<(), PluginError> {
+    if is_windows_reserved_name(id) {
+        return Err(PluginError::new(
+            PluginErrorCode::PluginIdInvalid,
+            format!("Eklenti ID'si ayrılmış bir sistem adı olamaz ('{}').", id),
+        ));
+    }
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    {
+        return Err(PluginError::new(
+            PluginErrorCode::PluginIdInvalid,
+            format!(
+                "Eklenti ID'si geçersiz ('{}'). 1-64 karakter uzunluğunda olmalı ve yalnızca küçük harf, rakam, tire veya alt çizgi içermelidir.",
+                id
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Validates a plugin version. The version becomes a directory name under
+/// `plugins/installed/<id>`, so it must never be a path component such as "." or "..":
+/// 1..32 chars of `[A-Za-z0-9._+-]`, starting with an alphanumeric, no consecutive dots
+/// and no trailing dot (Windows strips trailing dots, which would alias "1." to "1").
+/// Windows reserved device names ("con", "nul.1", ...) are rejected as well.
+pub fn validate_plugin_version(version: &str) -> Result<(), PluginError> {
+    if is_windows_reserved_name(version) {
+        return Err(PluginError::new(
+            PluginErrorCode::PluginVersionInvalid,
+            format!(
+                "Eklenti sürüm dizesi ayrılmış bir sistem adı olamaz ('{}').",
+                version
+            ),
+        ));
+    }
+    let starts_alphanumeric = version
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric());
+    if !starts_alphanumeric
+        || version.len() > 32
+        || !version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+' || c == '_')
+        || version.contains("..")
+        || version.ends_with('.')
+    {
+        return Err(PluginError::new(
+            PluginErrorCode::PluginVersionInvalid,
+            format!(
+                "Eklenti sürüm dizesi geçersiz ('{}'). 1-32 karakter uzunluğunda olmalı, harf veya rakamla başlamalı, ardışık nokta içermemeli ve nokta ile bitmemelidir.",
+                version
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Recursively checks that a JSON object contains no duplicate keys.
@@ -600,6 +651,73 @@ mod tests {
                 .code,
             PluginErrorCode::PluginVersionInvalid
         );
+    }
+
+    fn manifest_with_version(version: &str) -> String {
+        format!(
+            r#"{{
+            "manifest_version": 1,
+            "id": "valid-id",
+            "name": "Test",
+            "version": "{version}",
+            "main_script": "main.rhai"
+        }}"#
+        )
+    }
+
+    #[test]
+    fn test_manifest_version_path_component_cases_rejected() {
+        for version in [".", "..", "1..2", ".1", "-1", "_1", "+1", "1.", "1.0.."] {
+            let err =
+                PluginManifestV1::parse_and_validate(manifest_with_version(version).as_bytes())
+                    .unwrap_err();
+            assert_eq!(
+                err.code,
+                PluginErrorCode::PluginVersionInvalid,
+                "version {version:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_windows_reserved_names_rejected_as_id_and_version() {
+        for id in ["con", "prn", "aux", "nul", "com1", "lpt9", "com0"] {
+            assert_eq!(
+                validate_plugin_id(id).unwrap_err().code,
+                PluginErrorCode::PluginIdInvalid,
+                "id {id:?} must be rejected"
+            );
+        }
+        for id in ["console", "nul-plugin", "com10", "aux_tools", "lpt"] {
+            assert!(validate_plugin_id(id).is_ok(), "id {id:?} must be accepted");
+        }
+        for version in ["CON", "nul.1", "Com1.0", "lpt3"] {
+            assert_eq!(
+                validate_plugin_version(version).unwrap_err().code,
+                PluginErrorCode::PluginVersionInvalid,
+                "version {version:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_manifest_valid_versions_accepted() {
+        let max_len = "1".repeat(32);
+        for version in [
+            "1",
+            "1.0.0",
+            "v2",
+            "1.0.0-rc.1",
+            "1.0.0+build.5",
+            "1.0.0-beta_2",
+            "2024.10.16",
+            max_len.as_str(),
+        ] {
+            let manifest =
+                PluginManifestV1::parse_and_validate(manifest_with_version(version).as_bytes())
+                    .unwrap_or_else(|e| panic!("version {version:?} must be accepted: {e:?}"));
+            assert_eq!(manifest.version, version);
+        }
     }
 
     #[test]

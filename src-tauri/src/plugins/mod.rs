@@ -189,7 +189,8 @@ impl PluginState {
             }
 
             // Verify disk integrity before enabling
-            let install_dir = PathBuf::from(&entry.install_dir);
+            let install_dir = install::resolve_installed_plugin_dir(app_data_dir, entry)
+                .map_err(|e| e.to_wire())?;
             let manifest_path = install_dir.join("manifest.json");
             let script_path = install_dir.join(&entry.main_script);
             let manifest_bytes = fs::read(&manifest_path).map_err(|_| {
@@ -347,7 +348,8 @@ impl PluginState {
         }
 
         // Pre-check disk digest before starting execution
-        let install_dir = PathBuf::from(&plugin.install_dir);
+        let install_dir = install::resolve_installed_plugin_dir(app_data_dir, &plugin)
+            .map_err(|e| e.to_wire())?;
         let manifest_path = install_dir.join("manifest.json");
         let script_path = install_dir.join(&plugin.main_script);
         let manifest_bytes = fs::read(&manifest_path).map_err(|_| {
