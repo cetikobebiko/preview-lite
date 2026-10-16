@@ -117,157 +117,51 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg-primary);
+  background: var(--background);
   position: relative;
 }
 
-/* Telemetry Header Seal / System Banner */
-.telemetry-header {
-  height: 40px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-raw);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  z-index: 20;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.5px;
-}
-
-.telemetry-seal {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-muted);
-}
-
-.system-tag {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-raw);
-  color: var(--accent-industrial);
-  padding: 2px 8px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-
-.file-title-raw {
-  color: var(--text-primary);
-  font-weight: 600;
-  max-width: 320px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Utilitarian Dock / HUD (Bottom Fixed Control Panel) */
-.hud-dock {
-  position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-raw);
-  padding: 6px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 90;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  max-width: calc(100vw - 16px);
-  overflow-x: auto;
-}
-
-.hud-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border-right: 1px solid var(--border-raw);
-  padding-right: 8px;
-}
-
-.hud-group:last-child {
-  border-right: none;
-  padding-right: 0;
-}
-
+/* Buttons still rendered by components not yet moved to shadcn-svelte. */
 .hud-btn {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-raw);
-  color: var(--text-primary);
-  height: 28px;
-  padding: 0 8px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  transition: border-color 0.1s ease, color 0.1s ease;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
 }
 
 .hud-btn:hover:not(:disabled) {
-  border-color: var(--accent-industrial);
-  color: var(--accent-industrial);
-  background: var(--bg-surface);
+  background: var(--accent);
 }
 
 .hud-btn.active {
-  border-color: var(--accent-industrial);
-  background: var(--accent-industrial);
+  border-color: transparent;
+  background: var(--primary);
   color: var(--primary-foreground);
-  font-weight: 700;
 }
 
 .hud-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.5;
   cursor: not-allowed;
-  border-color: var(--border-raw);
 }
 
-.hud-telemetry-badge {
-  background: var(--secondary);
-  border: 1px solid var(--border-raw);
-  color: var(--accent-industrial);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 8px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.hud-page-input {
-  width: 34px;
-  background: transparent;
-  border: none;
-  color: var(--accent-industrial);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  text-align: center;
-  outline: none;
-}
-
-/* Workspace & Canvas Viewport */
+/* Workspace & viewer: pages sit on a neutral gray surface, like Preview. */
 .workspace-body {
   flex: 1;
   display: flex;
-  height: calc(100vh - 40px);
+  position: relative;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -276,12 +170,11 @@
   min-width: 0;
   height: 100%;
   background: var(--canvas);
-  overflow-y: auto;
-  overflow-x: auto;
+  overflow: auto;
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 32px;
+  padding: 24px;
   position: relative;
 }
 
@@ -319,73 +212,38 @@
   margin-bottom: 0;
 }
 
-.book-divider {
-  width: 1px;
-  background-color: var(--border);
-  align-self: stretch;
-}
-
 .page-wrapper {
   position: relative;
   display: flex;
   justify-content: center;
 }
 
-/* Canvas Styling - Sharp Raw Framing */
-canvas {
+.viewer-area canvas {
   background: #ffffff;
-  border: 1px solid var(--border);
   cursor: crosshair;
 }
 
-canvas.pointer-mode {
+.viewer-area canvas.pointer-mode {
   cursor: default;
 }
 
-/* Popover Settings Panel */
-.settings-popover {
-  position: absolute;
-  bottom: 56px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-raw);
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  z-index: 95;
+.page-wrapper > canvas {
+  box-shadow: var(--page-shadow);
 }
 
-.color-swatch {
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--border-raw);
-  cursor: pointer;
-}
-
-.color-swatch.active {
-  border-color: var(--accent-industrial);
-  outline: 1px solid var(--accent-industrial);
-}
-
-.stroke-slider {
-  width: 70px;
-  accent-color: var(--accent-industrial);
-  cursor: pointer;
-}
-
-/* Toast Notifications */
 .toast-notification {
   position: fixed;
-  top: 48px;
-  right: 16px;
-  background: var(--bg-surface);
-  border: 1px solid var(--accent-industrial);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 8px 14px;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(480px, calc(100vw - 32px));
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+  font-size: 12px;
+  padding: 6px 14px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -394,26 +252,25 @@ canvas.pointer-mode {
 
 .loading-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: color-mix(in srgb, var(--background) 85%, transparent);
+  inset: 0;
+  background: color-mix(in srgb, var(--canvas) 70%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   z-index: 10;
-  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  font-size: 12px;
 }
 
 .spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--border-raw);
-  border-top-color: var(--accent-industrial);
-  animation: spin 0.6s linear infinite;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
 
 @keyframes spin {
@@ -421,13 +278,15 @@ canvas.pointer-mode {
 }
 
 .error-card {
-  max-width: 400px;
-  background: var(--bg-surface);
-  border: 1px solid var(--error-color);
-  color: var(--error-color);
-  padding: 16px;
-  font-family: var(--font-mono);
-  font-size: 12px;
+  max-width: 420px;
+  margin: 0 auto 16px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid color-mix(in srgb, var(--destructive) 40%, transparent);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.08);
+  padding: 14px 16px;
+  font-size: 13px;
   text-align: center;
 }
 
@@ -474,6 +333,8 @@ canvas.pointer-mode {
 
 @theme inline {
   --font-sans: var(--font-ui);
+  --color-toolbar: var(--toolbar);
+  --color-canvas: var(--canvas);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

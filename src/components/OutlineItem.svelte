@@ -36,21 +36,21 @@
 
 <style>
   .outline-node {
-    font-size: 14px;
-    color: var(--text-main, #d1d5db);
+    font-size: 13px;
+    color: var(--sidebar-foreground);
     user-select: none;
   }
   .outline-header {
     display: flex;
     align-items: center;
-    border-radius: 4px;
-    transition: background-color 0.2s;
+    border-radius: 6px;
+    transition: background-color 0.1s;
   }
   .outline-header:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--sidebar-accent);
   }
   .outline-header button {
-    padding: 6px 0;
+    padding: 4px 0;
     border: none;
     background: none;
     color: inherit;
@@ -72,7 +72,7 @@
     display: inline-block;
     width: 16px;
     font-size: 10px;
-    color: #9ca3af;
+    color: var(--muted-foreground);
     text-align: center;
     margin-right: 4px;
   }
@@ -83,13 +83,14 @@
     text-overflow: ellipsis;
   }
   .page-num {
-    font-size: 12px;
-    color: #9ca3af;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
     margin-left: 8px;
   }
   .children {
     padding-left: 16px;
-    border-left: 1px solid rgba(255,255,255,0.1);
+    border-left: 1px solid var(--sidebar-border);
     margin-left: 8px;
   }
 </style>

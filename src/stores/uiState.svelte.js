@@ -1,5 +1,5 @@
 export function createUiState() {
-  const state = $state({ activeModal: null, panels: { sidebar: true, search: false, a11y: false, prepress: false, sensitiveDataScan: false, secureRedaction: false, readingRuler: false }, settingsPopover: false, isDraggingFileOver: false, toast: "", error: "" });
+  const state = $state({ activeModal: null, panels: { sidebar: true, search: false, a11y: false, prepress: false, sensitiveDataScan: false, secureRedaction: false, readingRuler: false, markup: false }, settingsPopover: false, isDraggingFileOver: false, toast: "", error: "" });
   const api = {
     get activeModal() { return state.activeModal; },
     openModal(type, props = {}) { state.activeModal = { type, props }; },

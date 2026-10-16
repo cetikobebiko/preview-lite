@@ -126,7 +126,7 @@
 <style>
   .search-bar {
     position: absolute;
-    top: 50px;
+    top: 12px;
     right: 16px;
     background: var(--bg-surface);
     border: 1px solid var(--border-raw);

@@ -89,7 +89,7 @@ describe("Signature Surface Invariants (Gate 1)", () => {
     }
   });
 
-  it("ensures signature components are not mounted or imported in AppModalHost or ViewerHudDock", () => {
+  it("ensures signature components are not mounted or imported in AppModalHost or the toolbar", () => {
     const appModalHost = readFileSync(
       resolve(sourceRoot, "components/AppModalHost.svelte"),
       "utf8",
@@ -102,14 +102,13 @@ describe("Signature Surface Invariants (Gate 1)", () => {
     expect(appModalHost).not.toContain("signature_verification");
     expect(appModalHost).not.toContain("pades_signing");
 
-    const viewerHud = readFileSync(
-      resolve(sourceRoot, "components/ViewerHudDock.svelte"),
-      "utf8",
-    );
-    expect(viewerHud).not.toContain("pades_signing");
-    expect(viewerHud).not.toContain("signature_verification");
-    expect(viewerHud).not.toContain("signature_settings");
-    expect(viewerHud).not.toContain("signature_wizard");
+    for (const file of ["components/AppToolbar.svelte", "services/app/toolbarMenu.js"]) {
+      const toolbar = readFileSync(resolve(sourceRoot, file), "utf8");
+      expect(toolbar, file).not.toContain("pades_signing");
+      expect(toolbar, file).not.toContain("signature_verification");
+      expect(toolbar, file).not.toContain("signature_settings");
+      expect(toolbar, file).not.toContain("signature_wizard");
+    }
   });
 
   it("ensures uiState does not contain signature panel or modal properties", () => {

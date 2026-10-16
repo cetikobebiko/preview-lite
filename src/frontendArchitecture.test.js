@@ -21,12 +21,13 @@ describe("frontend architecture acceptance gates", () => {
       "src/services/app/featureRuntime.js",
       "src/services/app/commandActionRouter.js",
       "src/services/app/presentationController.js",
-      "src/components/AppHeader.svelte",
+      "src/components/AppToolbar.svelte",
+      "src/components/MarkupToolbar.svelte",
       "src/components/AppModalHost.svelte",
       "src/components/AppOverlayHost.svelte",
       "src/components/AppPresentationHost.svelte",
-      "src/components/ViewerHudDock.svelte",
-      "src/components/ViewerNavigationDock.svelte",
+      "src/components/ToolbarNavigation.svelte",
+      "src/services/app/toolbarMenu.js",
       "src/components/ViewerShell.svelte",
       "src/components/WorkspacePanels.svelte",
       "src/components/SearchHost.svelte",
@@ -76,14 +77,15 @@ describe("frontend architecture acceptance gates", () => {
 
   it("uses typed modal and panel APIs in the extracted shell", () => {
     const shell = [
-      "AppHeader.svelte",
-      "AppModalHost.svelte",
-      "AppOverlayHost.svelte",
-      "AppPresentationHost.svelte",
-      "ViewerHudDock.svelte",
-      "WorkspacePanels.svelte",
-      "SearchHost.svelte",
-    ].map((file) => read(`src/components/${file}`)).join("\n");
+      "components/AppToolbar.svelte",
+      "components/AppModalHost.svelte",
+      "components/AppOverlayHost.svelte",
+      "components/AppPresentationHost.svelte",
+      "components/MarkupToolbar.svelte",
+      "components/WorkspacePanels.svelte",
+      "components/SearchHost.svelte",
+      "services/app/toolbarMenu.js",
+    ].map((file) => read(`src/${file}`)).join("\n");
     for (const alias of [
       "showSidebar", "showOrganizer", "showMergeSplit", "showShortcuts",
       "isCmdPaletteOpen", "isSearchBarOpen", "isAiModalOpen", "isAiSettingsOpen",

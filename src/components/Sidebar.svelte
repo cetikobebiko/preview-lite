@@ -13,6 +13,7 @@
   } = $props();
 
   let activeTab = $state('thumbnails');
+  const tabClass = "rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs";
   let outlineNodes = $state([]);
   let loadingOutline = $state(false);
   let loadingOutlineKey = $state("");
@@ -59,23 +60,23 @@
   }
 </script>
 
-<div class="sidebar">
-  <div class="tabs">
-    <button class:active={activeTab === 'thumbnails'} onclick={() => activeTab = 'thumbnails'}>
+<aside class="sidebar flex h-full w-[208px] shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground">
+  <div class="grid shrink-0 grid-cols-2 gap-0.5 rounded-md bg-black/5 p-0.5 m-2 dark:bg-white/10" role="group" aria-label="Kenar çubuğu görünümü">
+    <button type="button" class={tabClass} aria-pressed={activeTab === 'thumbnails'} onclick={() => activeTab = 'thumbnails'}>
       Sayfalar
     </button>
-    <button class:active={activeTab === 'outline'} onclick={() => activeTab = 'outline'}>
+    <button type="button" class={tabClass} aria-pressed={activeTab === 'outline'} onclick={() => activeTab = 'outline'}>
       İçindekiler
     </button>
   </div>
 
-  <div class="content">
+  <div class="min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-4">
     {#if activeTab === 'outline'}
-      <div class="outline-container">
+      <div class="flex flex-col gap-0.5">
         {#if loadingOutline}
-          <div class="loading">Yükleniyor...</div>
+          <div class="mt-6 text-center text-xs text-muted-foreground">Yükleniyor…</div>
         {:else if outlineNodes.length === 0}
-          <div class="empty">Bu belgede içindekiler tablosu bulunamadı.</div>
+          <div class="mt-6 text-center text-xs text-muted-foreground">Bu belgede içindekiler tablosu bulunamadı.</div>
         {:else}
           {#each outlineNodes as node, index (`${index}:${node.page_index}:${node.title}`)}
             <OutlineItem {node} onJump={onJumpPhysical} />
@@ -83,7 +84,7 @@
         {/if}
       </div>
     {:else if activeTab === 'thumbnails'}
-      <div class="thumbnails-container">
+      <div class="flex flex-col items-center gap-2">
         {#each pageOrder as physicalIndex, displayIndex (physicalIndex)}
           <Thumbnail
             {sessionId}
@@ -97,69 +98,4 @@
       </div>
     {/if}
   </div>
-</div>
-
-<style>
-  .sidebar {
-    width: 280px;
-    height: 100vh;
-    background: var(--bg-surface, #18181b);
-    border-right: 1px solid var(--border-raw, #3f3f46);
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-    overflow: hidden;
-    font-family: var(--font-mono);
-  }
-  .tabs {
-    display: flex;
-    border-bottom: 1px solid var(--border-raw, #3f3f46);
-    flex-shrink: 0;
-    background: var(--bg-panel, #202023);
-  }
-  .tabs button {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--text-muted, #a1a1aa);
-    padding: 12px;
-    cursor: pointer;
-    font-size: 13px;
-    font-family: var(--font-mono);
-    font-weight: 600;
-    transition: all 0.2s ease;
-  }
-  .tabs button:hover {
-    color: var(--text-primary, #f4f4f5);
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .tabs button.active {
-    color: var(--accent-industrial, #ff5500);
-    border-bottom: 2px solid var(--accent-industrial, #ff5500);
-    background: var(--bg-surface, #18181b);
-  }
-  .content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-  }
-  .outline-container {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .thumbnails-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 16px;
-    align-items: start;
-  }
-  .loading, .empty {
-    color: var(--text-muted, #a1a1aa);
-    text-align: center;
-    margin-top: 24px;
-    font-size: 13px;
-  }
-</style>
+</aside>

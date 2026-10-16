@@ -1023,15 +1023,17 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    background: var(--bg-surface);
     margin-bottom: 24px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     contain: layout;
     overflow: hidden;
   }
   .pdf-image-wrapper {
     position: relative;
     line-height: 0;
+    background: #ffffff;
+    /* An inset outline: the container clips anything drawn outside the page. */
+    outline: 1px solid rgb(0 0 0 / 0.12);
+    outline-offset: -1px;
   }
   .display-surface {
     position: relative;

@@ -102,10 +102,9 @@ vi.mock("./services/backend/ai.js", () => ({
 }));
 
 import App from "./App.svelte";
-import AppHeader from "./components/AppHeader.svelte";
 import AppModalHost from "./components/AppModalHost.svelte";
+import AppToolbar from "./components/AppToolbar.svelte";
 import SearchHost from "./components/SearchHost.svelte";
-import ViewerHudDock from "./components/ViewerHudDock.svelte";
 import ViewerShell from "./components/ViewerShell.svelte";
 import { pageFailureRegistry } from "./services/pageFailureRegistry.js";
 import { createDocumentSessionStore } from "./stores/documentSession.svelte.js";
@@ -123,6 +122,26 @@ const feature = (visibleIds = []) => (id) => ({
   runnable: visibleIds.includes(id),
   warning: "",
 });
+
+function toolbarProps(overrides = {}) {
+  return {
+    isPdf: true,
+    viewer: {
+      activeImageSourcePath: "", fileExt: "pdf", pageOrder: [0], currentPageIndex: 0, scale: 1, visualScale: 1,
+      historyStack: [], forwardStack: [], isSinglePageMode: false, isBookMode: false, coverMode: false,
+      isSmartDarkMode: false, isSpeaking: false, flipH: false, flipV: false,
+    },
+    ui: { panels: { sidebar: true, search: false, readingRuler: false, markup: false }, isModalOpen: () => false, openModal: vi.fn(), togglePanel: vi.fn() },
+    annotation: { activeTool: "pointer", activeColor: "#fff", strokeColor: "#fff", strokeSize: 2 },
+    fileName: "a.pdf", activePdfDisplayPath: "/a.pdf", featureUi: feature([]), isDirty: false,
+    onFeatureAction: vi.fn(), onSelectFile: vi.fn(), onGoBack: vi.fn(), onGoForward: vi.fn(), onPreviousPage: vi.fn(),
+    onNextPage: vi.fn(), onPageInputChange: vi.fn(), onRotateLeft: vi.fn(), onRotateRight: vi.fn(),
+    onFlipH: vi.fn(), onFlipV: vi.fn(), onZoomOut: vi.fn(), onResetZoom: vi.fn(), onZoomIn: vi.fn(),
+    onToggleSinglePage: vi.fn(), onToggleBookMode: vi.fn(), onToggleDarkMode: vi.fn(), onOpenBionic: vi.fn(),
+    onRunOcr: vi.fn(), onSpeak: vi.fn(), onStopSpeaking: vi.fn(), onSave: vi.fn(), onExportImage: vi.fn(),
+    ...overrides,
+  };
+}
 
 function createMemoryStorage(initialValues = {}) {
   const values = new Map(Object.entries(initialValues));
@@ -282,15 +301,9 @@ describe("7R.6 component smoke behavior", () => {
 
   it("routes the sidebar toggle through the typed panel API", async () => {
     const ui = { panels: { sidebar: true, a11y: false, prepress: false }, togglePanel: vi.fn(), isModalOpen: vi.fn(() => false), openModal: vi.fn() };
-    const view = render(AppHeader, {
-      props: {
-        isPdf: true, viewer: { activeImageSourcePath: "", fileExt: "pdf" }, ui,
-        fileName: "a.pdf", activePdfDisplayPath: "/a.pdf", featureUi: feature([]),
-        featureControlLabel: (_id, label) => label, onFeatureAction: vi.fn(), onSelectFile: vi.fn(),
-      },
-    });
+    const view = render(AppToolbar, { props: toolbarProps({ ui }) });
 
-    await fireEvent.click(view.getByTitle("Sol Paneli Aç/Kapat (Cmd + B)"));
+    await fireEvent.click(view.getByRole("button", { name: "Kenar çubuğu" }));
     expect(ui.togglePanel).toHaveBeenCalledWith("sidebar");
   });
 
@@ -300,31 +313,14 @@ describe("7R.6 component smoke behavior", () => {
       id: "session-a", lifecycle: "open", contentGeneration: 1, stateRevision: 1,
       dirty: false, displayPath: "/a.pdf", fileName: "a.pdf",
     });
-    const props = {
-      isPdf: true,
-      viewer: {
-        activeImageSourcePath: "", pageOrder: [0], currentPageIndex: 0, scale: 1,
-        historyStack: [], forwardStack: [],
-        isSinglePageMode: false, isBookMode: false, coverMode: false, isSmartDarkMode: false,
-        isSpeaking: false,
-      },
-      ui: { panels: { search: false, readingRuler: false }, settingsPopover: false, isModalOpen: () => false, openModal: vi.fn(), togglePanel: vi.fn() },
-      annotation: { activeTool: "pointer", activeColor: "#fff", strokeColor: "#fff", strokeSize: 2 },
-      featureUi: feature(["annotation"]), featureControlLabel: (_id, label) => label,
-      colorPalette: ["#fff"], isDirty: documentSession.dirty, isLoadedPdfDocument: true,
-      onFeatureAction: vi.fn(), onGoBack: vi.fn(), onGoForward: vi.fn(), onPreviousPage: vi.fn(),
-      onNextPage: vi.fn(), onPageInputChange: vi.fn(), onRotateLeft: vi.fn(), onRotateRight: vi.fn(),
-      onFlipH: vi.fn(), onFlipV: vi.fn(), onZoomOut: vi.fn(), onResetZoom: vi.fn(), onZoomIn: vi.fn(),
-      onToggleSinglePage: vi.fn(), onToggleBookMode: vi.fn(), onToggleDarkMode: vi.fn(), onOpenBionic: vi.fn(),
-      onRunOcr: vi.fn(), onSpeak: vi.fn(), onStopSpeaking: vi.fn(), onSave: vi.fn(), onExportImage: vi.fn(),
-    };
-    const view = render(ViewerHudDock, { props });
-    expect(view.queryByTitle("Çalışma kopyasını atomik olarak kaydet")).toBeNull();
+    const props = toolbarProps({ featureUi: feature(["annotation"]), isDirty: documentSession.dirty });
+    const view = render(AppToolbar, { props });
+    expect(view.queryByRole("button", { name: "Kaydet" })).toBeNull();
 
     documentSession.applySnapshot({ ...documentSession.active, stateRevision: 2, dirty: true });
     await view.rerender({ ...props, isDirty: documentSession.dirty });
-    const save = view.getByTitle("Çalışma kopyasını atomik olarak kaydet");
-    expect(save).toBeTruthy();
+    const save = view.getByRole("button", { name: "Kaydet" });
+    expect(save.getAttribute("title")).toBe("Çalışma kopyasını atomik olarak kaydet");
     await fireEvent.click(save);
     expect(props.onSave).toHaveBeenCalledOnce();
   });
@@ -346,12 +342,12 @@ describe("7R.6 component smoke behavior", () => {
       onSessionSnapshot: vi.fn(), onCanvasMouseDown: vi.fn(), onCanvasMouseMove: vi.fn(), onCanvasMouseUp: vi.fn(),
     };
     const view = render(ViewerShell, { props: base });
-    expect(view.getByText("// DOSYA_YÜKLEME_MERKEZİ")).toBeTruthy();
+    expect(view.getByText("Belge açılmadı")).toBeTruthy();
 
     viewer.activeImageSourcePath = "/image.png";
     await view.rerender({ ...base, viewer: { ...viewer } });
     expect(document.querySelector(".viewer-area canvas")).not.toBeNull();
-    expect(view.queryByText("// DOSYA_YÜKLEME_MERKEZİ")).toBeNull();
+    expect(view.queryByText("Belge açılmadı")).toBeNull();
 
     await view.rerender({ ...base, isPdf: true, viewer: { ...viewer, activeImageSourcePath: "" } });
     expect(document.querySelector(".viewer-area .pdf-continuous-scroll")).not.toBeNull();
@@ -395,7 +391,7 @@ describe("7R.6 component smoke behavior", () => {
     expect(document.querySelector(".document-quarantine")?.textContent).toContain(
       "Belgeyi yeniden açarak tekrar deneyebilirsiniz.",
     );
-    await fireEvent.click(view.getByText("[ BELGEYİ YENİDEN AÇ ]"));
+    await fireEvent.click(view.getByRole("button", { name: "Belgeyi yeniden aç" }));
     expect(onReopenDocument).toHaveBeenCalledOnce();
     pageFailureRegistry.reset();
   });

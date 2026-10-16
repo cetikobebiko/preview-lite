@@ -1,9 +1,9 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, screen } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
-import { Button } from "$lib/components/ui/button/index.js";
-import { Toggle } from "$lib/components/ui/toggle/index.js";
+import { Button } from "$lib/components/ui/button";
+import { Toggle } from "$lib/components/ui/toggle";
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
@@ -16,6 +16,15 @@ describe("shadcn-svelte foundation", () => {
 
     render(Toggle, { props: { pressed: true, "aria-label": "Kenar çubuğu" } });
     expect(screen.getByRole("button", { name: "Kenar çubuğu" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("imports $lib modules extensionless from JavaScript sources", () => {
+    // Vite maps `.js` to `.ts` only for TypeScript importers, so a plain
+    // <script> importing "$lib/.../index.js" builds in Vitest but not in Vite.
+    const offenders = readdirSync(resolve(process.cwd(), "src"), { recursive: true })
+      .filter((file) => /\.(svelte|js)$/.test(file) && !file.startsWith("lib/"))
+      .filter((file) => /from\s+["']\$lib\/[^"']*\.js["']/.test(readFileSync(resolve(process.cwd(), "src", file), "utf8")));
+    expect(offenders).toEqual([]);
   });
 
   it("does not flatten radius, shadow or Tailwind spacing with a global reset", () => {

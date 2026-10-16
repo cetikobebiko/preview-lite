@@ -1,4 +1,6 @@
 <script>
+  import FileTextIcon from "@lucide/svelte/icons/file-text";
+  import { Button } from "$lib/components/ui/button";
   import PdfPage from "./PdfPage.svelte";
   import {
     DOCUMENT_QUARANTINED,
@@ -50,22 +52,22 @@
     <div class="approximate-preview-legend" role="status">APPROXIMATE RGB-DERIVED PREVIEW</div>
   {/if}
   {#if !isPdf && !viewer.activeImageSourcePath}
-    <button class="drop-zone" onclick={onSelectFile} style="all: unset; display: flex; flex-direction: column; align-items: center; padding: 48px 36px; border: 1px dashed var(--border-raw); background: var(--bg-surface); text-align: center; cursor: pointer; font-family: var(--font-mono);">
-      <div style="width: 56px; height: 56px; border: 1px solid var(--border-raw); color: var(--accent-industrial); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; font-weight: 700; font-size: 20px;">[+]</div>
-      <h2 style="font-size: 16px; font-weight: 700; margin-bottom: 6px; color: var(--text-primary); text-transform: uppercase;">// DOSYA_YÜKLEME_MERKEZİ</h2>
-      <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 20px; max-width: 340px;">Görüntülemek için bilgisayarınızdan PDF veya görsel belgesi seçin ya da pencereye sürükleyin</p>
-      <span class="hud-btn active" style="padding: 4px 16px;">[ DOSYA SEÇ ]</span>
-    </button>
+    <div class="empty-state m-auto flex flex-col items-center text-center">
+      <FileTextIcon class="mb-4 size-14 text-muted-foreground/60" strokeWidth={1.25} />
+      <h2 class="text-base font-semibold">Belge açılmadı</h2>
+      <p class="mt-1 mb-5 max-w-xs text-[13px] text-muted-foreground">Bir PDF veya görseli bu pencereye sürükleyin ya da bilgisayarınızdan seçin.</p>
+      <Button variant="outline" size="sm" onclick={onSelectFile}>Dosya Seç…</Button>
+    </div>
   {:else}
     <!-- No transform transition: visualScale only returns to 1 in the same update that lays out the
          committed scale, so animating it would show the new layout at visualScale× for its duration. -->
     <div class="canvas-container {viewer.isBookMode || viewer.isSplitView ? 'book-mode' : ''} {viewer.isSmartDarkMode ? 'smart-dark-mode' : ''}" style="transform: scale({viewer.visualScale}); transform-origin: 50% {viewer.zoomOriginY ?? 0}px; will-change: transform;">
-      {#if viewer.isRendering}<div class="loading-overlay"><div class="spinner"></div><p style="font-size: 11px; font-weight: 700; color: var(--accent-industrial);">// RENDER_İŞLENİYOR...</p></div>{/if}
+      {#if viewer.isRendering}<div class="loading-overlay" role="status"><div class="spinner"></div><p>Görüntüleniyor…</p></div>{/if}
       {#if errorMsg}<div class="error-card"><p>{errorMsg}</p></div>{/if}
       {#if documentQuarantined}
         <div class="error-card document-quarantine" role="alert">
           <p>{pageFailureMessage(DOCUMENT_QUARANTINED, 0)} Belgeyi yeniden açarak tekrar deneyebilirsiniz.</p>
-          {#if onReopenDocument}<button class="hud-btn" onclick={onReopenDocument}>[ BELGEYİ YENİDEN AÇ ]</button>{/if}
+          {#if onReopenDocument}<Button variant="outline" size="sm" class="mt-3" onclick={onReopenDocument}>Belgeyi yeniden aç</Button>{/if}
         </div>
       {/if}
       <div class="pdf-continuous-scroll" style="width: 100%; display: flex; flex-direction: column; align-items: center;">
@@ -94,5 +96,5 @@
     margin-bottom: 24px;
     min-height: 800px;
   }
-  .approximate-preview-legend { position: sticky; top: 8px; z-index: 100; margin: 8px auto -36px; width: max-content; padding: 7px 12px; background: #f59e0b; color: #111; border: 2px solid #111; font: 800 12px var(--font-mono); pointer-events: none; }
+  .approximate-preview-legend { position: sticky; top: 8px; z-index: 100; margin: 0 auto -28px; width: max-content; padding: 4px 12px; border-radius: 999px; background: #ffcc00; color: #1d1d1f; font-size: 12px; font-weight: 600; box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); pointer-events: none; }
 </style>

@@ -224,68 +224,81 @@
   role="button"
   tabindex="0"
 >
-  <canvas bind:this={canvas} aria-label="Page {displayedPageNumber}"></canvas>
-  {#if !loadedKey}
-    <div
-      class="placeholder"
-      class:failed={Boolean(failureCode)}
-      title={failureCode ? pageFailureMessage(failureCode, pageIndex) : undefined}
-    >
-      <span>{failureCode ? "!" : displayedPageNumber}</span>
-    </div>
-  {/if}
+  <div class="thumb-frame">
+    <canvas bind:this={canvas} aria-label="Page {displayedPageNumber}"></canvas>
+    {#if !loadedKey}
+      <div
+        class="placeholder"
+        class:failed={Boolean(failureCode)}
+        title={failureCode ? pageFailureMessage(failureCode, pageIndex) : undefined}
+      >
+        <span>{failureCode ? "!" : displayedPageNumber}</span>
+      </div>
+    {/if}
+  </div>
   <div class="page-label">{displayedPageNumber}</div>
 </div>
 
 <style>
   .thumbnail-container {
     width: 100%;
-    aspect-ratio: 1 / 1.414;
-    background: #1e1e1e;
-    border: 2px solid transparent;
-    border-radius: 4px;
+    max-width: 148px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 8px 6px;
+    border-radius: 8px;
     cursor: pointer;
-    overflow: hidden;
-    position: relative;
-    transition: all 0.2s;
-  }
-  .thumbnail-container:hover {
-    border-color: #4b5563;
+    outline: none;
   }
   .thumbnail-container.active {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+    background: var(--sidebar-accent);
+  }
+  .thumbnail-container:focus-visible {
+    box-shadow: 0 0 0 2px var(--sidebar-ring);
+  }
+  .thumb-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1.414;
+    overflow: hidden;
+    background: #ffffff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.1), 0 1px 3px rgb(0 0 0 / 0.12);
   }
   canvas {
     width: 100%;
     height: 100%;
     object-fit: contain;
     display: block;
-    background: white;
+    background: #ffffff;
   }
   .placeholder {
-    width: 100%;
-    height: 100%;
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #4b5563;
-    font-size: 18px;
-    font-weight: bold;
-    background: #2a2a2a;
+    color: #a1a1a6;
+    font-size: 14px;
+    font-weight: 500;
+    background: #f5f5f7;
   }
   .placeholder.failed {
-    color: #ef4444;
+    color: var(--destructive);
   }
   .page-label {
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
-    background: rgba(0,0,0,0.6);
-    color: white;
-    font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    backdrop-filter: blur(2px);
+    min-width: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .thumbnail-container.active .page-label {
+    background: var(--sidebar-primary);
+    color: var(--sidebar-primary-foreground);
   }
 </style>

@@ -1,11 +1,11 @@
 <script>
   import { onMount, setContext, tick, untrack } from "svelte";
-  import AppHeader from "./components/AppHeader.svelte";
   import AppModalHost from "./components/AppModalHost.svelte";
   import AppOverlayHost from "./components/AppOverlayHost.svelte";
   import AppPresentationHost from "./components/AppPresentationHost.svelte";
+  import AppToolbar from "./components/AppToolbar.svelte";
+  import MarkupToolbar from "./components/MarkupToolbar.svelte";
   import SearchHost from "./components/SearchHost.svelte";
-  import ViewerHudDock from "./components/ViewerHudDock.svelte";
   import ViewerShell from "./components/ViewerShell.svelte";
   import WorkspacePanels from "./components/WorkspacePanels.svelte";
   import {
@@ -192,28 +192,34 @@
 />
 
 <main class="app-container">
-  <AppHeader
-    isPdf={documentRuntime.isPdf}
-    {viewer}
-    {ui}
-    fileName={documentRuntime.fileName}
-    activePdfDisplayPath={documentRuntime.activeDisplayPath}
-    featureUi={featureRuntime.featureUi}
-    featureControlLabel={featureRuntime.featureControlLabel}
-    onFeatureAction={featureRuntime.runUiAction}
-    onSelectFile={documentRuntime.selectFile}
+  <AppToolbar
+    isPdf={documentRuntime.isPdf} {viewer} {ui} {annotation}
+    fileName={documentRuntime.fileName} activePdfDisplayPath={documentRuntime.activeDisplayPath}
+    featureUi={featureRuntime.featureUi} isDirty={documentRuntime.isDirty}
+    onFeatureAction={featureRuntime.runUiAction} onSelectFile={documentRuntime.selectFile}
+    onGoBack={viewerRuntime.navigation.goBack} onGoForward={viewerRuntime.navigation.goForward}
+    onPreviousPage={viewerRuntime.navigation.goToPrevPage} onNextPage={viewerRuntime.navigation.goToNextPage} onPageInputChange={viewerRuntime.navigation.handlePageInputChange}
+    onRotateLeft={viewerRuntime.edits.rotateLeft} onRotateRight={viewerRuntime.edits.rotateRight} onFlipH={viewerRuntime.edits.toggleFlipH} onFlipV={viewerRuntime.edits.toggleFlipV}
+    onZoomOut={viewerRuntime.navigation.zoomOut} onResetZoom={viewerRuntime.navigation.resetZoom} onZoomIn={viewerRuntime.navigation.zoomIn} onToggleSinglePage={viewerRuntime.navigation.toggleSinglePageMode}
+    onToggleBookMode={viewerRuntime.navigation.toggleBookMode} onToggleDarkMode={featureRuntime.toggleDarkMode} onOpenBionic={featureRuntime.openBionicReading}
+    onRunOcr={featureRuntime.runOcr} onSpeak={featureRuntime.speak} onStopSpeaking={featureRuntime.stopSpeaking}
+    onSave={documentRuntime.save} onExportImage={featureRuntime.exportImage}
   />
 
-  <SearchHost
-    {ui}
-    {searchState}
-    featureUi={featureRuntime.featureUi}
-    onSearch={featureRuntime.handleSearchQuery}
-    onNext={featureRuntime.searchNext}
-    onPrevious={featureRuntime.searchPrevious}
-  />
+  {#if ui.panels.markup && (documentRuntime.isPdf || viewer.activeImageSourcePath) && featureRuntime.featureUi("annotation").visible}
+    <MarkupToolbar {annotation} {ui} featureUi={featureRuntime.featureUi} {colorPalette} />
+  {/if}
 
   <div class="workspace-body">
+    <SearchHost
+      {ui}
+      {searchState}
+      featureUi={featureRuntime.featureUi}
+      onSearch={featureRuntime.handleSearchQuery}
+      onNext={featureRuntime.searchNext}
+      onPrevious={featureRuntime.searchPrevious}
+    />
+
     <WorkspacePanels
       isPdf={documentRuntime.isPdf}
       {ui}
@@ -261,19 +267,6 @@
       bind:canvasRefLeft
     />
   </div>
-
-  <ViewerHudDock
-    isPdf={documentRuntime.isPdf} {viewer} {ui} {annotation}
-    featureUi={featureRuntime.featureUi} featureControlLabel={featureRuntime.featureControlLabel}
-    {colorPalette} isDirty={documentRuntime.isDirty} isLoadedPdfDocument={documentRuntime.isLoadedPdfDocument}
-    onFeatureAction={featureRuntime.runUiAction} onGoBack={viewerRuntime.navigation.goBack} onGoForward={viewerRuntime.navigation.goForward}
-    onPreviousPage={viewerRuntime.navigation.goToPrevPage} onNextPage={viewerRuntime.navigation.goToNextPage} onPageInputChange={viewerRuntime.navigation.handlePageInputChange}
-    onRotateLeft={viewerRuntime.edits.rotateLeft} onRotateRight={viewerRuntime.edits.rotateRight} onFlipH={viewerRuntime.edits.toggleFlipH} onFlipV={viewerRuntime.edits.toggleFlipV}
-    onZoomOut={viewerRuntime.navigation.zoomOut} onResetZoom={viewerRuntime.navigation.resetZoom} onZoomIn={viewerRuntime.navigation.zoomIn} onToggleSinglePage={viewerRuntime.navigation.toggleSinglePageMode}
-    onToggleBookMode={viewerRuntime.navigation.toggleBookMode} onToggleDarkMode={featureRuntime.toggleDarkMode} onOpenBionic={featureRuntime.openBionicReading}
-    onRunOcr={featureRuntime.runOcr} onSpeak={featureRuntime.speak} onStopSpeaking={featureRuntime.stopSpeaking}
-    onSave={documentRuntime.save} onExportImage={featureRuntime.exportImage}
-  />
 
   <AppOverlayHost
     {ui}

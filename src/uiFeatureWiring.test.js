@@ -36,9 +36,10 @@ describe("UI feature wiring source contracts", () => {
   const appSource = readSource("src/App.svelte");
   const keyboardControllerSource = readSource("src/services/app/keyboardController.js");
   const viewerShellSource = readSource("src/components/ViewerShell.svelte");
-  const viewerNavigationSource = readSource("src/components/ViewerNavigationDock.svelte");
-  const annotationHudSource = readSource("src/components/AnnotationHudControls.svelte");
-  const viewerHudSource = readSource("src/components/ViewerHudDock.svelte");
+  const toolbarNavigationSource = readSource("src/components/ToolbarNavigation.svelte");
+  const markupToolbarSource = readSource("src/components/MarkupToolbar.svelte");
+  const appToolbarSource = readSource("src/components/AppToolbar.svelte");
+  const toolbarMenuSource = readSource("src/services/app/toolbarMenu.js");
   const documentExportControllerSource = readSource("src/services/app/documentExportController.js");
   const commandPaletteSource = readSource("src/components/CommandPalette.svelte");
   const pdfPageSource = readSource("src/components/PdfPage.svelte");
@@ -65,13 +66,15 @@ describe("UI feature wiring source contracts", () => {
     expect(appSource).not.toContain("createDocumentExportController");
     // The annotation burn-in export was removed with its unregistered backend command.
     expect(documentExportControllerSource).not.toContain("annotation_burn_export");
-    expect(appSource).toContain("<ViewerHudDock");
-    expect(viewerHudSource).toContain("<AnnotationHudControls");
-    expect(annotationHudSource).toContain("{#if isDirty}");
-    expect(annotationHudSource).toContain('{featureControlLabel("annotation", "ANNOTATION")}');
-    expect(viewerHudSource).not.toContain("annotation_burn_export");
+    expect(appSource).toContain("<AppToolbar");
+    expect(appSource).toContain("<MarkupToolbar");
+    expect(appToolbarSource).toContain("{#if annotationVisible && isDirty}");
+    expect(markupToolbarSource).toContain('featureUi("annotation")');
+    expect(markupToolbarSource).toContain("badgeLabel(annotationState.badge)");
+    expect(appToolbarSource).not.toContain("annotation_burn_export");
+    expect(markupToolbarSource).not.toContain("annotation_burn_export");
     expect(appSource).toContain("onSave={documentRuntime.save}");
-    expect(annotationHudSource).toContain("onclick={onSave}");
+    expect(appToolbarSource).toContain("onclick={onSave}");
   });
 
   it("maps stop-speak to a dedicated stop-only handler without fire-and-forget", () => {
@@ -83,18 +86,21 @@ describe("UI feature wiring source contracts", () => {
   it("keeps the basic viewer and zoom controls mounted independently of feature gates", () => {
     expect(appSource).toContain("<ViewerShell");
     expect(viewerShellSource).toContain("<PdfPage");
-    expect(viewerHudSource).toContain("<ViewerNavigationDock");
-    expect(viewerNavigationSource).toContain("onclick={onZoomOut}");
-    expect(viewerNavigationSource).toContain("onclick={onResetZoom}");
-    expect(viewerNavigationSource).toContain("onclick={onZoomIn}");
+    expect(appToolbarSource).toContain("<ToolbarNavigation");
+    expect(toolbarNavigationSource).not.toContain("featureUi");
+    expect(toolbarNavigationSource).toContain("onclick={onZoomOut}");
+    expect(toolbarNavigationSource).toContain("onclick={onResetZoom}");
+    expect(toolbarNavigationSource).toContain("onclick={onZoomIn}");
     expect(pdfPageSource).toContain("<canvas");
   });
 
   it("gates nested mock and disabled modal mounts and their action handlers", () => {
-    expect(viewerHudSource).not.toContain('featureUi("pdf_x_export")');
-    expect(viewerHudSource).not.toContain('featureUi("pades_signing")');
-    expect(viewerHudSource).not.toContain('featureUi("signature_verification")');
-    expect(viewerHudSource).not.toContain('featureUi("signature_settings")');
+    for (const source of [appToolbarSource, toolbarMenuSource]) {
+      expect(source).not.toContain("pdf_x_export");
+      expect(source).not.toContain("pades_signing");
+      expect(source).not.toContain("signature_verification");
+      expect(source).not.toContain("signature_settings");
+    }
 
     expect(appModalHostSource).not.toContain("SignaturePanel");
     expect(appModalHostSource).not.toContain("SignatureWizardModal");
