@@ -1,10 +1,12 @@
 {
   "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
       "$lib": ["src/lib"],
       "$lib/*": ["src/lib/*"]
     }
   },
-  "include": ["src/**/*.js", "src/**/*.svelte"]
+  "include": ["src/**/*.js", "src/**/*.ts", "src/**/*.svelte"]
 }
