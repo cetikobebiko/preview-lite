@@ -616,6 +616,18 @@ Doğrulama:
   mutasyonların tam yeniden yazımı) ile kaydedildiğinde `/ByteRange` artık `/Contents`'i
   göstermiyor ve imza bozuluyor.
 
+**Düzeltme (2026-10-17): Preview'ın açamadığı artımlı çıktılar.** Kaynak dosya
+cross-reference stream kullanıyorsa (günümüz PDF'lerinin çoğu), PDFium'un artımlı kaydı
+güncellemenin xref stream nesnesini `/Type /XRef` olmadan ve `endobj` olmadan yazıyor
+(`core/fpdfapi/edit/cpdf_creator.cpp`, `WriteDoc_Stage4`; PDFium `main`'de de aynı). PDFium
+kendi çıktısını okuyor, ama CoreGraphics "invalid xref stream: missing or invalid `Type`
+value" diyerek reddediyordu; testler yalnız PDFium ile okuduğu için yakalanmadı. `forms::fill`
+artık artımlı kayıttan sonra son xref nesnesine `/Type/XRef` ve `endobj` ekliyor. Ekleme
+nesne başlangıcından sonra olduğu için `startxref`, xref girdileri ve `/Length` değişmiyor.
+Kalıp birebir eşleşmezse dosyaya dokunulmuyor. Testler: bayt düzeyinde onarım ve
+xref-stream'li fixture'da doldurma. CoreGraphics onarılmış çıktıları açıyor (elle
+doğrulandı). Upstream'e raporlanmaya değer bir PDFium hatası.
+
 Sınırlar:
 - İmza doğrulamasının görüntüleyici tarafı (Acrobat'ın "imzadan sonra değiştirildi" ve izin
   verilen değişiklik analizi) test edilmedi.

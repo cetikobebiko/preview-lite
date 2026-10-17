@@ -1354,6 +1354,7 @@ pub fn run() {
             document_session::get_session_form_info,
             document_session::get_session_page_form_fields,
             document_session::fill_session_form_fields,
+            document_session::author_session_form_fields,
             document_session::search_session_pdf_text,
             document_session::get_session_page_text_layout,
             document_session::retry_session_page,

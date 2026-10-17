@@ -9484,6 +9484,30 @@ pub async fn fill_session_form_fields(
     Ok(snapshot)
 }
 
+/// Form alanı oluşturur, siler, taşır ya da özelliklerini değiştirir
+/// (form-authoring-plan.md, Faz A). İstek burada yalnız belgeden bağımsız kurallarla
+/// denetlenir; alan adı/indeks, ad çakışması ve yapı denetimi job worker'da yapılır.
+#[tauri::command]
+pub async fn author_session_form_fields(
+    session_id: String,
+    expected_content_generation: u64,
+    ops: Vec<crate::forms::author::FormAuthorOp>,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    crate::forms::author::validate_request(&ops)
+        .map_err(|message| DocumentSessionError::new("SESSION_FORM_AUTHOR_INVALID", message))?;
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::AuthorFormFields { ops },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
 #[tauri::command]
 pub async fn update_session_metadata(
     session_id: String,

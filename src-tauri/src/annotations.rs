@@ -284,7 +284,7 @@ fn validate_page_index(
     Ok(page_count)
 }
 
-fn validate_normalized_rect(rect: &NormalizedPageRect) -> Result<(), DocumentIoFailure> {
+pub(crate) fn validate_normalized_rect(rect: &NormalizedPageRect) -> Result<(), DocumentIoFailure> {
     let values = [rect.x, rect.y, rect.width, rect.height];
     if !values.iter().all(|value| value.is_finite()) || rect.width <= 0.0 || rect.height <= 0.0 {
         return Err(DocumentIoFailure::preflight(

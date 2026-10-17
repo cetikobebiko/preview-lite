@@ -133,6 +133,52 @@ struct FieldPropsPatch { name, tooltip, required, read_only, max_len, options, m
    uyarı gösterir ("imzalar korunur ama alan değişiklikleri imzanın izin verdiği
    değişikliklerden değildir").
 
+#### Faz A sonuçları (2026-10-17)
+
+Uygulandı: `src-tauri/src/forms/author.rs`: `FormAuthorOp` (`add` / `delete` / `move` /
+`set_props`, JSON `{ op, pageIndex, … }`), `validate_request`, `author_form_fields_report`
+(`atomic_write_pdf`), `MutationRecipe::AuthorFormFields`, `author_session_form_fields`
+(`mutate_isolated`). Frontend sözleşmesi Faz B'de eklenecek.
+
+- **Yazım:** `lopdf::IncrementalDocument`. Değişen nesneler (sayfa, AcroForm, üst alan,
+  `/Annots`/`/Fields`/`/Kids` dizileri) yeni revizyona kopyalanır. Referanslı ve satır içi
+  sözlük/diziler desteklenir. Kayıttan sonra çıktının orijinal baytlarla başladığı
+  denetlenir.
+- **Ekleme:** metin (çok satırlı), checkbox, radio (aynı grup adına katılır, yoksa üst alan
+  oluşturulur), açılır liste (düzenlenebilir), liste kutusu (çoklu seçim). Acrobat varsayılan
+  adları (`Text1`, `Check Box1`, `Dropdown1`, `List Box1`), ad çakışması reddi. AcroForm yoksa
+  oluşturulur; `/DR`'ye `/Helv` ve `/ZaDb` eklenir. Görünüm akışları: beyaz zemin + gri kenar;
+  checkbox ✓ ve radio çember/nokta yollarla çizilir (font gerekmez).
+- **Silme:** widget sayfadan, alan `/Fields`'ten ya da üst alanın `/Kids`'inden; son çocuk
+  giderse üst alan da kalkar.
+- **Taşıma:** yalnız `/Rect`; görünüm akışı PDF kuralıyla (BBox → Rect) yeni dikdörtgene
+  ölçeklenir. Değerli metin alanı boyutlandırılırsa metin bir sonraki doldurmaya kadar
+  gerilmiş görünebilir (bilinen sınır).
+- **Özellikler:** ad (aynı hiyerarşide, çakışma ve `.` reddi), ipucu, zorunlu, salt okunur,
+  çok satırlı (yalnız metin), `MaxLen` (yalnız metin, 0 kaldırır), seçenekler (yalnız seçim).
+  `/Ff` bitleri ISO 32000'e göre yazılıyor.
+- **Hedefleme:** `annot_index` PDFium'un annotation sırasıyla aynı (`/Annots` dizi indeksi);
+  tüm hedefler işlemler uygulanmadan önce, orijinal sıraya göre çözülüyor ve tam nitelikli
+  adla doğrulanıyor. Satır içi annotation sözlükleri reddediliyor.
+- **Güvenlik sınırları:** şifreli girdi (credential ya da `lopdf` `is_encrypted`) reddedilir;
+  256 MiB girdi sınırı; alan ağacı yürüyüşünde ziyaret kümesi, 64 derinlik ve 100 000 düğüm
+  sınırı; `/Parent` döngüsü hata verir.
+- **Doğrulama:** `atomic_write_pdf`'in doğrulama adımı PDFium ile yeniden açar; sayfa başına
+  form widget sayısını ve eklenen/taşınan/değişen alanları (ad, tür, rect, bayraklar,
+  seçenekler) Faz 1 okuyucusuyla denetler.
+
+Testler: `forms::author::tests` (11): her türün eklenip PDFium ile okunması ve Faz 3 yoluyla
+doldurulması, varsayılan adlar ve çakışma, silme (radio grubunun son widget'ı ve `/Fields`
+temizliği), taşıma, özellikler (MaxLen'in doldurmada uygulanması dahil), isim-indeks,
+AcroForm'suz belge, şifreli girdi ve döngülü ağaç, imzalı belgede önek, istek doğrulaması,
+JSON biçimi. `job_worker::tests::author_form_fields_mutation_round_trips_through_job_worker_dispatch`.
+Görsel kontrol: PDFKit (CoreGraphics) oluşturulan ve doldurulan alanları doğru çiziyor.
+
+**Bu sırada bulunan kritik hata (form doldurmayı etkiliyordu):** PDFium'un artımlı kaydı,
+xref stream kullanan kaynaklarda güncellemenin xref stream nesnesini `/Type /XRef` ve `endobj`
+olmadan yazıyor; CoreGraphics (Preview, PDFKit) bu dosyaları açmıyordu. `forms::fill` artık
+artımlı kayıttan sonra bu nesneyi onarıyor (ayrı commit; ayrıntı `form-filling-plan.md`).
+
 ### Faz B — Frontend: tasarım modu
 
 1. Araç çubuğunda "Form tasarla" modu; açıkken `FormLayer` (doldurma) yerine

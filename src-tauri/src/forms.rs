@@ -6,6 +6,7 @@
 //! API'si neden kullanılmayacak"). Aynı nedenle checkbox durumu pdfium-render'ın
 //! `is_checked` sezgisinden değil, widget'ın `/AS` değerinden türetilir.
 
+pub mod author;
 pub mod fill;
 #[cfg(test)]
 pub(crate) mod test_support;

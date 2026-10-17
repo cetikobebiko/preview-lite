@@ -69,6 +69,10 @@ pub enum MutationRecipe {
     FillFormFields {
         edits: Vec<crate::forms::fill::FormFieldEdit>,
     },
+    /// Form alanı ekler, siler, taşır ya da özelliklerini değiştirir; bkz. `forms::author`.
+    AuthorFormFields {
+        ops: Vec<crate::forms::author::FormAuthorOp>,
+    },
 }
 
 impl MutationRecipe {
@@ -82,6 +86,7 @@ impl MutationRecipe {
             Self::AddAnnotation { .. } => "add_annotation",
             Self::DeleteAnnotation { .. } => "delete_annotation",
             Self::FillFormFields { .. } => "fill_form_fields",
+            Self::AuthorFormFields { .. } => "author_form_fields",
         }
     }
 }
@@ -1430,6 +1435,10 @@ fn execute_mutation(
             copy_mutation_input(snapshot_path, output_path)?;
             crate::forms::fill::fill_form_fields_report(output, edits, password)
         }
+        MutationRecipe::AuthorFormFields { ops } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::forms::author::author_form_fields_report(output, ops, password)
+        }
     };
     report.map(|_| ()).map_err(|error| {
         JobFailure::new(
@@ -2238,6 +2247,74 @@ mod tests {
         .unwrap_err();
         assert_eq!(failure.code, "SESSION_MUTATION_WORKER_FAILED");
         assert!(failure.message.contains("read-only"), "{}", failure.message);
+    }
+
+    #[test]
+    fn author_form_fields_mutation_round_trips_through_job_worker_dispatch() {
+        use crate::forms::author::{FormAuthorOp, NewField};
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        crate::forms::test_support::standard_fixture(&snapshot);
+        let command = |ops: Vec<FormAuthorOp>, output_name: &str| {
+            let command = JobCommand::MutatePdf {
+                recipe: MutationRecipe::AuthorFormFields { ops },
+                output_name: output_name.to_string(),
+            };
+            serde_json::from_str::<JobCommand>(&serde_json::to_string(&command).unwrap()).unwrap()
+        };
+        let rect = crate::annotations::NormalizedPageRect {
+            x: 0.55,
+            y: 0.3,
+            width: 0.3,
+            height: 0.04,
+        };
+
+        let result = execute_command(
+            directory.path(),
+            &snapshot,
+            None,
+            "form-author-job",
+            "form-author-session",
+            command(
+                vec![FormAuthorOp::Add {
+                    page_index: 0,
+                    normalized_rect: rect,
+                    field: NewField::Text { multiline: false },
+                    name: Some("Email".to_string()),
+                }],
+                "authored.pdf",
+            ),
+        )
+        .unwrap();
+        let output = directory.path().join("authored.pdf");
+        assert!(matches!(result, JobResult::File(ref path) if path == &output));
+        let widgets = crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+            let document = pdfium
+                .load_pdf_from_file(&output, None)
+                .map_err(|error| error.to_string())?;
+            crate::forms::read_page_form_fields(&document, 0).map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert!(widgets.iter().any(|widget| widget.field_name == "Email"));
+
+        let failure = execute_command(
+            directory.path(),
+            &snapshot,
+            None,
+            "form-author-job",
+            "form-author-session",
+            command(
+                vec![FormAuthorOp::Delete {
+                    page_index: 0,
+                    annot_index: 0,
+                    field_name: "notes".to_string(),
+                }],
+                "rejected.pdf",
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "SESSION_MUTATION_WORKER_FAILED");
+        assert!(failure.message.contains("'name'"), "{}", failure.message);
     }
 
     #[test]

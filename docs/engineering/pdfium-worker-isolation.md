@@ -592,6 +592,13 @@ starts with the original bytes, so signed byte ranges stay untouched; only an un
 falls back to a full rewrite when PDFium cannot save incrementally. Session save and mutation
 commit copy those bytes verbatim (`atomic_copy_pdf`, `atomic_commit_prevalidated_pdf`).
 
+`author_session_form_fields` uses this path with `MutationRecipe::AuthorFormFields`. PDFium's
+public API cannot create widgets, so `forms::author` writes form structure with
+`lopdf::IncrementalDocument` in the job worker on the copied snapshot (encrypted input rejected,
+256 MiB input limit, bounded field-tree walk), takes geometry from PDFium's display transform,
+and its `atomic_write_pdf` validation rereads the fields with PDFium. See
+`docs/engineering/form-authoring-plan.md`.
+
 Session split, merge, and page-extraction outputs use the same ephemeral worker plus separate
 reopen-validation rule. Additional merge inputs are byte-copied into the private job directory
 before PDFium sees them. Output publication remains the existing job-output staging operation.
