@@ -1725,9 +1725,9 @@ mod macos_arm64 {
                     panic!("expected rendered page");
                 };
                 assert_eq!(data.len(), width as usize * height as usize * 4);
-                let mut pixels = data.chunks_exact(4);
+                let (pixels, _) = data.as_chunks::<4>();
                 assert!(
-                    pixels.all(|pixel| pixel == expected),
+                    pixels.iter().all(|pixel| *pixel == expected),
                     "page {page_index} thumbnail={thumbnail}: first pixel {:?}, expected {expected:?}",
                     &data[..4]
                 );
