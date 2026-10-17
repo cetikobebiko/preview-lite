@@ -131,10 +131,7 @@ mod tests {
 
     #[test]
     fn stem_replaces_characters_invalid_on_any_platform() {
-        assert_eq!(
-            output_name_stem("a<b>c:d\"e|f?g*h.pdf"),
-            "a_b_c_d_e_f_g_h"
-        );
+        assert_eq!(output_name_stem("a<b>c:d\"e|f?g*h.pdf"), "a_b_c_d_e_f_g_h");
         assert_eq!(output_name_stem("satır\nsonu\t.pdf"), "satır_sonu_");
         assert_eq!(output_name_stem("evil\u{202E}fdp.exe.pdf"), "evil_fdp.exe");
         assert_eq!(output_name_stem("geniş\u{00A0}boşluk.pdf"), "geniş boşluk");
@@ -172,14 +169,26 @@ mod tests {
         assert_eq!(stem, "ş".repeat(OUTPUT_STEM_MAX_BYTES / 2));
 
         let dotted = format!("{}. son.pdf", "a".repeat(OUTPUT_STEM_MAX_BYTES - 1));
-        assert_eq!(output_name_stem(&dotted), "a".repeat(OUTPUT_STEM_MAX_BYTES - 1));
+        assert_eq!(
+            output_name_stem(&dotted),
+            "a".repeat(OUTPUT_STEM_MAX_BYTES - 1)
+        );
     }
 
     #[test]
     fn page_and_range_names_are_one_based() {
-        assert_eq!(page_image_output_name("rapor", 0, "png"), "rapor_sayfa_1.png");
-        assert_eq!(page_image_output_name("rapor", 9, "jpg"), "rapor_sayfa_10.jpg");
-        assert_eq!(split_range_output_name("rapor", 0, 2), "rapor_sayfa_1-3.pdf");
+        assert_eq!(
+            page_image_output_name("rapor", 0, "png"),
+            "rapor_sayfa_1.png"
+        );
+        assert_eq!(
+            page_image_output_name("rapor", 9, "jpg"),
+            "rapor_sayfa_10.jpg"
+        );
+        assert_eq!(
+            split_range_output_name("rapor", 0, 2),
+            "rapor_sayfa_1-3.pdf"
+        );
         assert_eq!(split_range_output_name("rapor", 4, 4), "rapor_sayfa_5.pdf");
         assert_eq!(
             split_range_output_name("rapor", u32::MAX, u32::MAX),

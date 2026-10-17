@@ -1639,7 +1639,7 @@ mod tests {
             let sync_target = directory.path().join(format!("sync.{format}"));
             convert_and_save_image_outside(
                 Path::new(UNRELATED_PRIVATE_ROOT),
-source.clone(),
+                source.clone(),
                 async_target.to_str().unwrap().to_string(),
                 format.to_uppercase(),
                 90,
@@ -1677,7 +1677,7 @@ source.clone(),
         let target = directory.path().join("out.png");
         let error = convert_and_save_image_outside(
             Path::new(UNRELATED_PRIVATE_ROOT),
-corrupt.to_str().unwrap().to_string(),
+            corrupt.to_str().unwrap().to_string(),
             target.to_str().unwrap().to_string(),
             "png".to_string(),
             0,
@@ -1692,7 +1692,7 @@ corrupt.to_str().unwrap().to_string(),
         let source = write_test_png(directory.path());
         let error = convert_and_save_image_outside(
             Path::new(UNRELATED_PRIVATE_ROOT),
-source.to_str().unwrap().to_string(),
+            source.to_str().unwrap().to_string(),
             target.to_str().unwrap().to_string(),
             "tiff".to_string(),
             0,
@@ -1744,7 +1744,10 @@ source.to_str().unwrap().to_string(),
             if format == "pdf" {
                 assert!(written.starts_with(b"%PDF-1.5"));
             } else {
-                assert_eq!(image::open(&target).unwrap().to_rgba8().dimensions(), (2, 3));
+                assert_eq!(
+                    image::open(&target).unwrap().to_rgba8().dimensions(),
+                    (2, 3)
+                );
             }
         }
         assert!(leftover_write_temps(directory.path()).is_empty());
@@ -1824,7 +1827,11 @@ source.to_str().unwrap().to_string(),
         for ((target, format, prefix), outcome) in targets.iter().zip(outcomes) {
             let error = outcome.unwrap_err();
             assert!(error.starts_with(prefix), "{format}: {error}");
-            assert_eq!(std::fs::read(target).unwrap(), b"original contents", "{format}");
+            assert_eq!(
+                std::fs::read(target).unwrap(),
+                b"original contents",
+                "{format}"
+            );
         }
         assert!(leftover_write_temps(&locked).is_empty());
     }
@@ -1863,7 +1870,8 @@ source.to_str().unwrap().to_string(),
                 .await
                 .unwrap_err();
                 assert_eq!(
-                    error, "Session/job temp root'u Save veya Save As hedefi olamaz",
+                    error,
+                    "Session/job temp root'u Save veya Save As hedefi olamaz",
                     "{}",
                     target.display()
                 );
@@ -1872,7 +1880,10 @@ source.to_str().unwrap().to_string(),
         assert_eq!(std::fs::read(&existing).unwrap(), b"working copy");
         assert!(!private.path().join("out.png").exists());
         assert!(!nested.join("out.pdf").exists());
-        assert!(!canonical_root.join("instance-x").join("resolved.png").exists());
+        assert!(!canonical_root
+            .join("instance-x")
+            .join("resolved.png")
+            .exists());
     }
 
     /// Header-only 24-bit BMP: the decoder reports these dimensions without
@@ -1916,7 +1927,7 @@ source.to_str().unwrap().to_string(),
             let target = directory.path().join("out.png");
             let error = convert_and_save_image_outside(
                 Path::new(UNRELATED_PRIVATE_ROOT),
-source.clone(),
+                source.clone(),
                 target.to_str().unwrap().to_string(),
                 "png".to_string(),
                 0,

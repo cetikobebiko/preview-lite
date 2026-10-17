@@ -11859,10 +11859,12 @@ fn planned_split_outputs(
     Ok(ranges
         .iter()
         .enumerate()
-        .map(|(range_index, &(start, end))| crate::output_names::PlannedOutput {
-            worker_name: crate::job_worker::split_output_file_name(range_index, start),
-            target_name: crate::output_names::split_range_output_name(stem, start, end),
-        })
+        .map(
+            |(range_index, &(start, end))| crate::output_names::PlannedOutput {
+                worker_name: crate::job_worker::split_output_file_name(range_index, start),
+                target_name: crate::output_names::split_range_output_name(stem, start, end),
+            },
+        )
         .collect())
 }
 
@@ -12625,11 +12627,17 @@ mod tests {
             };
             assert_eq!(failure.code, SESSION_JOB_OUTPUT_CONFLICT_CODE);
             assert_eq!(
-                failure.conflicting_names.as_ref().map(|names| names.0.as_slice()),
+                failure
+                    .conflicting_names
+                    .as_ref()
+                    .map(|names| names.0.as_slice()),
                 Some(&["rapor_sayfa_2.png".to_string()][..])
             );
             let wire = serde_json::to_value(&failure).unwrap();
-            assert_eq!(wire["conflictingNames"], serde_json::json!(["rapor_sayfa_2.png"]));
+            assert_eq!(
+                wire["conflictingNames"],
+                serde_json::json!(["rapor_sayfa_2.png"])
+            );
         }
         assert_eq!(sorted_output_names(&output_dir), ["rapor_sayfa_2.png"]);
         assert_eq!(

@@ -998,10 +998,7 @@ fn rollback_output_set<E>(
         let target = &entries[index].target;
         if !replaces[index] {
             if let Err(error) = fs::remove_file(target) {
-                failures.push(format!(
-                    "{} kaldırılamadı: {error}",
-                    target.display()
-                ));
+                failures.push(format!("{} kaldırılamadı: {error}", target.display()));
             }
             continue;
         }
@@ -1097,15 +1094,15 @@ pub(crate) fn publish_output_set<E>(
             persist_new_output(file, &entry.target)
         };
         if let Err(error) = result {
-            let cause = if !replaces[index] && error.error.kind() == std::io::ErrorKind::AlreadyExists
-            {
-                OutputSetError::Conflict(vec![entry.target.clone()])
-            } else {
-                OutputSetError::Io {
-                    target: entry.target.clone(),
-                    error: error.error,
-                }
-            };
+            let cause =
+                if !replaces[index] && error.error.kind() == std::io::ErrorKind::AlreadyExists {
+                    OutputSetError::Conflict(vec![entry.target.clone()])
+                } else {
+                    OutputSetError::Io {
+                        target: entry.target.clone(),
+                        error: error.error,
+                    }
+                };
             return Err(rollback_output_set(
                 entries,
                 &replaces,
@@ -3196,8 +3193,7 @@ mod tests {
             fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
         }
 
-        write_atomically::<std::io::Error>(&target, |file| file.write_all(b"replacement"))
-            .unwrap();
+        write_atomically::<std::io::Error>(&target, |file| file.write_all(b"replacement")).unwrap();
 
         assert_eq!(fs::read(&target).unwrap(), b"replacement");
         assert!(atomic_write_temps(dir.path()).is_empty());
@@ -3257,10 +3253,12 @@ mod tests {
         let link = dir.path().join("link.png");
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        write_atomically::<std::io::Error>(&link, |file| file.write_all(b"replacement"))
-            .unwrap();
+        write_atomically::<std::io::Error>(&link, |file| file.write_all(b"replacement")).unwrap();
 
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(fs::read_link(&link).unwrap(), real);
         assert_eq!(fs::read(&real).unwrap(), b"replacement");
         assert!(atomic_write_temps(dir.path()).is_empty());
@@ -3275,13 +3273,18 @@ mod tests {
         let link = dir.path().join("dangling.png");
         std::os::unix::fs::symlink(&destination, &link).unwrap();
 
-        let error =
-            write_atomically::<std::io::Error>(&link, |_| unreachable!("no temp to write"))
-                .unwrap_err();
+        let error = write_atomically::<std::io::Error>(&link, |_| unreachable!("no temp to write"))
+            .unwrap_err();
 
-        assert!(matches!(error, AtomicWriteError::CreateTemp(_)), "{error:?}");
+        assert!(
+            matches!(error, AtomicWriteError::CreateTemp(_)),
+            "{error:?}"
+        );
         assert!(error.to_string().contains("sembolik bağ"), "{error}");
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert!(!destination.exists());
         assert!(atomic_write_temps(dir.path()).is_empty());
     }
@@ -3295,7 +3298,10 @@ mod tests {
             write_atomically::<std::io::Error>(&target, |_| unreachable!("no temp to write"))
                 .unwrap_err();
 
-        assert!(matches!(error, AtomicWriteError::CreateTemp(_)), "{error:?}");
+        assert!(
+            matches!(error, AtomicWriteError::CreateTemp(_)),
+            "{error:?}"
+        );
         assert!(!target.exists());
     }
 
@@ -3359,7 +3365,10 @@ mod tests {
         assert_eq!(sorted_dir_names(&output), ["a.png", "b.png", "c.png"]);
         for entry in &entries {
             let name = entry.target.file_name().unwrap().to_string_lossy();
-            assert_eq!(fs::read_to_string(&entry.target).unwrap(), format!("new {name}"));
+            assert_eq!(
+                fs::read_to_string(&entry.target).unwrap(),
+                format!("new {name}")
+            );
         }
         assert!(output_set_leftovers(&output).is_empty());
     }
@@ -3399,7 +3408,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(output.join("a.png")).unwrap().permissions().mode();
+            let mode = fs::metadata(output.join("a.png"))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o640);
         }
     }
