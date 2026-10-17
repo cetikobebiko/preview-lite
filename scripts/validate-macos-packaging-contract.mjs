@@ -218,8 +218,8 @@ if (stagedBinaryExists) {
       error(`Staged libpdfium.dylib CPU type mismatch: expected 0x0100000c (ARM64), got 0x${cpuType.toString(16)}`);
     }
 
-    if (buf.length !== 7151568) {
-      error(`Staged libpdfium.dylib byte length mismatch: expected 7151568, got ${buf.length}`);
+    if (buf.length !== 7199216) {
+      error(`Staged libpdfium.dylib byte length mismatch: expected 7199216, got ${buf.length}`);
     }
   }
 } else {

@@ -66,8 +66,8 @@ export const MACOS_ARTIFACT_TYPES = Object.freeze(["MACOS_DMG", "MACOS_APP_BUNDL
 export const EXPECTED_APP_NAME = "PreviewLite.app";
 export const EXPECTED_EXECUTABLE = "preview-alternative";
 export const EXPECTED_RUNTIME_REL = "Contents/Resources/lib/libpdfium.dylib";
-export const EXPECTED_RUNTIME_SHA256 = "c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869";
-export const EXPECTED_RUNTIME_BYTE_LENGTH = 7151568;
+export const EXPECTED_RUNTIME_SHA256 = "cb167bb40974e409a4de3e37fc97fe29802a33aa0bfb75ce0a4e6c991c7857ab";
+export const EXPECTED_RUNTIME_BYTE_LENGTH = 7199216;
 
 // ─── Mach-O Architecture Validator (arm64) ───
 

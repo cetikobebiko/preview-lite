@@ -269,7 +269,7 @@ console.log("\n[Test 7] Evidence schema 1.0.0 compliance...");
     status: "PASS",
     resolvedPath: "/tmp/test/PreviewLite.app/Contents/Resources/lib/libpdfium.dylib",
     source: "packaged",
-    sha256: "c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869",
+    sha256: "cb167bb40974e409a4de3e37fc97fe29802a33aa0bfb75ce0a4e6c991c7857ab",
     error: null
   };
   evidence.smokeDocumentResult = {

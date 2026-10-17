@@ -10,7 +10,7 @@ This document describes the Prompt 11.0 support baseline captured on 20 August
 
 | Platform | Status | Runtime in repository | SHA-256 | Provenance | Supply-chain | Publication |
 |---|---|---|---|---|---|---|
-| macOS arm64 (`aarch64-apple-darwin`) | `not_evaluated` | arm64 `libpdfium.dylib` present (2 copies, byte-identical, 7,151,568 B) | `c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869` known | `unknown` (upstreamUrl/builder/date missing) | PARTIAL (hash known, provenance INCOMPLETE) | Not allowed |
+| macOS arm64 (`aarch64-apple-darwin`) | `not_evaluated` | arm64 `libpdfium.dylib` present (7,199,216 B), locally built with the Turkish charset patch | `cb167bb40974e409a4de3e37fc97fe29802a33aa0bfb75ce0a4e6c991c7857ab` known | `locally_built_verified` (PDFium `dd35832`, pdfium-binaries `chromium/7961` patches + `turkish-charset.patch`) | PARTIAL (hash and source known, no build attestation) | Not allowed |
 | Linux x64 (`x86_64-unknown-linux-gnu`) | `not_evaluated` | `libpdfium.so` absent — `src-tauri/lib/libpdfium.so` expected staging | `SHA256: UNKNOWN` | `unknown` — `EXTERNAL_RUNTIME_METADATA_REQUIRED` | **INCOMPLETE — RUNTIME_METADATA_INCOMPLETE** | Not allowed |
 | Windows x64 (`x86_64-pc-windows-msvc`) | `not_evaluated` | `pdfium.dll` absent — `src-tauri/lib/pdfium.dll` expected staging | `SHA256: UNKNOWN` | `unknown` — `EXTERNAL_RUNTIME_METADATA_REQUIRED` | **INCOMPLETE — RUNTIME_METADATA_INCOMPLETE** | Not allowed |
 
@@ -62,11 +62,17 @@ canonical Linux evidence.
 ## Runtime facts (C2)
 
 The only runtime currently committed is a macOS arm64
-`libpdfium.dylib`. Its two repository copies are byte-identical, each
-7,151,568 bytes with SHA-256
-`c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869`.
-The repository version label is `152.0.7961.0`, but complete upstream artifact
-and build provenance is not yet recorded → `sourceProvenanceComplete:false`, provenance class `unknown`.
+`libpdfium.dylib`, 7,199,216 bytes with SHA-256
+`cb167bb40974e409a4de3e37fc97fe29802a33aa0bfb75ce0a4e6c991c7857ab`.
+Since 2026-10-17 it is a local build of PDFium `chromium/7961` (commit
+`dd3583292697`, version label `152.0.7961.0`) with the bblanchon/pdfium-binaries
+`chromium/7961` patches, the shipped `args.gn` and
+`docs/engineering/pdfium-patches/turkish-charset.patch`, which keeps Turkish
+ğ Ğ ı İ in generated form field appearances. Provenance class
+`locally_built_verified`, `sourceProvenanceComplete:true`; there is no build
+attestation, so supply chain stays PARTIAL. Rebuild steps:
+`docs/engineering/pdfium-patches/README.md`. The previous runtime
+(7,151,568 B, `c2f68f87…3869`, provenance unknown) is in git history.
 
 **11I-C2 & 11I-D2 supply-chain contract:**
 

@@ -88,25 +88,25 @@
           "src-tauri/lib/libpdfium.dylib"
         ],
         "copiesByteIdentical": true,
-        "sha256": "c2f68f87106da4f0cb6d6a90a7aad9644b3c1cb92a3463dbdc8f39449aec3869",
-        "byteLength": 7151568,
+        "sha256": "cb167bb40974e409a4de3e37fc97fe29802a33aa0bfb75ce0a4e6c991c7857ab",
+        "byteLength": 7199216,
         "binaryArchitecture": "arm64",
         "minimumOs": "13.0",
         "licenseReference": "src-tauri/licenses/pdfium.txt",
         "provenance": {
-          "class": "unknown",
-          "upstreamUrl": null,
+          "class": "locally_built_verified",
+          "upstreamUrl": "https://pdfium.googlesource.com/pdfium",
           "sourceArtifactName": null,
           "sourceArtifactChecksum": null,
-          "sourceCommit": null,
-          "builder": null,
-          "buildDate": null
+          "sourceCommit": "dd3583292697a0356cca1f64892892a92f0a2770",
+          "builder": "local macOS arm64, Command Line Tools SDK 26.1; bblanchon/pdfium-binaries chromium/7961 (c6529b58791d) patches + docs/engineering/pdfium-patches/turkish-charset.patch; see docs/engineering/pdfium-patches/README.md",
+          "buildDate": "2026-10-17"
         },
         "distributionClass": "bundled_with_artifact",
         "expectedStagedPath": "src-tauri/lib/libpdfium.dylib",
         "expectedPackagedLocation": "resourceDir/lib/libpdfium.dylib",
         "supplyChainStatus": "PARTIAL",
-        "sourceProvenanceComplete": false
+        "sourceProvenanceComplete": true
       },
       "currentBaselineEvidence": {
         "sourceBuild": "not_run",

@@ -335,6 +335,20 @@ yama upstream'e girip bblanchon sürümüne ulaştığında tespit uyarısı Tü
 susar. Yol 2 (fork) hâlâ şu iki koşula bağlı: upstream review takılıyor **ve** diğer
 görüntüleyicilerde Türkçe görünüm ürün gereksinimi.
 
+#### Karar: yamalı runtime uygulamada (2026-10-17)
+
+Uygulama yalnız kişisel kullanım için olduğundan upstream gönderimi yapılmadı.
+`src-tauri/lib/libpdfium.dylib` yamalı yerel build ile değiştirildi (SHA-256 `cb167bb4…57ab`,
+provenance `locally_built_verified`; ayrıntı `pdfium-patches/README.md`). Uygulamanın
+normal runtime çözümlemesiyle `form_unicode_spike` Türkçe alanların tamamında eşleşiyor.
+`cargo test --locked`: 1084 geçti, 0 başarısız, 10 ignored. Runtime manifest
+doğrulayıcısı, macOS paketleme sözleşmesi ve macOS smoke harness (34/34) geçti.
+
+Bu değişiklik yalnız macOS arm64 runtime'ını kapsar. Linux ve Windows runtime'ları
+yamasız bblanchon build'leridir ve Türkçe kaybı orada sürer. Seçenek A'nın tespit +
+uyarı katmanı bu nedenle ve glif düzeyindeki sınırlar için Faz 3'te güvenlik ağı olarak
+kalır.
+
 ### Faz 1 — Okuma: alan modeli (salt-okunur)
 
 `forms.rs` DTO'su (PdfCraft `Field`/`Widget` modelinden sadeleştirilmiş):
