@@ -207,6 +207,91 @@ Yorum:
 upstream hata raporu aç. B'yi rapora gelen yanıta göre ayrıca değerlendir.
 `/NeedAppearances` ayrı bir `lopdf` kararı olarak ele alınır.
 
+#### Seçenek B — PDFium yaması: kök neden ve maliyet (2026-10-17)
+
+**Kök neden kaynakta doğrulandı** (`chromium/7961` dalından indirilip okundu; `main`
+dalında da değişmemiş):
+
+- `core/fxge/cfx_font.cpp` `CFX_Font::GetCharSetFromUnicode` U+0100–U+024F
+  aralığının tamamını `FX_Charset::kMSWin_EasternEuropean` olarak döndürüyor. Türkçe dalı yok.
+- `core/fpdfdoc/cpdf_bafontmap.cpp` `CPDF_BAFontMap::GetWordFontIndex` sırasıyla şunları
+  dener: (1) `/DA` fontu, yalnız charset'i eşleşirse (TrHv denemesinin neden başarısız
+  olduğunu açıklar); (2) o charset'in yerel fontu (`Arial_EE`, CP1250); (3) `"Arial Unicode MS"`.
+  Üçüncü font sistemin ANSI kod sayfasıyla, yani WinAnsi ile ekleniyor. Üçü de `ğ ı`'yı
+  kodlayamıyor, fonksiyon `-1` döndürüyor ve karakter düşüyor.
+- `kDefaultTTFMap` içinde `kMSWin_Turkish` girdisi yok. PDFium'da CP1254 tablosu
+  (`kFX_MSWinTurkishUnicodes`, `core/fxcrt/fx_codepage.cpp`) zaten var.
+- `CPWL_EditImpl` metni `FX_Charset::kDefault` ile ekliyor. Bu yüzden "önceki charset'i
+  takip et" kuralı devreye girmiyor ve her karakter bağımsız eşleniyor.
+
+**Yama taslağı** (22 satırlık diff, derlenmedi ve test edilmedi):
+
+```diff
+--- a/core/fxge/cfx_font.cpp
++++ b/core/fxge/cfx_font.cpp
+@@ -44,6 +44,7 @@
+     {static_cast<int>(FX_Charset::kMSWin_Arabic), "Arial"},
++    {static_cast<int>(FX_Charset::kMSWin_Turkish), "Arial"},
+@@ -127,6 +128,11 @@
++  // Turkish letters that Windows-1250 lacks but Windows-1254 has.
++  if (word == 0x011E || word == 0x011F || word == 0x0130 || word == 0x0131) {
++    return FX_Charset::kMSWin_Turkish;
++  }
++
+   if (word >= 0x0100 && word <= 0x024F) {
+     return FX_Charset::kMSWin_EasternEuropean;
+```
+
+Yamanın açık soruları:
+- `AddNativeTrueTypeFontToPDF`'in `kMSWin_Turkish` için doğru CP1254 `/Differences`
+  ürettiği varsayılıyor, doğrulanmadı.
+- `kDefaultTTFMap`, kullanımdan kaldırılmış public `FPDF_GetDefaultTTFMap*` API'siyle
+  dışarı açık. Upstream kuralına göre public API'ye dokunan değişiklik için bug ve mailing
+  list tartışması gerekir. Upstream'de bu satır olmadan, yalnız charset dalıyla
+  başlanabilir.
+- Linux'ta Arial genelde kurulu değil. `FindNativeTrueTypeFont("Arial")` başarısız
+  olunca ne olduğu (bugün Lehçe için de geçerli) ölçülmedi. Bu risk Seçenek A için de geçerli.
+- Romence `ș ț` (U+0219/U+021B; CP1250'de yalnız cedilla biçimleri var) ve Azerice `ə`
+  muhtemelen aynı şekilde düşüyor; ölçülmedi. Genel bir çözüm, yerel font kelimeyi
+  bilmediğinde karakteri içeren diğer kod sayfalarını denemek olurdu. Bu daha büyük bir
+  yamadır ve daha uzun review gerektirir.
+
+**Yol 1 — Upstream CL** (önerilen)
+
+| Kalem | Tahmin |
+|---|---|
+| CLA (bireysel, online), depot_tools, Gerrit kurulumu | ~0,5 gün |
+| Yama + `cfx_font_unittest` + embedder testi (form doldur, düzleştir, metni karşılaştır; spike'ın C++ karşılığı) | ~1 gün |
+| Review | **Bilinmiyor.** İlk CL'lerde try-bot'ları bir committer tetikler. Yalnız charset dalı küçük ve izole bir bug fix'tir |
+| Yayına ulaşma | `main`'e girdikten sonra bir sonraki chromium dalı, ardından bblanchon sürümü, ardından bizim runtime pin'imizin 7961'den yükseltilmesi. Haftalar sürer; tarih verilemez |
+| Bizim sürekli maliyetimiz | Sıfır. Pin yükseltmesi zaten yapılacak ayrı bir iş |
+
+**Yol 2 — pdfium-binaries fork'u + yama** (kendi build'imiz)
+
+bblanchon düzeni buna uygun: `patches/*.patch` dosyaları `steps/03-patch.sh` içinde
+`patch -p1` ile uygulanıyor. `build-one.yml` fork'ta Actions sekmesinden `branch`,
+`target_os` ve `target_cpu` girdileriyle elle tetiklenebiliyor.
+
+| Kalem | Ölçüm / tahmin |
+|---|---|
+| Fork + `patches/turkish_charset.patch` + `03-patch.sh`'ye tek satır | ~0,5 gün |
+| Build süresi (bblanchon `Build all`, 2026-10-12, ölçüldü) | macOS arm64 8,1 dk; macOS x64 6,7 dk; Windows x64 21,7 dk; Linux x64 8,0 dk. Hedeflerimiz için **~45 runner-dakika/sürüm** |
+| CI ücreti | Public fork'ta ücretsiz. Private repoda GitHub çarpanları (macOS ×10, Windows ×2) ile ~200 faturalanan dakika, yani sürüm başına birkaç dolar |
+| Tedarik zinciri | `platform-support.json` provenance sınıfı `upstream_prebuilt_verified`'dan yeni bir self-built sınıfına geçer. `scripts/provision-pdfium-runtime.mjs` `ALLOWED_UPSTREAM_PREFIX` bizim fork'umuzu kabul etmeli ve testleri güncellenmeli. Artifact attestation eklenmeli. ~1–2 gün |
+| Yan kazanç | macOS runtime'ın provenance'ı bugün `class: unknown`, `sourceProvenanceComplete: false`. Kendi pipeline'ımız macOS'u da tam provenance'a taşır |
+| Sürekli maliyet | Her PDFium yükseltmesinde yamayı rebase etmek (dosya küçük ve az değişiyor), upstream fork'u merge etmek, dört hedefi yeniden build etmek, hash'leri yeniden pinlemek ve PDFium'a bağlı acceptance testlerini koşmak: ~0,5–1 gün/yükseltme |
+| Risk | Chrome ve diğer PDFium kullanıcılarından ayrışan davranış (küçük). Fork CI'ı bizim sorumluluğumuza geçer |
+
+**Doğrulama ön koşulu (her iki yol için):** Yama henüz derlenmedi. Karar vermeden önce
+yamalı PDFium tek bir hedefte (macOS arm64; fork'ta `build-one.yml` ya da yerel `build.sh`)
+build edilmeli ve `form_unicode_spike` o runtime'a karşı çalıştırılmalı. Beklenen sonuç:
+`ğ Ğ ı İ` için eksik küme boş, diğer satırlar değişmemiş.
+
+**Öneri:** Seçenek A ile ilerle ve Yol 1'i (upstream CL) paralel başlat. Yol 2'yi yalnız
+şu iki koşul birlikte sağlanırsa aç: upstream review takılıyor **ve** diğer
+görüntüleyicilerde Türkçe görünüm ürün gereksinimi. Yol 2'nin macOS provenance kazancı
+ayrıca değerlendirilebilir.
+
 ### Faz 1 — Okuma: alan modeli (salt-okunur)
 
 `forms.rs` DTO'su (PdfCraft `Field`/`Widget` modelinden sadeleştirilmiş):
