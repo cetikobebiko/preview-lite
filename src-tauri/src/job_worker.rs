@@ -65,6 +65,10 @@ pub enum MutationRecipe {
         page_index: u32,
         annot_id: String,
     },
+    /// Form taslaklarını PDFium form-fill ortamıyla yazar; bkz. `forms::fill`.
+    FillFormFields {
+        edits: Vec<crate::forms::fill::FormFieldEdit>,
+    },
 }
 
 impl MutationRecipe {
@@ -77,6 +81,7 @@ impl MutationRecipe {
             Self::InsertBlankPage { .. } => "insert_blank_page",
             Self::AddAnnotation { .. } => "add_annotation",
             Self::DeleteAnnotation { .. } => "delete_annotation",
+            Self::FillFormFields { .. } => "fill_form_fields",
         }
     }
 }
@@ -1421,6 +1426,10 @@ fn execute_mutation(
             copy_mutation_input(snapshot_path, output_path)?;
             crate::annotations::delete_annotation_report(output, page_index, annot_id, password)
         }
+        MutationRecipe::FillFormFields { edits } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::forms::fill::fill_form_fields_report(output, edits, password)
+        }
     };
     report.map(|_| ()).map_err(|error| {
         JobFailure::new(
@@ -2149,6 +2158,86 @@ mod tests {
         } else {
             panic!("Expected SessionJobOperationError::Failed");
         }
+    }
+
+    #[test]
+    fn fill_form_fields_mutation_round_trips_through_job_worker_dispatch() {
+        use crate::forms::fill::{FormFieldEdit, FormFieldValue};
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        crate::forms::test_support::standard_fixture(&snapshot);
+        let command = |edits: Vec<FormFieldEdit>, output_name: &str| {
+            let command = JobCommand::MutatePdf {
+                recipe: MutationRecipe::FillFormFields { edits },
+                output_name: output_name.to_string(),
+            };
+            // The job IPC carries commands as JSON.
+            serde_json::from_str::<JobCommand>(&serde_json::to_string(&command).unwrap()).unwrap()
+        };
+
+        let result = execute_command(
+            directory.path(),
+            &snapshot,
+            None,
+            "form-fill-job",
+            "form-fill-session",
+            command(
+                vec![
+                    FormFieldEdit {
+                        page_index: 0,
+                        annot_index: 0,
+                        field_name: "name".to_string(),
+                        value: FormFieldValue::Text {
+                            text: "Grace".to_string(),
+                        },
+                    },
+                    FormFieldEdit {
+                        page_index: 0,
+                        annot_index: 7,
+                        field_name: "color".to_string(),
+                        value: FormFieldValue::Radio,
+                    },
+                ],
+                "filled.pdf",
+            ),
+        )
+        .unwrap();
+        let output = directory.path().join("filled.pdf");
+        assert!(matches!(result, JobResult::File(ref path) if path == &output));
+        let widgets = crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+            let document = pdfium
+                .load_pdf_from_file(&output, None)
+                .map_err(|error| error.to_string())?;
+            crate::forms::read_page_form_fields(&document, 0).map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert_eq!(widgets[0].value.as_deref(), Some("Grace"));
+        assert_eq!(
+            widgets.iter().find(|w| w.annot_index == 7).unwrap().checked,
+            Some(true)
+        );
+
+        let failure = execute_command(
+            directory.path(),
+            &snapshot,
+            None,
+            "form-fill-job",
+            "form-fill-session",
+            command(
+                vec![FormFieldEdit {
+                    page_index: 0,
+                    annot_index: 3,
+                    field_name: "locked".to_string(),
+                    value: FormFieldValue::Text {
+                        text: "x".to_string(),
+                    },
+                }],
+                "rejected.pdf",
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "SESSION_MUTATION_WORKER_FAILED");
+        assert!(failure.message.contains("read-only"), "{}", failure.message);
     }
 
     #[test]

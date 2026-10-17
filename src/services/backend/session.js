@@ -256,6 +256,13 @@ export const getSessionPageFormFields = (
     pageIndex,
   });
 
+export const fillSessionFormFields = (sessionId, expectedContentGeneration, edits) =>
+  callBackend("fillSessionFormFields", {
+    sessionId,
+    expectedContentGeneration,
+    edits,
+  });
+
 export const addSessionAnnotation = (
   sessionId,
   expectedContentGeneration,

@@ -530,6 +530,62 @@ pub struct FormFieldEdit {
    invalidation acknowledgement" deseni).
 5. Feature gate `form_editing` → `experimental`. Feature matrix ve IPC envanteri güncellenir.
 
+#### Faz 3 sonuçları (2026-10-17)
+
+Uygulandı:
+- `src-tauri/src/forms/fill.rs`: `FormFieldEdit` (`{ pageIndex, annotIndex, fieldName, kind,
+  text? | checked? | selected? }`), `validate_request` ve `fill_form_fields_report`. Yazma
+  `atomic_write_pdf` içinde ham PDFium binding'leriyle yapılıyor: kendi
+  `FPDF_FORMFILLINFO`'muz, `FORM_OnAfterLoadPage`, metin için
+  `FORM_SelectAllText` + `FORM_ReplaceSelection`, checkbox/radio için `FORM_OnChar(' ')`,
+  seçim için `FORM_SetIndexSelected`, ardından `FORM_ForceToKillFocus` ve
+  `FPDF_SaveAsCopy` (flags 0). Belge, form ortamı, sayfa ve annotation RAII ile
+  kapatılıyor; `unsafe` yalnız `FPDF_FILEWRITE` callback'inde.
+- Doğrulama (belgeye karşı, yazmadan önce): sayfa ve annotation var mı, widget mı,
+  `FPDFAnnot_GetFormFieldName` istekteki adla aynı mı (**isim-indeks**), alan türü değer
+  türüne uyuyor mu, `/Ff` bit 1 (**read-only**) ve combo için tek seçim, liste için
+  multi-select. Yazdıktan sonra değer PDFium'dan geri okunuyor; kırpılmış metin
+  **MaxLen** hatası olarak reddediliyor ("en fazla N karakter"). Tek bir hata tüm batch'i
+  reddediyor ve dosya değişmiyor. Kayıttan sonra `atomic_write_pdf`'in doğrulama adımı
+  geçici dosyayı Faz 1 okuyucusuyla yeniden okuyup aynı değerleri bekliyor.
+- `MutationRecipe::FillFormFields` → `fill_session_form_fields` (`mutate_isolated`;
+  istek önce `validate_request` ile, belgeden bağımsız denetleniyor) → frontend
+  `fillSessionFormFields`. Sözleşme `kind`'a göre tam olarak doğru alanı istiyor.
+- Frontend: `formCommitController.svelte.js` taslak store'u başına tek denetleyici.
+  Metin alanı odaktan çıkınca ya da Enter'da, düğme/seçim değişince 350 ms gecikmeyle tüm
+  taslakları tek mutasyonla yazıyor. Uçuştaki yazma sırasında gelen istek, yazma bitince
+  yanıttaki generation ile yeniden çalışıyor. Yalnız gönderildiğinden beri değişmemiş
+  taslaklar siliniyor. Belgede imza varsa (`FormInfo.signature_count`) ilk yazmadan önce
+  onay isteniyor ve oturum boyunca hatırlanıyor. Hata durumunda taslaklar korunuyor;
+  alanlar kırmızı çerçeveyle işaretleniyor ve hata `title` olarak gösteriliyor.
+  Yazma sırasında çerçeve kesikli.
+
+Doğrulama:
+- Rust: `forms::fill::tests` (10): tüm türlerin yazılıp geri okunması, regenere `/AP /N`,
+  read-only, isim-indeks, MaxLen, tür uyuşmazlığı, batch atomikliği, `/Fields` dışı widget,
+  istek doğrulaması, JSON biçimi. `job_worker::tests::fill_form_fields_mutation_round_trips_through_job_worker_dispatch`
+  (JSON üzerinden job komutu, gerçek dağıtım, read-only reddi).
+- Vitest: `formCommitController.test.js` (5), `FormLayer.test.js` (8), `client.test.js`
+  sözleşme testi, `architecture.test.js` (komut `mutate_isolated` kullanıyor, dosya yolu
+  almıyor).
+- Gerçek tarayıcı: gerçek `FormLayer`, `pdfState`, denetleyici ve sözleşme doğrulaması
+  yalnız Tauri `invoke` taklit edilerek çalıştırıldı. Başarı yolu (Enter → yazma → yeni
+  generation → yeniden okuma, taslak silinir) ve hata yolu (MaxLen → kırmızı çerçeve,
+  taslak korunur, mesaj `title`'da) doğrulandı. Bu sırada imzasız belgede her commit'te
+  `FormInfo`'nun yeniden istendiği görüldü; artık oturum başına bir kez isteniyor.
+- Uygulama içinde uçtan uca (yerel Tauri penceresi) **doğrulanmadı**.
+
+Testlerin yakaladığı hata: uçuştaki yazma sırasında kuyruğa giren istek, yazmanın döndürdüğü
+yeni generation'ı öğrenmiyor ve sonraki yazmayı eski generation ile gönderiyordu.
+Düzeltildi.
+
+Kapsam dışı kalanlar:
+- Seçenek A'nın görünüm tespiti (yazma sonrası flatten + metin çıkarma ile
+  `undrawn_chars`): macOS runtime yamalı olduğu için Türkçe için gerekli değil; Linux ve
+  Windows runtime'ları için ayrıca eklenmeli.
+- Incremental save (imzaları korumak), editable combo'ya serbest metin, formu temizleme,
+  XFA bildirimi.
+
 ### Faz 4 — Sonraki adımlar (bu planın kapsamı dışında, ayrı karar gerektirir)
 
 - **Formu temizle (Reset)**: `/DV`'ye dönüş. PDFium'da doğrudan API yok, `/DV` okunup Faz 3 yoluyla yazılır.

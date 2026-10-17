@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/svelte";
-import { getPageFormFields } from "../pdfState.js";
+import { fillFormFields, getFormInfo, getPageFormFields } from "../pdfState.js";
 import {
   createFormDraftState,
   FORM_DRAFTS_CONTEXT,
@@ -9,10 +9,23 @@ import FormLayer from "./FormLayer.svelte";
 
 vi.mock("../pdfState.js", () => ({
   getPageFormFields: vi.fn(),
+  getFormInfo: vi.fn(async () => ({ form_type: "AcroForm", signature_count: 0 })),
+  // Commit testleri dışında yazma hiç bitmez; taslak durumu değişmeden kalır.
+  fillFormFields: vi.fn(() => new Promise(() => {})),
 }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  confirm: vi.fn(async () => true),
+}));
+
+// Commit denetleyicisinin gecikme zamanlayıcıları testten teste sızmasın.
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
 
 afterEach(() => {
   cleanup();
+  vi.clearAllTimers();
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -108,7 +121,11 @@ describe("FormLayer", () => {
     const input = await waitFor(() => getByLabelText("name"));
 
     await fireEvent.input(input, { target: { value: "Ada Lovelace" } });
-    expect(drafts.get("name")).toEqual({ kind: "text", value: "Ada Lovelace" });
+    expect(drafts.get("name")).toEqual({
+      kind: "text",
+      value: "Ada Lovelace",
+      target: { pageIndex: 1, annotIndex: 0 },
+    });
     expect(fieldOf(input).classList.contains("dirty")).toBe(true);
 
     await fireEvent.input(input, { target: { value: "Ada" } });
@@ -122,11 +139,15 @@ describe("FormLayer", () => {
     await waitFor(() => getByLabelText("agree"));
 
     await fireEvent.click(getByLabelText("agree"));
-    expect(drafts.get("agree")).toEqual({ kind: "checkbox", checked: true });
+    expect(drafts.get("agree")).toEqual({
+      kind: "checkbox",
+      checked: true,
+      target: { pageIndex: 1, annotIndex: 3 },
+    });
 
     const [red, blue] = getAllByLabelText("color");
     await fireEvent.click(blue);
-    expect(drafts.get("color")).toEqual({ kind: "radio", widget: "1:5" });
+    expect(drafts.get("color")).toEqual({ kind: "radio", target: { pageIndex: 1, annotIndex: 5 } });
     expect(blue.checked).toBe(true);
     expect(fieldOf(red).classList.contains("dirty")).toBe(true);
     await fireEvent.click(red);
@@ -135,12 +156,20 @@ describe("FormLayer", () => {
     const country = getByLabelText("country");
     country.options[1].selected = true;
     await fireEvent.change(country);
-    expect(drafts.get("country")).toEqual({ kind: "choice", selected: [1] });
+    expect(drafts.get("country")).toEqual({
+      kind: "choice",
+      selected: [1],
+      target: { pageIndex: 1, annotIndex: 6 },
+    });
 
     const langs = getByLabelText("langs");
     langs.options[1].selected = true;
     await fireEvent.change(langs);
-    expect(drafts.get("langs")).toEqual({ kind: "choice", selected: [0, 1] });
+    expect(drafts.get("langs")).toEqual({
+      kind: "choice",
+      selected: [0, 1],
+      target: { pageIndex: 1, annotIndex: 7 },
+    });
   });
 
   it("does not paint widgets returned for an old session", async () => {
@@ -180,6 +209,38 @@ describe("FormLayer", () => {
 
     await first.rerender({ sessionId: "other-session" });
     await waitFor(() => expect(drafts.count).toBe(0));
+  });
+
+  it("writes drafts when a text field loses focus and reports the new session snapshot", async () => {
+    getPageFormFields.mockResolvedValue(PAGE_WIDGETS);
+    fillFormFields.mockResolvedValueOnce({ contentGeneration: 4 });
+    const onsessionSnapshot = vi.fn();
+    const { getByLabelText, drafts } = renderLayer({ onsessionSnapshot });
+    const input = await waitFor(() => getByLabelText("name"));
+
+    await fireEvent.input(input, { target: { value: "Ada Lovelace" } });
+    await fireEvent.blur(input);
+
+    await waitFor(() => expect(onsessionSnapshot).toHaveBeenCalledWith({ contentGeneration: 4 }));
+    expect(getFormInfo).toHaveBeenCalledWith("form-session", 3);
+    expect(fillFormFields).toHaveBeenCalledWith("form-session", 3, [
+      { pageIndex: 1, annotIndex: 0, fieldName: "name", kind: "text", text: "Ada Lovelace" },
+    ]);
+    expect(drafts.has("name")).toBe(false);
+  });
+
+  it("keeps drafts and marks the fields when the write fails", async () => {
+    getPageFormFields.mockResolvedValue(PAGE_WIDGETS);
+    fillFormFields.mockRejectedValueOnce(new Error("'locked' alanı read-only"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { getByLabelText, drafts } = renderLayer();
+    const checkbox = await waitFor(() => getByLabelText("agree"));
+
+    await fireEvent.click(checkbox);
+    await waitFor(() => expect(fieldOf(checkbox).classList.contains("commit-failed")).toBe(true));
+    expect(drafts.get("agree").checked).toBe(true);
+    expect(fieldOf(checkbox).getAttribute("title")).toContain("read-only");
+    errorSpy.mockRestore();
   });
 
   it("renders nothing when the backend read is refused", async () => {

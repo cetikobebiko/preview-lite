@@ -156,6 +156,28 @@ export async function getPageFormFields(
   );
 }
 
+export async function getFormInfo(
+  sessionId,
+  generation,
+  context = getRuntimeFeatureContext(),
+) {
+  return await guardFeatureAction("form_editing", context, async () =>
+    sessionBackend.getSessionFormInfo(sessionId, generation),
+  );
+}
+
+// Form taslaklarını yazar (Faz 3). Hatalar çağırana iletilir: taslaklar korunmalıdır.
+export async function fillFormFields(
+  sessionId,
+  generation,
+  edits,
+  context = getRuntimeFeatureContext(),
+) {
+  return await guardFeatureAction("form_editing", context, async () =>
+    sessionBackend.fillSessionFormFields(sessionId, generation, edits),
+  );
+}
+
 // `normalizedRect`: sayfa görüntü uzayında normalize dikdörtgen (bkz. contracts.js).
 export async function addAnnotation(
   sessionId,

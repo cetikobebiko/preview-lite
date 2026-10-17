@@ -580,6 +580,13 @@ A mutation or validation crash therefore happens before replacement begins. The 
 working copy remain intact and the session generation/dirty state is updated only from the
 existing typed commit report.
 
+`fill_session_form_fields` uses this path with `MutationRecipe::FillFormFields`. In the job
+worker, `forms::fill` opens the copied snapshot with raw PDFium bindings and its own form fill
+environment (pdfium-render exposes neither handle), checks each edit's field name against its
+annotation index, its kind and its read-only flag, writes through `FORM_*` so PDFium regenerates
+`/V`, `/AS` and `/AP`, reads each value back (rejecting MaxLen truncation), and saves inside
+`atomic_write_pdf`, whose validation step rereads the values from the temp file.
+
 Session split, merge, and page-extraction outputs use the same ephemeral worker plus separate
 reopen-validation rule. Additional merge inputs are byte-copied into the private job directory
 before PDFium sees them. Output publication remains the existing job-output staging operation.

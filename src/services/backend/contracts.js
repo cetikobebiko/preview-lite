@@ -182,6 +182,30 @@ const redactionRegionInputWire = objectOf({
   source: stringType,
 });
 
+// Form taslağı yazımı (Faz 3); bkz. `FormFieldEdit` (src-tauri/src/forms/fill.rs).
+// Kurallar backend'de de uygulanır; burada yalnız biçim denetlenir.
+const FORM_TEXT_MAX_LENGTH = 32768;
+const formFieldEdit = objectOf(
+  {
+    pageIndex: u32Type,
+    annotIndex: u32Type,
+    fieldName: Object.freeze({ type: "string", minLength: 1, maxLength: FORM_TEXT_MAX_LENGTH }),
+    kind: Object.freeze({ type: "string", enum: Object.freeze(["text", "checkbox", "radio", "choice"]) }),
+  },
+  {
+    text: Object.freeze({ type: "string", maxLength: FORM_TEXT_MAX_LENGTH }),
+    checked: booleanType,
+    selected: Object.freeze({ type: "array", items: u32Type }),
+  },
+  (edit) => {
+    const present = ["text", "checked", "selected"].filter((key) => edit[key] !== undefined);
+    const expected = { text: ["text"], checkbox: ["checked"], radio: [], choice: ["selected"] }[edit.kind];
+    return present.length === expected.length && present.every((key, index) => key === expected[index])
+      ? null
+      : `form edit of kind ${edit.kind} must carry exactly: ${expected.join(", ") || "no value"}`;
+  },
+);
+
 const command = (name, required = {}, optional = {}, validate = null) =>
   Object.freeze({
     command: name,
@@ -435,6 +459,11 @@ export const CONTRACTS = Object.freeze({
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     pageIndex: u32Type,
+  }),
+  fillSessionFormFields: command("fill_session_form_fields", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    edits: Object.freeze({ type: "array", items: formFieldEdit }),
   }),
   addSessionAnnotation: command(
     "add_session_annotation",

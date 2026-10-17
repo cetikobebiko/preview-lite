@@ -928,6 +928,7 @@
                     {sessionId}
                     contentGeneration={documentGenerationId}
                     {pageIndex}
+                    {onsessionSnapshot}
                   />
                 {/if}
                 {#if ocrPresentation.runnable}

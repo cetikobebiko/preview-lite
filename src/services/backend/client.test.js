@@ -220,6 +220,34 @@ describe("validated backend client", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("validates form fill edits by kind before invoking the backend", async () => {
+    const base = { sessionId: "document", expectedContentGeneration: 4 };
+    const edits = [
+      { pageIndex: 0, annotIndex: 1, fieldName: "name", kind: "text", text: "Ada" },
+      { pageIndex: 0, annotIndex: 2, fieldName: "agree", kind: "checkbox", checked: true },
+      { pageIndex: 1, annotIndex: 0, fieldName: "color", kind: "radio" },
+      { pageIndex: 1, annotIndex: 3, fieldName: "langs", kind: "choice", selected: [0, 2] },
+    ];
+    invokeMock.mockResolvedValue({});
+    await callBackend("fillSessionFormFields", { ...base, edits });
+    expect(invokeMock).toHaveBeenCalledWith("fill_session_form_fields", { ...base, edits });
+    invokeMock.mockReset();
+
+    for (const [edit, message] of [
+      [{ pageIndex: 0, annotIndex: 1, fieldName: "name", kind: "text" }, "exactly: text"],
+      [{ pageIndex: 0, annotIndex: 1, fieldName: "name", kind: "text", text: "a", checked: true }, "exactly: text"],
+      [{ pageIndex: 0, annotIndex: 1, fieldName: "color", kind: "radio", checked: true }, "no value"],
+      [{ pageIndex: 0, annotIndex: 1, fieldName: "", kind: "text", text: "a" }, "fieldName"],
+      [{ pageIndex: 0, annotIndex: -1, fieldName: "a", kind: "text", text: "a" }, "annotIndex"],
+      [{ pageIndex: 0, annotIndex: 1, fieldName: "a", kind: "date", text: "a" }, "kind"],
+    ]) {
+      await expect(
+        callBackend("fillSessionFormFields", { ...base, edits: [edit] }),
+      ).rejects.toMatchObject({ message: expect.stringContaining(message) });
+    }
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("requires a valid session identifier and allows idempotent deactivation", async () => {
     await expect(
       callBackend("setActiveSessionRenderDocument", {

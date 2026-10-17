@@ -5,16 +5,18 @@
     createFormDraftState,
     FORM_DRAFTS_CONTEXT,
   } from "../stores/formDraftState.svelte.js";
+  import { formCommitControllerFor } from "../stores/formCommitController.svelte.js";
 
   // Koordinat sözleşmesi AnnotationLayer ile aynıdır: katmanın yerel kutusu sayfanın
   // görüntü uzayıdır ve widget dikdörtgenleri sol-üst kökenli normalize [0..1]
-  // değerlerdir. Faz 2: kullanıcının girdiği değerler yalnız taslaktır, belgeye
-  // yazılmaz (docs/engineering/form-filling-plan.md).
+  // değerlerdir. Kullanıcının girdiği değerler önce taslaktır; metin alanı odaktan
+  // çıkınca ya da düğme/seçim değişince paylaşılan denetleyici taslakları belgeye yazar
+  // (docs/engineering/form-filling-plan.md, Faz 3).
   //
   // Değişmemiş bir alanın görünümünü PDFium bitmap'i zaten çizer; kontrol o yüzden
   // şeffaftır ve yalnız odakta ya da taslak varken opak çizilir. Böylece metin iki kez
   // görünmez.
-  let { sessionId = "", contentGeneration = 0, pageIndex = 0 } = $props();
+  let { sessionId = "", contentGeneration = 0, pageIndex = 0, onsessionSnapshot } = $props();
 
   const EDITABLE_KINDS = new Set(["Text", "Checkbox", "RadioButton", "ComboBox", "ListBox"]);
   // Tek satırlık alanda font, alan yüksekliğinin bu oranı; üst sınır sayfa yüksekliğine göre.
@@ -23,6 +25,7 @@
   const MULTILINE_FONT_CQH = 1.5;
 
   const drafts = getContext(FORM_DRAFTS_CONTEXT) ?? createFormDraftState();
+  const commits = formCommitControllerFor(drafts);
 
   let widgets = $state([]);
 
@@ -50,8 +53,17 @@
     ),
   );
 
-  function widgetKey(widget) {
-    return `${pageIndex}:${widget.annot_index}`;
+  function targetOf(widget) {
+    return { pageIndex, annotIndex: widget.annot_index };
+  }
+
+  function isTarget(target, widget) {
+    return target?.pageIndex === pageIndex && target?.annotIndex === widget.annot_index;
+  }
+
+  function requestCommit() {
+    if (drafts.count === 0) return;
+    commits.request({ sessionId, contentGeneration, onsessionSnapshot });
   }
 
   function fieldStyle(widget) {
@@ -74,7 +86,7 @@
   function isChecked(widget) {
     const draft = drafts.get(widget.field_name);
     if (widget.kind === "RadioButton") {
-      return draft?.kind === "radio" ? draft.widget === widgetKey(widget) : Boolean(widget.checked);
+      return draft?.kind === "radio" ? isTarget(draft.target, widget) : Boolean(widget.checked);
     }
     return draft?.kind === "checkbox" ? draft.checked : Boolean(widget.checked);
   }
@@ -90,23 +102,30 @@
 
   function setText(widget, value) {
     if (value === (widget.value ?? "")) drafts.discard(widget.field_name);
-    else drafts.set(widget.field_name, { kind: "text", value });
+    else drafts.set(widget.field_name, { kind: "text", value, target: targetOf(widget) });
   }
 
   function setCheckbox(widget, checked) {
     if (checked === Boolean(widget.checked)) drafts.discard(widget.field_name);
-    else drafts.set(widget.field_name, { kind: "checkbox", checked });
+    else drafts.set(widget.field_name, { kind: "checkbox", checked, target: targetOf(widget) });
+    requestCommit();
   }
 
   function selectRadio(widget) {
     // Grubun belgede seçili düğmesine geri dönmek taslağı kaldırır.
     if (widget.checked) drafts.discard(widget.field_name);
-    else drafts.set(widget.field_name, { kind: "radio", widget: widgetKey(widget) });
+    else drafts.set(widget.field_name, { kind: "radio", target: targetOf(widget) });
+    requestCommit();
   }
 
   function setSelection(widget, selected) {
     if (sameSelection(selected, originalSelection(widget))) drafts.discard(widget.field_name);
-    else drafts.set(widget.field_name, { kind: "choice", selected });
+    else drafts.set(widget.field_name, { kind: "choice", selected, target: targetOf(widget) });
+    requestCommit();
+  }
+
+  function commitOnEnter(event) {
+    if (event.key === "Enter") event.currentTarget.blur();
   }
 
   function selectedIndices(select) {
@@ -123,8 +142,11 @@
     <div
       class="form-field kind-{widget.kind.toLowerCase()}"
       class:dirty
+      class:saving={dirty && commits.status === "saving"}
+      class:commit-failed={dirty && commits.status === "error"}
       class:read-only={widget.read_only}
       style={fieldStyle(widget)}
+      title={dirty && commits.status === "error" ? commits.error : undefined}
       data-annot-index={widget.annot_index}
     >
       {#if widget.kind === "Text" && widget.multiline}
@@ -134,6 +156,7 @@
           disabled={widget.read_only}
           value={textValue(widget)}
           oninput={(event) => setText(widget, event.currentTarget.value)}
+          onblur={requestCommit}
         ></textarea>
       {:else if widget.kind === "Text"}
         <input
@@ -143,6 +166,8 @@
           disabled={widget.read_only}
           value={textValue(widget)}
           oninput={(event) => setText(widget, event.currentTarget.value)}
+          onblur={requestCommit}
+          onkeydown={commitOnEnter}
         />
       {:else if widget.kind === "Checkbox"}
         <input
@@ -158,7 +183,6 @@
           type="radio"
           name={`form:${pageIndex}:${widget.field_name}`}
           aria-label={label}
-          aria-required={widget.required}
           disabled={widget.read_only}
           checked={isChecked(widget)}
           onchange={() => selectRadio(widget)}
@@ -262,6 +286,14 @@
   .form-field.dirty {
     background: #ffffff;
     outline: 2px solid #f59e0b;
+  }
+
+  .form-field.dirty.saving {
+    outline-style: dashed;
+  }
+
+  .form-field.dirty.commit-failed {
+    outline: 2px solid #dc2626;
   }
 
   .form-field input:disabled,

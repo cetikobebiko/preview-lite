@@ -9460,6 +9460,30 @@ pub async fn delete_session_annotation(
     Ok(snapshot)
 }
 
+/// Form taslaklarını yazar (form-filling-plan.md, Faz 3). İstek burada yalnız belgeden
+/// bağımsız kurallarla denetlenir; alan adı/indeks, tür, read-only ve MaxLen denetimi job
+/// worker'da belgeye karşı yapılır.
+#[tauri::command]
+pub async fn fill_session_form_fields(
+    session_id: String,
+    expected_content_generation: u64,
+    edits: Vec<crate::forms::fill::FormFieldEdit>,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    crate::forms::fill::validate_request(&edits)
+        .map_err(|message| DocumentSessionError::new("SESSION_FORM_FILL_INVALID", message))?;
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::FillFormFields { edits },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
 #[tauri::command]
 pub async fn update_session_metadata(
     session_id: String,
