@@ -1140,7 +1140,7 @@ mod tests {
             outside: 0,
             inside_rows: Vec::new(),
         };
-        for (index, pixel) in rgba.chunks_exact(4).enumerate() {
+        for (index, pixel) in rgba.as_chunks::<4>().0.iter().enumerate() {
             if !is_non_white(pixel) {
                 continue;
             }
@@ -1331,7 +1331,9 @@ mod tests {
         let dark_pixels = |path: &Path| {
             let (width, height, rgba) = render_page_with_annotations(path, 0);
             let (left, top, right, bottom) = pixel_bounds(&rect, height);
-            rgba.chunks_exact(4)
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
                 .enumerate()
                 .filter(|(index, pixel)| {
                     let (x, y) = (index % width, index / width);
@@ -1616,8 +1618,10 @@ mod tests {
 
             let (mut inside, mut outside) = (0, 0);
             for (pixel_index, (old, new)) in before
-                .chunks_exact(4)
-                .zip(after.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(after.as_chunks::<4>().0)
                 .enumerate()
             {
                 let changed = old[..3]
