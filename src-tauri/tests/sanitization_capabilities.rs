@@ -206,14 +206,14 @@ fn validate_xref_stream_points_to_output_objects(output: &[u8]) -> usize {
     assert_eq!(widths.len(), 3);
     assert_eq!(indices.len() % 2, 0);
     let entry_width: usize = widths.iter().sum();
-    let entry_count: usize = indices.chunks_exact(2).map(|pair| pair[1]).sum();
+    let entry_count: usize = indices.as_chunks::<2>().0.iter().map(|pair| pair[1]).sum();
     let content_start = stream_marker + b"stream\n".len();
     let content_end = content_start + entry_width * entry_count;
     assert!(tail[content_end..].starts_with(b"\nendstream"));
 
     let mut cursor = content_start;
     let mut in_use = 0;
-    for pair in indices.chunks_exact(2) {
+    for pair in indices.as_chunks::<2>().0 {
         for object_number in pair[0]..pair[0] + pair[1] {
             let entry_type = if widths[0] == 0 {
                 1
