@@ -995,7 +995,7 @@ impl<'a> ObjectGraphScanner<'a> {
                     "Name-tree /Names yapısı malformed veya limit dışı",
                 ));
             }
-            for (index, pair) in names.chunks_exact(2).enumerate() {
+            for (index, pair) in names.as_chunks::<2>().0.iter().enumerate() {
                 let value = &pair[1];
                 let value_path = format!("{path}/Names/[{}]", index * 2 + 1);
                 match kind {

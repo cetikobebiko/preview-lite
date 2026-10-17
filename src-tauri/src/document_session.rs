@@ -3626,7 +3626,7 @@ async fn cleanup_session_job_record(
     );
     let cleanup_result = if job
         .cleanup_failures_remaining
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
             if remaining > 0 {
                 Some(remaining - 1)
             } else {
