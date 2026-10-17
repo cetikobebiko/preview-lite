@@ -87,6 +87,8 @@ Amaç, yazma yolunun gerçekten `/AP` ürettiğini **ölçerek** kanıtlamak. Bu
    mu? Kullandığımız PDFium build'inde (V8 yok) değer değişince format/calculate
    script'leri sessizce atlanıyor mu?
 
+**Çıkış kriteri:** Fixture'ların tamamında `/AP` yenileniyor ve yeniden açılınca değer doğru render ediliyor. Sorunlu türler yazılı olarak kayda geçiriliyor.
+
 #### Faz 0 sonuçları (2026-10-17, macOS arm64, PDFium 152.0.7961.0, `pdf_enable_v8=false`, `pdf_enable_xfa=false`)
 
 Spike: `src-tauri/tests/form_fill_spike.rs` (`#[ignore]`, manuel). Fixture lopdf ile test
@@ -148,19 +150,62 @@ qpdf/poppler doğrulaması.
 Amaç: `ğ ı İ` ve genel Unicode değerlerin AP'de doğru çizilmesi ya da kaybın kesin
 biçimde tespit edilip kullanıcıya bildirilmesi.
 
-Denenecek seçenekler (sırasıyla):
-1. `FPDF_SetSystemFontInfo` veya varsayılan font mapper'ın Türkçe charset'i (162)
-   raporlayıp raporlamadığını incele. Platform bazında (macOS, Windows, Linux) ölç.
-2. Belgenin `/DR`'sinde Türkçe kapsayan bir font varsa PDFium onu kullanıyor mu?
-   (gömülü TrueType veya Unicode CMap'li CID font içeren fixture)
-3. Hiçbiri çalışmazsa: yazma sonrası `/V` ile AP'de çizilen karakterleri karşılaştırarak
-   kaybı tespit et, `/NeedAppearances true` ayarla (PdfCraft `undrawn_fields` yaklaşımı;
-   PDF/A belgelerinde yasak) ve kullanıcıyı uyar.
-
 Çıkış kriteri: Türkçe değer üç platformda da ya doğru çiziliyor ya da kayıp tespit
 edilip bildiriliyor. Sessiz kayıp kabul edilmez.
 
-**Çıkış kriteri:** Fixture'ların tamamında `/AP` yenileniyor ve yeniden açılınca değer doğru render ediliyor. Sorunlu türler yazılı olarak kayda geçiriliyor.
+#### Faz 0b sonuçları (2026-10-17, macOS arm64, aynı PDFium build'i)
+
+Spike: `form_unicode_spike` (`tests/form_fill_spike.rs`, `#[ignore]`). Her değer
+`FORM_ReplaceSelection` ile yazıldı ve tam kayıt yapıldı. Kaydedilen kopyada sayfanın
+kendi içeriği silindi, `FPDFPage_Flatten` uygulandı ve her widget dikdörtgeninde
+`FPDFText_GetBoundedText` ile çizilen metin çıkarıldı.
+
+| Alan | `/DA` fontu | Değer | AP'de çizilen | Kayıp | PDFium'un eklediği font |
+|---|---|---|---|---|---|
+| Türkçe küçük | Helv (WinAnsi) | `ğışçöü` | `şçöü` | **ğ ı** | `Arial_EE` (CP1250) |
+| Türkçe büyük | Helv | `ĞİŞÇÖÜ` | `ŞÇÖÜ` | **Ğ İ** | `Arial_EE` |
+| Türkçe ad | Helv | `Çağrı Yılmaz İstanbul` | `Çar Ylmaz stanbul` | **ğ ı ı İ** | — |
+| Lehçe | Helv | `ąęłńśźż` | aynı | yok | `Arial_EE` |
+| Fransızca/€ | Helv | `œŒ€é` | aynı | yok | `ArialUnicodeMS` |
+| Kiril | Helv | `Жжё` | aynı | yok | `Arial_CC` (CP1251) |
+| Yunanca | Helv | `Ωωλ` | aynı | yok | `ArialUnicodeMS` (Greek) |
+| CJK | Helv | `日本語` | aynı | yok | `_86` (GB) |
+| Türkçe ×3 | **TrHv** (WinAnsi + CP1254 Differences) | aynı üç değer | aynı kayıplar | **aynı** | `Arial_EE` |
+
+Yorum:
+
+1. **Kayıp yalnız `ğ Ğ ı İ` ile sınırlı.** Bu dört karakter CP1254'te bulunuyor, CP1250'de
+   bulunmuyor. Ş/ş ise her iki kod sayfasında var. PDFium, Latin Extended-A
+   karakterleri için CP1250 (`_EE`) fontunu seçiyor ve Türkçe charset'e (162)
+   düşmüyor. Gözlenen davranış bununla birebir uyumlu. PDFium kaynak kodu bu çalışmada
+   okunmadı; neden bir **çıkarım**, doğrulanmış bir gerçek değil.
+2. **Belgenin `/DR` fontu kurtarmıyor.** CP1254 Differences taşıyan `/DA` fontu ğ ve ı için
+   seçilmedi. Seçenek 2 (belgenin kendi fontu) en azından basit fontlar için çalışmıyor.
+   Gömülü Unicode CID fontlu fixture denenmedi.
+3. **Font mapper değil, charset seçimi.** Kiril, Yunanca ve CJK için platform fontları
+   bulundu. Sorun font bulunamaması değil, Türkçe için yanlış charset'in seçilmesi.
+   Bu nedenle Windows ve Linux'ta da aynı davranış **beklenir**, ancak ölçülmedi.
+4. **Tespit yolu çalışıyor ve yalnız PDFium kullanıyor.** Kaydedilen kopyayı
+   aç → sayfa nesnelerini sil → `FPDFPage_Flatten` → widget dikdörtgeninde
+   `FPDFText_GetBoundedText` → değerdeki karakterlerden çizilmeyenleri bul. Eksik küme
+   tüm alanlarda birebir yakalandı. Sayfa içeriği silinmeden yapılan ilk denemede
+   başlık metni widget alanına taşıp sonucu kirletti; içerik silme adımı zorunlu.
+5. **`/NeedAppearances` PDFium public API'siyle yazılamıyor.** AcroForm sözlüğüne anahtar
+   ekleyen bir FPDF fonksiyonu yok. Bu bayrak için `lopdf` yazımı gerekir ve AGENTS.md
+   gereği ayrı mimari gerekçe ile onay ister.
+
+#### Düzeltme seçenekleri (karar bekliyor)
+
+| Seçenek | Ne yapar | Maliyet | Sonuç |
+|---|---|---|---|
+| **A. Tespit + uyarı + overlay** | Faz 3 yazımından sonra yukarıdaki tespit çalışır. Kayıp varsa kullanıcı uyarılır, edit sonucu `undrawn_chars` döner ve FormLayer o alanın değerini DOM'da çizer | Düşük, yeni bağımlılık yok | Veri doğru (`/V`). Uygulama içinde doğru görünür. Diğer AP kullanan görüntüleyicilerde eksik görünür; bu kullanıcıya açıkça söylenir |
+| A + `/NeedAppearances` | A'ya ek olarak bayrak `lopdf` ile yazılır | `lopdf` onayı + test | Acrobat ve pdf.js görünümü kendi fontuyla yeniden üretir. Chrome (PDFium) aynı hatayı tekrarlar. PDF/A'da yasak |
+| B. Yamalı PDFium build'i | Türkçe karakterler için CP1254 charset seçimi | Yüksek: altı hedef için kendi build'imiz, SHA-pinned provenance zinciri yeniden kurulur | Kökten çözüm. Upstream'e hata raporu ve yama gönderilmeli |
+| C. Kendi AP üreticimiz | Etkilenen alanlar için görünüm akışını gömülü Unicode fontla biz yazarız | Yüksek: font gömme/subsetting, muhtemelen yeni crate; PDFium'un AP otoritesiyle çakışır | Önerilmez |
+
+**Öneri:** Faz 3'ü **A** ile ilerlet (sessiz kayıp yok, yeni bağımlılık yok). PDFium'a
+upstream hata raporu aç. B'yi rapora gelen yanıta göre ayrıca değerlendir.
+`/NeedAppearances` ayrı bir `lopdf` kararı olarak ele alınır.
 
 ### Faz 1 — Okuma: alan modeli (salt-okunur)
 
@@ -232,6 +277,8 @@ pub struct FormFieldEdit {
    alan var mı, türü uyuyor mu, read-only mi, MaxLen aşılıyor mu, seçenek indeksi sınır
    içinde mi, multi-select değilse tek seçim mi. Tek bir geçersiz edit tüm batch'i reddeder
    (atomik).
+   Yazma sonrası aynı job içinde görünüm doğrulaması yapılır (Faz 0b tespit yolu,
+   seçenek A). Kayıp karakterler edit sonucuna `undrawn_chars` olarak eklenir.
 2. `fill_session_form_fields(session_id, expected_content_generation, edits)` komutu
    `mutate_isolated` üzerinden çalışır. Generation, digest, recovery ve atomic I/O mevcut
    yoldan gelir. Ana process kullanıcı PDF'ini açmaz.
@@ -264,7 +311,7 @@ pub struct FormFieldEdit {
 | Her commit = alt süreç + yeni generation | Gecikme, render yeniden tetiklenmesi | Batch commit + debounce. Faz 0'da gecikme ölçülür |
 | Annot indeksinin generation'lar arasında kayması | Yanlış alana yazma | İsim + indeks çift doğrulaması, `expected_content_generation` |
 | Tam yeniden yazım kaydı | Dijital imzalar geçersiz olur | Faz 3 uyarısı. Incremental save Faz 4'te |
-| Font kapsamı (Türkçe `ğ ı`, CJK) | **Doğrulandı:** PDFium `ğ ı` karakterlerini AP'den sessizce siliyor | Faz 0b (zorunlu): platform font eşlemesi, `/DR` fontu ya da tespit + `NeedAppearances` + uyarı |
+| Türkçe `ğ Ğ ı İ` glif kaybı | **Doğrulandı (Faz 0b):** PDFium bu dört karakteri AP'den sessizce siliyor. `/DR` fontu kurtarmıyor. Kiril, Yunanca ve CJK etkilenmiyor | Seçenek A: flatten + metin çıkarma ile tespit, uyarı ve DOM overlay. Upstream rapor. B (yamalı PDFium) ayrı karar |
 | PDFium read-only'yi uygulamıyor | Read-only alan değiştirilebilir | **Doğrulandı.** Backend her edit'te `Ff` bit 1'i kontrol eder ve reddeder. Bunun için test zorunlu |
 | MaxLen sessiz kırpma | Kullanıcının yazdığı kaybolur | Backend aşımı reddeder ya da bildirir |
 

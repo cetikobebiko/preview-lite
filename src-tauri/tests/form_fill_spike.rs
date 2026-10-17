@@ -76,6 +76,16 @@ impl Fixture {
         }
     }
 
+    fn dr_font(&mut self, key: &str, font: Dictionary) {
+        let id = self.doc.add_object(font);
+        self.dr
+            .get_mut(b"Font")
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set(key, id);
+    }
+
     fn appearance(&mut self, r: [f32; 4], content: &str) -> Object {
         let stream = Stream::new(
             dictionary! {
@@ -842,5 +852,207 @@ fn form_fill_spike() {
         &dir.join("after-full-ffldraw.png"),
         true,
     );
+    println!("\nartifacts: {}", dir.display());
+}
+
+// ---------------------------------------------------------------------------
+// Faz 0b: Unicode / Turkish appearance coverage and loss detection
+// ---------------------------------------------------------------------------
+
+/// Text a flattened copy of the page shows inside `rect`, via PDFium text
+/// extraction. Whitespace is dropped so line breaks and comb spacing compare.
+fn drawn_text(
+    b: &dyn PdfiumLibraryBindings,
+    pdf: &Path,
+    rects: &[(String, [f32; 4])],
+) -> BTreeMap<String, String> {
+    let doc = b.FPDF_LoadDocument(pdf.to_str().unwrap(), None);
+    assert!(!doc.is_null());
+    let page = b.FPDF_LoadPage(doc, 0);
+    // Drop the page's own content so only widget appearances are extracted.
+    // Removed objects are owned by the caller; this throwaway copy leaks them.
+    for index in (0..b.FPDFPage_CountObjects(page)).rev() {
+        b.FPDFPage_RemoveObject(page, b.FPDFPage_GetObject(page, index));
+    }
+    b.FPDFPage_GenerateContent(page);
+    let flattened = b.FPDFPage_Flatten(page, 0);
+    println!("FPDFPage_Flatten = {flattened} (1 = success)");
+    b.FPDF_ClosePage(page);
+    let page = b.FPDF_LoadPage(doc, 0);
+    let text_page = b.FPDFText_LoadPage(page);
+    let mut out = BTreeMap::new();
+    for (name, r) in rects {
+        let (l, bt, rt, t) = (
+            f64::from(r[0]),
+            f64::from(r[1]),
+            f64::from(r[2]),
+            f64::from(r[3]),
+        );
+        let n = b.FPDFText_GetBoundedText(text_page, l, t, rt, bt, std::ptr::null_mut(), 0);
+        let mut buf = vec![0u16; n.max(0) as usize + 1];
+        b.FPDFText_GetBoundedText(
+            text_page,
+            l,
+            t,
+            rt,
+            bt,
+            buf.as_mut_ptr(),
+            buf.len() as c_int,
+        );
+        let end = buf.iter().position(|u| *u == 0).unwrap_or(buf.len());
+        out.insert(name.clone(), String::from_utf16_lossy(&buf[..end]));
+    }
+    b.FPDFText_ClosePage(text_page);
+    b.FPDF_ClosePage(page);
+    b.FPDF_CloseDocument(doc);
+    out
+}
+
+fn squash(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Fonts selected with `Tf` in each widget's normal appearance.
+fn ap_fonts(pdf: &Path) -> BTreeMap<String, Vec<String>> {
+    let doc = Document::load(pdf).unwrap();
+    let page_id = *doc.get_pages().get(&1).unwrap();
+    let page = doc.get_dictionary(page_id).unwrap();
+    let annots = doc
+        .dereference(page.get(b"Annots").unwrap())
+        .unwrap()
+        .1
+        .as_array()
+        .unwrap();
+    let mut out = BTreeMap::new();
+    for a in annots {
+        let d = doc.dereference(a).unwrap().1.as_dict().unwrap();
+        let Some(Object::Stream(s)) = d
+            .get(b"AP")
+            .ok()
+            .and_then(|ap| doc.dereference(ap).ok()?.1.as_dict().ok())
+            .and_then(|ap| Some(doc.dereference(ap.get(b"N").ok()?).ok()?.1))
+        else {
+            continue;
+        };
+        let content = s
+            .decompressed_content()
+            .unwrap_or_else(|_| s.content.clone());
+        let text = String::from_utf8_lossy(&content);
+        let mut fonts: Vec<String> = text
+            .split('\n')
+            .filter(|l| l.ends_with(" Tf"))
+            .filter_map(|l| l.split_whitespace().next().map(str::to_owned))
+            .collect();
+        fonts.dedup();
+        out.insert(qualified(&doc, d), fonts);
+    }
+    out
+}
+
+#[test]
+#[ignore = "Faz 0b unicode form-fill spike; manual measurement"]
+fn form_unicode_spike() {
+    let (dir, _guard) = out_dir();
+    let input = dir.join("unicode-fixture.pdf");
+
+    // (field, value, DA font)
+    let probes: [(&str, &str, &str); 11] = [
+        ("tr_lower", "ğışçöü", "Helv"),
+        ("tr_upper", "ĞİŞÇÖÜ", "Helv"),
+        ("tr_name", "Çağrı Yılmaz İstanbul", "Helv"),
+        ("pl", "ąęłńśźż", "Helv"),
+        ("fr", "œŒ€é", "Helv"),
+        ("cyr", "Жжё", "Helv"),
+        ("el", "Ωωλ", "Helv"),
+        ("cjk", "日本語", "Helv"),
+        ("tr_dr_lower", "ğışçöü", "TrHv"),
+        ("tr_dr_upper", "ĞİŞÇÖÜ", "TrHv"),
+        ("tr_dr_name", "Çağrı Yılmaz İstanbul", "TrHv"),
+    ];
+
+    let mut f = Fixture::new();
+    // CP1254 layout through Differences on a WinAnsi base: the shape Turkish
+    // forms commonly carry in /DR.
+    f.dr_font(
+        "TrHv",
+        dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            "Encoding" => dictionary! {
+                "Type" => "Encoding", "BaseEncoding" => "WinAnsiEncoding",
+                "Differences" => vec![
+                    208.into(), name("Gbreve"),
+                    221.into(), name("Idotaccent"), name("Scedilla"),
+                    240.into(), name("gbreve"),
+                    253.into(), name("dotlessi"), name("scedilla"),
+                ],
+            },
+        },
+    );
+    let mut rects = Vec::new();
+    for (i, (field, _, font)) in probes.iter().enumerate() {
+        let y = 740.0 - 40.0 * i as f32;
+        let r = [50.0, y - 20.0, 400.0, y];
+        rects.push((field.to_string(), r));
+        let da = format!("/{font} 12 Tf 0 g");
+        f.text(field, r, 0, None, dictionary! { "DA" => pdf_string(&da) });
+    }
+    f.finish(&input);
+
+    let pdfium = get_pdfium().unwrap();
+    let b = pdfium.bindings();
+    let saved = {
+        let fd = FormDoc::open(b, &input);
+        let page = b.FPDF_LoadPage(fd.doc, 0);
+        b.FORM_OnAfterLoadPage(page, fd.form);
+        for w in widgets(&fd, page) {
+            let value = probes.iter().find(|p| p.0 == w.name).unwrap().1;
+            let text: &'static str = Box::leak(value.to_owned().into_boxed_str());
+            apply(&fd, page, &w, &Edit::Text(text));
+        }
+        b.FORM_OnBeforeClosePage(page, fd.form);
+        b.FPDF_ClosePage(page);
+        fd.save(0)
+    };
+    let output = dir.join("unicode-filled.pdf");
+    std::fs::write(&output, saved).unwrap();
+
+    let fonts = ap_fonts(&output);
+    let drawn = drawn_text(b, &output, &rects);
+    let stored: BTreeMap<String, String> = {
+        let fd = FormDoc::open(b, &output);
+        let page = b.FPDF_LoadPage(fd.doc, 0);
+        b.FORM_OnAfterLoadPage(page, fd.form);
+        let map = widgets(&fd, page)
+            .into_iter()
+            .map(|w| (w.name, w.value))
+            .collect();
+        b.FORM_OnBeforeClosePage(page, fd.form);
+        b.FPDF_ClosePage(page);
+        map
+    };
+
+    println!(
+        "\n{:<12} {:<6} {:<24} {:<24} {:<8} {:<10} AP fonts",
+        "field", "DA", "stored /V", "drawn (flattened)", "match", "missing"
+    );
+    for (field, value, font) in probes {
+        let v = stored.get(field).cloned().unwrap_or_default();
+        let d = drawn.get(field).cloned().unwrap_or_default();
+        let missing: String = squash(value)
+            .chars()
+            .filter(|c| !squash(&d).contains(*c))
+            .collect();
+        println!(
+            "{:<12} {:<6} {:<24} {:<24} {:<8} {:<10} {:?}",
+            field,
+            font,
+            v,
+            d,
+            squash(&v) == squash(&d),
+            missing,
+            fonts.get(field).cloned().unwrap_or_default()
+        );
+    }
+    render_png(&pdfium, &output, &dir.join("unicode-ffldraw.png"), true);
     println!("\nartifacts: {}", dir.display());
 }
