@@ -119,6 +119,18 @@ pub(crate) fn read_page_form_fields(
         .map_err(|error| FormReadError::Pdfium(format!("Sayfa bulunamadı: {error:?}")))?;
     let display = PageDisplayTransform::for_page(&page).map_err(FormReadError::Pdfium)?;
 
+    // PDFium adopts widgets that only the page's `/Annots` reaches (not the form's
+    // `/Fields`) when it builds the page's form view: `CPDF_InteractiveForm::FixPageFields`
+    // runs in the `CPDFSDK_PageView` constructor. pdfium-render creates that view only
+    // through `FPDF_FFLDraw`, so a 1×1 render with form data runs it before the widgets are
+    // read. Without it such widgets have no form field type and are skipped.
+    page.render_with_config(
+        &PdfRenderConfig::new()
+            .set_fixed_size(1, 1)
+            .render_form_data(true),
+    )
+    .map_err(|error| FormReadError::Pdfium(format!("Sayfa form görünümü kurulamadı: {error}")))?;
+
     let annotations = page.annotations();
     let mut widgets = Vec::new();
     for index in 0..annotations.len() {
@@ -297,7 +309,16 @@ mod tests {
             Object::Dictionary(dictionary! { "N" => dictionary! { on => on_ap, "Off" => off_ap } })
         }
 
-        fn widget(&mut self, mut dict: Dictionary, r: [f32; 4]) {
+        fn widget(&mut self, dict: Dictionary, r: [f32; 4]) {
+            self.add_widget(dict, r, true);
+        }
+
+        /// A widget that only the page's `/Annots` reaches, not the form's `/Fields`.
+        fn orphan_widget(&mut self, dict: Dictionary, r: [f32; 4]) {
+            self.add_widget(dict, r, false);
+        }
+
+        fn add_widget(&mut self, mut dict: Dictionary, r: [f32; 4], listed: bool) {
             dict.set("Type", "Annot");
             dict.set("Subtype", "Widget");
             dict.set("Rect", rect(r));
@@ -308,7 +329,9 @@ mod tests {
             dict.set("DA", string("/Helv 10 Tf 0 g"));
             let id = self.doc.add_object(dict);
             self.annots.push(Object::Reference(id));
-            self.fields.push(Object::Reference(id));
+            if listed {
+                self.fields.push(Object::Reference(id));
+            }
         }
 
         fn checkbox(&mut self, t: &str, r: [f32; 4], on: &str, state: &str) {
@@ -529,6 +552,30 @@ mod tests {
         assert!(close(rect.y, (792.0 - 720.0) / 792.0), "{rect:?}");
         assert!(close(rect.width, 250.0 / 612.0), "{rect:?}");
         assert!(close(rect.height, 20.0 / 792.0), "{rect:?}");
+    }
+
+    #[test]
+    fn widgets_outside_acroform_fields_are_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("orphan.pdf");
+        let mut f = FormFixture::new();
+        f.widget(
+            dictionary! { "FT" => "Tx", "T" => string("listed"), "V" => string("a") },
+            [50.0, 700.0, 300.0, 720.0],
+        );
+        f.orphan_widget(
+            dictionary! { "FT" => "Tx", "T" => string("orphan"), "V" => string("b") },
+            [50.0, 650.0, 300.0, 670.0],
+        );
+        f.save(&path, true);
+        let widgets = read(&path).1.unwrap();
+        assert_eq!(
+            widgets
+                .iter()
+                .map(|w| (w.field_name.as_str(), w.value.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![("listed", Some("a")), ("orphan", Some("b"))]
+        );
     }
 
     #[test]

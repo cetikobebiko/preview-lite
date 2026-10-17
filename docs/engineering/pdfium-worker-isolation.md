@@ -199,7 +199,8 @@ Commands are `Hello`, `OpenDocument`, `CloseDocument`, `CloseAllDocuments`, `Get
 Worker protocol version 6 adds `GetFormInfo` (`FormInfo { form_type, signature_count }`) and
 `GetPageFormFields` (`PageFormFields([FormWidgetData])`, one page's form widgets in `/Annots`
 order with display-space normalized rects). Both are read-only and use pdfium-render getters
-only; `get_session_form_info` and `get_session_page_form_fields` reach them through
+only (a 1×1 render with form data first builds PDFium's page form view so widgets outside
+`/Fields` are adopted); `get_session_form_info` and `get_session_page_form_fields` reach them through
 `acquire_worker_read` with the expected content generation. A page over the widget, text or
 option limits in `forms.rs` fails with `MessageTooLarge`. See
 `docs/engineering/form-filling-plan.md`, Faz 1.

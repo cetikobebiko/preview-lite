@@ -465,14 +465,41 @@ Tarayıcı doğrulamasında bulunup düzeltilenler:
   kapsayıcısı artık tüm dikdörtgeni opak örtüyor.
 
 Bilinen eksikler:
-- **`/Fields` dışında kalan widget'lar görünmüyor.** PDFium bu widget'ları
-  `FORM_OnAfterLoadPage` sırasında `FixPageFields` ile alana çeviriyor. pdfium-render bu
-  çağrıyı yapmadığından worker onları form alanı olarak görmüyor (ham spike görüyordu).
-  Çözüm worker'da ham form ortamı gerektirir.
+- ~~**`/Fields` dışında kalan widget'lar görünmüyor.**~~ Çözüldü, aşağıdaki bölüme bakın.
 - Editable combo'da serbest metin girişi, `/Tabs` sırası, imza uyarısı ve XFA bildirimi
   yok. `FormInfo` henüz frontend'de kullanılmıyor.
 - Aynı adlı birden çok checkbox widget'ı tek taslağı paylaşıyor; export value okunmadığı
   için ayırt edilemiyorlar.
+
+#### `/Fields` dışı widget'lar (2026-10-17)
+
+**Kök neden (PDFium 7961 kaynağında doğrulandı):** PDFium, yalnız sayfanın `/Annots`
+dizisinden erişilen widget'ları `CPDF_InteractiveForm::FixPageFields` ile alana çeviriyor.
+Bu fonksiyon yalnızca `CPDFSDK_PageView` kurucusunda çağrılıyor. Sayfa görünümünü
+`FormHandleToPageView` → `GetOrCreatePageView` oluşturuyor; bunu tetikleyen public
+fonksiyonlar `FORM_*` ailesi ve `FPDF_FFLDraw`. pdfium-render bunlardan yalnız
+`FPDF_FFLDraw`'ı, `render_form_data(true)` ile render sırasında çağırıyor ve
+`FORM_OnAfterLoadPage`'i hiç çağırmıyor.
+
+Değerlendirilen seçenekler:
+
+| Seçenek | Artı | Eksi |
+|---|---|---|
+| **A. Okumadan önce 1×1 bitmap'e form verisiyle render** (seçildi) | Yeni `unsafe` yok, değişiklik `forms.rs` içinde birkaç satır, deterministik | Bir yan etki üzerinden çalışıyor (yorumla belgelendi); MaxLen/export value/Comb sorununu çözmüyor |
+| B. Worker'da ham ikinci `FPDF_DOCUMENT` + `FPDF_FORMFILLINFO` + `FORM_OnAfterLoadPage` | Ham `FPDFAnnot_*` ile MaxLen, export value, doğru `/Ff` bayrakları ve control index de okunur | FFI `unsafe`, form içeren her belge için ikinci belge örneği; "açıldıktan sonra kaynak yolu yeniden açma" kuralı nedeniyle `OpenDocument` anında açılmalı; şifreli belgede bayt kopyası tutulmalı |
+
+Ölçüm (debug profil, macOS arm64): süreçteki ilk okuma **1781 ms**, aynı belgede sonraki
+okumalar 0,3 ms, yeni belgede ilk okuma 1,4 ms. Ağır sayfada 1×1 render ~0,1 ms.
+İlk okumadaki maliyet süreç başına bir kezdir: PDFium görünüm akışı olmayan alanlar için
+ilk görünümü üretirken sistem fontlarını tarıyor. Worker'ın normal sayfa render'ı da
+`FFLDraw` ile çalıştığından uygulamada bu maliyet ilk render'da zaten ödeniyor.
+
+Doğrulama: `forms::tests::widgets_outside_acroform_fields_are_read` düzeltmeden önce
+başarısız oldu (yalnız `listed` döndü), sonra geçti.
+`worker_reads_form_info_and_page_form_fields` gerçek worker'da orphan widget'ı da
+doğruluyor.
+
+B, Faz 3'ün UI'da MaxLen veya comb göstermesi gerekirse yeniden değerlendirilir.
 
 ### Faz 3 — Yazma: `FillFormFields` mutasyonu
 

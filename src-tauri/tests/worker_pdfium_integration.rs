@@ -1933,13 +1933,25 @@ mod macos_arm64 {
             "AP" => dictionary! { "N" => dictionary! { "On" => on, "Off" => off } },
             "Rect" => vec![50.into(), 650.into(), 66.into(), 666.into()],
         });
+        // Reachable only through the page's /Annots, not the form's /Fields.
+        let orphan_id = document.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx", "F" => 4, "P" => page_id,
+            "T" => Object::String(b"orphan".to_vec(), StringFormat::Literal),
+            "V" => Object::String(b"adopted".to_vec(), StringFormat::Literal),
+            "DA" => Object::String(b"/Helv 10 Tf 0 g".to_vec(), StringFormat::Literal),
+            "Rect" => vec![50.into(), 600.into(), 300.into(), 620.into()],
+        });
         let content_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
         document.objects.insert(
             page_id,
             Object::Dictionary(dictionary! {
                 "Type" => "Page", "Parent" => pages_id, "Contents" => content_id,
                 "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
-                "Annots" => vec![Object::Reference(text_id), Object::Reference(checkbox_id)],
+                "Annots" => vec![
+                    Object::Reference(text_id),
+                    Object::Reference(checkbox_id),
+                    Object::Reference(orphan_id),
+                ],
             }),
         );
         document.objects.insert(
@@ -2020,7 +2032,7 @@ mod macos_arm64 {
                 continue;
             }
             assert_eq!(info.form_type, FormType::AcroForm);
-            assert_eq!(fields.len(), 2);
+            assert_eq!(fields.len(), 3);
             assert_eq!(fields[0].field_name, "name");
             assert_eq!(fields[0].kind, FormFieldKind::Text);
             assert_eq!(fields[0].value.as_deref(), Some("Ada"));
@@ -2031,6 +2043,9 @@ mod macos_arm64 {
             assert_eq!(fields[1].field_name, "agree");
             assert_eq!(fields[1].kind, FormFieldKind::Checkbox);
             assert_eq!(fields[1].checked, Some(true));
+            assert_eq!(fields[2].field_name, "orphan");
+            assert_eq!(fields[2].value.as_deref(), Some("adopted"));
+            assert_eq!(fields[2].annot_index, 2);
         }
     }
 }
