@@ -36,8 +36,8 @@ jobs:
       - name: Verify Node.js toolchain
         run: node --version && npm --version
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1 (pinned)
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Install Linux Tauri build dependencies
         run: |

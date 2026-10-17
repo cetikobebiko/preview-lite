@@ -41,8 +41,10 @@ jobs:
       - name: Check Svelte and TypeScript
         run: npx --no-install svelte-check --tsconfig ./jsconfig.json
 
-      - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1 (pinned)
+        uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: rustfmt, clippy
 
       - name: Install Linux Dependencies (Tauri)
         if: matrix.os == 'ubuntu-22.04'

@@ -3,6 +3,7 @@ name = "preview-alternative"
 version = "0.1.0"
 description = "Fast macOS Preview alternative built with Tauri v2, Rust & Svelte"
 edition = "2021"
+rust-version = "1.97"
 default-run = "preview-alternative"
 [lib]
 name = "preview_alternative_lib"
