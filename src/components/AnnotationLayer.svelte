@@ -2,6 +2,7 @@
   import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { getPageAnnotations, addAnnotation, deleteAnnotation } from "../pdfState.js";
   import { requireAsyncPromptCoordinator } from "../services/asyncPrompt.svelte.js";
+  import { isSignatureLossDeclined } from "../services/signatureLossGuard.js";
   import {
     clientPointToLayerNormalized,
     fixedSizeNormalizedRect,
@@ -131,7 +132,7 @@
         await loadAnnotations();
         onsessionSnapshot?.(sessionSnapshot);
       } catch (err) {
-        console.error("Açıklama kaydedilemedi", err);
+        if (!isSignatureLossDeclined(err)) console.error("Açıklama kaydedilemedi", err);
       }
     } else if (activeTool === "text") {
        // Küçük tıklama ise sabit boyutlu not ekle
@@ -148,18 +149,22 @@
            })
          : null;
        if (contents) {
-         const sessionSnapshot = await addAnnotation(
-           sessionId,
-           contentGeneration,
-           pageIndex,
-           "Text",
-           normalizedRect,
-           activeColor,
-           contents,
-         );
-         contentGeneration = sessionSnapshot.contentGeneration;
-         await loadAnnotations();
-         onsessionSnapshot?.(sessionSnapshot);
+         try {
+           const sessionSnapshot = await addAnnotation(
+             sessionId,
+             contentGeneration,
+             pageIndex,
+             "Text",
+             normalizedRect,
+             activeColor,
+             contents,
+           );
+           contentGeneration = sessionSnapshot.contentGeneration;
+           await loadAnnotations();
+           onsessionSnapshot?.(sessionSnapshot);
+         } catch (err) {
+           if (!isSignatureLossDeclined(err)) console.error("Açıklama kaydedilemedi", err);
+         }
        }
     }
     
@@ -183,7 +188,7 @@
         await loadAnnotations();
         onsessionSnapshot?.(sessionSnapshot);
       } catch (e) {
-        console.error(e);
+        if (!isSignatureLossDeclined(e)) console.error(e);
       }
     }
   }

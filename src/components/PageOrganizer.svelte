@@ -21,6 +21,7 @@
   import { SvelteMap } from "svelte/reactivity";
   import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { rotatePage, deletePages, reorderPages } from "../pdfState.js";
+  import { isSignatureLossDeclined } from "../services/signatureLossGuard.js";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
   import {
     pageFailureMessage,
@@ -369,6 +370,11 @@
         contentGeneration === sourceContentGeneration &&
         pages.includes(page)
       ) {
+        if (isSignatureLossDeclined(e)) {
+          // Nothing changed; bring back the thumbnail the rotation released.
+          void renderThumbnail(page, sourceSessionId, sourceContentGeneration);
+          return;
+        }
         releaseCanvasBackingStore(page.canvas);
         updatePageStatus(page, "error", e?.message || String(e));
         alert("Döndürme hatası: " + e);
@@ -402,7 +408,7 @@
       pageCount -= 1;
       onpageMutated?.({ snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterDelete([page.index]) });
     } catch (e) {
-      alert("Silme hatası: " + e);
+      if (!isSignatureLossDeclined(e)) alert("Silme hatası: " + e);
     }
     isSaving = false;
   }
@@ -421,7 +427,7 @@
       }
       onorderSaved?.({ snapshot: sessionSnapshot, mapPageIndex: pageMappingAfterReorder(newOrder) });
     } catch(e) {
-      alert("Sıralama kaydedilemedi: " + e);
+      if (!isSignatureLossDeclined(e)) alert("Sıralama kaydedilemedi: " + e);
     }
     isSaving = false;
   }

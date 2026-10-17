@@ -3,12 +3,17 @@ import { getRuntimeFeatureContext } from "./featureRegistry.js";
 import * as manipulationBackend from "./services/backend/manipulation.js";
 import * as ocrBackend from "./services/backend/ocr.js";
 import * as sessionBackend from "./services/backend/session.js";
+import { ensureSignatureLossAccepted } from "./services/signatureLossGuard.js";
 
 // ==========================================
 // AŞAMA 9: Belge Manipülasyonu
 // ==========================================
+//
+// Bu bölümdeki oturum mutasyonları ve annotation ekleme/silme belgeyi tam yeniden yazar;
+// imzalı belgede önce `ensureSignatureLossAccepted` onay ister (bkz. signatureLossGuard.js).
 
 export async function rotatePage(sessionId, generation, pageIndex, degrees) {
+  await ensureSignatureLossAccepted(sessionId, generation, "Sayfa döndürme");
   return await sessionBackend.rotateSessionPage(
     sessionId,
     generation,
@@ -18,6 +23,7 @@ export async function rotatePage(sessionId, generation, pageIndex, degrees) {
 }
 
 export async function deletePages(sessionId, generation, pageIndices) {
+  await ensureSignatureLossAccepted(sessionId, generation, "Sayfa silme");
   return await sessionBackend.deleteSessionPages(
     sessionId,
     generation,
@@ -26,6 +32,7 @@ export async function deletePages(sessionId, generation, pageIndices) {
 }
 
 export async function reorderPages(sessionId, generation, newOrder) {
+  await ensureSignatureLossAccepted(sessionId, generation, "Sayfa sıralaması");
   return await sessionBackend.reorderSessionPages(
     sessionId,
     generation,
@@ -37,13 +44,16 @@ export async function insertBlankPage(sessionId, generation, atIndex, width = 59
   return await guardFeatureAction(
     "page_insert_blank",
     getRuntimeFeatureContext(),
-    () => sessionBackend.insertSessionBlankPage(
-      sessionId,
-      generation,
-      atIndex,
-      width,
-      height,
-    ),
+    async () => {
+      await ensureSignatureLossAccepted(sessionId, generation, "Boş sayfa ekleme");
+      return await sessionBackend.insertSessionBlankPage(
+        sessionId,
+        generation,
+        atIndex,
+        width,
+        height,
+      );
+    },
   );
 }
 
@@ -193,6 +203,7 @@ export async function addAnnotation(
     "annotation",
     context,
     async () => {
+      await ensureSignatureLossAccepted(sessionId, generation, "Açıklama ekleme");
       try {
         return await sessionBackend.addSessionAnnotation(
           sessionId,
@@ -222,6 +233,7 @@ export async function deleteAnnotation(
     "annotation",
     context,
     async () => {
+      await ensureSignatureLossAccepted(sessionId, generation, "Açıklama silme");
       try {
         return await sessionBackend.deleteSessionAnnotation(
           sessionId,

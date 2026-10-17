@@ -619,8 +619,35 @@ Doğrulama:
 Sınırlar:
 - İmza doğrulamasının görüntüleyici tarafı (Acrobat'ın "imzadan sonra değiştirildi" ve izin
   verilen değişiklik analizi) test edilmedi.
-- Diğer mutasyonlar (döndürme, silme, annotation, birleştirme) hâlâ tam yeniden yazım
-  yapıyor ve imzaları bozuyor. Form yazımından sonra bunlardan biri yapılırsa imzalar gider.
+- Diğer mutasyonlar (döndürme, silme, sıralama, boş sayfa, annotation ekleme/silme) hâlâ
+  tam yeniden yazım yapıyor ve imzaları bozuyor. Artık bu mutasyonlardan önce uyarılıyor
+  (aşağıdaki bölüme bakın).
+
+#### Tam yeniden yazım öncesi imza uyarısı (2026-10-17)
+
+`src/services/signatureLossGuard.js`: `pdfState`'teki `rotatePage`, `deletePages`,
+`reorderPages`, `insertBlankPage`, `addAnnotation` ve `deleteAnnotation` backend'e gitmeden
+önce imza durumunu (`getSessionFormInfo` → `signature_count`) okuyor. İmza varsa işlemin
+adını içeren bir onay istiyor ("… belgeyi yeniden yazar ve mevcut imzaları geçersiz kılar").
+İmzasız belge ya da kabul oturum başına hatırlanıyor; reddetme bir sonraki işlemde yeniden
+soruluyor. İmza durumu okunamazsa işlem hata veriyor, tahmin yürütülmüyor.
+
+Reddetme `SignatureLossDeclinedError` (`code: SIGNATURE_LOSS_DECLINED`) atıyor; PageOrganizer
+ve AnnotationLayer bunu hata olarak göstermiyor. PageOrganizer, döndürme için serbest
+bıraktığı küçük resmi yeniden render ediyor. Bu sırada AnnotationLayer'ın sabit boyutlu not
+yolunda hiç hata yakalanmadığı görüldü ve düzeltildi.
+
+Kapsam dışı:
+- Birleştirme, bölme ve sayfa çıkarma yeni dosyalar üretiyor; açık belgeyi değiştirmedikleri
+  için uyarı yok. Çıktılarda imzalar geçersizdir.
+- Güvenli redaksiyon ve sanitization kendi imza onaylarını zaten istiyor.
+- `insertBlankPage`'in `page_insert_blank` özelliği kapalı; koruma yerinde ama bu yola
+  ulaşılamıyor.
+
+Doğrulama: `signatureLossGuard.test.js` (4), `pdfState.signatureLoss.test.js` (beş mutasyon ×
+reddet/kabul: reddedince backend çağrılmıyor ve hata loglanmıyor), `PageOrganizer.test.js`
+(reddetme uyarı göstermiyor, küçük resim geri geliyor). Yerel onay diyaloğu Tauri
+penceresinde görsel olarak doğrulanmadı.
 
 ### Faz 4 — Sonraki adımlar (bu planın kapsamı dışında, ayrı karar gerektirir)
 

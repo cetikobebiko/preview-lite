@@ -6,6 +6,7 @@ import { renderThumbnail } from "../services/backend/viewer.js";
 import { paintBufferToCanvas } from "../utils/canvasUtils.js";
 import { pageFailureRegistry } from "../services/pageFailureRegistry.js";
 import PageOrganizer from "./PageOrganizer.svelte";
+import { SignatureLossDeclinedError } from "../services/signatureLossGuard.js";
 
 const renderSessionMock = vi.hoisted(() => ({
   current: {
@@ -198,6 +199,19 @@ describe("PageOrganizer PDFium thumbnails", () => {
     beforeRotation.resolve(oldPayload);
     await flushAsyncWork();
     expect(paintBufferToCanvas).toHaveBeenCalledOnce();
+  });
+
+  it("imza uyarısı reddedilen döndürmede hata göstermez ve minyatürü geri getirir", async () => {
+    renderThumbnail.mockImplementation(async (request) => renderedThumbnail(7, request));
+    const { getByTitle } = renderOrganizer({
+      props: { sessionId: "session-signed", contentGeneration: 2, pageCount: 1 },
+    });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(1));
+
+    rotatePage.mockRejectedValueOnce(new SignatureLossDeclinedError());
+    await fireEvent.click(getByTitle("Sağa Döndür"));
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(2));
+    expect(globalThis.alert).not.toHaveBeenCalled();
   });
 
   it("kaynak değişince önceki kaynağın geciken sonucunu uygulamaz", async () => {
