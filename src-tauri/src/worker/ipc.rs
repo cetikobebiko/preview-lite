@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{self, Read, Write};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 6;
+pub const WORKER_PROTOCOL_VERSION: u16 = 7;
 pub const MAX_WORKER_REQUEST_BYTES: usize = 64 * 1024;
 pub const MAX_WORKER_RESPONSE_BYTES: usize =
     crate::pdf_engine::render_service::MAX_RENDER_BYTES + 64 * 1024;

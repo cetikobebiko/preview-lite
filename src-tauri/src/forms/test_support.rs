@@ -18,6 +18,10 @@ pub(crate) fn rect(r: [f32; 4]) -> Object {
 /// Tek sayfalık (612×792) AcroForm fixture'ı. `widgets` her biri kendi widget'ı
 /// olan terminal alanlardır; radio grubu ayrıca eklenir.
 pub(crate) struct FormFixture {
+    /// Signature dictionary of a signed-looking signature field, used as `/Perms /DocMDP`
+    /// when it carries a DocMDP transform.
+    certification: Option<ObjectId>,
+    signed: bool,
     doc: Document,
     page_id: ObjectId,
     font: ObjectId,
@@ -34,6 +38,8 @@ impl FormFixture {
         });
         let page_id = doc.new_object_id();
         Self {
+            certification: None,
+            signed: false,
             doc,
             page_id,
             font,
@@ -110,6 +116,36 @@ impl FormFixture {
         self.fields.push(Object::Reference(parent));
     }
 
+    /// A signature field whose `/V` looks like a detached PKCS#7 signature (the bytes are not
+    /// a real signature). `doc_mdp` adds a DocMDP transform with that `/P` and makes it the
+    /// certification signature.
+    pub(crate) fn signature_field(&mut self, doc_mdp: Option<i64>) {
+        let mut signature = dictionary! {
+            "Type" => "Sig", "Filter" => "Adobe.PPKLite", "SubFilter" => "adbe.pkcs7.detached",
+            "ByteRange" => vec![0.into(), 100.into(), 200.into(), 300.into()],
+            "Contents" => Object::String(vec![0x30, 0x82, 0x01, 0x00, 0xAB, 0xCD], StringFormat::Hexadecimal),
+            "M" => string("D:20261017120000Z"),
+        };
+        if let Some(p) = doc_mdp {
+            signature.set(
+                "Reference",
+                vec![Object::Dictionary(dictionary! {
+                    "Type" => "SigRef", "TransformMethod" => "DocMDP",
+                    "TransformParams" => dictionary! { "Type" => "TransformParams", "P" => p, "V" => name("1.2") },
+                })],
+            );
+        }
+        let signature = self.doc.add_object(signature);
+        self.signed = true;
+        if doc_mdp.is_some() {
+            self.certification = Some(signature);
+        }
+        self.widget(
+            dictionary! { "FT" => "Sig", "T" => string("signature"), "V" => signature, "F" => 132 },
+            [0.0, 0.0, 0.0, 0.0],
+        );
+    }
+
     pub(crate) fn save(mut self, path: &Path, with_acroform: bool) {
         let pages_id = self.doc.new_object_id();
         let content = self.doc.add_object(Stream::new(dictionary! {}, Vec::new()));
@@ -128,12 +164,20 @@ impl FormFixture {
             }),
         );
         let mut catalog = dictionary! { "Type" => "Catalog", "Pages" => pages_id };
+        if let Some(signature) = self.certification {
+            catalog.set("Perms", dictionary! { "DocMDP" => signature });
+        }
         if with_acroform {
-            let acroform = self.doc.add_object(dictionary! {
+            let mut acroform = dictionary! {
                 "Fields" => self.fields.clone(),
                 "DR" => dictionary! { "Font" => dictionary! { "Helv" => self.font } },
                 "DA" => string("/Helv 0 Tf 0 g"),
-            });
+            };
+            if self.signed {
+                // SigFlags: SignaturesExist | AppendOnly.
+                acroform.set("SigFlags", 3);
+            }
+            let acroform = self.doc.add_object(acroform);
             catalog.set("AcroForm", acroform);
         }
         let catalog = self.doc.add_object(catalog);

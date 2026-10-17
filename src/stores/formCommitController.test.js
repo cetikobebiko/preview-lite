@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFormCommitController, draftToEdit } from "./formCommitController.svelte.js";
+import {
+  createFormCommitController,
+  draftToEdit,
+  signatureWarning,
+} from "./formCommitController.svelte.js";
 import { createFormDraftState } from "./formDraftState.svelte.js";
 
 vi.mock("../pdfState.js", () => ({ fillFormFields: vi.fn(), getFormInfo: vi.fn() }));
@@ -106,6 +110,19 @@ describe("form commit controller", () => {
     await accepted.flush();
     expect(accepted.dependencies.fill).toHaveBeenCalledTimes(2);
     expect(accepted.dependencies.confirmSignatureInvalidation).toHaveBeenCalledTimes(1);
+    expect(accepted.dependencies.confirmSignatureInvalidation).toHaveBeenCalledWith({
+      form_type: "AcroForm",
+      signature_count: 2,
+    });
+  });
+
+  it("tells signed documents apart from documents certified against changes", () => {
+    expect(signatureWarning({ signature_count: 1, signatures_forbid_changes: false })).toContain(
+      "imzalar korunur",
+    );
+    expect(signatureWarning({ signature_count: 1, signatures_forbid_changes: true })).toContain(
+      "sertifikayı geçersiz kılar",
+    );
   });
 
   it("keeps drafts and reports the error when the write fails", async () => {

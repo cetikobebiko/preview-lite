@@ -32,9 +32,11 @@ pub enum FormType {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FormInfo {
     pub form_type: FormType,
-    /// Belgedeki dijital imza sayısı. Form kaydı tam yeniden yazım olduğundan imzaları
-    /// geçersiz kılar; frontend ilk düzenlemeden önce uyarmalıdır.
+    /// Belgedeki dijital imza sayısı. Form kaydı artımlıdır ve imzalı baytları korur, ama
+    /// imzalı belge imzadan sonra değiştirilmiş görünür; frontend ilk yazmadan önce uyarır.
     pub signature_count: u32,
+    /// Bir imza DocMDP P=1 ile her değişikliği yasaklıyor: form yazımı sertifikayı bozar.
+    pub signatures_forbid_changes: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,9 +104,16 @@ pub(crate) fn read_form_info(document: &PdfDocument<'_>) -> FormInfo {
         Some(PdfFormType::XfaFull) => FormType::XfaFull,
         Some(PdfFormType::XfaForeground) => FormType::XfaForeground,
     };
+    let signatures = document.signatures();
     FormInfo {
         form_type,
-        signature_count: u32::from(document.signatures().len()),
+        signature_count: u32::from(signatures.len()),
+        signatures_forbid_changes: signatures.iter().any(|signature| {
+            matches!(
+                signature.modification_detection_permission(),
+                Ok(PdfSignatureModificationDetectionPermission::Mdp1)
+            )
+        }),
     }
 }
 
@@ -392,6 +401,24 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("listed", Some("a")), ("orphan", Some("b"))]
         );
+    }
+
+    #[test]
+    fn form_info_reports_signatures_and_doc_mdp_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        for (doc_mdp, forbid) in [(None, false), (Some(2), false), (Some(1), true)] {
+            let path = directory.path().join(format!("signed-{doc_mdp:?}.pdf"));
+            let mut f = FormFixture::new();
+            f.widget(
+                dictionary! { "FT" => "Tx", "T" => string("name") },
+                [50.0, 700.0, 300.0, 720.0],
+            );
+            f.signature_field(doc_mdp);
+            f.save(&path, true);
+            let (info, _) = read(&path);
+            assert_eq!(info.signature_count, 1, "{doc_mdp:?}");
+            assert_eq!(info.signatures_forbid_changes, forbid, "{doc_mdp:?}");
+        }
     }
 
     #[test]

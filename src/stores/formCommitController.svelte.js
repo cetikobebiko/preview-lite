@@ -13,14 +13,20 @@ const COMMIT_DELAY_MS = 350;
 
 const controllers = new WeakMap();
 
+// Form yazımı artımlıdır: imzalı baytlar korunur ve imzalar kendi revizyonları için geçerli
+// kalır, ama görüntüleyiciler belgeyi imzadan sonra değiştirilmiş gösterir. DocMDP P=1 ile
+// sertifikalanmış belgede her değişiklik sertifikayı bozar.
+export function signatureWarning(info) {
+  return info?.signatures_forbid_changes
+    ? "Bu belge değişikliğe kapalı olarak sertifikalanmış. Form alanlarını kaydetmek sertifikayı geçersiz kılar. Devam edilsin mi?"
+    : "Bu belge dijital imza içeriyor. Değişiklikler imzalı içeriğin sonuna eklenir; imzalar korunur, ancak belge imzadan sonra değiştirilmiş olarak görünür. Devam edilsin mi?";
+}
+
 const defaultDependencies = Object.freeze({
   fill: fillFormFields,
   getFormInfo,
-  confirmSignatureInvalidation: () =>
-    confirmDialog(
-      "Bu belge dijital imza içeriyor. Form alanlarını kaydetmek belgeyi yeniden yazar ve mevcut imzaları geçersiz kılar. Devam edilsin mi?",
-      { title: "İmzalı belge", kind: "warning" },
-    ),
+  confirmSignatureInvalidation: (info) =>
+    confirmDialog(signatureWarning(info), { title: "İmzalı belge", kind: "warning" }),
   delay: (callback) => setTimeout(callback, COMMIT_DELAY_MS),
   cancelDelay: (handle) => clearTimeout(handle),
 });
@@ -67,7 +73,7 @@ export function createFormCommitController(drafts, dependencies = defaultDepende
   async function signaturesAllowed(sessionId, contentGeneration) {
     if (signaturesClearedFor === sessionId) return true;
     const info = await dependencies.getFormInfo(sessionId, contentGeneration);
-    if (info?.signature_count && !(await dependencies.confirmSignatureInvalidation())) {
+    if (info?.signature_count && !(await dependencies.confirmSignatureInvalidation(info))) {
       return false;
     }
     signaturesClearedFor = sessionId;

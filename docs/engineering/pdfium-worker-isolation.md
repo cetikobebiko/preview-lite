@@ -196,7 +196,8 @@ Commands are `Hello`, `OpenDocument`, `CloseDocument`, `CloseAllDocuments`, `Get
 `GetPageAnnotations`, `GetStructureTree`, `AuditAccessibility`, `Ping`, `Shutdown`,
 `SearchTextPages`, `GetPageSizes`, `GetFormInfo`, and `GetPageFormFields`.
 
-Worker protocol version 6 adds `GetFormInfo` (`FormInfo { form_type, signature_count }`) and
+Worker protocol version 7 adds `signatures_forbid_changes` (any DocMDP P=1 signature) to
+`FormInfo`. Version 6 added `GetFormInfo` (`FormInfo { form_type, signature_count }`) and
 `GetPageFormFields` (`PageFormFields([FormWidgetData])`, one page's form widgets in `/Annots`
 order with display-space normalized rects). Both are read-only and use pdfium-render getters
 only (a 1×1 render with form data first builds PDFium's page form view so widgets outside
@@ -585,7 +586,11 @@ worker, `forms::fill` opens the copied snapshot with raw PDFium bindings and its
 environment (pdfium-render exposes neither handle), checks each edit's field name against its
 annotation index, its kind and its read-only flag, writes through `FORM_*` so PDFium regenerates
 `/V`, `/AS` and `/AP`, reads each value back (rejecting MaxLen truncation), and saves inside
-`atomic_write_pdf`, whose validation step rereads the values from the temp file.
+`atomic_write_pdf`, whose validation step rereads the values from the temp file. The save is an
+incremental update (`FPDF_INCREMENTAL`): for a signed document the job fails unless the output
+starts with the original bytes, so signed byte ranges stay untouched; only an unsigned document
+falls back to a full rewrite when PDFium cannot save incrementally. Session save and mutation
+commit copy those bytes verbatim (`atomic_copy_pdf`, `atomic_commit_prevalidated_pdf`).
 
 Session split, merge, and page-extraction outputs use the same ephemeral worker plus separate
 reopen-validation rule. Additional merge inputs are byte-copied into the private job directory

@@ -267,7 +267,7 @@ const RAW_FEATURES = [
     label: "Form editing",
     status: "experimental",
     enabled: true,
-    warning: "Form doldurma deneyseldir: değişiklikler alan odaktan çıkınca belgeye yazılır; imzalı belgelerde imzalar geçersiz olur.",
+    warning: "Form doldurma deneyseldir: değişiklikler alan odaktan çıkınca belgeye artımlı olarak yazılır; imzalı belgeler imzadan sonra değiştirilmiş görünür.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/form-filling-plan.md",
   },

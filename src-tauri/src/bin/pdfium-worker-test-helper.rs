@@ -318,6 +318,7 @@ fn main() {
                 WorkerResult::FormInfo(preview_alternative_lib::forms::FormInfo {
                     form_type: preview_alternative_lib::forms::FormType::None,
                     signature_count: 0,
+                    signatures_forbid_changes: false,
                 }),
             ),
             preview_alternative_lib::worker::ipc::WorkerCommand::GetPageFormFields { .. } => {

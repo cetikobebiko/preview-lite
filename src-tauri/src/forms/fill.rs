@@ -12,6 +12,9 @@
 //! okunur: PDFium MaxLen'i aşan metni sessizce kırptığı için farklı geri gelen değer
 //! reddedilir. Kayıttan sonra `atomic_write_pdf`'in doğrulama adımı geçici dosyayı yeniden
 //! açıp Faz 1 okuyucusuyla aynı değerleri bekler.
+//!
+//! Kayıt artımlıdır (`FPDF_INCREMENTAL`): orijinal baytlar korunur ve değişiklikler sona
+//! eklenir, böylece mevcut dijital imzalar kendi revizyonları için geçerli kalır.
 
 use super::{FormFieldKind, MAX_FORM_OPTIONS_PER_FIELD, MAX_FORM_TEXT_CHARS};
 use crate::document_io::{
@@ -40,6 +43,8 @@ const FPDF_FORMFIELD_RADIOBUTTON: c_int = 3;
 const FPDF_FORMFIELD_COMBOBOX: c_int = 4;
 const FPDF_FORMFIELD_LISTBOX: c_int = 5;
 const FPDF_FORMFIELD_TEXTFIELD: c_int = 6;
+const FPDF_INCREMENTAL: FPDF_DWORD = 1;
+const FPDF_FULL_REWRITE: FPDF_DWORD = 0;
 
 /// Bir widget'a yazılacak değer. `field_name` ve `annot_index` birlikte doğrulanır:
 /// annotation indeksi okumadan bu yana kaydıysa istek reddedilir.
@@ -223,8 +228,42 @@ fn fill_and_save(
             });
         }
     }
-    save_copy(bindings, &document, temp)?;
+    save_preserving_signatures(bindings, &document, source, temp)?;
     Ok(expected)
+}
+
+/// Saves as an incremental update: the original bytes stay byte-for-byte at the start of
+/// the file and the changes are appended, so the byte ranges existing signatures cover are
+/// untouched and the signatures stay valid for their revision. Only an unsigned document
+/// falls back to a full rewrite when PDFium cannot save incrementally.
+fn save_preserving_signatures(
+    bindings: &dyn PdfiumLibraryBindings,
+    document: &RawDocument<'_>,
+    source: &str,
+    temp: &Path,
+) -> Result<(), DocumentIoFailure> {
+    let signature_count = bindings.FPDF_GetSignatureCount(document.handle);
+    if let Err(error) = save_copy(bindings, document, temp, FPDF_INCREMENTAL) {
+        if signature_count > 0 {
+            return Err(DocumentIoFailure::write(format!(
+                "İmzalı belge artımlı (incremental) kaydedilemedi; imzaları korumak için tam yeniden yazıma geçilmedi: {}",
+                error.detail
+            )));
+        }
+        return save_copy(bindings, document, temp, FPDF_FULL_REWRITE);
+    }
+    if signature_count > 0 {
+        let original = std::fs::read(source)
+            .map_err(|error| DocumentIoFailure::write(format!("Kaynak PDF okunamadı: {error}")))?;
+        let saved = std::fs::read(temp)
+            .map_err(|error| DocumentIoFailure::write(format!("Temp PDF okunamadı: {error}")))?;
+        if !saved.starts_with(&original) {
+            return Err(DocumentIoFailure::invariant(
+                "Artımlı kayıt imzalı baytları korumadı",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn apply_edit(
@@ -745,6 +784,7 @@ fn save_copy(
     bindings: &dyn PdfiumLibraryBindings,
     document: &RawDocument<'_>,
     temp: &Path,
+    flags: FPDF_DWORD,
 ) -> Result<(), DocumentIoFailure> {
     let file = std::fs::OpenOptions::new()
         .write(true)
@@ -760,8 +800,7 @@ fn save_copy(
         file,
         failed: false,
     });
-    // Tam yeniden yazım (flags 0), diğer mutasyonlarla aynı.
-    let saved = bindings.FPDF_SaveAsCopy(document.handle, &mut writer.base, 0);
+    let saved = bindings.FPDF_SaveAsCopy(document.handle, &mut writer.base, flags);
     if !bindings.is_true(saved) || writer.failed {
         return Err(DocumentIoFailure::write("Temp PDF kaydedilemedi"));
     }
@@ -939,6 +978,55 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&content)
         );
+    }
+
+    #[test]
+    fn unsigned_fill_appends_an_incremental_update() {
+        let (_directory, path) = fixture();
+        let original = std::fs::read(&path).unwrap();
+        fill(&path, vec![edit(0, 0, "name", text("Grace"))]).unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        assert!(saved.len() > original.len());
+        assert!(
+            saved.starts_with(&original),
+            "original bytes were rewritten"
+        );
+    }
+
+    #[test]
+    fn signed_fill_keeps_the_signed_bytes_and_the_signature() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("signed.pdf");
+        let mut f = FormFixture::new();
+        f.widget(
+            dictionary! { "FT" => "Tx", "T" => string("name"), "V" => string("Ada") },
+            [50.0, 700.0, 300.0, 720.0],
+        );
+        f.signature_field(Some(2));
+        f.save(&path, true);
+        let original = std::fs::read(&path).unwrap();
+        let signatures = |path: &Path| {
+            crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+                let document = pdfium
+                    .load_pdf_from_file(path, None)
+                    .map_err(|error| error.to_string())?;
+                Ok(document
+                    .signatures()
+                    .iter()
+                    .map(|signature| signature.bytes())
+                    .collect::<Vec<_>>())
+            })
+            .unwrap()
+        };
+        let before = signatures(&path);
+        assert_eq!(before.len(), 1);
+
+        fill(&path, vec![edit(0, 0, "name", text("Grace"))]).unwrap();
+
+        let saved = std::fs::read(&path).unwrap();
+        assert!(saved.starts_with(&original), "signed bytes were rewritten");
+        assert_eq!(signatures(&path), before);
+        assert_eq!(widget(&read(&path), 0).value.as_deref(), Some("Grace"));
     }
 
     #[test]

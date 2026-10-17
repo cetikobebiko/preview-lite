@@ -583,8 +583,44 @@ Kapsam dışı kalanlar:
 - Seçenek A'nın görünüm tespiti (yazma sonrası flatten + metin çıkarma ile
   `undrawn_chars`): macOS runtime yamalı olduğu için Türkçe için gerekli değil; Linux ve
   Windows runtime'ları için ayrıca eklenmeli.
-- Incremental save (imzaları korumak), editable combo'ya serbest metin, formu temizleme,
-  XFA bildirimi.
+- ~~Incremental save~~ (aşağıdaki bölüme bakın), editable combo'ya serbest metin, formu
+  temizleme, XFA bildirimi.
+
+#### Incremental save (2026-10-17)
+
+Form yazımı artık `FPDF_SaveAsCopy(..., FPDF_INCREMENTAL)` ile kaydediliyor. Orijinal baytlar
+dosyanın başında aynen kalıyor ve değişiklikler bir incremental update olarak sona ekleniyor.
+Mevcut imzaların `/ByteRange`'i orijinal revizyonu kapsadığı için imzalar geçerli kalıyor.
+
+- **Koruma:** Belgede imza varsa (`FPDF_GetSignatureCount > 0`) kayıttan sonra çıktının
+  kaynağın baytlarıyla başladığı doğrulanıyor; başlamıyorsa job başarısız oluyor. PDFium
+  incremental kaydedemezse imzalı belgede hata veriliyor; tam yeniden yazıma yalnız imzasız
+  belgede düşülüyor.
+- **Bayt yolu:** mutasyon commit'i (`atomic_commit_prevalidated_pdf`) ve session kaydı
+  (`atomic_copy_pdf`) baytları kopyalıyor, yeniden serileştirmiyor; incremental çıktı diske
+  aynen gidiyor.
+- **DocMDP:** `FormInfo.signatures_forbid_changes` (worker protokolü 7), herhangi bir imza
+  DocMDP P=1 ise true. Frontend uyarısı iki duruma ayrılıyor: imzalı belge için "imzalar
+  korunur, belge imzadan sonra değiştirilmiş görünür"; P=1 sertifikalı belge için "sertifika
+  geçersiz olur". Yazmaya yine izin veriliyor, karar kullanıcıda.
+
+Doğrulama:
+- Rust: `unsigned_fill_appends_an_incremental_update`,
+  `signed_fill_keeps_the_signed_bytes_and_the_signature` (sahte imzalı fixture: önek ve imza
+  içeriği aynı, değer yazılmış), `form_info_reports_signatures_and_doc_mdp_lock`
+  (P yok / P=2 / P=1).
+- **Gerçek kriptografi (manuel, OpenSSL 3.6.5):** Python ile üretilen PDF'e kendinden imzalı
+  sertifikayla gerçek bir `adbe.pkcs7.detached` CMS imzası atıldı. Form yazımından sonra
+  `openssl cms -verify` → **"CMS Verification successful"** (17 623 → 19 231 bayt, orijinal
+  önek korundu). Karşılaştırma için aynı dosya pdfium-render `save_to_file` (diğer
+  mutasyonların tam yeniden yazımı) ile kaydedildiğinde `/ByteRange` artık `/Contents`'i
+  göstermiyor ve imza bozuluyor.
+
+Sınırlar:
+- İmza doğrulamasının görüntüleyici tarafı (Acrobat'ın "imzadan sonra değiştirildi" ve izin
+  verilen değişiklik analizi) test edilmedi.
+- Diğer mutasyonlar (döndürme, silme, annotation, birleştirme) hâlâ tam yeniden yazım
+  yapıyor ve imzaları bozuyor. Form yazımından sonra bunlardan biri yapılırsa imzalar gider.
 
 ### Faz 4 — Sonraki adımlar (bu planın kapsamı dışında, ayrı karar gerektirir)
 
