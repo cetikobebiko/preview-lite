@@ -64,9 +64,9 @@
       ],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 26,
+      "expectedTestCount": 41,
       "expectedTestPresence": "exact",
-      "notes": "PDFium-independent atomic filesystem and replace semantics; compiles isolated document_io module (25 unit tests) + 1 integration typecheck test."
+      "notes": "PDFium-independent atomic filesystem and replace semantics; compiles isolated document_io module (43 unit tests; 4 are unix-only and 3 windows-only, so 40 run on Unix) + 1 integration typecheck test; FAST_LOCAL runs on Linux, so 41 exact."
     },
     {
       "id": "rust:document_io_pdfium",
@@ -182,7 +182,7 @@
         "plugin_worker_executable"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 5,
+      "expectedTestCount": 7,
       "expectedTestPresence": "exact"
     },
     {
@@ -516,7 +516,7 @@
       "syntheticInputs": [],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 6,
+      "expectedTestCount": 7,
       "expectedTestPresence": "exact",
       "notes": "Integrity validator test suite for test execution registry, corpus manifest bindings, and B5 fail-closed invariants."
     },
@@ -568,7 +568,7 @@
         "pdfium_worker_test_helper_executable"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 19,
+      "expectedTestCount": 30,
       "expectedTestPresence": "exact",
       "notes": "Fake worker via CARGO_BIN_EXE_pdfium-worker-test-helper (bin gated by required-features worker-test-support, enabled for test builds by the self dev-dependency in src-tauri/Cargo.toml so it is never bundled); realWorker=false canonical (see test-execution-architecture.md §5)"
     },
@@ -626,9 +626,9 @@
       ],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 99,
+      "expectedTestCount": 128,
       "expectedTestPresence": "at_least_one",
-      "notes": "Aggregate of 99 *.test.js files under src (vitest jsdom, vi.mock tauri). Invocation: npm run test. Sub-target js:cross-platform is alias for src/crossPlatformBuildArchitecture.test.js."
+      "notes": "Aggregate of 128 test files (127 *.test.* under src + scripts/worker-metrics-report.test.mjs) (vitest jsdom, vi.mock tauri). Invocation: npm run test. Sub-target js:cross-platform is alias for src/crossPlatformBuildArchitecture.test.js."
     },
     {
       "id": "rust:b4_integration_gaps",
