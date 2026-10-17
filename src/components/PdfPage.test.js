@@ -25,10 +25,13 @@ const renderSessionMock = vi.hoisted(() => ({
 
 vi.mock("svelte", async () => {
   const client = await import("../../node_modules/svelte/src/index-client.js");
+  const { FORM_DRAFTS_CONTEXT } = await import("../stores/formDraftState.svelte.js");
   return {
     ...client,
     getContext(key) {
-      return client.getContext(key) ?? renderSessionMock;
+      const value = client.getContext(key);
+      if (value !== undefined || key === FORM_DRAFTS_CONTEXT) return value;
+      return renderSessionMock;
     },
   };
 });
@@ -45,8 +48,7 @@ vi.mock("../pdfState.js", () => ({
   getPageAnnotations: vi.fn(async () => []),
   addAnnotation: vi.fn(async () => undefined),
   deleteAnnotation: vi.fn(async () => undefined),
-  getFormFields: vi.fn(async () => []),
-  updateFormField: vi.fn(async () => undefined),
+  getPageFormFields: vi.fn(async () => []),
   detectScannedPages: vi.fn(async () => []),
   runOcrOnPage: vi.fn(async () => ({ words: [] })),
   getAvailableOcrLanguages: vi.fn(async () => ["eng"]),

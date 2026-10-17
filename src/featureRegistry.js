@@ -265,11 +265,11 @@ const RAW_FEATURES = [
   {
     id: "form_editing",
     label: "Form editing",
-    status: "disabled",
-    enabled: false,
-    warning: "Form alanlarını okuma ve güncelleme backend tarafından desteklenmemektedir.",
+    status: "experimental",
+    enabled: true,
+    warning: "Form alanları okunur ve taslak olarak doldurulabilir; değişiklikler henüz belgeye kaydedilmez.",
     platform: ALL_DESKTOP_PLATFORMS,
-    documentation: "docs/engineering/feature-matrix.md#page-manipulation",
+    documentation: "docs/engineering/form-filling-plan.md",
   },
   {
     id: "searchable_pdf_export",

@@ -432,6 +432,48 @@ süreci), `architecture.test.js` (komutlar worker broker sınırında).
    gösterir ve kontrol yeniden şeffaf olur.
 4. Lazy davranış: alanlar yalnız sayfa render edildiğinde istenir.
 
+#### Faz 2 sonuçları (2026-10-17)
+
+Uygulandı:
+- `src/stores/formDraftState.svelte.js`: `SvelteMap` tabanlı taslak store'u. Anahtar alan
+  adı (belgeden gelen adlar prototype ile çakışmasın diye düz nesne değil). Oturum
+  değişince taslaklar silinir, generation değişince ada göre korunur.
+  `App.svelte` `FORM_DRAFTS_CONTEXT` ile sağlar, böylece sayfalar arası paylaşılır.
+- `src/components/FormLayer.svelte` (Svelte 5 runes): text/textarea/password, checkbox,
+  radio, combo ve list kontrolleri; read-only `disabled`, `aria-label`/`aria-required`;
+  yanıt isteğin `(sessionId, generation, page)` üçlüsüyle eşleşmezse yok sayılır.
+  Değişmemiş kontrol şeffaftır (görünümü PDFium bitmap'i çizer), taslaklı alan opak beyaz
+  ve turuncu çerçevelidir. Font boyutu `cqh` ile alan yüksekliğinden türetilir.
+- `pdfState.getPageFormFields` `form_editing` kapısıyla korunuyor. Kapı `experimental`
+  ve açık; uyarı metni değişikliklerin kaydedilmediğini söylüyor.
+
+Doğrulama:
+- Vitest: `FormLayer.test.js` (6), `formDraftState.test.js` (3); tüm paket 1369/1369.
+- Gerçek tarayıcı: `tmp/form-harness` (gitignore'da) gerçek `FormLayer`, `pdfState`,
+  feature guard ve sözleşme doğrulamasını Vite'ta çalıştırdı. Yalnız Tauri `invoke` köprüsü
+  taklit edildi ve **gerçek worker'dan** alınmış `FormWidgetData` ile PDFium render'ı
+  kullanıldı. Alan hizası, şeffaflık, Türkçe metin, checkbox, radio, combo ve multiline
+  taslakları görsel olarak doğrulandı; konsolda hata yok.
+- **Yerel Tauri penceresinde doğrulanmadı.** Bu oturumda masaüstü penceresini görüntüleyip
+  sürebilecek bir araç yoktu.
+
+Tarayıcı doğrulamasında bulunup düzeltilenler:
+- Değişmemiş liste kutusu kendi seçeneklerini ve gri seçim vurgusunu bitmap'in üstüne
+  çiziyordu. WebKit'te `color` ile gizlenemiyor; değişmemiş liste kutusu artık
+  `opacity: 0` (etkileşim sürüyor).
+- Yuvarlak radio taslağında bitmap'teki eski işaretin köşeleri sızıyordu. Taslaklı alanın
+  kapsayıcısı artık tüm dikdörtgeni opak örtüyor.
+
+Bilinen eksikler:
+- **`/Fields` dışında kalan widget'lar görünmüyor.** PDFium bu widget'ları
+  `FORM_OnAfterLoadPage` sırasında `FixPageFields` ile alana çeviriyor. pdfium-render bu
+  çağrıyı yapmadığından worker onları form alanı olarak görmüyor (ham spike görüyordu).
+  Çözüm worker'da ham form ortamı gerektirir.
+- Editable combo'da serbest metin girişi, `/Tabs` sırası, imza uyarısı ve XFA bildirimi
+  yok. `FormInfo` henüz frontend'de kullanılmıyor.
+- Aynı adlı birden çok checkbox widget'ı tek taslağı paylaşıyor; export value okunmadığı
+  için ayırt edilemiyorlar.
+
 ### Faz 3 — Yazma: `FillFormFields` mutasyonu
 
 ```rust

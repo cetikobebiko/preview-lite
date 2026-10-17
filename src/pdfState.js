@@ -131,6 +131,31 @@ export async function getPageAnnotations(
   );
 }
 
+// Salt-okunur form widget'ları (Faz 1); `normalized_rect` annotation'larla aynı uzaydadır.
+export async function getPageFormFields(
+  sessionId,
+  generation,
+  pageIndex,
+  context = getRuntimeFeatureContext(),
+) {
+  return await guardFeatureAction(
+    "form_editing",
+    context,
+    async () => {
+      try {
+        return await sessionBackend.getSessionPageFormFields(
+          sessionId,
+          generation,
+          pageIndex,
+        );
+      } catch (error) {
+        console.error("Form alanı okuma hatası:", error);
+        return [];
+      }
+    },
+  );
+}
+
 // `normalizedRect`: sayfa görüntü uzayında normalize dikdörtgen (bkz. contracts.js).
 export async function addAnnotation(
   sessionId,

@@ -24,6 +24,10 @@
   } from "./services/renderSession.js";
   import { createAnnotationState } from "./stores/annotationState.svelte.js";
   import {
+    createFormDraftState,
+    FORM_DRAFTS_CONTEXT,
+  } from "./stores/formDraftState.svelte.js";
+  import {
     createDocumentSessionStore,
     DOCUMENT_SESSION_CONTEXT,
   } from "./stores/documentSession.svelte.js";
@@ -41,6 +45,7 @@
   setContext(DOCUMENT_SESSION_CONTEXT, documentSession);
   const asyncPrompt = createAsyncPromptCoordinator();
   setContext(ASYNC_PROMPT_CONTEXT, asyncPrompt);
+  setContext(FORM_DRAFTS_CONTEXT, createFormDraftState());
 
   const ui = createUiState();
   const viewer = createViewerState();

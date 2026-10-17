@@ -65,7 +65,7 @@ describe("feature policy", () => {
       enabled: true,
     }, developmentMac)).toBe(false);
     expect(isFeatureRecordRunnable({
-      ...getFeature("form_editing"),
+      ...getFeature("batch_processing"),
       enabled: true,
     }, developmentMac)).toBe(false);
   });
@@ -78,7 +78,7 @@ describe("feature policy", () => {
   });
 
   it("does not make disabled features runnable", () => {
-    const presentation = getFeaturePresentation("form_editing", developmentMac);
+    const presentation = getFeaturePresentation("batch_processing", developmentMac);
     expect(presentation.visible).toBe(true);
     expect(presentation.runnable).toBe(false);
   });

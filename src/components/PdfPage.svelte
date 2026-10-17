@@ -924,7 +924,11 @@
             {#if unscaledWidth > 0 && unscaledHeight > 0}
               <div style="position: absolute; inset: 0; transform: rotate({normalizedRotation}deg); pointer-events: none;">
                 {#if formPresentation.runnable}
-                  <FormLayer {scale} />
+                  <FormLayer
+                    {sessionId}
+                    contentGeneration={documentGenerationId}
+                    {pageIndex}
+                  />
                 {/if}
                 {#if ocrPresentation.runnable}
                   <OcrLayer
