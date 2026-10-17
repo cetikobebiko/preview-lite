@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { extname, join, relative, resolve } from "node:path";
+import { extname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CONTRACTS,
@@ -20,6 +20,16 @@ const clientPath = resolve(sourceRoot, "services/backend/client.js");
 const rustLibPath = resolve(process.cwd(), "src-tauri/src/lib.rs");
 const rustSourceRoot = resolve(process.cwd(), "src-tauri/src");
 const documentSessionPath = resolve(rustSourceRoot, "document_session.rs");
+
+// Windows checkout'ları CRLF ve `\` ayırıcı üretir; sözleşmeler LF metin ve
+// POSIX yollarla yazıldığı için kaynak her platformda aynı biçime getirilir.
+function readSource(path) {
+  return readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+}
+
+function relativePosix(from, to) {
+  return relative(from, to).split(sep).join("/");
+}
 
 function sourceFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -62,16 +72,15 @@ describe("backend service boundaries", () => {
       /import\s+(?:(?!\bfrom\b)[\s\S])*?\bfrom\s*["']@tauri-apps\/api\/core["']|import\s*["']@tauri-apps\/api\/core["']/;
     const offenders = sourceFiles(sourceRoot)
       .filter((path) => path !== clientPath)
-      .filter((path) => coreImport.test(readFileSync(path, "utf8")))
-      .map((path) => relative(sourceRoot, path));
+      .filter((path) => coreImport.test(readSource(path)))
+      .map((path) => relativePosix(sourceRoot, path));
 
     expect(offenders).toEqual([]);
   });
 
   it("does not expose protected raw wrappers from the public barrel", () => {
-    const barrel = readFileSync(
+    const barrel = readSource(
       resolve(sourceRoot, "services/backend/index.js"),
-      "utf8",
     );
     const protectedNames = PROTECTED_CONTRACT_IDS.filter((name) =>
       Object.prototype.hasOwnProperty.call(CONTRACTS, name),
@@ -90,14 +99,14 @@ describe("backend service boundaries", () => {
     );
     const offenders = sourceFiles(resolve(sourceRoot, "components"))
       .filter((path) => path.endsWith(".svelte"))
-      .filter((path) => protectedImport.test(readFileSync(path, "utf8")))
-      .map((path) => relative(sourceRoot, path));
+      .filter((path) => protectedImport.test(readSource(path)))
+      .map((path) => relativePosix(sourceRoot, path));
 
     expect(offenders).toEqual([]);
   });
 
   it("ensures old render commands are absent from executable public handlers and session render commands are used", () => {
-    const handlerRegistry = readFileSync(rustLibPath, "utf8");
+    const handlerRegistry = readSource(rustLibPath);
 
     // Old render commands must NOT be registered in Tauri generate_handler!
     expect(handlerRegistry).not.toMatch(/^\s*render_page\s*,/m);
@@ -113,7 +122,7 @@ describe("backend service boundaries", () => {
   });
 
   it("keeps every interactive session PDF read command on the worker broker boundary", () => {
-    const source = readFileSync(documentSessionPath, "utf8");
+    const source = readSource(documentSessionPath);
     const functions = [
       "open_document_session",
       "authenticate_document_session",
@@ -151,9 +160,9 @@ describe("backend service boundaries", () => {
   });
 
   it("does not retain raw-path interactive PDF read handlers or helpers", () => {
-    const handlerRegistry = readFileSync(rustLibPath, "utf8");
+    const handlerRegistry = readSource(rustLibPath);
     const rustSource = rustSourceFiles(rustSourceRoot)
-      .map((path) => readFileSync(path, "utf8"))
+      .map((path) => readSource(path))
       .join("\n");
     const legacyFunctions = [
       "check_pdf_encrypted",
@@ -244,7 +253,7 @@ describe("backend service boundaries", () => {
 
     const frontendSource = sourceFiles(sourceRoot)
       .filter((path) => !path.endsWith(".test.js"))
-      .map((path) => readFileSync(path, "utf8"))
+      .map((path) => readSource(path))
       .join("\n");
     for (const command of [
       "check_pdf_encrypted",
@@ -274,17 +283,14 @@ describe("backend service boundaries", () => {
   });
 
   it("does not expose working-copy paths or path-based render identity in frontend source", () => {
-    const contractSource = readFileSync(
+    const contractSource = readSource(
       resolve(sourceRoot, "services/backend/contracts.js"),
-      "utf8",
     );
-    const renderSessionSource = readFileSync(
+    const renderSessionSource = readSource(
       resolve(sourceRoot, "services/renderSession.js"),
-      "utf8",
     );
-    const annotationLayerSource = readFileSync(
+    const annotationLayerSource = readSource(
       resolve(sourceRoot, "components/AnnotationLayer.svelte"),
-      "utf8",
     );
 
     expect(contractSource).not.toMatch(/\bworkingPath\b|\bworking_path\b/);
@@ -293,17 +299,14 @@ describe("backend service boundaries", () => {
   });
 
   it("keeps prepress and search active identity pathless", () => {
-    const prepressSource = readFileSync(
+    const prepressSource = readSource(
       resolve(sourceRoot, "components/PrepressPanel.svelte"),
-      "utf8",
     );
-    const searchSource = readFileSync(
+    const searchSource = readSource(
       resolve(sourceRoot, "utils/searchCoordinator.js"),
-      "utf8",
     );
-    const prepressStateSource = readFileSync(
+    const prepressStateSource = readSource(
       resolve(sourceRoot, "stores/prepressState.svelte.js"),
-      "utf8",
     );
     expect(prepressSource).not.toMatch(/\bfilePath\b/);
     expect(searchSource).not.toMatch(/\bfilePath\b|\bdocumentGenerationId\b/);
@@ -313,7 +316,7 @@ describe("backend service boundaries", () => {
   });
 
   it("registers existing session-native OCR names and separate external-file share", () => {
-    const handlerRegistry = readFileSync(rustLibPath, "utf8");
+    const handlerRegistry = readSource(rustLibPath);
     expect(handlerRegistry).toMatch(/ocr::detect_scanned_pages\b/);
     expect(handlerRegistry).not.toMatch(/ocr::detect_scanned_page\b/);
     expect(handlerRegistry).toMatch(/ocr::run_ocr_on_page/);
@@ -342,7 +345,7 @@ describe("backend service boundaries", () => {
 
     let attributeCount = 0;
     const commands = rustSourceFiles(rustSourceRoot).flatMap((path) => {
-      const source = readFileSync(path, "utf8");
+      const source = readSource(path);
       attributeCount += (source.match(/#\[tauri::command\]/g) ?? []).length;
       return [...source.matchAll(commandDefinition)].map((match) => {
         const opening = source.indexOf("{", match.index + match[0].length);
@@ -353,7 +356,7 @@ describe("backend service boundaries", () => {
           if (source[end] === "}" && --depth === 0) break;
         }
         return {
-          file: relative(rustSourceRoot, path),
+          file: relativePosix(rustSourceRoot, path),
           name: match[2],
           isAsync: Boolean(match[1]),
           body: source.slice(opening, end + 1),
@@ -384,10 +387,9 @@ describe("backend service boundaries", () => {
   });
 
   it("keeps unsupported metadata writes session-native and removes accessibility write bypasses", () => {
-    const handlerRegistry = readFileSync(rustLibPath, "utf8");
-    const sessionSource = readFileSync(
+    const handlerRegistry = readSource(rustLibPath);
+    const sessionSource = readSource(
       resolve(rustSourceRoot, "document_session.rs"),
-      "utf8",
     );
     expect(handlerRegistry).toMatch(/document_session::update_session_metadata/);
     expect(handlerRegistry).not.toMatch(/document_session::update_session_alt_text/);
@@ -411,13 +413,11 @@ describe("backend service boundaries", () => {
   });
 
   it("does not re-export legacy active-PDF path facades from pdfState or the backend barrel", () => {
-    const pdfStateSource = readFileSync(
+    const pdfStateSource = readSource(
       resolve(sourceRoot, "pdfState.js"),
-      "utf8",
     );
-    const barrelSource = readFileSync(
+    const barrelSource = readSource(
       resolve(sourceRoot, "services/backend/index.js"),
-      "utf8",
     );
     const forbiddenNames = [
       "getPdfMetadata",
@@ -449,17 +449,16 @@ describe("backend service boundaries", () => {
   });
 
   it("isolates every active snapshot PDF job from the Tauri process", () => {
-    const rustLib = readFileSync(rustLibPath, "utf8");
-    const mainSource = readFileSync(resolve(rustSourceRoot, "main.rs"), "utf8");
-    const jobWorkerSource = readFileSync(
+    const rustLib = readSource(rustLibPath);
+    const mainSource = readSource(resolve(rustSourceRoot, "main.rs"));
+    const jobWorkerSource = readSource(
       resolve(rustSourceRoot, "job_worker.rs"),
-      "utf8",
     );
     const sources = {
-      documentSession: readFileSync(documentSessionPath, "utf8"),
-      ocr: readFileSync(resolve(rustSourceRoot, "ocr.rs"), "utf8"),
-      ai: readFileSync(resolve(rustSourceRoot, "ai.rs"), "utf8"),
-      redaction: readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8"),
+      documentSession: readSource(documentSessionPath),
+      ocr: readSource(resolve(rustSourceRoot, "ocr.rs")),
+      ai: readSource(resolve(rustSourceRoot, "ai.rs")),
+      redaction: readSource(resolve(rustSourceRoot, "redaction.rs")),
     };
     const forbidden = [
       "with_pdfium(",
@@ -532,10 +531,9 @@ describe("backend service boundaries", () => {
   });
 
   it("keeps session mutations and production atomic validation behind ephemeral workers", () => {
-    const sessionSource = readFileSync(documentSessionPath, "utf8");
-    const documentIoSource = readFileSync(
+    const sessionSource = readSource(documentSessionPath);
+    const documentIoSource = readSource(
       resolve(rustSourceRoot, "document_io.rs"),
-      "utf8",
     );
     const forbidden = [
       "with_pdfium(",
@@ -593,7 +591,7 @@ describe("backend service boundaries", () => {
     expect(saveCopy).toMatch(/validate_pdf_file_isolated/);
   });
   it("fails disabled snapshot features before snapshot creation or PDF parsing", () => {
-    const redactionSource = readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8");
+    const redactionSource = readSource(resolve(rustSourceRoot, "redaction.rs"));
 
     // 1. Helper signatures take 0 parameters
     expect(redactionSource).toMatch(/\bfn\s+apply_redactions_unavailable\s*\(\s*\)/);
@@ -638,7 +636,7 @@ describe("backend service boundaries", () => {
       [redactionSource, "sanitize_pdf_document"],
       [redactionSource, "apply_redactions_unavailable"],
       [redactionSource, "sanitize_pdf_document_unavailable"],
-      [readFileSync(resolve(rustSourceRoot, "ocr.rs"), "utf8"), "export_as_searchable_pdf"],
+      [readSource(resolve(rustSourceRoot, "ocr.rs")), "export_as_searchable_pdf"],
     ];
     for (const [source, functionName] of cases) {
       const body = rustFunctionBody(source, functionName);
@@ -656,17 +654,17 @@ describe("backend service boundaries", () => {
       );
     }
 
-    const handlerRegistry = readFileSync(rustLibPath, "utf8");
+    const handlerRegistry = readSource(rustLibPath);
     expect(handlerRegistry).not.toContain("export_session_pages_as_pdf_x");
-    expect(readFileSync(documentSessionPath, "utf8")).not.toContain("export_session_pages_as_pdf_x");
+    expect(readSource(documentSessionPath)).not.toContain("export_session_pages_as_pdf_x");
     expect(handlerRegistry).not.toMatch(/^\s*burn_annotations_to_pdf\s*,/m);
     expect(handlerRegistry).not.toMatch(/^\s*manipulation::merge_pdfs\s*,/m);
   });
 
   it("secure-redaction contract manifest matches Rust serialization and frontend runtime validators", () => {
-    const rustSource = readFileSync(resolve(rustSourceRoot, "secure_redaction.rs"), "utf8");
+    const rustSource = readSource(resolve(rustSourceRoot, "secure_redaction.rs"));
     const manifestPath = resolve(process.cwd(), "src-tauri/tests/fixtures/contracts/secure-redaction-contract-v1.json");
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const manifest = JSON.parse(readSource(manifestPath));
 
     expect(REDACTION_SCHEMA_VERSION).toBe(manifest.schemaVersion);
     expect(rustSource).toContain(`pub const REDACTION_SCHEMA_VERSION: &str = "${manifest.schemaVersion}";`);
@@ -701,7 +699,7 @@ describe("backend service boundaries", () => {
   });
 
   it("enforces plan_secure_redaction boundary and isolation rules", () => {
-    const redactionSource = readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8");
+    const redactionSource = readSource(resolve(rustSourceRoot, "redaction.rs"));
     const planBody = rustFunctionBody(redactionSource, "plan_secure_redaction");
     const forbidden = [
       "with_pdfium(",
@@ -731,16 +729,16 @@ describe("backend service boundaries", () => {
     ]);
 
     const planCallsites = sourceFiles(sourceRoot)
-      .filter((path) => !path.endsWith(".test.js") && !path.endsWith("services/backend/redaction.js"))
-      .filter((path) => readFileSync(path, "utf8").includes("startSecureRedactionPlan"))
-      .map((path) => relative(sourceRoot, path));
+      .filter((path) => readSource(path).includes("startSecureRedactionPlan"))
+      .map((path) => relativePosix(sourceRoot, path))
+      .filter((path) => !path.endsWith(".test.js") && path !== "services/backend/redaction.js");
     expect(planCallsites).toEqual(["services/app/secureRedactionController.js"]);
   });
 
   it("keeps secure execution worker-isolated and publication digest-bound", () => {
-    const redactionSource = readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8");
-    const workerSource = readFileSync(resolve(rustSourceRoot, "job_worker.rs"), "utf8");
-    const documentIoSource = readFileSync(resolve(rustSourceRoot, "document_io.rs"), "utf8");
+    const redactionSource = readSource(resolve(rustSourceRoot, "redaction.rs"));
+    const workerSource = readSource(resolve(rustSourceRoot, "job_worker.rs"));
+    const documentIoSource = readSource(resolve(rustSourceRoot, "document_io.rs"));
     const publicExecutionBody = rustFunctionBody(redactionSource, "execute_secure_redaction_core");
     const executionBody = rustFunctionBody(
       redactionSource,
@@ -782,24 +780,23 @@ describe("backend service boundaries", () => {
     ]);
 
     const executionCallsites = sourceFiles(sourceRoot)
-      .filter((path) => !path.endsWith(".test.js") && !path.endsWith("services/backend/redaction.js"))
-      .filter((path) => readFileSync(path, "utf8").includes("startSecureRedactionExecution"))
-      .map((path) => relative(sourceRoot, path));
+      .filter((path) => readSource(path).includes("startSecureRedactionExecution"))
+      .map((path) => relativePosix(sourceRoot, path))
+      .filter((path) => !path.endsWith(".test.js") && path !== "services/backend/redaction.js");
     expect(executionCallsites).toEqual(["services/app/secureRedactionController.js"]);
 
-    const controllerSource = readFileSync(
+    const controllerSource = readSource(
       resolve(sourceRoot, "services/app/secureRedactionController.js"),
-      "utf8",
     );
     expect(controllerSource).not.toContain("callBackend");
     expect(controllerSource).not.toContain("execute_secure_redaction");
   });
 
   it("keeps secure-redaction acceptance seams out of default production builds", () => {
-    const redactionSource = readFileSync(resolve(rustSourceRoot, "redaction.rs"), "utf8");
-    const documentIoSource = readFileSync(resolve(rustSourceRoot, "document_io.rs"), "utf8");
-    const workerSource = readFileSync(resolve(rustSourceRoot, "job_worker.rs"), "utf8");
-    const cargoSource = readFileSync(resolve(rustSourceRoot, "../Cargo.toml"), "utf8");
+    const redactionSource = readSource(resolve(rustSourceRoot, "redaction.rs"));
+    const documentIoSource = readSource(resolve(rustSourceRoot, "document_io.rs"));
+    const workerSource = readSource(resolve(rustSourceRoot, "job_worker.rs"));
+    const cargoSource = readSource(resolve(rustSourceRoot, "../Cargo.toml"));
 
     expect(cargoSource).toMatch(/\[features\][\s\S]*?default\s*=\s*\[\]/);
     expect(cargoSource).toContain("secure-redaction-test-support = []");
@@ -830,11 +827,11 @@ describe("backend service boundaries", () => {
     for (const file of aiFiles) {
       const isTestFile = file.includes("test") || file.includes("mock");
       if (!isTestFile) {
-        const content = readFileSync(file, "utf8");
+        const content = readSource(file);
         for (const pattern of forbiddenTlsPatterns) {
           expect(
             content,
-            `Production AI file ${relative(rustSourceRoot, file)} must not contain TLS bypass pattern: ${pattern}`,
+            `Production AI file ${relativePosix(rustSourceRoot, file)} must not contain TLS bypass pattern: ${pattern}`,
           ).not.toContain(pattern);
         }
       }

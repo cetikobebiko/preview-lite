@@ -1,11 +1,16 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { render, screen } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 import { Button } from "$lib/components/ui/button";
 import { Toggle } from "$lib/components/ui/toggle";
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+
+// readdirSync Windows'ta `\` ile döner; `lib/` öneki POSIX yolla karşılaştırılır.
+function sourceFiles() {
+  return readdirSync(resolve(process.cwd(), "src"), { recursive: true }).map((file) => file.split(sep).join("/"));
+}
 
 describe("shadcn-svelte foundation", () => {
   it("resolves $lib components and renders them with Tailwind classes", () => {
@@ -21,7 +26,7 @@ describe("shadcn-svelte foundation", () => {
   it("imports $lib modules extensionless from JavaScript sources", () => {
     // Vite maps `.js` to `.ts` only for TypeScript importers, so a plain
     // <script> importing "$lib/.../index.js" builds in Vitest but not in Vite.
-    const offenders = readdirSync(resolve(process.cwd(), "src"), { recursive: true })
+    const offenders = sourceFiles()
       .filter((file) => /\.(svelte|js)$/.test(file) && !file.startsWith("lib/"))
       .filter((file) => /from\s+["']\$lib\/[^"']*\.js["']/.test(readFileSync(resolve(process.cwd(), "src", file), "utf8")));
     expect(offenders).toEqual([]);
@@ -40,7 +45,7 @@ describe("shadcn-svelte foundation", () => {
 
   it("no longer defines or reads the old telemetry theme variables or HUD classes", () => {
     const legacy = /--(bg-primary|bg-surface|bg-panel|border-raw|border-focus|text-primary|text-muted|font-mono|accent-industrial|error-color|success-color)\b|\bhud-btn\b/;
-    const offenders = readdirSync(resolve(process.cwd(), "src"), { recursive: true })
+    const offenders = sourceFiles()
       .filter((file) => /\.(svelte|css)$/.test(file) && !file.startsWith("lib/"))
       .filter((file) => legacy.test(readFileSync(resolve(process.cwd(), "src", file), "utf8")));
     expect(offenders).toEqual([]);
