@@ -194,7 +194,7 @@ fn main() {
     content.push_str(&format!(
         "pub const LINUX_EXPECTED_BYTE_LENGTH: Option<u64> = {};\n\n",
         linux_byte_length
-            .map(|v| v.to_string())
+            .map(|v| format!("Some({v})"))
             .unwrap_or("None".to_string())
     ));
 
@@ -203,7 +203,7 @@ fn main() {
     content.push_str(&format!(
         "pub const LINUX_EXPECTED_VERSION: Option<&str> = {};\n\n",
         linux_version
-            .map(|v| format!("\"{}\"", v))
+            .map(|v| format!("Some({v:?})"))
             .unwrap_or("None".to_string())
     ));
 
@@ -263,7 +263,7 @@ fn main() {
     content.push_str(&format!(
         "pub const WINDOWS_EXPECTED_BYTE_LENGTH: Option<u64> = {};\n\n",
         windows_byte_length
-            .map(|v| v.to_string())
+            .map(|v| format!("Some({v})"))
             .unwrap_or("None".to_string())
     ));
 
@@ -272,7 +272,7 @@ fn main() {
     content.push_str(&format!(
         "pub const WINDOWS_EXPECTED_VERSION: Option<&str> = {};\n\n",
         windows_version
-            .map(|v| format!("\"{}\"", v))
+            .map(|v| format!("Some({v:?})"))
             .unwrap_or("None".to_string())
     ));
 

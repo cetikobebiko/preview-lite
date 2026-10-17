@@ -626,9 +626,9 @@
       ],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 128,
+      "expectedTestCount": 129,
       "expectedTestPresence": "at_least_one",
-      "notes": "Aggregate of 128 test files (127 *.test.* under src + scripts/worker-metrics-report.test.mjs) (vitest jsdom, vi.mock tauri). Invocation: npm run test. Sub-target js:cross-platform is alias for src/crossPlatformBuildArchitecture.test.js."
+      "notes": "Aggregate of 129 test files (127 *.test.* under src + scripts/worker-metrics-report.test.mjs + scripts/provision-pdfium-runtime.test.mjs) (vitest jsdom, vi.mock tauri). Invocation: npm run test. Sub-target js:cross-platform is alias for src/crossPlatformBuildArchitecture.test.js."
     },
     {
       "id": "rust:b4_integration_gaps",

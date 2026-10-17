@@ -1483,9 +1483,14 @@ mod linux_runtime_resolution_tests {
     }
 
     #[test]
-    fn supply_chain_status_is_incomplete_without_binary() {
-        use crate::pdf_engine::runtime_metadata::SUPPLY_CHAIN_STATUS;
-        assert_eq!(SUPPLY_CHAIN_STATUS, "INCOMPLETE");
+    fn supply_chain_status_is_complete_with_pinned_runtime() {
+        use crate::pdf_engine::runtime_metadata::{
+            EXPECTED_BYTE_LENGTH, EXPECTED_SHA256, EXPECTED_VERSION, SUPPLY_CHAIN_STATUS,
+        };
+        assert_eq!(SUPPLY_CHAIN_STATUS, "COMPLETE");
+        assert!(EXPECTED_SHA256.is_some());
+        assert!(EXPECTED_BYTE_LENGTH.is_some());
+        assert_eq!(EXPECTED_VERSION, Some("152.0.7961.0"));
     }
 
     #[test]
@@ -1723,8 +1728,8 @@ mod cross_platform_fast_local_tests {
         let dummy = temp.path().join(RUNTIME_FILENAME);
         fs::write(&dummy, b"dummy").unwrap();
 
-        // On Linux/Windows the dummy fails the ELF/PE header check, on macOS it fails
-        // to bind; either way the provided path was used rather than resolved again.
+        // On Linux/Windows the dummy fails the pinned byte-length check, on macOS it
+        // fails to bind; either way the provided path was used rather than resolved again.
         let Err(err) = get_pdfium_with_resolved_path(Some(dummy.clone())) else {
             panic!("dummy runtime must not bind");
         };

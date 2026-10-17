@@ -59,6 +59,10 @@ jobs:
       - name: Enforce B5 fail-closed static invariants
         run: node scripts/verify-test-evidence.mjs
 
+      - name: Provision verified PDFium runtime
+        if: runner.os != 'macOS'
+        run: node scripts/provision-pdfium-runtime.mjs
+
       - name: Verify registry integrity (Rust)
         run: cargo test --locked --test test_execution_registry_integrity
         working-directory: src-tauri
