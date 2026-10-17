@@ -1,0 +1,24 @@
+diff --git a/core/fxge/cfx_font.cpp b/core/fxge/cfx_font.cpp
+index 6cff42a..bebefd0 100644
+--- a/core/fxge/cfx_font.cpp
++++ b/core/fxge/cfx_font.cpp
+@@ -44,6 +44,7 @@ const CFX_Font::CharsetFontMap kDefaultTTFMap[] = {
+     {static_cast<int>(FX_Charset::kMSWin_EasternEuropean), "Arial"},
+ #endif
+     {static_cast<int>(FX_Charset::kMSWin_Arabic), "Arial"},
++    {static_cast<int>(FX_Charset::kMSWin_Turkish), "Arial"},
+     // TODO(crbug.com/348468114): Remove sentinel value when
+     // FPDF_GetDefaultTTFMap() gets removed.
+     {-1, nullptr}};
+@@ -129,6 +130,11 @@ FX_Charset CFX_Font::GetCharSetFromUnicode(uint16_t word) {
+     return FX_Charset::kMSWin_Cyrillic;
+   }
+ 
++  // Turkish letters that Windows-1250 lacks but Windows-1254 has.
++  if (word == 0x011E || word == 0x011F || word == 0x0130 || word == 0x0131) {
++    return FX_Charset::kMSWin_Turkish;
++  }
++
+   if (word >= 0x0100 && word <= 0x024F) {
+     return FX_Charset::kMSWin_EasternEuropean;
+   }

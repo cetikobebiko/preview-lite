@@ -345,6 +345,19 @@ fn build_fixture(path: &Path) {
     f.finish(path);
 }
 
+/// The verified app runtime, or — for measuring a locally built PDFium only —
+/// an explicit library from `FORM_SPIKE_PDFIUM`. That override skips the app's
+/// SHA-256 runtime pin and exists solely in this ignored spike.
+fn spike_pdfium() -> Pdfium {
+    match std::env::var_os("FORM_SPIKE_PDFIUM") {
+        Some(path) => {
+            println!("PDFium override: {}", PathBuf::from(&path).display());
+            Pdfium::new(Pdfium::bind_to_library(PathBuf::from(path)).unwrap())
+        }
+        None => get_pdfium().unwrap(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Raw PDFium helpers
 // ---------------------------------------------------------------------------
@@ -745,7 +758,7 @@ fn form_fill_spike() {
     let input = dir.join("fixture.pdf");
     build_fixture(&input);
 
-    let pdfium = get_pdfium().unwrap();
+    let pdfium = spike_pdfium();
     let b = pdfium.bindings();
 
     let edits: BTreeMap<&str, Edit> = BTreeMap::from([
@@ -998,7 +1011,7 @@ fn form_unicode_spike() {
     }
     f.finish(&input);
 
-    let pdfium = get_pdfium().unwrap();
+    let pdfium = spike_pdfium();
     let b = pdfium.bindings();
     let saved = {
         let fd = FormDoc::open(b, &input);

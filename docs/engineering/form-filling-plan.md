@@ -224,7 +224,7 @@ dalında da değişmemiş):
 - `CPWL_EditImpl` metni `FX_Charset::kDefault` ile ekliyor. Bu yüzden "önceki charset'i
   takip et" kuralı devreye girmiyor ve her karakter bağımsız eşleniyor.
 
-**Yama taslağı** (22 satırlık diff, derlenmedi ve test edilmedi):
+**Yama taslağı** (22 satırlık diff; aşağıdaki yerel build ile doğrulandı):
 
 ```diff
 --- a/core/fxge/cfx_font.cpp
@@ -243,8 +243,8 @@ dalında da değişmemiş):
 ```
 
 Yamanın açık soruları:
-- `AddNativeTrueTypeFontToPDF`'in `kMSWin_Turkish` için doğru CP1254 `/Differences`
-  ürettiği varsayılıyor, doğrulanmadı.
+- ~~`AddNativeTrueTypeFontToPDF`'in `kMSWin_Turkish` için doğru CP1254 kodlaması
+  ürettiği varsayılıyor.~~ macOS'ta doğrulandı: `Arial_A2` ekleniyor ve `ğ Ğ ı İ` çiziliyor.
 - `kDefaultTTFMap`, kullanımdan kaldırılmış public `FPDF_GetDefaultTTFMap*` API'siyle
   dışarı açık. Upstream kuralına göre public API'ye dokunan değişiklik için bug ve mailing
   list tartışması gerekir. Upstream'de bu satır olmadan, yalnız charset dalıyla
@@ -282,15 +282,58 @@ bblanchon düzeni buna uygun: `patches/*.patch` dosyaları `steps/03-patch.sh` i
 | Sürekli maliyet | Her PDFium yükseltmesinde yamayı rebase etmek (dosya küçük ve az değişiyor), upstream fork'u merge etmek, dört hedefi yeniden build etmek, hash'leri yeniden pinlemek ve PDFium'a bağlı acceptance testlerini koşmak: ~0,5–1 gün/yükseltme |
 | Risk | Chrome ve diğer PDFium kullanıcılarından ayrışan davranış (küçük). Fork CI'ı bizim sorumluluğumuza geçer |
 
-**Doğrulama ön koşulu (her iki yol için):** Yama henüz derlenmedi. Karar vermeden önce
-yamalı PDFium tek bir hedefte (macOS arm64; fork'ta `build-one.yml` ya da yerel `build.sh`)
-build edilmeli ve `form_unicode_spike` o runtime'a karşı çalıştırılmalı. Beklenen sonuç:
-`ğ Ğ ı İ` için eksik küme boş, diğer satırlar değişmemiş.
+#### Yama doğrulaması — yerel macOS arm64 build'i (2026-10-17)
 
-**Öneri:** Seçenek A ile ilerle ve Yol 1'i (upstream CL) paralel başlat. Yol 2'yi yalnız
-şu iki koşul birlikte sağlanırsa aç: upstream review takılıyor **ve** diğer
-görüntüleyicilerde Türkçe görünüm ürün gereksinimi. Yol 2'nin macOS provenance kazancı
-ayrıca değerlendirilebilir.
+**Sonuç: yama çalışıyor.** `ğ Ğ ı İ` artık AP'de çiziliyor. Diğer diller ve diğer alan
+türleri değişmedi.
+
+Build ortamı:
+- Kaynak: PDFium `chromium/7961`, commit `dd3583292697`. bblanchon/pdfium-binaries
+  `chromium/7961` etiketi (`c6529b58791d`), yamaları `steps/03-patch.sh` ile uygulandı.
+- `args.gn`, gönderilen runtime'ın `src-tauri/args.gn` dosyasıyla birebir aynı.
+- **Sapma:** Makinede tam Xcode yok, yalnız Command Line Tools var (SDK 26.1). Chromium'un
+  `build/config/apple/sdk_info.py` ve `build/mac/find_sdk.py` betikleri, bu
+  throwaway ağaçta CLT'ye düşen yedek dallarla yerel olarak yamalandı. bblanchon CI'ı
+  Xcode 26.0 kullanıyor. Bu nedenle yerel dylib gönderilen dylib ile bayt düzeyinde aynı değil
+  (7 199 216 / 7 151 568 bayt).
+- Süre (8 çekirdek, 8 GB RAM): `gclient sync` ~3,3 GB indirme. Tam build 272 sn
+  (1093 adım). Yama sonrası artımlı build 2,3 sn. Disk kullanımı ~3,5 GB.
+
+Karşılaştırma (`form_unicode_spike`, `FORM_SPIKE_PDFIUM` ile; bu değişken yalnız
+`#[ignore]` spike'ta runtime SHA-256 pin'ini atlar, production yolu değişmedi):
+
+| Runtime | Türkçe 6 alan | Lehçe, Fransızca/€, Kiril, Yunanca, CJK |
+|---|---|---|
+| Gönderilen (`src-tauri/lib`, bblanchon) | `ğ Ğ ı İ` kayıp | doğru |
+| Yerel, yamasız (kontrol) | `ğ Ğ ı İ` kayıp (gönderilenle **aynı**) | doğru |
+| Yerel, yamalı | **tümü doğru** (`Arial_A2` = CP1254 fontu eklendi) | doğru, AP fontları değişmedi |
+
+`form_fill_spike` (metin, multiline, comb, read-only, checkbox, radio, combo, list,
+incremental save) gönderilen runtime ile yamalı runtime arasında karşılaştırıldı. Tek fark
+Türkçe alanın AP'si ve eklenen font nedeniyle dosya boyutu (+2,3 KB). Read-only atlatma,
+MaxLen kırpma ve incremental save davranışı aynı kaldı.
+
+Yeni bulgular:
+1. **Eklenen `Arial_A2` gömülü değil**, `Arial_EE` gibi. Arial'i olmayan sistemlerde
+   (çoğu Linux) diğer görüntüleyiciler ikame font kullanır. Yamanın Linux ve Windows'taki
+   davranışı ölçülmedi.
+2. **Seçenek A'nın tespit yolunun bir sınırı var.** CJK satırında `語` (U+8A9E) her üç
+   runtime'da da render'da görünmüyor, oysa flatten + metin çıkarma `日本語` döndürüyor.
+   Karakter kodu AP'de bulunuyor, ama ikame fontta glif yok. Metin çıkarma yalnız
+   *kodlanamayan* karakterleri yakalar; *kodlanmış ama glifi olmayan* karakterleri
+   yakalamaz. Türkçe kaybı birinci türden olduğu için tespit edilir. Bu sınır Faz 3'te
+   belgelenmeli. Glif düzeyinde kontrol (ör. `FPDFText_GetCharBox` ile sıfır alan
+   arama ya da render tabanlı kontrol) ayrıca değerlendirilebilir.
+
+Yama dosyası: `docs/engineering/pdfium-patches/turkish-charset.patch`.
+
+**Öneri (güncel):** Yama doğrulandığı için **Yol 1 (upstream CL)** artık güçlü bir aday:
+küçük, izole ve ölçülmüş bir düzeltme. Upstream'e ilk etapta yalnız charset dalı
+(`GetCharSetFromUnicode`) ve bir birim testi gönderilmeli; `kDefaultTTFMap` satırı public
+API'ye dokunduğu için ayrı tartışılmalı. Ürün tarafında Faz 3 **Seçenek A** ile ilerlemeli;
+yama upstream'e girip bblanchon sürümüne ulaştığında tespit uyarısı Türkçe için kendiliğinden
+susar. Yol 2 (fork) hâlâ şu iki koşula bağlı: upstream review takılıyor **ve** diğer
+görüntüleyicilerde Türkçe görünüm ürün gereksinimi.
 
 ### Faz 1 — Okuma: alan modeli (salt-okunur)
 
