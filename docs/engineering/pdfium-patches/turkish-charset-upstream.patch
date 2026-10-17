@@ -1,0 +1,54 @@
+diff --git a/core/fxge/cfx_font.cpp b/core/fxge/cfx_font.cpp
+index 04aec88..8e09145 100644
+--- a/core/fxge/cfx_font.cpp
++++ b/core/fxge/cfx_font.cpp
+@@ -130,6 +130,11 @@ FX_Charset CFX_Font::GetCharSetFromUnicode(uint16_t word) {
+     return FX_Charset::kMSWin_Cyrillic;
+   }
+ 
++  // Turkish letters that Windows-1250 lacks but Windows-1254 has.
++  if (word == 0x011E || word == 0x011F || word == 0x0130 || word == 0x0131) {
++    return FX_Charset::kMSWin_Turkish;
++  }
++
+   if (word >= 0x0100 && word <= 0x024F) {
+     return FX_Charset::kMSWin_EasternEuropean;
+   }
+diff --git a/core/fxge/cfx_font_unittest.cpp b/core/fxge/cfx_font_unittest.cpp
+index 61f6fbf..ce8b965 100644
+--- a/core/fxge/cfx_font_unittest.cpp
++++ b/core/fxge/cfx_font_unittest.cpp
+@@ -7,6 +7,7 @@
+ #include <string>
+ #include <vector>
+ 
++#include "core/fxcrt/fx_codepage.h"
+ #include "core/fxge/cfx_cttgsubtable.h"
+ #include "testing/gtest/include/gtest/gtest.h"
+ #include "testing/utils/file_util.h"
+@@ -71,3 +72,25 @@ TEST(CfxFontTest, ParseGSUBTable) {
+   EXPECT_EQ(10u, sc_gsub->GetVerticalGlyph(2));
+   EXPECT_EQ(0u, sc_gsub->GetVerticalGlyph(3));
+ }
++
++TEST(CfxFontTest, GetCharSetFromUnicodeLatinExtendedA) {
++  // G with breve, g with breve, I with dot above and dotless i are in
++  // Windows-1254 but not in Windows-1250.
++  EXPECT_EQ(FX_Charset::kMSWin_Turkish,
++            CFX_Font::GetCharSetFromUnicode(0x011E));
++  EXPECT_EQ(FX_Charset::kMSWin_Turkish,
++            CFX_Font::GetCharSetFromUnicode(0x011F));
++  EXPECT_EQ(FX_Charset::kMSWin_Turkish,
++            CFX_Font::GetCharSetFromUnicode(0x0130));
++  EXPECT_EQ(FX_Charset::kMSWin_Turkish,
++            CFX_Font::GetCharSetFromUnicode(0x0131));
++
++  // The rest of Latin Extended-A stays Eastern European, including the
++  // Turkish S with cedilla that Windows-1250 also has.
++  EXPECT_EQ(FX_Charset::kMSWin_EasternEuropean,
++            CFX_Font::GetCharSetFromUnicode(0x0105));
++  EXPECT_EQ(FX_Charset::kMSWin_EasternEuropean,
++            CFX_Font::GetCharSetFromUnicode(0x015E));
++  EXPECT_EQ(FX_Charset::kMSWin_EasternEuropean,
++            CFX_Font::GetCharSetFromUnicode(0x015F));
++}
