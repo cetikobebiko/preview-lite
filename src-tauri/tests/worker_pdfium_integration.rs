@@ -1907,4 +1907,130 @@ mod macos_arm64 {
         drop(admission);
         broker.shutdown().await.unwrap();
     }
+
+    fn form_fixture() -> (tempfile::TempDir, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("worker-form.pdf");
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let page_id = document.new_object_id();
+        let font_id = document.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        let text_id = document.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx", "F" => 4, "P" => page_id,
+            "T" => Object::String(b"name".to_vec(), StringFormat::Literal),
+            "V" => Object::String(b"Ada".to_vec(), StringFormat::Literal),
+            "DA" => Object::String(b"/Helv 10 Tf 0 g".to_vec(), StringFormat::Literal),
+            "Rect" => vec![50.into(), 700.into(), 300.into(), 720.into()],
+        });
+        let on = document.add_object(Stream::new(dictionary! {}, b"0 g 2 2 12 12 re f".to_vec()));
+        let off = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+        let checkbox_id = document.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Btn", "F" => 4, "P" => page_id,
+            "T" => Object::String(b"agree".to_vec(), StringFormat::Literal),
+            "V" => "On", "AS" => "On",
+            "AP" => dictionary! { "N" => dictionary! { "On" => on, "Off" => off } },
+            "Rect" => vec![50.into(), 650.into(), 66.into(), 666.into()],
+        });
+        let content_id = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+        document.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page", "Parent" => pages_id, "Contents" => content_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Annots" => vec![Object::Reference(text_id), Object::Reference(checkbox_id)],
+            }),
+        );
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![Object::Reference(page_id)], "Count" => 1,
+            }),
+        );
+        let acroform_id = document.add_object(dictionary! {
+            "Fields" => vec![Object::Reference(text_id), Object::Reference(checkbox_id)],
+            "DR" => dictionary! { "Font" => dictionary! { "Helv" => font_id } },
+        });
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages_id, "AcroForm" => acroform_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        document.save(&path).unwrap();
+        (directory, path.to_string_lossy().to_string())
+    }
+
+    #[tokio::test]
+    async fn worker_reads_form_info_and_page_form_fields() {
+        use preview_alternative_lib::forms::{FormFieldKind, FormType};
+
+        let broker = broker();
+        let (_directory, path) = form_fixture();
+        for (session, source, expect_form) in [
+            ("worker-form", path, true),
+            ("worker-no-form", fixture("reorder-rich.pdf"), false),
+        ] {
+            let key = key(session);
+            let admission = broker.admit_read(&key, None).await.unwrap();
+            if let Err(error) = broker
+                .ensure_document(&admission, key.clone(), source, None, None)
+                .await
+            {
+                panic!(
+                    "worker open failed: {error:?}; stderr={}",
+                    broker.last_worker_stderr_for_test().await
+                );
+            }
+
+            let info = broker
+                .command_for_document(
+                    &admission,
+                    &key,
+                    |document_id| WorkerCommand::GetFormInfo { document_id },
+                    CommandTimeout::DocumentRead,
+                    None,
+                )
+                .await
+                .unwrap();
+            let WorkerResult::FormInfo(info) = info else {
+                panic!("unexpected form info result: {info:?}");
+            };
+            assert_eq!(info.signature_count, 0);
+
+            let fields = broker
+                .command_for_document(
+                    &admission,
+                    &key,
+                    |document_id| WorkerCommand::GetPageFormFields {
+                        document_id,
+                        page_index: 0,
+                    },
+                    CommandTimeout::DocumentRead,
+                    None,
+                )
+                .await
+                .unwrap();
+            let WorkerResult::PageFormFields(fields) = fields else {
+                panic!("unexpected form fields result: {fields:?}");
+            };
+
+            if !expect_form {
+                assert_eq!(info.form_type, FormType::None);
+                assert!(fields.is_empty());
+                continue;
+            }
+            assert_eq!(info.form_type, FormType::AcroForm);
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].field_name, "name");
+            assert_eq!(fields[0].kind, FormFieldKind::Text);
+            assert_eq!(fields[0].value.as_deref(), Some("Ada"));
+            assert_eq!(fields[0].annot_index, 0);
+            let rect = fields[0].normalized_rect.clone().unwrap();
+            assert!((rect.x - 50.0 / 612.0).abs() < 1e-3, "{rect:?}");
+            assert!((rect.y - 72.0 / 792.0).abs() < 1e-3, "{rect:?}");
+            assert_eq!(fields[1].field_name, "agree");
+            assert_eq!(fields[1].kind, FormFieldKind::Checkbox);
+            assert_eq!(fields[1].checked, Some(true));
+        }
+    }
 }

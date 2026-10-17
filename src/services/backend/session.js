@@ -239,6 +239,23 @@ export const getSessionPageAnnotations = (
     pageIndex,
   });
 
+export const getSessionFormInfo = (sessionId, expectedContentGeneration) =>
+  callBackend("getSessionFormInfo", {
+    sessionId,
+    expectedContentGeneration,
+  });
+
+export const getSessionPageFormFields = (
+  sessionId,
+  expectedContentGeneration,
+  pageIndex,
+) =>
+  callBackend("getSessionPageFormFields", {
+    sessionId,
+    expectedContentGeneration,
+    pageIndex,
+  });
+
 export const addSessionAnnotation = (
   sessionId,
   expectedContentGeneration,

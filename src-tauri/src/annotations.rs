@@ -302,7 +302,7 @@ fn validate_normalized_rect(rect: &NormalizedPageRect) -> Result<(), DocumentIoF
     Ok(())
 }
 
-fn rect_data_from_pdf_rect(bounds: &PdfRect) -> RectData {
+pub(crate) fn rect_data_from_pdf_rect(bounds: &PdfRect) -> RectData {
     RectData {
         x: bounds.left().value,
         y: bounds.bottom().value,

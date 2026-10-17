@@ -1967,7 +1967,9 @@ fn page_scope(command: &WorkerCommand) -> Option<u32> {
         | WorkerCommand::Ping
         | WorkerCommand::Shutdown
         | WorkerCommand::SearchTextPages { .. }
-        | WorkerCommand::GetPageSizes { .. } => None,
+        | WorkerCommand::GetPageSizes { .. }
+        | WorkerCommand::GetFormInfo { .. }
+        | WorkerCommand::GetPageFormFields { .. } => None,
     }
 }
 
@@ -2067,7 +2069,7 @@ fn prune_instants(events: &mut VecDeque<Instant>, window: Duration) {
     }
 }
 
-fn required_capabilities() -> [WorkerCapability; 17] {
+fn required_capabilities() -> [WorkerCapability; 19] {
     [
         WorkerCapability::OpenDocument,
         WorkerCapability::CloseDocument,
@@ -2086,6 +2088,8 @@ fn required_capabilities() -> [WorkerCapability; 17] {
         WorkerCapability::Shutdown,
         WorkerCapability::SearchTextPages,
         WorkerCapability::GetPageSizes,
+        WorkerCapability::GetFormInfo,
+        WorkerCapability::GetPageFormFields,
     ]
 }
 

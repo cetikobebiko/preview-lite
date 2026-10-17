@@ -8850,6 +8850,68 @@ pub async fn get_session_page_annotations(
 }
 
 #[tauri::command]
+pub async fn get_session_form_info(
+    session_id: String,
+    expected_content_generation: u64,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<crate::forms::FormInfo, DocumentSessionError> {
+    let context = store
+        .acquire_worker_read(&session_id, expected_content_generation, false, None)
+        .await?;
+    match store
+        .worker_broker
+        .command_for_document(
+            &context._admission,
+            &context.key,
+            |document_id| WorkerCommand::GetFormInfo { document_id },
+            CommandTimeout::DocumentRead,
+            None,
+        )
+        .await
+        .map_err(DocumentSessionError::from)?
+    {
+        WorkerResult::FormInfo(info) => Ok(info),
+        _ => Err(DocumentSessionError::new(
+            "PDFIUM_WORKER_PROTOCOL_ERROR",
+            "Form bilgisi beklenmeyen worker cevabı aldı",
+        )),
+    }
+}
+
+#[tauri::command]
+pub async fn get_session_page_form_fields(
+    session_id: String,
+    expected_content_generation: u64,
+    page_index: u32,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<Vec<crate::forms::FormWidgetData>, DocumentSessionError> {
+    let context = store
+        .acquire_worker_read(&session_id, expected_content_generation, false, None)
+        .await?;
+    match store
+        .worker_broker
+        .command_for_document(
+            &context._admission,
+            &context.key,
+            |document_id| WorkerCommand::GetPageFormFields {
+                document_id,
+                page_index,
+            },
+            CommandTimeout::DocumentRead,
+            None,
+        )
+        .await
+        .map_err(DocumentSessionError::from)?
+    {
+        WorkerResult::PageFormFields(widgets) => Ok(widgets),
+        _ => Err(DocumentSessionError::new(
+            "PDFIUM_WORKER_PROTOCOL_ERROR",
+            "Form alanları beklenmeyen worker cevabı aldı",
+        )),
+    }
+}
+
+#[tauri::command]
 pub async fn search_session_pdf_text(
     session_id: String,
     expected_content_generation: u64,

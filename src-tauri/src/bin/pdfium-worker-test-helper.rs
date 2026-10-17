@@ -31,6 +31,8 @@ fn capabilities() -> Vec<WorkerCapability> {
         WorkerCapability::Shutdown,
         WorkerCapability::SearchTextPages,
         WorkerCapability::GetPageSizes,
+        WorkerCapability::GetFormInfo,
+        WorkerCapability::GetPageFormFields,
     ]
 }
 
@@ -311,6 +313,15 @@ fn main() {
             }
             preview_alternative_lib::worker::ipc::WorkerCommand::GetPageAnnotations { .. } => {
                 Ok(WorkerResult::PageAnnotations(Vec::new()))
+            }
+            preview_alternative_lib::worker::ipc::WorkerCommand::GetFormInfo { .. } => Ok(
+                WorkerResult::FormInfo(preview_alternative_lib::forms::FormInfo {
+                    form_type: preview_alternative_lib::forms::FormType::None,
+                    signature_count: 0,
+                }),
+            ),
+            preview_alternative_lib::worker::ipc::WorkerCommand::GetPageFormFields { .. } => {
+                Ok(WorkerResult::PageFormFields(Vec::new()))
             }
             preview_alternative_lib::worker::ipc::WorkerCommand::GetStructureTree { .. } => Ok(
                 WorkerResult::AccessibilityStructure(accessibility_structure_fixture()),

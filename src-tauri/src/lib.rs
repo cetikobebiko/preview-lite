@@ -14,6 +14,7 @@ pub mod document_session;
 pub mod error;
 pub mod export;
 pub mod external_validation;
+pub mod forms;
 pub mod job_worker;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -1350,6 +1351,8 @@ pub fn run() {
             document_session::get_session_structure_tree,
             document_session::audit_session_accessibility,
             document_session::get_session_page_annotations,
+            document_session::get_session_form_info,
+            document_session::get_session_page_form_fields,
             document_session::search_session_pdf_text,
             document_session::get_session_page_text_layout,
             document_session::retry_session_page,

@@ -330,6 +330,28 @@ fn handle_command<'a>(
                     })?;
             Ok(WorkerResult::PageAnnotations(annotations))
         }
+        WorkerCommand::GetFormInfo { document_id } => {
+            let document = get_document(documents, *document_id)?;
+            Ok(WorkerResult::FormInfo(crate::forms::read_form_info(
+                &document.document,
+            )))
+        }
+        WorkerCommand::GetPageFormFields {
+            document_id,
+            page_index,
+        } => {
+            let document = get_document(documents, *document_id)?;
+            crate::forms::read_page_form_fields(&document.document, *page_index)
+                .map(WorkerResult::PageFormFields)
+                .map_err(|error| match error {
+                    crate::forms::FormReadError::Pdfium(message) => {
+                        WorkerFailure::new(WorkerFailureKind::PdfiumLoadError, message)
+                    }
+                    crate::forms::FormReadError::LimitExceeded(message) => {
+                        WorkerFailure::new(WorkerFailureKind::MessageTooLarge, message)
+                    }
+                })
+        }
         WorkerCommand::GetStructureTree { document_id } => {
             let document = get_document(documents, *document_id)?;
             let accessibility = document.accessibility.as_ref().map_err(|message| {
@@ -1105,6 +1127,8 @@ fn all_capabilities() -> Vec<WorkerCapability> {
         WorkerCapability::Ping,
         WorkerCapability::Shutdown,
         WorkerCapability::GetPageSizes,
+        WorkerCapability::GetFormInfo,
+        WorkerCapability::GetPageFormFields,
     ]
 }
 

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{self, Read, Write};
 
-pub const WORKER_PROTOCOL_VERSION: u16 = 5;
+pub const WORKER_PROTOCOL_VERSION: u16 = 6;
 pub const MAX_WORKER_REQUEST_BYTES: usize = 64 * 1024;
 pub const MAX_WORKER_RESPONSE_BYTES: usize =
     crate::pdf_engine::render_service::MAX_RENDER_BYTES + 64 * 1024;
@@ -60,6 +60,8 @@ pub enum WorkerCapability {
     Shutdown,
     SearchTextPages,
     GetPageSizes,
+    GetFormInfo,
+    GetPageFormFields,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -138,6 +140,15 @@ pub enum WorkerCommand {
     GetPageSizes {
         document_id: u64,
     },
+    /// AcroForm/XFA type and signature count of the document.
+    GetFormInfo {
+        document_id: u64,
+    },
+    /// Read-only form widgets of one page, in `/Annots` order.
+    GetPageFormFields {
+        document_id: u64,
+        page_index: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -185,6 +196,8 @@ pub enum WorkerResult {
     ShutdownComplete,
     SearchChunk(WorkerSearchChunk),
     PageSizes(Vec<WorkerPageSize>),
+    FormInfo(crate::forms::FormInfo),
+    PageFormFields(Vec<crate::forms::FormWidgetData>),
 }
 
 /// Page size in PDF points as PDFium reports it (`FPDF_GetPageSizeByIndexF`):

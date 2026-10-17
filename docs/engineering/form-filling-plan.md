@@ -388,6 +388,35 @@ Adımlar:
    `get_session_page_annotations` deseni).
 4. XFA belgelerinde (`XfaFull`) alanlar dönülmez; `FormInfo` frontend'e "desteklenmiyor" bildirimi göstermesini söyler.
 
+#### Faz 1 sonuçları (2026-10-17)
+
+Uygulandı: `src-tauri/src/forms.rs`; worker `GetFormInfo` / `GetPageFormFields`
+(protokol 6); `get_session_form_info` / `get_session_page_form_fields`; frontend sözleşmesi
+`getSessionFormInfo` / `getSessionPageFormFields`. Frontend bağlantısı yok (Faz 2).
+
+Plandan sapmalar:
+- **Okuma ham `FPDFAnnot_*` yerine pdfium-render getter'larıyla yapılıyor.** Worker
+  belgeleri `PdfDocument` olarak tutuyor ve form handle'ı `pub(crate)`. Getter'lar
+  `FPDFAnnot_GetFormField*` çağırdığı için güvenli; değer yazan setter'lar kullanılmıyor.
+  Worker'a yeni `unsafe` kod eklenmedi.
+- **Checkbox durumu `/AS`'den türetiliyor.** pdfium-render `is_checked()` yalnız `/Yes`
+  on-state'ini tanıyor (on-state'i `/On` olan checkbox için yanlış sonuç). Radio için
+  `FPDFAnnot_IsChecked` kullanan `is_checked()` doğru çalışıyor.
+- **Comb, DoNotScroll, RichText, FileSelect ve Sort bayrakları modelde yok.** pdfium-render
+  0.8.37'nin kendi tanımladığı bu bayraklar ISO 32000 bitlerinin bir üstünü okuyor (ör.
+  Comb `1 << 25`, doğrusu `1 << 24`). Ham `/Ff` public değil. PDFium sabitlerinden gelen
+  Multiline, Password, Combo, Edit ve MultiSelect doğru.
+- **MaxLen, export value ve control index okunmuyor** (pdfium-render'da public getter yok).
+  Faz 3'teki ham yazma yolu bunları doğrulama için job worker'da okuyacak.
+- `FormInfo`'da alan sayısı yok; belgedeki tüm sayfaları dolaşmak gerekeceği için
+  çıkarıldı. `signature_count` (`FPDF_GetSignatureCount`) eklendi.
+- Tab sırası `/Annots` sırası (`annot_index`); `/Tabs` henüz uygulanmıyor.
+
+Doğrulama: `forms::tests` (5 birim testi: türler/değerler/bayraklar/seçenekler, `/On`
+checkbox, normalize rect, AcroForm'suz belge, limit hatası),
+`worker_pdfium_integration::worker_reads_form_info_and_page_form_fields` (gerçek worker
+süreci), `architecture.test.js` (komutlar worker broker sınırında).
+
 ### Faz 2 — Frontend overlay (taslak, henüz yazma yok)
 
 1. `formState.svelte.js`: `$state` ile anahtarı `(sessionId, contentGeneration, page)` olan

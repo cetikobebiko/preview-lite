@@ -427,6 +427,15 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     pageIndex: u32Type,
   }),
+  getSessionFormInfo: command("get_session_form_info", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+  }),
+  getSessionPageFormFields: command("get_session_page_form_fields", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    pageIndex: u32Type,
+  }),
   addSessionAnnotation: command(
     "add_session_annotation",
     {

@@ -134,6 +134,8 @@ describe("backend service boundaries", () => {
       "get_session_structure_tree",
       "audit_session_accessibility",
       "get_session_page_annotations",
+      "get_session_form_info",
+      "get_session_page_form_fields",
       "render_session_page",
       "render_session_thumbnail",
       "get_session_page_text_layout",

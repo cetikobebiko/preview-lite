@@ -13,6 +13,8 @@ PDFium work in the `--run-worker` process:
 - `get_session_pdf_outline`
 - `get_session_pdf_metadata`
 - `get_session_page_annotations`
+- `get_session_form_info`
+- `get_session_page_form_fields`
 - `get_session_structure_tree`
 - `audit_session_accessibility`
 - `render_session_page`
@@ -192,7 +194,15 @@ are distinct from frontend render request IDs.
 Commands are `Hello`, `OpenDocument`, `CloseDocument`, `CloseAllDocuments`, `GetPageCount`,
 `RenderPage`, `RenderThumbnail`, `GetPageTextLayout`, `SearchText`, `GetOutline`, `GetMetadata`,
 `GetPageAnnotations`, `GetStructureTree`, `AuditAccessibility`, `Ping`, `Shutdown`,
-`SearchTextPages`, and `GetPageSizes`.
+`SearchTextPages`, `GetPageSizes`, `GetFormInfo`, and `GetPageFormFields`.
+
+Worker protocol version 6 adds `GetFormInfo` (`FormInfo { form_type, signature_count }`) and
+`GetPageFormFields` (`PageFormFields([FormWidgetData])`, one page's form widgets in `/Annots`
+order with display-space normalized rects). Both are read-only and use pdfium-render getters
+only; `get_session_form_info` and `get_session_page_form_fields` reach them through
+`acquire_worker_read` with the expected content generation. A page over the widget, text or
+option limits in `forms.rs` fails with `MessageTooLarge`. See
+`docs/engineering/form-filling-plan.md`, Faz 1.
 
 Worker protocol version 5 adds `GetPageSizes`, answered by `PageSizes([{ width_pt, height_pt }])`
 for every page in one round trip (`FPDF_GetPageSizeByIndexF`, so CropBox and the page `/Rotate`
