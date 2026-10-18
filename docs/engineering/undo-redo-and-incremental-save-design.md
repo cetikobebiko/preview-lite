@@ -566,7 +566,16 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
    eklenmedi.
 6. Geçmiş modeli, commit'te geçmişe yazma ve sınırlar (§5.2–5.5). **Yapıldı** (§5.11).
 7. Undo/redo komutları ve frontend (§5.4, §5.10). **Yapıldı** (§5.11).
-8. `ReorderPages` için lopdf artımlı yolu (S3 sonucuna bağlı).
+8. `ReorderPages` için lopdf artımlı yolu (S3 sonucuna bağlı). **Yapıldı:** Tam permütasyon önce
+   `reorder_incrementally` ile denenir. Yalnız sayfa ağacı yazılır: kök `/Pages`'in `/Kids`'i yeni
+   sırayla yazılır, ara düğümlerin altındaki sayfalar miras özellikleri açıkça yazılarak köke
+   taşınır. Kökün kendi özellikleri yerinde kalır, bu yüzden zaten kökte olan sayfalara
+   dokunulmaz (S3b'den farkı budur; artımlı bölüm küçük kalır). Outline, named destination,
+   AcroForm, ekler, imzalar ve metadata değişmez. Bu yüzden önceki PDFium sayfa kopyası yolunun
+   reddettiği bu belgeler artık sıralanabilir; imzalı belgede imzalı baytlar korunur. Artımlı yol
+   kurulamazsa (xref tutarsız, şifreli belge, sayfa ağacında tekrar/döngü, PDFium ile uyuşmayan
+   sayfa sayısı) imzasız belge eski PDFium yoluna ve onun kısıtlarına düşer; imzalı belge
+   reddedilir. `ExtractPages` yeni belge anlamında olduğu için PDFium yolunda kalır.
 9. `document-session.md` ve `feature-matrix.md` güncellemesi.
 
 ## 11. Test planı

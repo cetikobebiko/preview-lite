@@ -2,8 +2,11 @@ use crate::document_io::{
     atomic_write_pdf, ensure_unprotected, AtomicWriteReport, CommitState, DocumentIoError,
     DocumentIoFailure, DocumentIoStage,
 };
-use crate::incremental_save::{save_mutation, RawDocument, RawPage};
+use crate::incremental_save::{
+    find_xref_inconsistency, save_mutation, validate_append_only, RawDocument, RawPage, WriteMode,
+};
 use pdfium_render::prelude::*;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
@@ -192,6 +195,174 @@ fn reject_unsupported_reorder_features(
     Ok(())
 }
 
+/// Sayfa ağacında miras alınan sayfa özellikleri (ISO 32000-1 §7.7.3.4).
+const INHERITABLE_PAGE_KEYS: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
+/// Sayfa ağacı derinliği için savunma sınırı; gerçek belgeler bunun çok altındadır.
+const MAX_PAGE_TREE_DEPTH: usize = 64;
+
+struct PageLeaf {
+    id: lopdf::ObjectId,
+    parent: lopdf::ObjectId,
+    /// Kökten bu sayfaya kadar miras gelen özellikler (alt düğüm üst düğümü ezer).
+    inherited: lopdf::Dictionary,
+}
+
+fn collect_page_leaves(
+    document: &lopdf::Document,
+    node: lopdf::ObjectId,
+    parent: lopdf::ObjectId,
+    inherited: &lopdf::Dictionary,
+    depth: usize,
+    visited: &mut HashSet<lopdf::ObjectId>,
+    leaves: &mut Vec<PageLeaf>,
+) -> Result<(), String> {
+    if depth > MAX_PAGE_TREE_DEPTH {
+        return Err("sayfa ağacı çok derin".to_string());
+    }
+    if !visited.insert(node) {
+        return Err(format!("sayfa ağacında {node:?} birden fazla kez geçiyor"));
+    }
+    let dictionary = document
+        .get_dictionary(node)
+        .map_err(|error| format!("sayfa ağacı düğümü {node:?} okunamadı: {error}"))?;
+    let is_pages = dictionary
+        .get(b"Type")
+        .and_then(lopdf::Object::as_name)
+        .map(|name| name == b"Pages")
+        .unwrap_or_else(|_| dictionary.has(b"Kids"));
+    if !is_pages {
+        leaves.push(PageLeaf {
+            id: node,
+            parent,
+            inherited: inherited.clone(),
+        });
+        return Ok(());
+    }
+    let mut here = inherited.clone();
+    for key in INHERITABLE_PAGE_KEYS {
+        if let Ok(value) = dictionary.get(key) {
+            here.set(key.to_vec(), value.clone());
+        }
+    }
+    let kids = dictionary
+        .get(b"Kids")
+        .and_then(lopdf::Object::as_array)
+        .map_err(|_| format!("sayfa ağacı düğümü {node:?} /Kids taşımıyor"))?;
+    for kid in kids {
+        let kid = kid
+            .as_reference()
+            .map_err(|_| "sayfa ağacında doğrudan (dolaylı olmayan) nesne var".to_string())?;
+        collect_page_leaves(document, kid, node, &here, depth + 1, visited, leaves)?;
+    }
+    Ok(())
+}
+
+/// Tam permütasyonu lopdf ile artımlı bir güncelleme olarak yazar (tasarım §4.1, S3/S3b).
+///
+/// Yalnız sayfa ağacı değişir: kök `/Pages` düğümünün `/Kids`'i yeni sırayla yazılır. Ara
+/// düğümlerin altındaki sayfalar köke taşınır; ara düğümlerden miras aldıkları özellikler
+/// sayfaya açıkça yazılır. Kök düğümün kendi özellikleri yerinde kalır, bu yüzden zaten kökün
+/// altındaki sayfalara dokunulmaz. Diğer bütün nesneler (outline, named destination, AcroForm,
+/// ekler, imzalar, metadata) değişmez ve aynı sayfa nesnelerini göstermeye devam eder.
+///
+/// AGENTS.md lopdf sınırları: job worker'da, snapshot'ın kopyası üzerinde, `atomic_write_pdf`
+/// içinde çalışır; şifreli belge reddedilir; çıktı `validate_append_only` ve ardından PDFium
+/// sayfa doğrulamasından geçer. Gerekçe: PDFium'un sayfa sırasını değiştiren bir API'si yoktur.
+fn reorder_incrementally(
+    input: &[u8],
+    order: &[u32],
+    page_count: usize,
+) -> Result<Vec<u8>, String> {
+    if let Some(reason) = find_xref_inconsistency(input) {
+        return Err(format!("xref zinciri onarım gerektiriyor: {reason}"));
+    }
+    let previous =
+        lopdf::Document::load_mem(input).map_err(|error| format!("lopdf açamadı: {error}"))?;
+    if previous.is_encrypted() {
+        return Err("şifreli belge lopdf ile artımlı yazılamaz".to_string());
+    }
+    let catalog = previous
+        .trailer
+        .get(b"Root")
+        .and_then(lopdf::Object::as_reference)
+        .map_err(|_| "belge kataloğu bulunamadı".to_string())?;
+    let root = previous
+        .get_dictionary(catalog)
+        .and_then(|catalog| catalog.get(b"Pages"))
+        .and_then(lopdf::Object::as_reference)
+        .map_err(|_| "kök /Pages düğümü bulunamadı".to_string())?;
+    let mut leaves = Vec::with_capacity(page_count);
+    collect_page_leaves(
+        &previous,
+        root,
+        root,
+        &lopdf::Dictionary::new(),
+        0,
+        &mut HashSet::new(),
+        &mut leaves,
+    )?;
+    if leaves.len() != page_count {
+        return Err(format!(
+            "sayfa ağacında {} sayfa var, PDFium {page_count} sayfa görüyor",
+            leaves.len()
+        ));
+    }
+    let version = previous.version.clone();
+    let mut incremental = lopdf::IncrementalDocument::create_from(input.to_vec(), previous);
+    // Artımlı bölümün başına yazılan `%PDF-x.y` satırı yalnız bir yorumdur; sürümü koru.
+    incremental.new_document.version = version;
+    for leaf in leaves.iter().filter(|leaf| leaf.parent != root) {
+        incremental
+            .opt_clone_object_to_new_document(leaf.id)
+            .map_err(|error| format!("sayfa {:?} kopyalanamadı: {error}", leaf.id))?;
+        let page = incremental
+            .new_document
+            .get_object_mut(leaf.id)
+            .and_then(lopdf::Object::as_dict_mut)
+            .map_err(|error| format!("sayfa {:?} düzenlenemedi: {error}", leaf.id))?;
+        for (key, value) in leaf.inherited.iter() {
+            if page.get(key).is_err() {
+                page.set(key.clone(), value.clone());
+            }
+        }
+        page.set("Parent", lopdf::Object::Reference(root));
+    }
+    incremental
+        .opt_clone_object_to_new_document(root)
+        .map_err(|error| format!("kök /Pages kopyalanamadı: {error}"))?;
+    let root_dictionary = incremental
+        .new_document
+        .get_object_mut(root)
+        .and_then(lopdf::Object::as_dict_mut)
+        .map_err(|error| format!("kök /Pages düzenlenemedi: {error}"))?;
+    root_dictionary.set(
+        "Kids",
+        lopdf::Object::Array(
+            order
+                .iter()
+                .map(|&index| lopdf::Object::Reference(leaves[index as usize].id))
+                .collect(),
+        ),
+    );
+    root_dictionary.set("Count", lopdf::Object::Integer(page_count as i64));
+    let mut output = Vec::with_capacity(input.len() + 4096);
+    incremental
+        .save_to(&mut output)
+        .map_err(|error| format!("artımlı güncelleme yazılamadı: {error}"))?;
+    let digest = format!("{:x}", Sha256::digest(input));
+    validate_append_only(input, &digest, &output).map_err(|failure| failure.detail)?;
+    Ok(output)
+}
+
+fn write_temp(temp: &Path, bytes: &[u8]) -> Result<(), DocumentIoFailure> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(temp)
+        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF açılamadı: {error}")))?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF yazılamadı: {error}")))
+}
+
 #[derive(Clone, Copy)]
 pub enum ReorderMode {
     FullPermutation,
@@ -269,12 +440,6 @@ pub(crate) fn reorder_pdf_to_target_report(
                     DocumentIoFailure::preflight(format!("Kaynak PDF açılamadı: {error}"))
                 })?;
             ensure_unprotected(&source_document)?;
-            reject_unsupported_reorder_features(
-                pdfium,
-                &source_document,
-                &source_for_write,
-                password.as_deref(),
-            )?;
             let source_count = source_document.pages().len();
             validate_reorder(&page_order, source_count, mode)?;
             let source_pages = page_snapshots(&source_document)?;
@@ -282,6 +447,42 @@ pub(crate) fn reorder_pdf_to_target_report(
                 .iter()
                 .map(|index| source_pages[*index as usize].clone())
                 .collect::<Vec<_>>();
+
+            // Yerinde sıralama önce artımlı denenir; böylece imzalı baytlar ve sayfa dışındaki
+            // bütün yapılar korunur. Ayıklama (OrderedSubset) yeni bir belgedir, PDFium'la kalır.
+            if matches!(mode, ReorderMode::FullPermutation) {
+                let input = std::fs::read(&source_for_write).map_err(|error| {
+                    DocumentIoFailure::write(format!("Kaynak PDF okunamadı: {error}"))
+                })?;
+                match reorder_incrementally(&input, &page_order, usize::from(source_count)) {
+                    Ok(output) => {
+                        write_temp(temp, &output)?;
+                        tracing::info!(
+                            operation = "reorder_pages",
+                            write_mode = ?WriteMode::Appended,
+                            "Sayfa sırası kaydedildi"
+                        );
+                        return Ok(expected_pages);
+                    }
+                    Err(reason) if !source_document.signatures().is_empty() => {
+                        return Err(DocumentIoFailure::write(format!(
+                            "İmzalı belge artımlı (incremental) sıralanamadı; imzaları korumak için tam yeniden yazıma geçilmedi: {reason}"
+                        )));
+                    }
+                    Err(reason) => tracing::warn!(
+                        code = "INCREMENTAL_WRITE_FALLBACK",
+                        reason = %reason,
+                        "Artımlı sıralama kullanılamadı; imzasız belge tam yeniden yazılıyor"
+                    ),
+                }
+            }
+
+            reject_unsupported_reorder_features(
+                pdfium,
+                &source_document,
+                &source_for_write,
+                password.as_deref(),
+            )?;
 
             let mut output = pdfium.create_new_pdf().map_err(|error| {
                 DocumentIoFailure::write(format!("Yeni PDF oluşturulamadı: {error}"))
@@ -818,8 +1019,28 @@ mod tests {
         assert_reordered_pages(&before_full_reorder, &source, &[2, 0, 1]);
     }
 
+    fn document_features(path: &Path) -> (bool, bool, bool, i32) {
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+            let document = pdfium
+                .load_pdf_from_file(path, None)
+                .map_err(|error| error.to_string())?;
+            let raw = pdfium
+                .bindings()
+                .FPDF_LoadDocument(path.to_str().unwrap(), None);
+            let named = pdfium.bindings().FPDF_CountNamedDests(raw);
+            pdfium.bindings().FPDF_CloseDocument(raw);
+            Ok((
+                !document.metadata().is_empty(),
+                document.bookmarks().root().is_some(),
+                document.form().is_some(),
+                named as i32,
+            ))
+        })
+        .unwrap()
+    }
+
     #[test]
-    fn document_io_reorder_rejects_unpreserved_document_features() {
+    fn document_io_reorder_keeps_document_features_and_extract_still_rejects_them() {
         for fixture_name in [
             "reorder-with-metadata.pdf",
             "reorder-with-outline.pdf",
@@ -829,22 +1050,226 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let source = copied_fixture(fixture_name, directory.path());
             let original = fs::read(&source).unwrap();
+            let before = document_features(&source);
 
+            // Ayıklama yeni bir belgedir; PDFium sayfa kopyası bu yapıları korumaz.
+            let subset = directory.path().join("subset.pdf");
             let error = reorder_pdf_to_target(
+                source.to_string_lossy().to_string(),
+                vec![2, 0],
+                subset.to_string_lossy().to_string(),
+                None,
+                ReorderMode::OrderedSubset,
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("güvenli biçimde koruyamıyor"),
+                "{fixture_name}: {error}"
+            );
+
+            let before_reorder = directory.path().join("before.pdf");
+            fs::copy(&source, &before_reorder).unwrap();
+            reorder_pdf_to_target(
                 source.to_string_lossy().to_string(),
                 vec![2, 0, 1],
                 source.to_string_lossy().to_string(),
                 None,
                 ReorderMode::FullPermutation,
             )
-            .unwrap_err();
-
+            .unwrap();
             assert!(
-                error.contains("güvenli biçimde koruyamıyor"),
-                "{fixture_name}: {error}"
+                fs::read(&source).unwrap().starts_with(&original),
+                "{fixture_name}: reorder rewrote the original bytes"
             );
-            assert_eq!(fs::read(source).unwrap(), original, "{fixture_name}");
+            assert_reordered_pages(&before_reorder, &source, &[2, 0, 1]);
+            assert_eq!(document_features(&source), before, "{fixture_name}");
         }
+    }
+
+    fn signed_three_pages(path: &Path) {
+        use lopdf::{dictionary, Object, StringFormat};
+        let mut document = lopdf::Document::load(fixture("three-distinct-pages.pdf")).unwrap();
+        let page = *document.get_pages().get(&1).unwrap();
+        let signature = document.add_object(dictionary! {
+            "Type" => "Sig", "Filter" => "Adobe.PPKLite", "SubFilter" => "adbe.pkcs7.detached",
+            "ByteRange" => vec![0.into(), 100.into(), 200.into(), 300.into()],
+            "Contents" => Object::String(vec![0x30, 0x82, 0x01, 0x00, 0xAB, 0xCD], StringFormat::Hexadecimal),
+        });
+        let field = document.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig",
+            "T" => Object::string_literal("signature"), "V" => signature, "F" => 132,
+            "Rect" => vec![0.into(), 0.into(), 0.into(), 0.into()], "P" => page,
+        });
+        document
+            .get_object_mut(page)
+            .and_then(Object::as_dict_mut)
+            .unwrap()
+            .set("Annots", vec![Object::Reference(field)]);
+        let catalog = document
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .unwrap();
+        document
+            .get_object_mut(catalog)
+            .and_then(Object::as_dict_mut)
+            .unwrap()
+            .set(
+                "AcroForm",
+                dictionary! { "Fields" => vec![Object::Reference(field)], "SigFlags" => 3 },
+            );
+        document.save(path).unwrap();
+    }
+
+    #[test]
+    fn document_io_reorder_of_a_signed_document_keeps_the_signed_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("signed.pdf");
+        signed_three_pages(&source);
+        let original = fs::read(&source).unwrap();
+        let before_signatures = signature_bytes(&source);
+        assert_eq!(before_signatures.len(), 1);
+        let before = directory.path().join("before.pdf");
+        fs::copy(&source, &before).unwrap();
+
+        reorder_pdf_to_target(
+            source.to_string_lossy().to_string(),
+            vec![1, 2, 0],
+            source.to_string_lossy().to_string(),
+            None,
+            ReorderMode::FullPermutation,
+        )
+        .unwrap();
+
+        assert!(
+            fs::read(&source).unwrap().starts_with(&original),
+            "signed bytes were rewritten"
+        );
+        assert_eq!(signature_bytes(&source), before_signatures);
+        assert_reordered_pages(&before, &source, &[1, 2, 0]);
+    }
+
+    /// Kök (MediaBox 600x800, Rotate 90, Resources/F1) → ara düğüm (MediaBox 300x400) →
+    /// [P1, P2 (Rotate 0)]; P3 doğrudan kökte, kendi MediaBox'ıyla.
+    fn nested_page_tree(path: &Path) {
+        use lopdf::{dictionary, Object, Stream};
+        let mut document = lopdf::Document::with_version("1.7");
+        let root = document.new_object_id();
+        let middle = document.new_object_id();
+        let font = document.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let mut page = |parent: lopdf::ObjectId, label: &str, extra: lopdf::Dictionary| {
+            let content = document.add_object(Stream::new(
+                dictionary! {},
+                format!("BT /F1 24 Tf 40 40 Td ({label}) Tj ET").into_bytes(),
+            ));
+            let mut dictionary = dictionary! {
+                "Type" => "Page", "Parent" => parent, "Contents" => content
+            };
+            for (key, value) in extra.iter() {
+                dictionary.set(key.clone(), value.clone());
+            }
+            document.add_object(dictionary)
+        };
+        let p1 = page(middle, "NESTED-P1", dictionary! {});
+        let p2 = page(middle, "NESTED-P2", dictionary! { "Rotate" => 0 });
+        let p3 = page(
+            root,
+            "NESTED-P3",
+            dictionary! { "MediaBox" => vec![0.into(), 0.into(), 500.into(), 500.into()] },
+        );
+        document.objects.insert(
+            middle,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Parent" => root, "Count" => 2,
+                "Kids" => vec![p1.into(), p2.into()],
+                "MediaBox" => vec![0.into(), 0.into(), 300.into(), 400.into()],
+            }),
+        );
+        document.objects.insert(
+            root,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Count" => 3, "Kids" => vec![middle.into(), p3.into()],
+                "MediaBox" => vec![0.into(), 0.into(), 600.into(), 800.into()],
+                "Rotate" => 90,
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+            }),
+        );
+        let catalog = document.add_object(dictionary! { "Type" => "Catalog", "Pages" => root });
+        document.trailer.set("Root", catalog);
+        document.save(path).unwrap();
+    }
+
+    #[test]
+    fn document_io_reorder_flattens_a_nested_page_tree_and_keeps_inherited_attributes() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("nested.pdf");
+        nested_page_tree(&source);
+        let original = fs::read(&source).unwrap();
+        let before = directory.path().join("before.pdf");
+        fs::copy(&source, &before).unwrap();
+
+        reorder_pdf_to_target(
+            source.to_string_lossy().to_string(),
+            vec![2, 1, 0],
+            source.to_string_lossy().to_string(),
+            None,
+            ReorderMode::FullPermutation,
+        )
+        .unwrap();
+
+        assert!(fs::read(&source).unwrap().starts_with(&original));
+        // Metin (miras Resources), boyut (miras MediaBox) ve dönüş (miras + override) korunur.
+        assert_reordered_pages(&before, &source, &[2, 1, 0]);
+    }
+
+    fn shifted_startxref(path: &Path) {
+        let bytes = fs::read(path).unwrap();
+        let keyword = bytes
+            .windows(b"startxref".len())
+            .rposition(|window| window == b"startxref")
+            .unwrap();
+        let (offset, _) = last_xref_section(&bytes);
+        let mut shifted = bytes[..keyword].to_vec();
+        shifted.extend_from_slice(format!("startxref\n{}\n%%EOF\n", offset + 7).as_bytes());
+        fs::write(path, shifted).unwrap();
+    }
+
+    #[test]
+    fn document_io_reorder_falls_back_to_a_rewrite_only_for_unsigned_documents() {
+        let directory = tempfile::tempdir().unwrap();
+        let unsigned = copied_fixture("three-distinct-pages.pdf", directory.path());
+        shifted_startxref(&unsigned);
+        let original = fs::read(&unsigned).unwrap();
+        reorder_pdf_to_target(
+            unsigned.to_string_lossy().to_string(),
+            vec![2, 0, 1],
+            unsigned.to_string_lossy().to_string(),
+            None,
+            ReorderMode::FullPermutation,
+        )
+        .unwrap();
+        assert!(
+            !fs::read(&unsigned).unwrap().starts_with(&original),
+            "expected a rewrite"
+        );
+        assert_page_sizes(&unsigned, &[(500.0, 600.0), (300.0, 400.0), (400.0, 500.0)]);
+
+        let signed = directory.path().join("signed.pdf");
+        signed_three_pages(&signed);
+        shifted_startxref(&signed);
+        let original = fs::read(&signed).unwrap();
+        let error = reorder_pdf_to_target(
+            signed.to_string_lossy().to_string(),
+            vec![2, 0, 1],
+            signed.to_string_lossy().to_string(),
+            None,
+            ReorderMode::FullPermutation,
+        )
+        .unwrap_err();
+        assert!(error.contains("imzaları korumak"), "{error}");
+        assert_eq!(fs::read(&signed).unwrap(), original);
     }
 
     #[test]

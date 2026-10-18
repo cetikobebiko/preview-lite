@@ -24,7 +24,6 @@ pub(crate) const FPDF_INCREMENTAL: FPDF_DWORD = 1;
 pub(crate) const FPDF_FULL_REWRITE: FPDF_DWORD = 0;
 
 /// Bir mutasyonun working PDF'i nasıl yazdığı (tasarım §4.4).
-#[allow(dead_code)] // `Appended`, karar K5'in lopdf fark yazımıyla gelir (tasarım §9.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum WriteMode {
