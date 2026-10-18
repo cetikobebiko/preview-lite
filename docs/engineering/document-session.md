@@ -18,7 +18,16 @@ frontend only receives a session identifier and `DocumentSessionSnapshot`;
   targets.
 - `content_generation` starts at 1 and advances only after a verified content
   mutation (including a durability-unconfirmed commit whose replacement is known
-  to be committed).
+  to be committed). Undo and redo are content mutations too: they advance the
+  generation and never move it back, even when they restore earlier bytes.
+- `dirty` is derived, not counted: `working_digest != Some(baseline.digest)`
+  (`refresh_dirty`). `baseline.digest` is the digest of the bytes last opened or
+  saved, because open copies the source byte for byte and Save copies the
+  working PDF byte for byte. An unknown working digest counts as dirty. Undoing
+  back to the saved bytes is therefore clean although the generation advanced.
+- `DocumentSessionSnapshot.undoOperation` / `redoOperation` name the operation
+  (for example `rotate_page`) that undo or redo would reverse or reapply; they
+  carry no path, digest or file name.
 - `state_revision` advances when dirty, save target, baseline, lifecycle, warning, or other backend session state changes.
 - `transition_epoch` is frontend-only and advances only when the active session changes. Mutation, Save, Save As, warning, or recovery changes do not advance it.
 - Save/Save As operations enforce single-flight concurrency per session ID on the frontend and validate `expected_state_revision` after acquiring backend write lease.
@@ -44,7 +53,7 @@ publish a new generation before normal operation resumes.
 
 | CommitState | Session result |
 | --- | --- |
-| `NewCommitted` | dirty; generation and revision advance; candidate digest becomes working digest |
+| `NewCommitted` | generation and revision advance; candidate digest becomes working digest; dirty is recomputed; the pre-mutation state enters the undo history (see Undo/redo history) |
 | `NewCommittedDurabilityUnconfirmed` | same as committed, plus durability warning |
 | `Prepared`, `OriginalPreserved` | mutation not applied; generation/revision unchanged |
 | `OriginalRecovered` | working file is re-hashed; old digest means not applied, candidate digest means applied, otherwise indeterminate |
@@ -55,7 +64,7 @@ publish a new generation before normal operation resumes.
 
 | CommitState | Session result |
 | --- | --- |
-| `NewCommitted` | baseline/target update; dirty clears; revision advances |
+| `NewCommitted` | baseline/target update; dirty is recomputed (clean, because the target now holds the working bytes); revision advances; the undo history is kept |
 | `NewCommittedDurabilityUnconfirmed` | same as committed, plus durability warning |
 | `Prepared`, `OriginalPreserved`, `OriginalRecovered` | dirty and working copy remain available; typed error returned |
 | `RecoveryRequired` | dirty remains; lifecycle blocks normal work pending recovery |
@@ -64,6 +73,44 @@ publish a new generation before normal operation resumes.
 Normal Save supplies the opening/last-save SHA-256 baseline as an atomic commit
 precondition. A missing or changed target is a typed conflict and never overwrites
 external content. Save As retargets normal Save after a verified commit.
+
+## Incremental writes
+
+Session mutations append to the working PDF instead of rewriting it, so signed
+bytes stay intact (`incremental_save::save_mutation`; ReorderPages through
+`manipulation::reorder_incrementally`). Before writing, the input's xref chain
+must be consistent, because PDFium appends to a repaired chain by silently
+dropping `/Prev`. After writing, the output must start with the input bytes
+and link its new section to the input's last `startxref`
+(`validate_append_only`). If either check fails, a signed document returns an
+error and an unsigned one is rewritten as before. ExtractPages produces a new
+document and stays a full rewrite. Design and spike evidence:
+`undo-redo-and-incremental-save-design.md` §4 and §8.1.
+
+## Undo/redo history
+
+Each session owns `session_dir/history/`. Every committed mutation leaves the
+state before it there. No new copy is written: the transaction's own
+pre-mutation snapshot is renamed into the directory after the commit, provided
+its digest matches the pre-mutation digest. The history holds at most 50 undo
+steps and 1 GiB in total. Oldest undo entries go first; with no undo entries
+left, the farthest redo entries go. A new mutation discards the redo stack.
+
+`undo_session_mutation` and `redo_session_mutation` (`sessionId`,
+`expectedContentGeneration`) restore the top entry through the same isolated
+transaction as recipe mutations (`MutationTransactionKind::Restore`). Admission,
+the write lease, worker-document invalidation, the commit-state mapping above,
+cancellation and recovery are therefore identical. A restore runs no worker and
+no PDFium validation: the entry's bytes must hash to the digest recorded when
+it was created. A mismatch is `HISTORY_ENTRY_CORRUPTED`; the working PDF is
+untouched and the history is cleared. The restore transaction's own snapshot
+becomes the entry in the opposite direction. An empty stack is `HISTORY_EMPTY`.
+
+If a mutation commits but its history entry cannot be kept, the history is
+cleared and `health_warning` becomes `HISTORY_TRUNCATED`; the mutation itself
+stands. `recover_document_session` clears the history, because the recovered
+content's relation to it is unknown. Closing the session removes `session_dir`
+and with it the history. Nothing persists across process exit.
 
 ## Transition protocol
 

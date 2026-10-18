@@ -577,7 +577,7 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
    kurulamazsa (xref tutarsız, şifreli belge, sayfa ağacında tekrar/döngü, PDFium ile uyuşmayan
    sayfa sayısı) imzasız belge eski PDFium yoluna ve onun kısıtlarına düşer; imzalı belge
    reddedilir. `ExtractPages` yeni belge anlamında olduğu için PDFium yolunda kalır.
-9. `document-session.md` ve `feature-matrix.md` güncellemesi.
+9. `document-session.md` ve `feature-matrix.md` güncellemesi. **Yapıldı.**
 
 ## 11. Test planı
 
