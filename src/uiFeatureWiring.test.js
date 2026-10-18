@@ -114,7 +114,10 @@ describe("UI feature wiring source contracts", () => {
   });
 
   it("does not mount disabled page overlays from stale local UI state", () => {
-    expect(pdfPageSource).toContain("{#if formPresentation.runnable}");
+    expect(pdfPageSource).toContain(
+      "{#if formAuthoringPresentation.runnable && isFormTool(activeTool)}",
+    );
+    expect(pdfPageSource).toContain("{:else if formPresentation.runnable}");
     expect(pdfPageSource).toContain("{#if annotationPresentation.runnable}");
     expect(pdfPageSource).not.toContain("redactionMaskPresentation");
   });

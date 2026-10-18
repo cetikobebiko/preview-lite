@@ -28,6 +28,9 @@
   } = $props();
 
   const NOTE_SIZE_PT = 24;
+  // Yalnız bu araçlar çizer; diğerleri (seçim, form tasarım araçları) olayları geçirir.
+  const DRAWING_TOOLS = new Set(["highlight", "underline", "text"]);
+  const drawing = $derived(DRAWING_TOOLS.has(activeTool));
   const MIN_DRAG_PX = 5;
 
   const asyncPrompt = requireAsyncPromptCoordinator();
@@ -74,7 +77,7 @@
   }
 
   function handlePointerDown(e) {
-    if (activeTool === "pointer") return;
+    if (!drawing) return;
     if (e.button !== 0) return; // Sadece sol tık
 
     const point = localPoint(e);
@@ -85,7 +88,7 @@
   }
 
   function handlePointerMove(e) {
-    if (!isDrawing || activeTool === "pointer") return;
+    if (!isDrawing || !drawing) return;
 
     const point = localPoint(e);
     if (point) currentRect = normalizedRectBetween(startPoint, point);
@@ -199,7 +202,7 @@
   bind:this={layerRef}
   role="application"
   aria-label="PDF açıklama katmanı"
-  class="annotation-layer {activeTool !== 'pointer' ? 'drawing' : ''}"
+  class="annotation-layer {drawing ? 'drawing' : ''}"
   onpointerdown={handlePointerDown}
   onpointermove={handlePointerMove}
   onpointerup={handlePointerUp}

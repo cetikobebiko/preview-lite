@@ -28,6 +28,10 @@
     FORM_DRAFTS_CONTEXT,
   } from "./stores/formDraftState.svelte.js";
   import {
+    createFormDesignState,
+    FORM_DESIGN_CONTEXT,
+  } from "./stores/formDesignState.svelte.js";
+  import {
     createDocumentSessionStore,
     DOCUMENT_SESSION_CONTEXT,
   } from "./stores/documentSession.svelte.js";
@@ -46,6 +50,8 @@
   const asyncPrompt = createAsyncPromptCoordinator();
   setContext(ASYNC_PROMPT_CONTEXT, asyncPrompt);
   setContext(FORM_DRAFTS_CONTEXT, createFormDraftState());
+  const formDesign = createFormDesignState();
+  setContext(FORM_DESIGN_CONTEXT, formDesign);
 
   const ui = createUiState();
   const viewer = createViewerState();
@@ -210,7 +216,7 @@
   />
 
   {#if ui.panels.markup && (documentRuntime.isPdf || viewer.activeImageSourcePath) && featureRuntime.featureUi("annotation").visible}
-    <MarkupToolbar {annotation} {ui} featureUi={featureRuntime.featureUi} {colorPalette} />
+    <MarkupToolbar {annotation} {ui} featureUi={featureRuntime.featureUi} {colorPalette} {formDesign} />
   {/if}
 
   <div class="workspace-body">

@@ -206,6 +206,79 @@ const formFieldEdit = objectOf(
   },
 );
 
+// Form alanı tasarımı (form-authoring-plan.md); bkz. `FormAuthorOp`
+// (src-tauri/src/forms/author.rs). Kurallar backend'de de uygulanır.
+const formLabelType = Object.freeze({ type: "string", minLength: 1, maxLength: 1024 });
+const formOptionsType = Object.freeze({ type: "array", items: formLabelType });
+const newFormField = objectOf(
+  { kind: Object.freeze({ type: "string", enum: Object.freeze(["text", "checkbox", "radio", "combo", "list"]) }) },
+  {
+    multiline: booleanType,
+    group: formLabelType,
+    export: formLabelType,
+    options: formOptionsType,
+    editable: booleanType,
+    multi: booleanType,
+  },
+  (field) => {
+    const allowed = {
+      text: ["multiline"],
+      checkbox: [],
+      radio: ["group", "export"],
+      combo: ["options", "editable"],
+      list: ["options", "multi"],
+    }[field.kind];
+    const present = ["multiline", "group", "export", "options", "editable", "multi"].filter(
+      (key) => field[key] !== undefined,
+    );
+    return present.length === allowed.length && allowed.every((key) => present.includes(key))
+      ? null
+      : `form field of kind ${field.kind} must carry exactly: ${allowed.join(", ") || "nothing else"}`;
+  },
+);
+const formFieldPropsPatch = objectOf(
+  {},
+  {
+    name: formLabelType,
+    tooltip: Object.freeze({ type: "string", maxLength: 1024 }),
+    required: booleanType,
+    readOnly: booleanType,
+    multiline: booleanType,
+    maxLen: u32Type,
+    options: formOptionsType,
+  },
+);
+const formAuthorOp = objectOf(
+  {
+    op: Object.freeze({ type: "string", enum: Object.freeze(["add", "delete", "move", "set_props"]) }),
+    pageIndex: u32Type,
+  },
+  {
+    normalizedRect: normalizedPageRect,
+    field: newFormField,
+    name: Object.freeze({ type: "string", minLength: 1, maxLength: 255, nullable: true }),
+    annotIndex: u32Type,
+    fieldName: formLabelType,
+    props: formFieldPropsPatch,
+  },
+  (op) => {
+    const required = {
+      add: ["normalizedRect", "field"],
+      delete: ["annotIndex", "fieldName"],
+      move: ["annotIndex", "fieldName", "normalizedRect"],
+      set_props: ["annotIndex", "fieldName", "props"],
+    }[op.op];
+    const optional = op.op === "add" ? ["name"] : [];
+    const present = ["normalizedRect", "field", "name", "annotIndex", "fieldName", "props"].filter(
+      (key) => op[key] !== undefined,
+    );
+    const ok =
+      required.every((key) => present.includes(key)) &&
+      present.every((key) => required.includes(key) || optional.includes(key));
+    return ok ? null : `form op ${op.op} must carry exactly: ${required.join(", ")}`;
+  },
+);
+
 const command = (name, required = {}, optional = {}, validate = null) =>
   Object.freeze({
     command: name,
@@ -459,6 +532,11 @@ export const CONTRACTS = Object.freeze({
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     pageIndex: u32Type,
+  }),
+  authorSessionFormFields: command("author_session_form_fields", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    ops: Object.freeze({ type: "array", items: formAuthorOp }),
   }),
   fillSessionFormFields: command("fill_session_form_fields", {
     sessionId: renderIdentifierType,

@@ -3,6 +3,14 @@
   import HighlighterIcon from "@lucide/svelte/icons/highlighter";
   import UnderlineIcon from "@lucide/svelte/icons/underline";
   import TypeIcon from "@lucide/svelte/icons/type";
+  import SquareMousePointerIcon from "@lucide/svelte/icons/square-mouse-pointer";
+  import TextCursorInputIcon from "@lucide/svelte/icons/text-cursor-input";
+  import SquareCheckIcon from "@lucide/svelte/icons/square-check";
+  import CircleDotIcon from "@lucide/svelte/icons/circle-dot";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import ListIcon from "@lucide/svelte/icons/list";
+  import FormFieldProperties from "./FormFieldProperties.svelte";
+  import { isFormTool } from "../stores/formDesignState.svelte.js";
   import Settings2Icon from "@lucide/svelte/icons/settings-2";
   import * as Popover from "$lib/components/ui/popover";
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
@@ -12,9 +20,18 @@
   import { cn } from "$lib/utils";
   import { badgeLabel } from "../services/app/toolbarMenu.js";
 
-  let { annotation, ui, featureUi, colorPalette } = $props();
+  let { annotation, ui, featureUi, colorPalette, formDesign = null } = $props();
 
   const annotationState = $derived(featureUi("annotation"));
+  const formAuthoringState = $derived(featureUi("form_authoring"));
+  const formTools = [
+    { value: "form-select", label: "Alan seç ve taşı", icon: SquareMousePointerIcon },
+    { value: "form-text", label: "Metin alanı ekle", icon: TextCursorInputIcon },
+    { value: "form-checkbox", label: "Onay kutusu ekle", icon: SquareCheckIcon },
+    { value: "form-radio", label: "Radio düğmesi ekle", icon: CircleDotIcon },
+    { value: "form-combo", label: "Açılır liste ekle", icon: ChevronDownIcon },
+    { value: "form-list", label: "Liste kutusu ekle", icon: ListIcon },
+  ];
   const tools = [
     { value: "pointer", label: "Seçim", icon: MousePointerIcon, gated: false },
     { value: "highlight", label: "Vurgula", icon: HighlighterIcon, gated: true },
@@ -46,7 +63,34 @@
       {/each}
     </ToggleGroup.Root>
 
-    {#if annotationState.visible}
+    {#if formAuthoringState.visible && formDesign}
+      <div class="h-5 w-px bg-border" aria-hidden="true"></div>
+      <ToggleGroup.Root
+        type="single"
+        size="sm"
+        spacing={1}
+        aria-label="Form tasarım araçları"
+        bind:value={() => (isFormTool(annotation.activeTool) ? annotation.activeTool : ""), (tool) => { annotation.activeTool = tool || "pointer"; }}
+      >
+        {#each formTools as tool (tool.value)}
+          <Tooltip.Root>
+            <Tooltip.Trigger>
+              {#snippet child({ props })}
+                <ToggleGroup.Item {...props} value={tool.value} aria-label={tool.label} disabled={!formAuthoringState.runnable} class="text-foreground/75 data-[state=on]:bg-accent data-[state=on]:text-foreground">
+                  <tool.icon />
+                </ToggleGroup.Item>
+              {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content side="bottom" sideOffset={6}>{formAuthoringState.runnable ? tool.label : formAuthoringState.warning}</Tooltip.Content>
+          </Tooltip.Root>
+        {/each}
+      </ToggleGroup.Root>
+      {#if isFormTool(annotation.activeTool)}
+        <FormFieldProperties design={formDesign} />
+      {/if}
+    {/if}
+
+    {#if annotationState.visible && !isFormTool(annotation.activeTool)}
       <div class="h-5 w-px bg-border" aria-hidden="true"></div>
 
       <label

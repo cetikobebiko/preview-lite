@@ -272,6 +272,15 @@ const RAW_FEATURES = [
     documentation: "docs/engineering/form-filling-plan.md",
   },
   {
+    id: "form_authoring",
+    label: "Form authoring",
+    status: "experimental",
+    enabled: true,
+    warning: "Form tasarımı deneyseldir: alan ekleme, taşıma, silme ve özellik değişiklikleri belgeye artımlı olarak hemen yazılır.",
+    platform: ALL_DESKTOP_PLATFORMS,
+    documentation: "docs/engineering/form-authoring-plan.md",
+  },
+  {
     id: "searchable_pdf_export",
     label: "Searchable PDF export",
     status: "disabled",

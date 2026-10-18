@@ -22,8 +22,8 @@ function createDeferred() {
 }
 
 describe("App render session lifecycle static checks", () => {
-  it("sets stable render, document session, async prompt and form draft contexts exactly once", () => {
-    expect(appSource.match(/\bsetContext\s*\(/g)).toHaveLength(4);
+  it("sets stable render, document session, async prompt, form draft and form design contexts exactly once", () => {
+    expect(appSource.match(/\bsetContext\s*\(/g)).toHaveLength(5);
     expect(appSource).toMatch(
       /const renderSession = createRenderSession\(\);\s*setContext\(RENDER_SESSION_CONTEXT, renderSession\);/,
     );
@@ -36,6 +36,9 @@ describe("App render session lifecycle static checks", () => {
     );
     expect(appSource).toMatch(/setContext\(FORM_DRAFTS_CONTEXT, createFormDraftState\(\)\);/);
     expect(appSource.match(/\bcreateFormDraftState\s*\(/g)).toHaveLength(1);
+    expect(appSource).toMatch(
+      /const formDesign = createFormDesignState\(\);\s*setContext\(FORM_DESIGN_CONTEXT, formDesign\);/,
+    );
   });
 
   it("delegates document open transitions to the tested coordinator", () => {

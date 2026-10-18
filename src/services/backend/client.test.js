@@ -220,6 +220,36 @@ describe("validated backend client", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("validates form authoring ops before invoking the backend", async () => {
+    const base = { sessionId: "document", expectedContentGeneration: 2 };
+    const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.05 };
+    const ops = [
+      { op: "add", pageIndex: 0, normalizedRect: rect, field: { kind: "radio", group: "G", export: "A" }, name: null },
+      { op: "add", pageIndex: 0, normalizedRect: rect, field: { kind: "list", options: ["a"], multi: true } },
+      { op: "move", pageIndex: 0, annotIndex: 1, fieldName: "x", normalizedRect: rect },
+      { op: "set_props", pageIndex: 0, annotIndex: 2, fieldName: "y", props: { required: true, maxLen: 4 } },
+      { op: "delete", pageIndex: 0, annotIndex: 3, fieldName: "z" },
+    ];
+    invokeMock.mockResolvedValue({});
+    await callBackend("authorSessionFormFields", { ...base, ops });
+    expect(invokeMock).toHaveBeenCalledWith("author_session_form_fields", { ...base, ops });
+    invokeMock.mockReset();
+
+    for (const [op, message] of [
+      [{ op: "add", pageIndex: 0, field: { kind: "checkbox" } }, "exactly: normalizedRect, field"],
+      [{ op: "add", pageIndex: 0, normalizedRect: rect, field: { kind: "checkbox", multiline: true } }, "nothing else"],
+      [{ op: "add", pageIndex: 0, normalizedRect: rect, field: { kind: "radio", group: "G" } }, "group, export"],
+      [{ op: "delete", pageIndex: 0, annotIndex: 1, fieldName: "x", normalizedRect: rect }, "exactly: annotIndex, fieldName"],
+      [{ op: "move", pageIndex: 0, annotIndex: 1, fieldName: "x" }, "normalizedRect"],
+      [{ op: "rename", pageIndex: 0 }, "op"],
+    ]) {
+      await expect(
+        callBackend("authorSessionFormFields", { ...base, ops: [op] }),
+      ).rejects.toMatchObject({ message: expect.stringContaining(message) });
+    }
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("validates form fill edits by kind before invoking the backend", async () => {
     const base = { sessionId: "document", expectedContentGeneration: 4 };
     const edits = [

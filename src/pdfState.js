@@ -176,6 +176,18 @@ export async function getFormInfo(
   );
 }
 
+// Form alanı ekler, siler, taşır ya da özelliklerini değiştirir (form-authoring-plan.md).
+export async function authorFormFields(
+  sessionId,
+  generation,
+  ops,
+  context = getRuntimeFeatureContext(),
+) {
+  return await guardFeatureAction("form_authoring", context, async () =>
+    sessionBackend.authorSessionFormFields(sessionId, generation, ops),
+  );
+}
+
 // Form taslaklarını yazar (Faz 3). Hatalar çağırana iletilir: taslaklar korunmalıdır.
 export async function fillFormFields(
   sessionId,

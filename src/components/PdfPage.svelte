@@ -35,6 +35,8 @@
   } from "../utils/renderRequestCoordinator.js";
   import AnnotationLayer from "./AnnotationLayer.svelte";
   import FormLayer from "./FormLayer.svelte";
+  import FormDesignLayer from "./FormDesignLayer.svelte";
+  import { isFormTool } from "../stores/formDesignState.svelte.js";
   import OcrLayer from "./OcrLayer.svelte";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
   import { createTextLayerItems } from "../utils/textLayerUtils.js";
@@ -65,6 +67,7 @@
   const featureContext = getRuntimeFeatureContext();
   const annotationPresentation = getFeaturePresentation("annotation", featureContext);
   const formPresentation = getFeaturePresentation("form_editing", featureContext);
+  const formAuthoringPresentation = getFeaturePresentation("form_authoring", featureContext);
   const ocrPresentation = getFeaturePresentation("ocr", featureContext);
   const searchPresentation = getFeaturePresentation("search", featureContext);
 
@@ -923,7 +926,18 @@
 
             {#if unscaledWidth > 0 && unscaledHeight > 0}
               <div style="position: absolute; inset: 0; transform: rotate({normalizedRotation}deg); pointer-events: none;">
-                {#if formPresentation.runnable}
+                {#if formAuthoringPresentation.runnable && isFormTool(activeTool)}
+                  <FormDesignLayer
+                    {sessionId}
+                    contentGeneration={documentGenerationId}
+                    {pageIndex}
+                    rotation={normalizedRotation}
+                    pageWidth={unscaledWidth}
+                    pageHeight={unscaledHeight}
+                    {activeTool}
+                    {onsessionSnapshot}
+                  />
+                {:else if formPresentation.runnable}
                   <FormLayer
                     {sessionId}
                     contentGeneration={documentGenerationId}

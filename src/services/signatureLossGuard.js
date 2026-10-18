@@ -28,20 +28,36 @@ export function signatureLossMessage(operation) {
   return `Bu belge dijital imza içeriyor. ${operation} belgeyi yeniden yazar ve mevcut imzaları geçersiz kılar. Devam edilsin mi?`;
 }
 
-export function createSignatureLossGuard({ getFormInfo, confirm }) {
+// Form alanı tasarımı artımlı yazar ve imzalı baytları korur; ama alan eklemek, silmek ya
+// da değiştirmek imzanın (DocMDP) izin verdiği değişikliklerden değildir.
+export function formAuthoringSignatureMessage() {
+  return "Bu belge dijital imza içeriyor. Alan değişiklikleri belgenin sonuna eklenir ve imzalı içerik korunur, ancak alan eklemek, silmek veya değiştirmek imzanın izin verdiği değişikliklerden değildir; imza panelleri belgeyi değiştirilmiş gösterir. Devam edilsin mi?";
+}
+
+export function createSignatureLossGuard({ getFormInfo, confirm, message = signatureLossMessage }) {
   const cleared = new Set();
 
   return async function ensureSignatureLossAccepted(sessionId, generation, operation) {
     if (cleared.has(sessionId)) return;
     const info = await getFormInfo(sessionId, generation);
-    if (info?.signature_count > 0 && !(await confirm(signatureLossMessage(operation)))) {
+    if (info?.signature_count > 0 && !(await confirm(message(operation)))) {
       throw new SignatureLossDeclinedError();
     }
     cleared.add(sessionId);
   };
 }
 
+const defaultLookup = (sessionId, generation) =>
+  sessionBackend.getSessionFormInfo(sessionId, generation);
+const defaultConfirm = (text) => confirmDialog(text, { title: "İmzalı belge", kind: "warning" });
+
 export const ensureSignatureLossAccepted = createSignatureLossGuard({
-  getFormInfo: (sessionId, generation) => sessionBackend.getSessionFormInfo(sessionId, generation),
-  confirm: (message) => confirmDialog(message, { title: "İmzalı belge", kind: "warning" }),
+  getFormInfo: defaultLookup,
+  confirm: defaultConfirm,
+});
+
+export const ensureSignedFormAuthoringAccepted = createSignatureLossGuard({
+  getFormInfo: defaultLookup,
+  confirm: defaultConfirm,
+  message: formAuthoringSignatureMessage,
 });

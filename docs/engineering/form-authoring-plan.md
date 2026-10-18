@@ -138,7 +138,7 @@ struct FieldPropsPatch { name, tooltip, required, read_only, max_len, options, m
 Uygulandı: `src-tauri/src/forms/author.rs`: `FormAuthorOp` (`add` / `delete` / `move` /
 `set_props`, JSON `{ op, pageIndex, … }`), `validate_request`, `author_form_fields_report`
 (`atomic_write_pdf`), `MutationRecipe::AuthorFormFields`, `author_session_form_fields`
-(`mutate_isolated`). Frontend sözleşmesi Faz B'de eklenecek.
+(`mutate_isolated`). Frontend sözleşmesi Faz B'de eklendi.
 
 - **Yazım:** `lopdf::IncrementalDocument`. Değişen nesneler (sayfa, AcroForm, üst alan,
   `/Annots`/`/Fields`/`/Kids` dizileri) yeni revizyona kopyalanır. Referanslı ve satır içi
@@ -190,6 +190,44 @@ artımlı kayıttan sonra bu nesneyi onarıyor (ayrı commit; ayrıntı `form-fi
 4. Özellik paneli: ad, ipucu, zorunlu, salt okunur, çok satırlı, en fazla karakter, seçenek
    listesi. Değişiklik odak kaybında `SetProps` olarak gönderilir.
 5. Her işlem bir mutasyondur (yeni generation); stale-result koruması Faz 2–3 ile aynı.
+
+#### Faz B sonuçları (2026-10-18)
+
+Uygulandı:
+
+- **Sözleşme:** `contracts.js`'te `authorSessionFormFields` (`newFormField`,
+  `formFieldPropsPatch`, `formAuthorOp`; op başına zorunlu ve izinli alanlar, tür başına
+  izinli opsiyonlar), `session.js`, `pdfState.authorFormFields` (`form_authoring` kapısı;
+  `featureRegistry.js`'te `experimental`).
+- **Durum:** `stores/formDesignState.svelte.js` context ile paylaşılır: seçim, `busy`, hata.
+  Her işlem önce `ensureSignedFormAuthoringAccepted` (imzalı belgede DocMDP uyarısı; red hata
+  sayılmaz), sonra mutasyon. Başarıda yeni anlık görüntü sayfaya iletilir ve seçim, sayfa yeni
+  generation ile yeniden okununca ada göre (eklemede sayfanın en yüksek `annot_index`'li
+  widget'ı) yeniden kurulur. Eski generation'a ait seçim temizlenir.
+- **Araç çubuğu:** `MarkupToolbar`'da form araçları (seç/taşı, metin, onay kutusu, radio,
+  açılır liste, liste kutusu); "Form tasarla" ayrı bir mod değil, form aracı seçmek modu açar.
+  Form aracı seçiliyken annotation denetimleri gizlenir, `FormFieldProperties` görünür ve
+  `AnnotationLayer` çizim yapmaz.
+- **Katman:** `FormDesignLayer` form aracı seçiliyken `FormLayer`'ın yerine geçer. Sürükleyerek
+  çizim ya da tıklamayla varsayılan boyut (metin 180×22 pt, onay kutusu/radio 14×14, açılır
+  liste 150×22, liste 150×60). Radio: seçili radio'nun grubuna katılır, yoksa ilk boş
+  `GroupN`; export `ChoiceN`. Seçili alanı sürükleyerek taşıma, sağ-alt tutamaçla
+  boyutlandırma (ikisi de sayfa içinde tutulur), Delete/Backspace ile silme (metin girişindeyken
+  yok sayılır). Geometri `clientPointToLayerNormalized` ile, viewer rotation dahil.
+- **Özellik paneli:** ad (tam adın son parçası; Enter ya da odak kaybı), ipucu (yalnız
+  değiştirilirse), zorunlu, salt okunur, çok satırlı ve en fazla karakter (metin), seçenekler
+  (açılır liste/liste; satır başına bir seçenek), sil düğmesi; "Kaydediliyor…" ve hata metni.
+
+Testler: `formDesignState.test.js` (op biçimleri, yeniden seçim isteği, hata ve imza reddi),
+`FormDesignLayer.test.js` (sürükleyerek ekleme, tıklamayla radio varsayılanları, seç-taşı-
+boyutlandır-Delete, eklemeden sonra yeni widget'ın seçilmesi, boş alana tıklamayla seçimin
+kalkması), `FormFieldProperties.test.js`, `client.test.js` sözleşme testi, AnnotationLayer'ın
+form araçlarında çizmemesi, `uiFeatureWiring.test.js`. Görsel kontrol: Tauri `invoke`'u taklit
+eden tarayıcı sayfasında (bellekte widget listesi) tüm hareketler denendi.
+
+Bilinen sınırlar: yerel Tauri penceresinde gerçek PDF ile uçtan uca denenmedi; değerli metin
+alanı boyutlandırılınca görünüm bir sonraki doldurmaya kadar gerilmiş görünebilir (Faz A);
+geri alma yok; çoklu seçim ve klavyeyle taşıma yok.
 
 ### Faz C — Sonraki adımlar (ayrı karar)
 

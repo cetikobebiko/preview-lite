@@ -98,6 +98,22 @@ function stubLayerLayout(layer, { width, height, boundingRect }) {
   });
 }
 
+describe("AnnotationLayer tools", () => {
+  it("does not draw while a form design tool is active", async () => {
+    getPageAnnotations.mockResolvedValue([]);
+    const { container } = render(AnnotationLayer, {
+      props: { sessionId: "s", contentGeneration: 1, pageIndex: 0, pageWidth: 300, pageHeight: 500, activeTool: "form-text" },
+    });
+    const layer = container.querySelector(".annotation-layer");
+    expect(layer.classList.contains("drawing")).toBe(false);
+    stubLayerLayout(layer, { width: 300, height: 500, boundingRect: { left: 0, top: 0, width: 300, height: 500 } });
+    await fireEvent.pointerDown(layer, { button: 0, clientX: 30, clientY: 50 });
+    await fireEvent.pointerMove(layer, { clientX: 200, clientY: 300 });
+    await fireEvent.pointerUp(layer, { clientX: 200, clientY: 300 });
+    expect(addAnnotation).not.toHaveBeenCalled();
+  });
+});
+
 describe("AnnotationLayer coordinates", () => {
   it("sends the drawn rect in normalized display space under viewer rotation and zoom", async () => {
     getPageAnnotations.mockResolvedValue([]);
