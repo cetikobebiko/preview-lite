@@ -504,9 +504,16 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
      (`D:YYYYMMDDHHmmSSZ00'00'`) korunur; `chrono` production bağımlılığı olmadığı için tarih
      küçük bir `civil_from_days` ile hesaplanır. Görselli sayfada AP üretimi için yapılan render
      sayfa kaynaklarını yüklediğinden büyüme K5 kapsamındadır (§9.1).
-   - 4c. `writeMode`'u mutasyon sonucuyla frontend'e taşı; `signatureLossGuard` sabit liste
-     yerine backend'in bildirdiği moda baksın (4a sonrasında uyarı gereğinden temkinli:
-     artık artımlı yazılan işlemlerde de soruyor).
+   - **4c. Yapıldı:** İmzalı belgede artımlı yazılan işlemlerden (döndürme, silme, boş sayfa,
+     annotation ekleme/silme) önce gösterilen uyarı bilgilendirmeye çevrildi: değişiklik sona
+     eklenir, imzalı içerik korunur, imza panelleri belgeyi imzadan sonra değiştirilmiş gösterir
+     (`ensureSignedIncrementalEditAccepted`). Metin, değişikliğin imzanın izin verdiği türden
+     olup olmadığını iddia etmez; bu DocMDP'ye bağlıdır. Sayfa sıralaması hâlâ tam yeniden
+     yazar ve "imzalar geçersiz olur" uyarısını korur. İki uyarının kabul belleği ayrıdır:
+     bilgilendirmeyi kabul etmek sıralama uyarısını atlatmaz.
+     `writeMode`'u frontend'e taşımak bu uyarı için gerekmedi: imzalı belgede bu işlemler ya
+     artımlı yazılır ya hata verir, bu yüzden uyarı işlem türünden belirlenir. Undo geçmişi
+     yazım modunu oturum tarafında prefix denetimiyle kendisi bulur (§5.3).
    - Bilinen maliyet: xref tutarlılık denetimi her mutasyonda belgeyi lopdf ile bir kez
      ayrıştırır. Tek yüklemenin bellek maliyeti ayrıca ölçülmedi (S6'daki ölçüm iki yüklemeyi
      birlikte kapsar). Yalnız xref bölümlerini okuyan bir denetimle değiştirilmesi açık iş.

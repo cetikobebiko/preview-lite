@@ -3,6 +3,7 @@ import {
   createSignatureLossGuard,
   isSignatureLossDeclined,
   signatureLossMessage,
+  signedIncrementalEditMessage,
   SignatureLossDeclinedError,
 } from "./signatureLossGuard.js";
 
@@ -50,5 +51,21 @@ describe("signature loss guard", () => {
     });
     const ensure = createSignatureLossGuard({ getFormInfo, confirm: vi.fn() });
     await expect(ensure("s1", 1, "Sayfa döndürme")).rejects.toThrow("worker unavailable");
+  });
+
+  it("tells signed-document users an incremental edit keeps signed content", () => {
+    const message = signedIncrementalEditMessage("Sayfa döndürme");
+    expect(message).toContain("Sayfa döndürme belgenin sonuna eklenir");
+    expect(message).toContain("imzalı içerik korunur");
+    expect(message).toContain("değiştirilmiş olarak gösterir");
+    expect(message).not.toContain("geçersiz");
+  });
+
+  it("asks with the guard's own message", async () => {
+    const getFormInfo = vi.fn(async () => ({ signature_count: 1 }));
+    const confirm = vi.fn(async () => true);
+    const ensure = createSignatureLossGuard({ getFormInfo, confirm, message: signedIncrementalEditMessage });
+    await ensure("s1", 1, "Açıklama ekleme");
+    expect(confirm).toHaveBeenCalledWith(signedIncrementalEditMessage("Açıklama ekleme"));
   });
 });

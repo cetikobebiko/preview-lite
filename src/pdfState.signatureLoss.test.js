@@ -21,13 +21,12 @@ afterEach(() => {
 });
 
 const runnable = { build: "development", platform: "macos" };
-// The guard remembers decisions per session, so every case uses its own session id.
+// The guards remember decisions per session, so every case uses its own session id.
 // insertBlankPage is guarded too, but its `page_insert_blank` feature is disabled, so the
 // feature gate rejects it before the guard runs.
-const cases = [
+const incrementalCases = [
   ["rotatePage", "rotateSessionPage", (id) => pdfState.rotatePage(id, 1, 0, 90)],
   ["deletePages", "deleteSessionPages", (id) => pdfState.deletePages(id, 1, [0])],
-  ["reorderPages", "reorderSessionPages", (id) => pdfState.reorderPages(id, 1, [1, 0])],
   [
     "addAnnotation",
     "addSessionAnnotation",
@@ -35,9 +34,12 @@ const cases = [
   ],
   ["deleteAnnotation", "deleteSessionAnnotation", (id) => pdfState.deleteAnnotation(id, 1, 0, "0", runnable)],
 ];
+const rewriteCases = [
+  ["reorderPages", "reorderSessionPages", (id) => pdfState.reorderPages(id, 1, [1, 0])],
+];
 
-describe("full-rewrite mutations on a signed document", () => {
-  it.each(cases)("%s does not reach the backend when the warning is declined", async (name, backend, run) => {
+function expectDeclinedBeforeBackend() {
+  return async (name, backend, run) => {
     confirm.mockResolvedValueOnce(false);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const error = await run(`declined-${name}`).catch((caught) => caught);
@@ -45,12 +47,40 @@ describe("full-rewrite mutations on a signed document", () => {
     expect(sessionBackend[backend]).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
     errorSpy.mockRestore();
-  });
+  };
+}
 
-  it.each(cases)("%s runs after the warning is accepted", async (name, backend, run) => {
+describe("incremental mutations on a signed document", () => {
+  it.each(incrementalCases)("%s does not reach the backend when the notice is declined", expectDeclinedBeforeBackend());
+
+  it.each(incrementalCases)("%s runs after the notice is accepted", async (name, backend, run) => {
+    confirm.mockResolvedValueOnce(true);
+    await expect(run(`accepted-${name}`)).resolves.toEqual({ contentGeneration: 2 });
+    expect(sessionBackend[backend]).toHaveBeenCalledTimes(1);
+    const message = confirm.mock.calls[0][0];
+    expect(message).toContain("imzalı içerik korunur");
+    expect(message).toContain("değiştirilmiş olarak gösterir");
+    expect(message).not.toContain("geçersiz");
+  });
+});
+
+describe("full-rewrite mutations on a signed document", () => {
+  it.each(rewriteCases)("%s does not reach the backend when the warning is declined", expectDeclinedBeforeBackend());
+
+  it.each(rewriteCases)("%s runs after the warning is accepted", async (name, backend, run) => {
     confirm.mockResolvedValueOnce(true);
     await expect(run(`accepted-${name}`)).resolves.toEqual({ contentGeneration: 2 });
     expect(sessionBackend[backend]).toHaveBeenCalledTimes(1);
     expect(confirm.mock.calls[0][0]).toContain("imzaları geçersiz kılar");
+  });
+
+  it("still warns after the incremental notice was accepted in the same session", async () => {
+    confirm.mockResolvedValue(true);
+    await pdfState.rotatePage("mixed", 1, 0, 90);
+    await pdfState.rotatePage("mixed", 2, 0, 90);
+    await pdfState.reorderPages("mixed", 3, [1, 0]);
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(confirm.mock.calls[0][0]).toContain("imzalı içerik korunur");
+    expect(confirm.mock.calls[1][0]).toContain("imzaları geçersiz kılar");
   });
 });
