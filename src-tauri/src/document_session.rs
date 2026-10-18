@@ -318,7 +318,6 @@ pub(crate) struct DocumentSession {
     working_path: PathBuf,
     session_dir: PathBuf,
     content_generation: u64,
-    persisted_content_generation: u64,
     state_revision: u64,
     dirty: bool,
     lifecycle: SessionLifecycle,
@@ -4188,7 +4187,6 @@ impl DocumentSessionStore {
             working_path,
             session_dir,
             content_generation: 1,
-            persisted_content_generation: 1,
             state_revision: 1,
             dirty: false,
             lifecycle,
@@ -4901,8 +4899,7 @@ impl DocumentSessionStore {
                 }
                 state.save_target_path = target;
                 state.baseline.digest = report.committed_digest.clone();
-                state.persisted_content_generation = content_generation;
-                state.dirty = state.content_generation != state.persisted_content_generation;
+                refresh_dirty(&mut state);
                 state.health_warning = (report.state
                     == CommitState::NewCommittedDurabilityUnconfirmed)
                     .then(|| "SAVE_DURABILITY_UNCONFIRMED".to_string());
@@ -6358,8 +6355,8 @@ fn reconcile_post_commit_authority(
             let _ = bump_generation(&mut state);
             let _ = bump_revision(&mut state);
         }
-        state.dirty = true;
         state.working_digest = actual_digest;
+        refresh_dirty(&mut state);
         let snap = snapshot(&state);
         MutationOwnerClassification::CommittedUnconfirmed {
             snapshot: snap,
@@ -6996,7 +6993,7 @@ fn apply_failed_mutation_reconciled(
                 .is_some_and(|candidate| candidate == actual)
             {
                 state.working_digest = Some(actual.to_string());
-                state.dirty = true;
+                refresh_dirty(state);
                 if let Some(pf) = preflight {
                     state.content_generation = pf.next_content_generation;
                     state.state_revision = pf.next_state_revision;
@@ -7655,7 +7652,7 @@ async fn execute_mutation_transaction(
     let snap = {
         let mut state = entry.state.lock();
         state.working_digest = Some(commit_report.committed_digest.clone());
-        state.dirty = true;
+        refresh_dirty(&mut state);
         state.health_warning =
             is_unconfirmed.then(|| "MUTATION_DURABILITY_UNCONFIRMED".to_string());
         state.content_generation = next_content_generation;
@@ -7681,6 +7678,16 @@ async fn execute_mutation_transaction(
     }
 }
 
+/// Working PDF, son açılan ya da kaydedilen baytlardan farklıysa kaydedilmemiş değişiklik
+/// vardır (docs/engineering/undo-redo-and-incremental-save-design.md §5.6). `baseline.digest`
+/// tam olarak o baytların digest'idir: açılışta working kopyanın kaynağı, Save'de hedefe bayt
+/// bayt kopyalanan working PDF. Working digest'i bilinmiyorsa (kurtarma gereken durumlar)
+/// belge kirli sayılır. Generation sayacıyla karşılaştırma, undo ile kaydedilmiş içeriğe
+/// dönüldüğünde yanlış sonuç verirdi: generation geri gitmez, içerik ise aynıdır.
+fn refresh_dirty(state: &mut DocumentSession) {
+    state.dirty = state.working_digest.as_deref() != Some(state.baseline.digest.as_str());
+}
+
 #[cfg(test)]
 fn apply_committed_mutation(
     state: &mut DocumentSession,
@@ -7689,7 +7696,7 @@ fn apply_committed_mutation(
     match report.state {
         CommitState::NewCommitted | CommitState::NewCommittedDurabilityUnconfirmed => {
             state.working_digest = Some(report.committed_digest);
-            state.dirty = true;
+            refresh_dirty(state);
             state.health_warning = (report.state == CommitState::NewCommittedDurabilityUnconfirmed)
                 .then(|| "MUTATION_DURABILITY_UNCONFIRMED".to_string());
             bump_generation(state)?;
@@ -7727,7 +7734,7 @@ fn apply_failed_mutation(
                 .is_some_and(|candidate| candidate == &actual)
             {
                 state.working_digest = Some(actual);
-                state.dirty = true;
+                refresh_dirty(state);
                 bump_generation(state)?;
                 return bump_revision(state);
             }
@@ -8113,7 +8120,7 @@ pub async fn recover_document_session(
     let snap = {
         let mut state = entry.state.lock();
         state.working_digest = Some(digest);
-        state.dirty = true;
+        refresh_dirty(&mut state);
         state.lifecycle = SessionLifecycle::Open;
         state.health_warning = Some("RECOVERED_CONTENT_REVALIDATED".to_string());
         bump_generation(&mut state)?;
@@ -12656,7 +12663,6 @@ mod tests {
             working_path: working,
             session_dir: directory.path().to_path_buf(),
             content_generation: 1,
-            persisted_content_generation: 1,
             state_revision: 1,
             dirty: false,
             lifecycle: SessionLifecycle::Open,
@@ -13136,7 +13142,6 @@ mod tests {
             working_path: working,
             session_dir: directory.path().to_path_buf(),
             content_generation: 1,
-            persisted_content_generation: 1,
             state_revision: 1,
             dirty: false,
             lifecycle: SessionLifecycle::Open,
@@ -13164,6 +13169,70 @@ mod tests {
         assert_eq!(state.content_generation, 2);
         assert_eq!(state.state_revision, 2);
         assert_eq!(state.working_digest.as_deref(), Some("after"));
+    }
+
+    fn clean_session_with_baseline(directory: &Path, baseline: &str) -> DocumentSession {
+        let working = directory.join("working.pdf");
+        fs::write(&working, b"%PDF-test").unwrap();
+        DocumentSession {
+            id: "s".into(),
+            save_target_path: working.clone(),
+            working_path: working,
+            session_dir: directory.to_path_buf(),
+            content_generation: 1,
+            state_revision: 1,
+            dirty: false,
+            lifecycle: SessionLifecycle::Open,
+            editable: true,
+            read_only_reason: None,
+            opened_at_ms: 0,
+            baseline: BaselineFingerprint {
+                digest: baseline.into(),
+            },
+            working_digest: Some(baseline.into()),
+            health_warning: None,
+            credential: None,
+            active_transition: None,
+            last_save_commit: None,
+        }
+    }
+
+    #[test]
+    fn dirty_compares_the_working_digest_with_the_saved_baseline() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = clean_session_with_baseline(directory.path(), "saved");
+        let commit = |state: &mut DocumentSession, digest: &str| {
+            apply_committed_mutation(
+                state,
+                AtomicWriteReport {
+                    state: CommitState::NewCommitted,
+                    committed_digest: digest.into(),
+                },
+            )
+            .unwrap();
+        };
+
+        commit(&mut state, "edited");
+        assert!(state.dirty);
+        assert_eq!(state.content_generation, 2);
+
+        // Kaydedilmiş baytlara dönen bir commit (ileride undo) generation'ı yine ilerletir,
+        // ama belge artık kirli değildir.
+        commit(&mut state, "saved");
+        assert!(!state.dirty);
+        assert_eq!(state.content_generation, 3);
+    }
+
+    #[test]
+    fn unknown_working_digest_counts_as_dirty() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = clean_session_with_baseline(directory.path(), "saved");
+        state.working_digest = None;
+        refresh_dirty(&mut state);
+        assert!(state.dirty);
+        state.working_digest = Some("saved".into());
+        refresh_dirty(&mut state);
+        assert!(!state.dirty);
     }
 
     #[test]
@@ -13243,7 +13312,6 @@ mod tests {
             working_path: working,
             session_dir: directory.path().to_path_buf(),
             content_generation: 4,
-            persisted_content_generation: 4,
             state_revision: 7,
             dirty: false,
             lifecycle: SessionLifecycle::Open,
@@ -17919,7 +17987,6 @@ mod tests {
             working_path: PathBuf::from("nonexistent.pdf"),
             session_dir: PathBuf::from("dir"),
             content_generation: 1,
-            persisted_content_generation: 1,
             state_revision: 1,
             dirty: false,
             lifecycle: SessionLifecycle::Open,
@@ -17964,7 +18031,6 @@ mod tests {
             working_path: PathBuf::from("working.pdf"),
             session_dir: PathBuf::from("dir"),
             content_generation: 1,
-            persisted_content_generation: 1,
             state_revision: 1,
             dirty: false,
             lifecycle: SessionLifecycle::Open,
@@ -18007,7 +18073,6 @@ mod tests {
             working_path: PathBuf::from("working.pdf"),
             session_dir: PathBuf::from("dir"),
             content_generation: 1,
-            persisted_content_generation: 1,
             state_revision: 1,
             dirty: false,
             lifecycle: SessionLifecycle::Open,

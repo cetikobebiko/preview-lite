@@ -272,16 +272,24 @@ Değerler geçicidir, ölçülmeden kesinleşmez (bkz. §8 S6):
 
 ### 5.6 `dirty` hesabı
 
-Bugünkü sayaç karşılaştırması (`content_generation != persisted_content_generation`) undo
-ile yanlış sonuç verir: kaydedilmiş duruma undo ile dönmek yeni bir generation üretir ama
-içerik kaydedilmiş içerikle aynıdır. Yeni kural:
+Eski sayaç karşılaştırması (`content_generation != persisted_content_generation`) undo ile
+yanlış sonuç verirdi: kaydedilmiş duruma undo ile dönmek yeni bir generation üretir ama içerik
+kaydedilmiş içerikle aynıdır. Uygulanan kural (`refresh_dirty`, §10 adım 5):
 
 ```text
-dirty = working_digest != Some(persisted_working_digest)
+dirty = working_digest != Some(baseline.digest)
 ```
 
-`persisted_working_digest`, açılışta ve her başarılı Save'de `working_digest`'ten alınır.
-Save bayt-bayt kopya olduğu için bu, baseline digest'iyle aynı değerdir (§8 S7'de doğrulanır).
+Tasarımdaki ayrı `persisted_working_digest` alanı eklenmedi; aynı değeri zaten `baseline.digest`
+tutuyor. Açılışta bu, working kopyanın kaynağının digest'idir (S7). Save'de ise hedefe bayt bayt
+kopyalanan working PDF'in commit digest'idir; Save, generation'ın değişmediğini aynı lease
+altında doğrular. İkinci bir alan yalnız birbirinden kayabilecek iki kopya üretirdi.
+`persisted_content_generation` kaldırıldı.
+
+Kural, digest'in bilindiği commit dallarında uygulanır: normal mutasyon commit'i, kurtarmada
+"aday uygulandı" sonucu, owner panic sonrası doğrulanmış commit ve `recover_document_session`.
+`CommitIndeterminate` / `RecoveryRequired` dallarında `dirty = true` temkinli olarak kalır;
+digest bilinmediğinde kural da zaten `true` verir.
 
 ### 5.7 Kayıttan sonra undo
 
@@ -517,7 +525,8 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
    - Bilinen maliyet: xref tutarlılık denetimi her mutasyonda belgeyi lopdf ile bir kez
      ayrıştırır. Tek yüklemenin bellek maliyeti ayrıca ölçülmedi (S6'daki ölçüm iki yüklemeyi
      birlikte kapsar). Yalnız xref bölümlerini okuyan bir denetimle değiştirilmesi açık iş.
-5. `persisted_working_digest` ile `dirty` hesabı (§5.6).
+5. `dirty`'nin digest ile hesaplanması (§5.6). **Yapıldı:** `baseline.digest` kullanılır, ayrı alan
+   eklenmedi.
 6. Geçmiş modeli, commit'te geçmişe yazma ve sınırlar (§5.2–5.5).
 7. Undo/redo komutları ve frontend (§5.4, §5.10).
 8. `ReorderPages` için lopdf artımlı yolu (S3 sonucuna bağlı).
