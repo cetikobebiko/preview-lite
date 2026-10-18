@@ -651,7 +651,7 @@ fn verify_windows_dll_architecture(path: &std::path::Path, expected_arch: &str) 
 
     // Verify it's 64-bit (not 32-bit) by checking Characteristics
     let characteristics = u16::from_le_bytes([coff_header[18], coff_header[19]]);
-    const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0020;
+    const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0100;
     if characteristics & IMAGE_FILE_32BIT_MACHINE != 0 {
         panic!(
             "ARCHITECTURE_MISMATCH: Staged Windows PDFium DLL has 32-bit flag set (IMAGE_FILE_32BIT_MACHINE). \

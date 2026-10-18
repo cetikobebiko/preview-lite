@@ -512,7 +512,7 @@ fn verify_pe_header_bytes(bytes: &[u8], expected_arch: &str) -> Result<(), AppEr
     }
 
     let characteristics = u16::from_le_bytes([coff[18], coff[19]]);
-    const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0020;
+    const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0100;
     if characteristics & IMAGE_FILE_32BIT_MACHINE != 0 {
         return Err(AppError::RuntimeArchitectureMismatch {
             expected: expected_arch.to_string(),
@@ -597,9 +597,10 @@ fn verify_windows_architecture(path: &std::path::Path) -> Result<(), AppError> {
     }
 
     // Optional: verify it's 64-bit (not 32-bit) by checking Characteristics
-    // Bit 0x0020 = IMAGE_FILE_32BIT_MACHINE should NOT be set for 64-bit
+    // Bit 0x0100 = IMAGE_FILE_32BIT_MACHINE should NOT be set for 64-bit (0x0020 is
+    // IMAGE_FILE_LARGE_ADDRESS_AWARE, which every x64 image sets)
     let characteristics = u16::from_le_bytes([coff_header[18], coff_header[19]]);
-    const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0020;
+    const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0100;
     if characteristics & IMAGE_FILE_32BIT_MACHINE != 0 {
         return Err(AppError::RuntimeArchitectureMismatch {
             expected: EXPECTED_ARCH.to_string(),
@@ -1953,7 +1954,7 @@ mod cross_platform_fast_local_tests {
         header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
         header[64..68].copy_from_slice(b"PE\0\0");
         header[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
-        header[86..88].copy_from_slice(&0x0020u16.to_le_bytes());
+        header[86..88].copy_from_slice(&0x0100u16.to_le_bytes());
 
         let result = verify_pe_header_bytes(&header, "x86_64");
         assert!(result.is_err());
@@ -1964,6 +1965,20 @@ mod cross_platform_fast_local_tests {
             }
             other => panic!("Expected RuntimeArchitectureMismatch, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn pe_header_parser_accepts_large_address_aware_x64_dll() {
+        // Characteristics of the pinned pdfium.dll: EXECUTABLE_IMAGE |
+        // LARGE_ADDRESS_AWARE (0x0020) | DLL. 0x0020 is not the 32-bit flag.
+        let mut header = [0u8; 128];
+        header[0..2].copy_from_slice(b"MZ");
+        header[0x3C..0x40].copy_from_slice(&64u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"PE\0\0");
+        header[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
+        header[86..88].copy_from_slice(&0x2022u16.to_le_bytes());
+
+        assert!(verify_pe_header_bytes(&header, "x86_64").is_ok());
     }
 
     #[test]

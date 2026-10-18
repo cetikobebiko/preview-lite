@@ -12362,16 +12362,17 @@ fn ensure_windows_current_user_acl(
     is_directory: bool,
 ) -> Result<(), DocumentSessionError> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS, GENERIC_ALL};
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
     use windows_sys::Win32::Security::Authorization::{
         GetExplicitEntriesFromAclW, GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW,
-        EXPLICIT_ACCESS_W, GRANT_ACCESS, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, TRUSTEE_IS_SID,
-        TRUSTEE_IS_USER, TRUSTEE_W,
+        EXPLICIT_ACCESS_W, GRANT_ACCESS, NO_MULTIPLE_TRUSTEE, SET_ACCESS, SE_FILE_OBJECT,
+        TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
     };
     use windows_sys::Win32::Security::{
         EqualSid, ACL, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
         SUB_CONTAINERS_AND_OBJECTS_INHERIT,
     };
+    use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
 
     let mut sid = current_windows_user_sid()?;
     let trustee = TRUSTEE_W {
@@ -12382,7 +12383,10 @@ fn ensure_windows_current_user_acl(
         ptstrName: sid.as_mut_ptr().cast(),
     };
     let entry = EXPLICIT_ACCESS_W {
-        grfAccessPermissions: GENERIC_ALL,
+        // Specific rights, not GENERIC_ALL: Windows maps generic rights when it
+        // stores the ACE (and splits inheritable ones), so a GENERIC_ALL grant
+        // never reads back as the single GENERIC_ALL entry verified below.
+        grfAccessPermissions: FILE_ALL_ACCESS,
         grfAccessMode: GRANT_ACCESS,
         grfInheritance: if is_directory {
             SUB_CONTAINERS_AND_OBJECTS_INHERIT
@@ -12446,8 +12450,9 @@ fn ensure_windows_current_user_acl(
         && !entries.is_null()
         && unsafe {
             let verified = &*entries;
-            verified.grfAccessMode == GRANT_ACCESS
-                && verified.grfAccessPermissions & GENERIC_ALL == GENERIC_ALL
+            // An access-allowed ACE reads back as GRANT_ACCESS or SET_ACCESS.
+            matches!(verified.grfAccessMode, GRANT_ACCESS | SET_ACCESS)
+                && verified.grfAccessPermissions & FILE_ALL_ACCESS == FILE_ALL_ACCESS
                 && verified.Trustee.TrusteeForm == TRUSTEE_IS_SID
                 && EqualSid(verified.Trustee.ptstrName.cast(), sid.as_mut_ptr().cast()) != 0
         };
