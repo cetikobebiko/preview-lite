@@ -1,2 +1,5 @@
 *.c linguist-vendored
 *.h linguist-vendored
+
+# PDF fixtures are byte-exact (xref offsets, digests); never convert line endings
+*.pdf binary

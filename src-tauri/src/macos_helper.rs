@@ -204,8 +204,12 @@ pub(crate) fn sanitize_share_file_name(display_path: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::path::PathBuf;
 
+    // Unix absolute paths: on Windows they are not absolute and the helper
+    // (macOS-only in production) rejects them before building arguments.
+    #[cfg(unix)]
     const HOSTILE_PATHS: &[&str] = &[
         "/tmp/a\"b/vision-ocr-input.png",
         "/tmp/back\\slash/vision-ocr-input.png",
@@ -214,6 +218,7 @@ mod tests {
         "/tmp/-e/--help/vision-ocr-input.png",
     ];
 
+    #[cfg(unix)]
     #[test]
     fn ocr_args_pass_path_as_a_single_untouched_argument() {
         for hostile in HOSTILE_PATHS {
@@ -223,6 +228,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn share_args_pass_path_and_service_timeout_as_separate_arguments() {
         for hostile in HOSTILE_PATHS {
@@ -239,6 +245,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn share_args_append_window_anchor_as_four_coordinates() {
         let path = PathBuf::from(HOSTILE_PATHS[0]);
