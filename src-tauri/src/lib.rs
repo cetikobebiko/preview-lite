@@ -1364,6 +1364,8 @@ pub fn run() {
             document_session::set_active_session_render_document,
             document_session::cancel_session_render_request,
             document_session::rotate_session_page,
+            document_session::undo_session_mutation,
+            document_session::redo_session_mutation,
             document_session::delete_session_pages,
             document_session::reorder_session_pages,
             document_session::insert_session_blank_page,

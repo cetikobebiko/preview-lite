@@ -330,6 +330,136 @@ pub(crate) struct DocumentSession {
     credential: Option<String>,
     active_transition: Option<SessionTransition>,
     last_save_commit: Option<SaveCommitDiagnostic>,
+    history: SessionHistory,
+}
+
+/// En fazla geri alınabilecek adım sayısı (tasarım §5.5, K4).
+const MAX_HISTORY_ENTRIES: usize = 50;
+/// Geçmiş dosyalarının toplam boyut bütçesi. Her giriş tam bir PDF kopyasıdır (§5.5); büyük
+/// belgede bütçe adım sayısından önce dolar (392 MB'lık belgede yaklaşık iki adım, S6).
+const MAX_HISTORY_BYTES: u64 = 1 << 30;
+
+/// Undo/redo geçmişi (docs/engineering/undo-redo-and-incremental-save-design.md §5).
+///
+/// Her giriş, bir mutasyondan ya da geri yüklemeden **önceki** working PDF'in değişmez bir
+/// kopyasıdır ve `session_dir/history/` altında durur. Kopya yeni yazılmaz: mutasyon işleminin
+/// zaten aldığı snapshot commit'ten sonra oraya taşınır. Girdiler yalnız işlemin exclusive
+/// lease'i altında değişir; geri yükleme digest eşleşmezse reddedilir ve geçmiş temizlenir.
+#[derive(Debug, Default)]
+pub(crate) struct SessionHistory {
+    undo: Vec<HistoryEntry>,
+    redo: Vec<HistoryEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HistoryEntry {
+    /// Bu durumdan çıkaran (geri alınınca geri dönülen) işlemin kodu.
+    operation: &'static str,
+    /// Girişin geri yükleyeceği working PDF'in digest'i.
+    digest: String,
+    blob: PathBuf,
+    bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HistoryDirection {
+    Undo,
+    Redo,
+}
+
+impl SessionHistory {
+    fn total_bytes(&self) -> u64 {
+        self.undo
+            .iter()
+            .chain(&self.redo)
+            .map(|entry| entry.bytes)
+            .sum()
+    }
+
+    /// Yeni bir mutasyon commit edildi: redo geçersizleşir, önceki durum undo'ya girer.
+    fn record_mutation(&mut self, entry: HistoryEntry) {
+        for stale in self.redo.drain(..) {
+            remove_history_blob(&stale.blob);
+        }
+        self.undo.push(entry);
+        self.enforce_limits();
+    }
+
+    /// `direction` yönündeki en üst giriş geri yüklendi; geri yüklemeden önceki durum (`previous`)
+    /// ters yöne girer. Geri yüklenen girişin dosyası artık working PDF'tedir ve silinir.
+    fn record_restore(&mut self, direction: HistoryDirection, previous: HistoryEntry) {
+        let (from, to) = match direction {
+            HistoryDirection::Undo => (&mut self.undo, &mut self.redo),
+            HistoryDirection::Redo => (&mut self.redo, &mut self.undo),
+        };
+        if let Some(restored) = from.pop() {
+            remove_history_blob(&restored.blob);
+        }
+        to.push(previous);
+        self.enforce_limits();
+    }
+
+    fn top(&self, direction: HistoryDirection) -> Option<&HistoryEntry> {
+        match direction {
+            HistoryDirection::Undo => self.undo.last(),
+            HistoryDirection::Redo => self.redo.last(),
+        }
+    }
+
+    /// En eski undo girişlerinden başlayarak adım ve bayt sınırlarına iner; undo boşalırsa en
+    /// uzaktaki redo girişleri düşer.
+    fn enforce_limits(&mut self) {
+        while self.undo.len() > MAX_HISTORY_ENTRIES
+            || (self.total_bytes() > MAX_HISTORY_BYTES && !self.undo.is_empty())
+        {
+            let oldest = self.undo.remove(0);
+            remove_history_blob(&oldest.blob);
+        }
+        while self.redo.len() > MAX_HISTORY_ENTRIES || self.total_bytes() > MAX_HISTORY_BYTES {
+            let farthest = self.redo.remove(0);
+            remove_history_blob(&farthest.blob);
+        }
+    }
+
+    fn clear(&mut self) {
+        for entry in self.undo.drain(..).chain(self.redo.drain(..)) {
+            remove_history_blob(&entry.blob);
+        }
+    }
+}
+
+fn remove_history_blob(path: &Path) {
+    if let Err(error) = fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                code = "HISTORY_BLOB_REMOVE_FAILED",
+                error = %error,
+                "Geçmiş dosyası silinemedi; oturum dizini kapanışta temizlenir"
+            );
+        }
+    }
+}
+
+/// İşlem snapshot'ını (işlem öncesi working PDF'in kopyası) geçmiş dizinine taşır. Snapshot
+/// ile session dizini aynı instance dizinindedir; taşıma bir rename'dir, kopya değildir.
+fn retain_transaction_snapshot(
+    snapshot_path: &Path,
+    snapshot_digest: Option<&str>,
+    before_digest: Option<&str>,
+    session_dir: &Path,
+) -> Result<(PathBuf, u64), String> {
+    match (snapshot_digest, before_digest) {
+        (Some(snapshot), Some(before)) if snapshot == before => {}
+        _ => return Err("işlem snapshot'ı işlem öncesi working PDF ile eşleşmiyor".to_string()),
+    }
+    let directory = session_dir.join("history");
+    create_secure_dir(&directory).map_err(|error| error.message)?;
+    let blob = directory.join(format!("{}.pdf", Uuid::new_v4()));
+    fs::rename(snapshot_path, &blob).map_err(|error| format!("snapshot taşınamadı: {error}"))?;
+    let bytes = fs::metadata(&blob)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    Ok((blob, bytes))
 }
 
 pub(crate) struct SessionEntry {
@@ -1061,6 +1191,8 @@ impl MutationTransactionRecord {
                 editable: false,
                 read_only_reason: None,
                 health_warning: Some(err.message.clone()),
+                undo_operation: None,
+                redo_operation: None,
             };
             ctrl.phase = MutationTransactionPhase::FailedPostCommit;
             ctrl.terminal_outcome = Some(MutationTransactionOutcome::Indeterminate {
@@ -3384,6 +3516,10 @@ pub struct DocumentSessionSnapshot {
     pub editable: bool,
     pub read_only_reason: Option<String>,
     pub health_warning: Option<String>,
+    /// Geri alınabilecek son mutasyonun işlem kodu (ör. `rotate_page`); yoksa `None`.
+    pub undo_operation: Option<String>,
+    /// Yinelenebilecek son geri alınmış mutasyonun işlem kodu; yoksa `None`.
+    pub redo_operation: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -4202,6 +4338,7 @@ impl DocumentSessionStore {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         };
         let snapshot = snapshot(&session);
         self.sessions.write().insert(
@@ -4303,6 +4440,39 @@ impl DocumentSessionStore {
         recipe: MutationRecipe,
         engine: Arc<dyn MutationEngine>,
     ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+        self.run_mutation_transaction(
+            session_id,
+            expected_generation,
+            MutationTransactionKind::Recipe(recipe),
+            engine,
+        )
+        .await
+    }
+
+    /// Undo/redo: geçmişteki durumu mutasyonla aynı işlem hattından geri yükler
+    /// (tasarım §5.4). Generation her zaman ilerler; `dirty` içeriğe göre yeniden hesaplanır.
+    pub(crate) async fn mutate_isolated_restore(
+        &self,
+        session_id: String,
+        expected_generation: u64,
+        direction: HistoryDirection,
+    ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+        self.run_mutation_transaction(
+            session_id,
+            expected_generation,
+            MutationTransactionKind::Restore(direction),
+            Arc::new(ProductionMutationEngine),
+        )
+        .await
+    }
+
+    async fn run_mutation_transaction(
+        &self,
+        session_id: String,
+        expected_generation: u64,
+        kind: MutationTransactionKind,
+        engine: Arc<dyn MutationEngine>,
+    ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
         let (record, reservation_guard) = self
             .mutation_transaction_manager
             .begin_transaction(&session_id, expected_generation)?;
@@ -4329,7 +4499,7 @@ impl DocumentSessionStore {
             transaction_id: record.id,
             session_id: session_id.clone(),
             expected_generation,
-            recipe,
+            kind,
         };
         let deps = MutationTransactionDependencies {
             worker_broker: self.worker_broker.clone(),
@@ -6088,6 +6258,16 @@ fn snapshot(state: &DocumentSession) -> DocumentSessionSnapshot {
         editable: state.editable,
         read_only_reason: state.read_only_reason.clone(),
         health_warning: state.health_warning.clone(),
+        undo_operation: state
+            .history
+            .undo
+            .last()
+            .map(|entry| entry.operation.to_string()),
+        redo_operation: state
+            .history
+            .redo
+            .last()
+            .map(|entry| entry.operation.to_string()),
     }
 }
 
@@ -6300,7 +6480,24 @@ pub(crate) struct MutationTransactionInput {
     pub(crate) transaction_id: MutationTransactionId,
     pub(crate) session_id: String,
     pub(crate) expected_generation: u64,
-    pub(crate) recipe: MutationRecipe,
+    pub(crate) kind: MutationTransactionKind,
+}
+
+/// Bir mutasyon işleminin ne yaptığı: worker'da bir recipe çalıştırmak ya da undo/redo
+/// geçmişinden bir durumu geri yüklemek. İkisi de aynı commit, iptal ve kurtarma hattından geçer.
+pub(crate) enum MutationTransactionKind {
+    Recipe(MutationRecipe),
+    Restore(HistoryDirection),
+}
+
+impl MutationTransactionKind {
+    fn operation_name(&self) -> &'static str {
+        match self {
+            Self::Recipe(recipe) => recipe.operation_name(),
+            Self::Restore(HistoryDirection::Undo) => "undo_mutation",
+            Self::Restore(HistoryDirection::Redo) => "redo_mutation",
+        }
+    }
 }
 
 pub(crate) struct MutationTransactionDependencies {
@@ -6577,6 +6774,8 @@ fn finalize_with_existing_claim(
                     editable: false,
                     read_only_reason: None,
                     health_warning: Some(pub_err.message.clone()),
+                    undo_operation: None,
+                    redo_operation: None,
                 },
             },
             error: pub_err.clone(),
@@ -7052,7 +7251,7 @@ async fn execute_mutation_transaction(
     let transaction_id = input.transaction_id;
     let session_id = input.session_id;
     let expected_generation = input.expected_generation;
-    let recipe = input.recipe;
+    let kind = input.kind;
 
     let worker_broker = deps.worker_broker;
     let _jobs_root = deps.jobs_root;
@@ -7104,7 +7303,7 @@ async fn execute_mutation_transaction(
         };
     }
 
-    let (working_path, credential, before_digest) = {
+    let (working_path, session_dir, credential, before_digest) = {
         let state = entry.state.lock();
         if let Err(err) = ensure_open_for_mutation(&state, expected_generation) {
             return MutationOwnerResult {
@@ -7117,6 +7316,7 @@ async fn execute_mutation_transaction(
         }
         (
             state.working_path.clone(),
+            state.session_dir.clone(),
             state.credential.clone(),
             state.working_digest.clone(),
         )
@@ -7168,19 +7368,23 @@ async fn execute_mutation_transaction(
         ctx.child_processes.clone(),
     );
 
-    if let Err(err) = copy_with_digest(&working_path, &tx_context.snapshot_path) {
-        let ds_err = DocumentSessionError::new(
-            "MUTATION_WORKER_FAILED",
-            format!("Snapshot PDF kopyalanamadı: {}", err.message),
-        );
-        return MutationOwnerResult {
-            transaction_id,
-            session_id,
-            classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
-            child_owner: ctx.child_processes,
-            recovery_ctx: ctx.recovery_ctx,
-        };
-    }
+    // Snapshot, işlem öncesi working PDF'in kopyasıdır; commit'ten sonra geçmişe taşınır.
+    let snapshot_digest = match copy_with_digest(&working_path, &tx_context.snapshot_path) {
+        Ok(digest) => Some(digest),
+        Err(err) => {
+            let ds_err = DocumentSessionError::new(
+                "MUTATION_WORKER_FAILED",
+                format!("Snapshot PDF kopyalanamadı: {}", err.message),
+            );
+            return MutationOwnerResult {
+                transaction_id,
+                session_id,
+                classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
+                child_owner: ctx.child_processes,
+                recovery_ctx: ctx.recovery_ctx,
+            };
+        }
+    };
 
     if let Err(err) = record.transition_to(MutationTransactionPhase::Mutating) {
         return MutationOwnerResult {
@@ -7199,72 +7403,117 @@ async fn execute_mutation_transaction(
     );
 
     let job_ctx = tx_context.to_session_job_context();
-    let operation = recipe.operation_name();
+    let operation = kind.operation_name();
 
-    let engine_clone = Arc::clone(&engine);
-    let job_ctx_clone = job_ctx.clone();
-    let recipe_clone = recipe.clone();
-
-    let mutation_res = spawn_supervised_blocking(&ctx.execution_authority, move || {
-        engine_clone.run_mutation_worker(&job_ctx_clone, &recipe_clone)
-    })
-    .await;
-
-    #[cfg(test)]
-    _manager.trigger_test_hook(MutationTestHookPhase::AfterMutationWorker, &transaction_id);
-
-    if record.control.lock().cancel_requested {
-        let reason = record
-            .control
-            .lock()
-            .cancel_reason
-            .clone()
-            .unwrap_or_else(|| "MUTATION_TRANSACTION_CANCELLED".to_string());
-        return MutationOwnerResult {
-            transaction_id,
-            session_id,
-            classification: MutationOwnerClassification::Aborted { reason },
-            child_owner: ctx.child_processes,
-            recovery_ctx: ctx.recovery_ctx,
-        };
-    }
-
-    let output_path = match mutation_res {
-        Ok(Ok(JobResult::File(path))) => path,
-        Ok(Ok(_)) => {
-            let ds_err = DocumentSessionError::new(
-                "MUTATION_WORKER_FAILED",
-                "Mutation worker beklenmeyen sonuç döndürdü",
-            );
-            return MutationOwnerResult {
-                transaction_id,
-                session_id,
-                classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
-                child_owner: ctx.child_processes,
-                recovery_ctx: ctx.recovery_ctx,
-            };
+    // Geri yüklemede geri dönülecek giriş; exclusive lease altında seçilir ve değişmez.
+    let restore_entry = match &kind {
+        MutationTransactionKind::Restore(direction) => {
+            let top = entry.state.lock().history.top(*direction).cloned();
+            match top {
+                Some(restored) => Some(restored),
+                None => {
+                    let ds_err = DocumentSessionError::new(
+                        "HISTORY_EMPTY",
+                        match direction {
+                            HistoryDirection::Undo => "Geri alınacak adım yok",
+                            HistoryDirection::Redo => "Yinelenecek adım yok",
+                        },
+                    );
+                    return MutationOwnerResult {
+                        transaction_id,
+                        session_id,
+                        classification: MutationOwnerClassification::FailedPreCommit {
+                            error: ds_err,
+                        },
+                        child_owner: ctx.child_processes,
+                        recovery_ctx: ctx.recovery_ctx,
+                    };
+                }
+            }
         }
-        Ok(Err(ds_err)) => {
-            return MutationOwnerResult {
-                transaction_id,
-                session_id,
-                classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
-                child_owner: ctx.child_processes,
-                recovery_ctx: ctx.recovery_ctx,
-            };
+        MutationTransactionKind::Recipe(_) => None,
+    };
+
+    let output_path = match (&kind, &restore_entry) {
+        // Geri yüklenen baytlar daha önce doğrulanıp commit edilmiş bir durumdur; worker
+        // çalışmaz, aşağıda digest'leri kayıtlı digest'le karşılaştırılır.
+        (_, Some(restored)) => restored.blob.clone(),
+        (MutationTransactionKind::Restore(_), None) => {
+            unreachable!("restore_entry yukarıda seçildi")
         }
-        Err(join_err) => {
-            let ds_err = DocumentSessionError::new(
-                "MUTATION_WORKER_FAILED",
-                format!("Mutation worker thread panikledi: {join_err}"),
-            );
-            return MutationOwnerResult {
-                transaction_id,
-                session_id,
-                classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
-                child_owner: ctx.child_processes,
-                recovery_ctx: ctx.recovery_ctx,
-            };
+        (MutationTransactionKind::Recipe(recipe), None) => {
+            let engine_clone = Arc::clone(&engine);
+            let job_ctx_clone = job_ctx.clone();
+            let recipe_clone = recipe.clone();
+
+            let mutation_res = spawn_supervised_blocking(&ctx.execution_authority, move || {
+                engine_clone.run_mutation_worker(&job_ctx_clone, &recipe_clone)
+            })
+            .await;
+
+            #[cfg(test)]
+            _manager.trigger_test_hook(MutationTestHookPhase::AfterMutationWorker, &transaction_id);
+
+            if record.control.lock().cancel_requested {
+                let reason = record
+                    .control
+                    .lock()
+                    .cancel_reason
+                    .clone()
+                    .unwrap_or_else(|| "MUTATION_TRANSACTION_CANCELLED".to_string());
+                return MutationOwnerResult {
+                    transaction_id,
+                    session_id,
+                    classification: MutationOwnerClassification::Aborted { reason },
+                    child_owner: ctx.child_processes,
+                    recovery_ctx: ctx.recovery_ctx,
+                };
+            }
+
+            match mutation_res {
+                Ok(Ok(JobResult::File(path))) => path,
+                Ok(Ok(_)) => {
+                    let ds_err = DocumentSessionError::new(
+                        "MUTATION_WORKER_FAILED",
+                        "Mutation worker beklenmeyen sonuç döndürdü",
+                    );
+                    return MutationOwnerResult {
+                        transaction_id,
+                        session_id,
+                        classification: MutationOwnerClassification::FailedPreCommit {
+                            error: ds_err,
+                        },
+                        child_owner: ctx.child_processes,
+                        recovery_ctx: ctx.recovery_ctx,
+                    };
+                }
+                Ok(Err(ds_err)) => {
+                    return MutationOwnerResult {
+                        transaction_id,
+                        session_id,
+                        classification: MutationOwnerClassification::FailedPreCommit {
+                            error: ds_err,
+                        },
+                        child_owner: ctx.child_processes,
+                        recovery_ctx: ctx.recovery_ctx,
+                    };
+                }
+                Err(join_err) => {
+                    let ds_err = DocumentSessionError::new(
+                        "MUTATION_WORKER_FAILED",
+                        format!("Mutation worker thread panikledi: {join_err}"),
+                    );
+                    return MutationOwnerResult {
+                        transaction_id,
+                        session_id,
+                        classification: MutationOwnerClassification::FailedPreCommit {
+                            error: ds_err,
+                        },
+                        child_owner: ctx.child_processes,
+                        recovery_ctx: ctx.recovery_ctx,
+                    };
+                }
+            }
         }
     };
 
@@ -7297,37 +7546,39 @@ async fn execute_mutation_transaction(
         };
     }
 
-    let engine_clone = Arc::clone(&engine);
-    let job_ctx_clone = job_ctx.clone();
+    if restore_entry.is_none() {
+        let engine_clone = Arc::clone(&engine);
+        let job_ctx_clone = job_ctx.clone();
 
-    let validation_res = spawn_supervised_blocking(&ctx.execution_authority, move || {
-        engine_clone.run_validation_worker(&job_ctx_clone)
-    })
-    .await;
+        let validation_res = spawn_supervised_blocking(&ctx.execution_authority, move || {
+            engine_clone.run_validation_worker(&job_ctx_clone)
+        })
+        .await;
 
-    match validation_res {
-        Ok(Ok(())) => {}
-        Ok(Err(ds_err)) => {
-            return MutationOwnerResult {
-                transaction_id,
-                session_id,
-                classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
-                child_owner: ctx.child_processes,
-                recovery_ctx: ctx.recovery_ctx,
-            };
-        }
-        Err(join_err) => {
-            let ds_err = DocumentSessionError::new(
-                "MUTATION_VALIDATION_FAILED",
-                format!("Validation worker thread panikledi: {join_err}"),
-            );
-            return MutationOwnerResult {
-                transaction_id,
-                session_id,
-                classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
-                child_owner: ctx.child_processes,
-                recovery_ctx: ctx.recovery_ctx,
-            };
+        match validation_res {
+            Ok(Ok(())) => {}
+            Ok(Err(ds_err)) => {
+                return MutationOwnerResult {
+                    transaction_id,
+                    session_id,
+                    classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
+                    child_owner: ctx.child_processes,
+                    recovery_ctx: ctx.recovery_ctx,
+                };
+            }
+            Err(join_err) => {
+                let ds_err = DocumentSessionError::new(
+                    "MUTATION_VALIDATION_FAILED",
+                    format!("Validation worker thread panikledi: {join_err}"),
+                );
+                return MutationOwnerResult {
+                    transaction_id,
+                    session_id,
+                    classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
+                    child_owner: ctx.child_processes,
+                    recovery_ctx: ctx.recovery_ctx,
+                };
+            }
         }
     }
 
@@ -7347,6 +7598,23 @@ async fn execute_mutation_transaction(
             };
         }
     };
+
+    if let Some(restored) = &restore_entry {
+        if restored.digest != validated_digest {
+            entry.state.lock().history.clear();
+            let ds_err = DocumentSessionError::new(
+                "HISTORY_ENTRY_CORRUPTED",
+                "Geçmiş dosyası kayıtlı içerikle eşleşmiyor; geçmiş temizlendi ve belge değiştirilmedi",
+            );
+            return MutationOwnerResult {
+                transaction_id,
+                session_id,
+                classification: MutationOwnerClassification::FailedPreCommit { error: ds_err },
+                child_owner: ctx.child_processes,
+                recovery_ctx: ctx.recovery_ctx,
+            };
+        }
+    }
 
     *ctx.recovery_ctx.replacement_digest.lock() = Some(validated_digest.clone());
 
@@ -7649,6 +7917,13 @@ async fn execute_mutation_transaction(
     _manager.trigger_test_hook(MutationTestHookPhase::BeforeStateApply, &transaction_id);
 
     let is_unconfirmed = commit_report.state == CommitState::NewCommittedDurabilityUnconfirmed;
+    // İşlem öncesi durum geçmişe girer: snapshot'ı rename ile taşınır (kilit dışında).
+    let retained = retain_transaction_snapshot(
+        &tx_context.snapshot_path,
+        snapshot_digest.as_deref(),
+        before_digest.as_deref(),
+        &session_dir,
+    );
     let snap = {
         let mut state = entry.state.lock();
         state.working_digest = Some(commit_report.committed_digest.clone());
@@ -7657,6 +7932,41 @@ async fn execute_mutation_transaction(
             is_unconfirmed.then(|| "MUTATION_DURABILITY_UNCONFIRMED".to_string());
         state.content_generation = next_content_generation;
         state.state_revision = next_state_revision;
+        let history_operation = restore_entry
+            .as_ref()
+            .map_or(operation, |restored| restored.operation);
+        match (retained, before_digest.clone()) {
+            (Ok((blob, bytes)), Some(digest)) => {
+                let previous = HistoryEntry {
+                    operation: history_operation,
+                    digest,
+                    blob,
+                    bytes,
+                };
+                match &kind {
+                    MutationTransactionKind::Recipe(_) => state.history.record_mutation(previous),
+                    MutationTransactionKind::Restore(direction) => {
+                        state.history.record_restore(*direction, previous)
+                    }
+                }
+            }
+            (retained, _) => {
+                // Mutasyon commit edildi; yalnız geçmiş tutulamadı. Eski girdiler bu yeni durumla
+                // tutarlı bir zincir oluşturmadığından hepsi düşer.
+                if let Ok((blob, _)) = &retained {
+                    remove_history_blob(blob);
+                }
+                tracing::warn!(
+                    code = "HISTORY_TRUNCATED",
+                    reason = %retained.err().unwrap_or_else(|| "işlem öncesi digest bilinmiyor".to_string()),
+                    "Undo geçmişi tutulamadı ve temizlendi"
+                );
+                state.history.clear();
+                if !is_unconfirmed {
+                    state.health_warning = Some("HISTORY_TRUNCATED".to_string());
+                }
+            }
+        }
         snapshot(&state)
     };
 
@@ -8121,6 +8431,8 @@ pub async fn recover_document_session(
         let mut state = entry.state.lock();
         state.working_digest = Some(digest);
         refresh_dirty(&mut state);
+        // Kurtarılan içeriğin geçmişle ilişkisi bilinmez (tasarım §5.8).
+        state.history.clear();
         state.lifecycle = SessionLifecycle::Open;
         state.health_warning = Some("RECOVERED_CONTENT_REVALIDATED".to_string());
         bump_generation(&mut state)?;
@@ -9322,6 +9634,44 @@ pub async fn cancel_session_render_request(
         matched_active_request = result.cancelled,
     );
     Ok(result)
+}
+
+/// Son mutasyonu geri alır (tasarım §5.4). Geri alınacak adım yoksa `HISTORY_EMPTY`.
+#[tauri::command]
+pub async fn undo_session_mutation(
+    session_id: String,
+    expected_content_generation: u64,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    let snapshot = store
+        .mutate_isolated_restore(
+            session_id,
+            expected_content_generation,
+            HistoryDirection::Undo,
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
+/// Son geri alınan mutasyonu yineler. Yinelenecek adım yoksa `HISTORY_EMPTY`.
+#[tauri::command]
+pub async fn redo_session_mutation(
+    session_id: String,
+    expected_content_generation: u64,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    let snapshot = store
+        .mutate_isolated_restore(
+            session_id,
+            expected_content_generation,
+            HistoryDirection::Redo,
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -12677,6 +13027,7 @@ mod tests {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         }
     }
 
@@ -13156,6 +13507,7 @@ mod tests {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         };
         apply_committed_mutation(
             &mut state,
@@ -13194,6 +13546,7 @@ mod tests {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         }
     }
 
@@ -13326,6 +13679,7 @@ mod tests {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         };
         let error = DocumentIoError::new(
             "rotate_page",
@@ -14984,6 +15338,261 @@ mod tests {
         assert!(!saved.dirty);
         assert_eq!(saved.content_generation, 2);
         assert_ne!(fs::read(&original).unwrap(), original_before);
+    }
+
+    fn working_bytes(store: &DocumentSessionStore, session_id: &str) -> Vec<u8> {
+        let path = store
+            .entry(session_id)
+            .unwrap()
+            .state
+            .lock()
+            .working_path
+            .clone();
+        fs::read(path).unwrap()
+    }
+
+    fn history_files(store: &DocumentSessionStore, session_id: &str) -> usize {
+        let directory = store
+            .entry(session_id)
+            .unwrap()
+            .state
+            .lock()
+            .session_dir
+            .join("history");
+        fs::read_dir(directory)
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+    }
+
+    fn rotate(page_index: u32) -> MutationRecipe {
+        MutationRecipe::RotatePage {
+            page_index,
+            degrees: 90,
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_and_redo_restore_exact_bytes_and_track_dirty() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("undo.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+        let opened = working_bytes(&store, &session_id);
+
+        let rotated = store
+            .mutate_isolated(session_id.clone(), 1, rotate(0))
+            .await
+            .unwrap();
+        let rotated_bytes = working_bytes(&store, &session_id);
+        assert!(rotated.dirty);
+        assert_eq!(rotated.undo_operation.as_deref(), Some("rotate_page"));
+        assert_eq!(rotated.redo_operation, None);
+        assert_eq!(history_files(&store, &session_id), 1);
+
+        let undone = store
+            .mutate_isolated_restore(session_id.clone(), 2, HistoryDirection::Undo)
+            .await
+            .unwrap();
+        assert_eq!(working_bytes(&store, &session_id), opened);
+        assert_eq!(undone.content_generation, 3, "generation never goes back");
+        assert!(!undone.dirty, "back at the opened bytes");
+        assert_eq!(undone.undo_operation, None);
+        assert_eq!(undone.redo_operation.as_deref(), Some("rotate_page"));
+        assert_eq!(history_files(&store, &session_id), 1);
+
+        let redone = store
+            .mutate_isolated_restore(session_id.clone(), 3, HistoryDirection::Redo)
+            .await
+            .unwrap();
+        assert_eq!(working_bytes(&store, &session_id), rotated_bytes);
+        assert_eq!(redone.content_generation, 4);
+        assert!(redone.dirty);
+        assert_eq!(redone.undo_operation.as_deref(), Some("rotate_page"));
+        assert_eq!(redone.redo_operation, None);
+        assert_eq!(history_files(&store, &session_id), 1);
+    }
+
+    #[tokio::test]
+    async fn a_new_mutation_after_undo_discards_redo() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("redo-discard.pdf");
+        fs::copy(fixture_path("three-distinct-pages.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+
+        store
+            .mutate_isolated(session_id.clone(), 1, rotate(0))
+            .await
+            .unwrap();
+        store
+            .mutate_isolated(session_id.clone(), 2, rotate(1))
+            .await
+            .unwrap();
+        let undone = store
+            .mutate_isolated_restore(session_id.clone(), 3, HistoryDirection::Undo)
+            .await
+            .unwrap();
+        assert_eq!(undone.redo_operation.as_deref(), Some("rotate_page"));
+        assert_eq!(history_files(&store, &session_id), 2);
+
+        let deleted = store
+            .mutate_isolated(
+                session_id.clone(),
+                4,
+                MutationRecipe::DeletePages {
+                    page_indices: vec![2],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.undo_operation.as_deref(), Some("delete_pages"));
+        assert_eq!(deleted.redo_operation, None);
+        assert_eq!(history_files(&store, &session_id), 2, "redo blob removed");
+
+        // İki adım geri: önce silme, sonra ilk döndürme.
+        let back = store
+            .mutate_isolated_restore(session_id.clone(), 5, HistoryDirection::Undo)
+            .await
+            .unwrap();
+        assert_eq!(back.undo_operation.as_deref(), Some("rotate_page"));
+        let back = store
+            .mutate_isolated_restore(session_id.clone(), 6, HistoryDirection::Undo)
+            .await
+            .unwrap();
+        assert_eq!(back.undo_operation, None);
+        assert!(!back.dirty);
+    }
+
+    #[tokio::test]
+    async fn undo_with_an_empty_history_leaves_the_document_alone() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("empty-history.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+        let before = working_bytes(&store, &session_id);
+
+        for direction in [HistoryDirection::Undo, HistoryDirection::Redo] {
+            let error = store
+                .mutate_isolated_restore(session_id.clone(), 1, direction)
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "HISTORY_EMPTY");
+        }
+        assert_eq!(working_bytes(&store, &session_id), before);
+        let state = store.entry(&session_id).unwrap();
+        let state = state.state.lock();
+        assert_eq!(state.content_generation, 1);
+        assert!(!state.dirty);
+    }
+
+    #[tokio::test]
+    async fn a_corrupted_history_file_is_refused_and_the_history_cleared() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("corrupted-history.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+        store
+            .mutate_isolated(session_id.clone(), 1, rotate(0))
+            .await
+            .unwrap();
+        let rotated = working_bytes(&store, &session_id);
+
+        let blob = store.entry(&session_id).unwrap().state.lock().history.undo[0]
+            .blob
+            .clone();
+        let mut tampered = fs::read(&blob).unwrap();
+        tampered.push(b'\n');
+        fs::write(&blob, tampered).unwrap();
+
+        let error = store
+            .mutate_isolated_restore(session_id.clone(), 2, HistoryDirection::Undo)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "HISTORY_ENTRY_CORRUPTED");
+        assert_eq!(working_bytes(&store, &session_id), rotated);
+        let state = store.entry(&session_id).unwrap();
+        let state = state.state.lock();
+        assert_eq!(state.content_generation, 2);
+        assert!(state.history.undo.is_empty() && state.history.redo.is_empty());
+        assert!(!blob.exists());
+    }
+
+    #[tokio::test]
+    async fn undo_past_a_save_is_dirty_and_redo_is_clean_again() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("undo-save.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+
+        let rotated = store
+            .mutate_isolated(session_id.clone(), 1, rotate(0))
+            .await
+            .unwrap();
+        let saved = store
+            .save(&session_id, rotated.state_revision, None)
+            .await
+            .unwrap();
+        assert!(!saved.dirty);
+        assert_eq!(saved.undo_operation.as_deref(), Some("rotate_page"));
+
+        let undone = store
+            .mutate_isolated_restore(session_id.clone(), 2, HistoryDirection::Undo)
+            .await
+            .unwrap();
+        assert!(undone.dirty, "differs from the saved file");
+        let redone = store
+            .mutate_isolated_restore(session_id.clone(), 3, HistoryDirection::Redo)
+            .await
+            .unwrap();
+        assert!(!redone.dirty, "byte-identical to the saved file again");
+    }
+
+    fn history_entry(directory: &Path, index: usize, bytes: u64) -> HistoryEntry {
+        let blob = directory.join(format!("{index}.pdf"));
+        fs::write(&blob, b"x").unwrap();
+        HistoryEntry {
+            operation: "rotate_page",
+            digest: format!("d{index}"),
+            blob,
+            bytes,
+        }
+    }
+
+    #[test]
+    fn history_keeps_at_most_the_step_limit_and_deletes_evicted_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut history = SessionHistory::default();
+        for index in 0..MAX_HISTORY_ENTRIES + 2 {
+            history.record_mutation(history_entry(directory.path(), index, 1));
+        }
+        assert_eq!(history.undo.len(), MAX_HISTORY_ENTRIES);
+        assert_eq!(history.undo[0].digest, "d2");
+        assert!(!directory.path().join("0.pdf").exists());
+        assert!(!directory.path().join("1.pdf").exists());
+        assert!(directory.path().join("2.pdf").exists());
+    }
+
+    #[test]
+    fn history_stays_within_the_byte_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut history = SessionHistory::default();
+        let half = MAX_HISTORY_BYTES / 2;
+        history.record_mutation(history_entry(directory.path(), 0, half));
+        history.record_mutation(history_entry(directory.path(), 1, half));
+        assert_eq!(history.undo.len(), 2);
+        history.record_mutation(history_entry(directory.path(), 2, half));
+        assert_eq!(history.undo.len(), 2);
+        assert_eq!(history.undo[0].digest, "d1");
+        assert!(!directory.path().join("0.pdf").exists());
+
+        // Tek başına bütçeyi aşan giriş tutulamaz.
+        history.record_mutation(history_entry(directory.path(), 3, MAX_HISTORY_BYTES + 1));
+        assert!(history.undo.is_empty());
+        assert!(!directory.path().join("3.pdf").exists());
     }
 
     #[tokio::test]
@@ -18001,6 +18610,7 @@ mod tests {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         };
 
         let err = DocumentIoError {
@@ -18045,6 +18655,7 @@ mod tests {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         };
 
         let err = DocumentIoError {
@@ -18087,6 +18698,7 @@ mod tests {
             credential: None,
             active_transition: None,
             last_save_commit: None,
+            history: SessionHistory::default(),
         };
 
         let err = DocumentIoError {
@@ -18282,6 +18894,8 @@ mod tests {
             editable: true,
             read_only_reason: None,
             health_warning: None,
+            undo_operation: None,
+            redo_operation: None,
         };
 
         let res = record.publish_terminal(MutationTransactionOutcome::Completed {
@@ -18478,6 +19092,8 @@ mod tests {
             editable: true,
             read_only_reason: None,
             health_warning: None,
+            undo_operation: None,
+            redo_operation: None,
         };
 
         let outcome = MutationTransactionOutcome::Completed {
@@ -18541,6 +19157,8 @@ mod tests {
             editable: true,
             read_only_reason: None,
             health_warning: None,
+            undo_operation: None,
+            redo_operation: None,
         };
 
         record
@@ -19448,6 +20066,8 @@ mod tests {
                 editable: true,
                 read_only_reason: None,
                 health_warning: None,
+                undo_operation: None,
+                redo_operation: None,
             },
             cleanup_warning: None,
         };
@@ -19463,6 +20083,8 @@ mod tests {
             editable: false,
             read_only_reason: None,
             health_warning: None,
+            undo_operation: None,
+            redo_operation: None,
         };
         let outcome3 = MutationTransactionOutcome::FailedPreCommit {
             transaction_id: id3.to_string(),
