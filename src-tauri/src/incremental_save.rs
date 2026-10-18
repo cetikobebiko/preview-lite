@@ -55,9 +55,76 @@ impl<'b> RawDocument<'b> {
     }
 }
 
+impl<'b> RawDocument<'b> {
+    /// Bir mutasyon için açar: yol UTF-8 olmalı, PDFium belgeyi açabilmeli ve belge şifresiz
+    /// olmalı (şifreli belge mutasyonları henüz desteklenmiyor; `ensure_unprotected` ile aynı).
+    pub(crate) fn open_for_mutation(
+        bindings: &'b dyn PdfiumLibraryBindings,
+        source: &Path,
+        password: Option<&str>,
+    ) -> Result<Self, DocumentIoFailure> {
+        let path = source
+            .to_str()
+            .ok_or_else(|| DocumentIoFailure::preflight("PDF yolu UTF-8 değil"))?;
+        let document = Self::open(bindings, path, password).ok_or_else(|| {
+            DocumentIoFailure::preflight(format!(
+                "PDF yüklenemedi (PDFium hata kodu {})",
+                bindings.FPDF_GetLastError()
+            ))
+        })?;
+        let revision = bindings.FPDF_GetSecurityHandlerRevision(document.handle);
+        if revision != -1 {
+            return Err(DocumentIoFailure::preflight(format!(
+                "Şifreli PDF mutasyonları henüz desteklenmiyor (security handler revision: {revision})"
+            )));
+        }
+        Ok(document)
+    }
+
+    pub(crate) fn page_count(&self) -> Result<u16, DocumentIoFailure> {
+        u16::try_from(self.bindings.FPDF_GetPageCount(self.handle)).map_err(|_| {
+            DocumentIoFailure::preflight("PDF sayfa sayısı desteklenen aralıkta değil")
+        })
+    }
+}
+
 impl Drop for RawDocument<'_> {
     fn drop(&mut self) {
         self.bindings.FPDF_CloseDocument(self.handle);
+    }
+}
+
+/// Ham PDFium sayfa handle'ı; düşerken kapanır. Kayıttan önce düşürülmelidir.
+pub(crate) struct RawPage<'d> {
+    pub(crate) bindings: &'d dyn PdfiumLibraryBindings,
+    pub(crate) handle: FPDF_PAGE,
+    _document: std::marker::PhantomData<&'d RawDocument<'d>>,
+}
+
+impl<'d> RawPage<'d> {
+    pub(crate) fn load(
+        document: &'d RawDocument<'_>,
+        index: u32,
+    ) -> Result<Self, DocumentIoFailure> {
+        let handle = c_int::try_from(index)
+            .map(|index| document.bindings.FPDF_LoadPage(document.handle, index))
+            .unwrap_or(std::ptr::null_mut());
+        if handle.is_null() {
+            return Err(DocumentIoFailure::preflight(format!(
+                "Sayfa bulunamadı: {index}"
+            )));
+        }
+        Ok(Self {
+            bindings: document.bindings,
+            handle,
+            _document: std::marker::PhantomData,
+        })
+    }
+}
+
+impl Drop for RawPage<'_> {
+    fn drop(&mut self) {
+        self.bindings.FPDF_ClosePage(self.handle);
     }
 }
 

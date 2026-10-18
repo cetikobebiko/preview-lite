@@ -496,7 +496,14 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
      `PdfDocument`'in handle'ını açmadığı için bu recipe'lerin yazma adımı ham binding'lerle
      (`RawDocument`) yapılır; doğrulama adımı pdfium-render'da kalır. Seçilen mod şimdilik
      yalnız loglanır.
-   - 4b. AddAnnotation / DeleteAnnotation (AP üretimi ham API'de yeniden kurulur).
+   - **4b. Yapıldı:** AddAnnotation ve DeleteAnnotation da `save_mutation`'dan geçer.
+     Okumalar (görüntü dönüşümü, önceki annotation parmak izleri) pdfium-render'da, aynı
+     dosyanın ayrı bir açılışında kalır; oluşturma, renk, sınır, QuadPoints, içerik ve silme ham
+     API'de yapılır. AP yine sayfa render edilerek PDFium'a ürettirilir (diğer annotation'lar
+     render süresince gizlenir). pdfium-render'ın yazdığı `/CreationDate` ve `/M` aynı biçimde
+     (`D:YYYYMMDDHHmmSSZ00'00'`) korunur; `chrono` production bağımlılığı olmadığı için tarih
+     küçük bir `civil_from_days` ile hesaplanır. Görselli sayfada AP üretimi için yapılan render
+     sayfa kaynaklarını yüklediğinden büyüme K5 kapsamındadır (§9.1).
    - 4c. `writeMode`'u mutasyon sonucuyla frontend'e taşı; `signatureLossGuard` sabit liste
      yerine backend'in bildirdiği moda baksın (4a sonrasında uyarı gereğinden temkinli:
      artık artımlı yazılan işlemlerde de soruyor).

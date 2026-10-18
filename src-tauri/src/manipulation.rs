@@ -2,7 +2,7 @@ use crate::document_io::{
     atomic_write_pdf, ensure_unprotected, AtomicWriteReport, CommitState, DocumentIoError,
     DocumentIoFailure, DocumentIoStage,
 };
-use crate::incremental_save::{save_mutation, RawDocument};
+use crate::incremental_save::{save_mutation, RawDocument, RawPage};
 use pdfium_render::prelude::*;
 use std::collections::HashSet;
 use std::os::raw::c_int;
@@ -32,36 +32,6 @@ fn rotation_from_degrees(degrees: i32) -> Result<PdfPageRenderRotation, String> 
         270 => PdfPageRenderRotation::Degrees270,
         _ => PdfPageRenderRotation::None,
     })
-}
-
-/// Sayfa mutasyonları artımlı kaydedilebilsin diye belgeyi ham PDFium ile açar
-/// (`incremental_save::RawDocument`). Şifreli belgeler, `ensure_unprotected` gibi reddedilir.
-fn open_raw<'b>(
-    bindings: &'b dyn PdfiumLibraryBindings,
-    source: &Path,
-    password: Option<&str>,
-) -> Result<RawDocument<'b>, DocumentIoFailure> {
-    let path = source
-        .to_str()
-        .ok_or_else(|| DocumentIoFailure::preflight("PDF yolu UTF-8 değil"))?;
-    let document = RawDocument::open(bindings, path, password).ok_or_else(|| {
-        DocumentIoFailure::preflight(format!(
-            "PDF yüklenemedi (PDFium hata kodu {})",
-            bindings.FPDF_GetLastError()
-        ))
-    })?;
-    let revision = bindings.FPDF_GetSecurityHandlerRevision(document.handle);
-    if revision != -1 {
-        return Err(DocumentIoFailure::preflight(format!(
-            "Şifreli PDF mutasyonları henüz desteklenmiyor (security handler revision: {revision})"
-        )));
-    }
-    Ok(document)
-}
-
-fn raw_page_count(document: &RawDocument<'_>) -> Result<u16, DocumentIoFailure> {
-    u16::try_from(document.bindings.FPDF_GetPageCount(document.handle))
-        .map_err(|_| DocumentIoFailure::preflight("PDF sayfa sayısı desteklenen aralıkta değil"))
 }
 
 fn save_logged(
@@ -358,27 +328,23 @@ pub(crate) fn rotate_page_report(
         &path,
         move |pdfium, temp| {
             let bindings = pdfium.bindings();
-            let document = open_raw(bindings, &source, password.as_deref())?;
-            let page_count = raw_page_count(&document)?;
+            let document = RawDocument::open_for_mutation(bindings, &source, password.as_deref())?;
+            let page_count = document.page_count()?;
             if page_index >= u32::from(page_count) {
                 return Err(DocumentIoFailure::preflight(format!(
                     "Sayfa indeksi aralık dışında: {page_index} >= {page_count}"
                 )));
             }
-            let page = bindings.FPDF_LoadPage(document.handle, page_index as c_int);
-            if page.is_null() {
-                return Err(DocumentIoFailure::preflight(format!(
-                    "Sayfa bulunamadı: {page_index}"
-                )));
-            }
-            // FPDFPage_{Get,Set}Rotation çeyrek dönüş sayısıdır (0–3).
-            let rotation =
-                rotation_from_degrees(bindings.FPDFPage_GetRotation(page) * 90 + degrees);
-            if let Ok(rotation) = rotation {
-                bindings.FPDFPage_SetRotation(page, degrees_from_rotation(rotation) / 90);
-            }
-            bindings.FPDF_ClosePage(page);
-            let rotation = rotation.map_err(DocumentIoFailure::preflight)?;
+            let rotation = {
+                let page = RawPage::load(&document, page_index)?;
+                // FPDFPage_{Get,Set}Rotation çeyrek dönüş sayısıdır (0–3).
+                let rotation = rotation_from_degrees(
+                    bindings.FPDFPage_GetRotation(page.handle) * 90 + degrees,
+                )
+                .map_err(DocumentIoFailure::preflight)?;
+                bindings.FPDFPage_SetRotation(page.handle, degrees_from_rotation(rotation) / 90);
+                rotation
+            };
             save_logged("rotate_page", &document, &source, temp)?;
             Ok((page_count, format!("{rotation:?}")))
         },
@@ -418,8 +384,8 @@ pub(crate) fn delete_pages_report(
         &path,
         move |pdfium, temp| {
             let bindings = pdfium.bindings();
-            let document = open_raw(bindings, &source, password.as_deref())?;
-            let page_count = raw_page_count(&document)?;
+            let document = RawDocument::open_for_mutation(bindings, &source, password.as_deref())?;
+            let page_count = document.page_count()?;
             if page_indices.is_empty() {
                 return Err(DocumentIoFailure::preflight("Silinecek sayfa listesi boş"));
             }
@@ -447,7 +413,7 @@ pub(crate) fn delete_pages_report(
                 bindings.FPDFPage_Delete(document.handle, index as c_int);
             }
             let expected_count = page_count - page_indices.len() as u16;
-            if raw_page_count(&document)? != expected_count {
+            if document.page_count()? != expected_count {
                 return Err(DocumentIoFailure::write(format!(
                     "Sayfalar silinemedi: beklenen {expected_count} sayfa"
                 )));
@@ -499,8 +465,8 @@ pub(crate) fn insert_blank_page_report(
         &path,
         move |pdfium, temp| {
             let bindings = pdfium.bindings();
-            let document = open_raw(bindings, &source, password.as_deref())?;
-            let page_count = raw_page_count(&document)?;
+            let document = RawDocument::open_for_mutation(bindings, &source, password.as_deref())?;
+            let page_count = document.page_count()?;
             if at_index > page_count as u32 {
                 return Err(DocumentIoFailure::preflight(format!(
                     "Ekleme indeksi aralık dışında: {at_index} > {page_count}"
