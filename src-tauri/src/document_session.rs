@@ -14952,7 +14952,13 @@ mod tests {
         let session_id = open_test_session(&store, &original);
 
         let working_widgets = |store: &DocumentSessionStore| {
-            let path = store.entry(&session_id).unwrap().state.lock().working_path.clone();
+            let path = store
+                .entry(&session_id)
+                .unwrap()
+                .state
+                .lock()
+                .working_path
+                .clone();
             crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
                 let document = pdfium
                     .load_pdf_from_file(&path, None)
@@ -14999,9 +15005,15 @@ mod tests {
         let widgets = working_widgets(&store);
         assert_eq!(widgets.len(), before.len() + 2);
         // Katman eklemeden sonra en yüksek `annot_index`'li widget'ı seçer.
-        let newest = widgets.iter().max_by_key(|widget| widget.annot_index).unwrap();
+        let newest = widgets
+            .iter()
+            .max_by_key(|widget| widget.annot_index)
+            .unwrap();
         assert_eq!(newest.field_name, "Group2");
-        let text = widgets.iter().find(|widget| widget.field_name == "Text1").unwrap();
+        let text = widgets
+            .iter()
+            .find(|widget| widget.field_name == "Text1")
+            .unwrap();
 
         // Seç → boyutlandır, yeniden adlandır, zorunlu yap.
         let moved = author(
@@ -15023,7 +15035,10 @@ mod tests {
         .await
         .unwrap();
         let widgets = working_widgets(&store);
-        let adres = widgets.iter().find(|widget| widget.field_name == "adres").unwrap();
+        let adres = widgets
+            .iter()
+            .find(|widget| widget.field_name == "adres")
+            .unwrap();
         assert!(adres.required);
         let rect = adres.normalized_rect.as_ref().unwrap();
         assert!((rect.width - 0.67).abs() < 0.005, "{rect:?}");
@@ -15040,7 +15055,10 @@ mod tests {
         assert!(stale.is_err());
 
         // Önceden var olan bir alanı sil; kalan indeksler yeniden okunur.
-        let first = widgets.iter().find(|widget| widget.field_name == "name").unwrap();
+        let first = widgets
+            .iter()
+            .find(|widget| widget.field_name == "name")
+            .unwrap();
         let deleted = author(
             renamed.content_generation,
             serde_json::json!([{

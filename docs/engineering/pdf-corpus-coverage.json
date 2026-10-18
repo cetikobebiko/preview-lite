@@ -3020,7 +3020,7 @@
     {
       "id": "form_editing",
       "name": "Form Editing",
-      "statusObservation": "disabled",
+      "statusObservation": "experimental",
       "fixtureIds": [
         "core-reorder-with-form"
       ],
