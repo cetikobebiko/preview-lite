@@ -333,6 +333,43 @@ digest bilinmediğinde kural da zaten `true` verir.
 - Frontend komut paleti ve ⌘Z / ⇧⌘Z kısayolları; etiket `undoLabel` kodundan i18n ile.
 - Undo/redo, Save/Save As ile aynı single-flight kilidini paylaşır.
 
+### 5.11 Uygulanan sürüm (§10 adım 6–7)
+
+§5.2–§5.10'un ilk uygulaması, tasarımdan şu noktalarda ayrılır:
+
+- **Her giriş tam bir dosyadır; `BlobRef::Working` (dosyasız prefix girişi) yoktur.** Bunun
+  için ek kopya yazılmaz. Her mutasyon işlemi zaten işlem öncesi working PDF'in bir snapshot'ını
+  alır (`copy_with_digest`); commit'ten sonra bu snapshot rename ile `session_dir/history/`'ye
+  taşınır (`retain_transaction_snapshot`). Bu yüzden §5.3'teki hard link / `ReplaceFileW`
+  yedeği ve `document_io` değişikliği gerekmedi. Bedeli diskte: artımlı adımlar da tam boyda
+  yer kaplar. Prefix girişi, worker'ın yazım modunu oturuma taşımayı gerektirdiği için sonraya
+  kaldı.
+- **Sınırlar:** en fazla 50 undo adımı ve tüm girişler için toplam 1 GiB
+  (`MAX_HISTORY_ENTRIES`, `MAX_HISTORY_BYTES`). §5.5'teki "belge boyutunun 8 katı" kuralı
+  uygulanmadı; her giriş tam dosya olunca küçük belgeleri gereksiz yere 8 adımla sınırlardı.
+  Bütçe aşılınca en eski undo girişleri, undo boşsa en uzaktaki redo girişleri düşer; tek başına
+  bütçeyi aşan giriş tutulmaz.
+- **Undo/redo aynı işlem hattıdır.** `MutationTransactionKind::{Recipe, Restore}` ile
+  `execute_mutation_transaction` iki türü de çalıştırır: admission, lease, worker belgesini
+  geçersiz kılma, commit, iptal, kurtarma ve `Indeterminate` sınıflandırması ortaktır.
+  Geri yüklemede worker ve PDFium doğrulaması çalışmaz. Bunun yerine geçmiş dosyasının digest'i
+  kayıtlı digest'le karşılaştırılır (o baytlar daha önce doğrulanıp commit edilmiş bir durumdur).
+  Uyuşmazlıkta işlem `HISTORY_ENTRY_CORRUPTED` ile reddedilir, belge değişmez ve geçmiş temizlenir.
+  Geri yükleme işleminin kendi snapshot'ı ters yöndeki girişe dönüşür.
+- **Geçmiş tutulamazsa** (snapshot digest'i uyuşmaz, dizin oluşturulamaz, rename başarısız
+  olur) mutasyon yine commit edilir; geçmiş temizlenir ve `health_warning = HISTORY_TRUNCATED`
+  olur.
+- **Kurtarma** (`recover_document_session`) geçmişi temizler. Kapanışta `session_dir` silindiği
+  için geçmiş dosyaları da gider.
+- **IPC:** `undo_session_mutation` / `redo_session_mutation` (`sessionId`,
+  `expectedContentGeneration`) → `DocumentSessionSnapshot`. Snapshot'a `undoOperation` ve
+  `redoOperation` (işlem kodu, ör. `rotate_page`) eklendi; path, digest ve dosya adı girmez.
+  Boş geçmişte `HISTORY_EMPTY`.
+- **Frontend:** `mutationHistoryController` isteği gönderir ve dönen snapshot'ı mutasyonlarla
+  aynı `applyMutationSnapshot` yolundan uygular. Kısayollar ⌘Z, ⇧⌘Z ve ⌘Y; metin alanında
+  tarayıcının kendi undo'su çalışır. Komut paletinde iki komut var, yeni deneysel `undo_redo`
+  özelliği arkasında. Kayıt sürerken ya da önceki istek bitmeden yeni istek gönderilmez.
+
 ## 6. Güvenlik değerlendirmesi
 
 - `history/` dizini oturum dizininin altındadır ve mevcut temp sahipliği kurallarını
@@ -527,8 +564,8 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
      birlikte kapsar). Yalnız xref bölümlerini okuyan bir denetimle değiştirilmesi açık iş.
 5. `dirty`'nin digest ile hesaplanması (§5.6). **Yapıldı:** `baseline.digest` kullanılır, ayrı alan
    eklenmedi.
-6. Geçmiş modeli, commit'te geçmişe yazma ve sınırlar (§5.2–5.5).
-7. Undo/redo komutları ve frontend (§5.4, §5.10).
+6. Geçmiş modeli, commit'te geçmişe yazma ve sınırlar (§5.2–5.5). **Yapıldı** (§5.11).
+7. Undo/redo komutları ve frontend (§5.4, §5.10). **Yapıldı** (§5.11).
 8. `ReorderPages` için lopdf artımlı yolu (S3 sonucuna bağlı).
 9. `document-session.md` ve `feature-matrix.md` güncellemesi.
 

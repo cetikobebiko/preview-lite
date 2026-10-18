@@ -28,6 +28,7 @@ import {
 import { createDocumentLifecycleController } from "./documentLifecycleController.js";
 import { createDocumentOpenController } from "./documentOpenController.js";
 import { createDocumentPositionMemory } from "./documentPositionMemory.js";
+import { createMutationHistoryController } from "./mutationHistoryController.js";
 import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
 
 const transitionApi = Object.freeze({
@@ -210,6 +211,13 @@ export function createDocumentRuntime({
     ui.closeModal("page_organizer");
   }
 
+  const mutationHistory = createMutationHistoryController({
+    documentSession,
+    applyMutationSnapshot,
+    onToast,
+    onError,
+  });
+
   return Object.freeze({
     get isPdf() { return isPdf(); },
     get activeDisplayPath() { return activeDisplayPath(); },
@@ -223,6 +231,8 @@ export function createDocumentRuntime({
     chooseDocumentTransition,
     applyBackendSessionSnapshot,
     applyMutationSnapshot,
+    undo: mutationHistory.undo,
+    redo: mutationHistory.redo,
     save: lifecycleController.save,
     saveAs: lifecycleController.saveAs,
     selectFile: openController.selectFile,

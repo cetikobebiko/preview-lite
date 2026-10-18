@@ -502,6 +502,14 @@ export const CONTRACTS = Object.freeze({
     pageIndex: u32Type,
     degrees: i32Type,
   }),
+  undoSessionMutation: command("undo_session_mutation", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+  }),
+  redoSessionMutation: command("redo_session_mutation", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+  }),
   deleteSessionPages: command("delete_session_pages", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
