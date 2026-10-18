@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createSignatureLossGuard,
   isSignatureLossDeclined,
-  signatureLossMessage,
   signedIncrementalEditMessage,
   SignatureLossDeclinedError,
 } from "./signatureLossGuard.js";
@@ -13,7 +12,11 @@ vi.mock("./backend/session.js", () => ({ getSessionFormInfo: vi.fn() }));
 function guard(signatureCount, answers = []) {
   const getFormInfo = vi.fn(async () => ({ form_type: "AcroForm", signature_count: signatureCount }));
   const confirm = vi.fn(async () => answers.shift() ?? false);
-  return { ensure: createSignatureLossGuard({ getFormInfo, confirm }), getFormInfo, confirm };
+  return {
+    ensure: createSignatureLossGuard({ getFormInfo, confirm, message: signedIncrementalEditMessage }),
+    getFormInfo,
+    confirm,
+  };
 }
 
 describe("signature loss guard", () => {
@@ -26,11 +29,10 @@ describe("signature loss guard", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("asks before rewriting a signed document, naming the operation", async () => {
+  it("asks once on a signed document, naming the operation", async () => {
     const { ensure, confirm } = guard(2, [true]);
     await ensure("s1", 3, "Açıklama ekleme");
-    expect(confirm).toHaveBeenCalledWith(signatureLossMessage("Açıklama ekleme"));
-    expect(signatureLossMessage("Açıklama ekleme")).toContain("imzaları geçersiz kılar");
+    expect(confirm).toHaveBeenCalledWith(signedIncrementalEditMessage("Açıklama ekleme"));
     await ensure("s1", 4, "Sayfa silme");
     expect(confirm).toHaveBeenCalledTimes(1);
   });
@@ -49,7 +51,11 @@ describe("signature loss guard", () => {
     const getFormInfo = vi.fn(async () => {
       throw new Error("worker unavailable");
     });
-    const ensure = createSignatureLossGuard({ getFormInfo, confirm: vi.fn() });
+    const ensure = createSignatureLossGuard({
+      getFormInfo,
+      confirm: vi.fn(),
+      message: signedIncrementalEditMessage,
+    });
     await expect(ensure("s1", 1, "Sayfa döndürme")).rejects.toThrow("worker unavailable");
   });
 

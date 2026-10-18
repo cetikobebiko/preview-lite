@@ -3,18 +3,14 @@ import { getRuntimeFeatureContext } from "./featureRegistry.js";
 import * as manipulationBackend from "./services/backend/manipulation.js";
 import * as ocrBackend from "./services/backend/ocr.js";
 import * as sessionBackend from "./services/backend/session.js";
-import {
-  ensureSignatureLossAccepted,
-  ensureSignedIncrementalEditAccepted,
-} from "./services/signatureLossGuard.js";
+import { ensureSignedIncrementalEditAccepted } from "./services/signatureLossGuard.js";
 
 // ==========================================
 // AŞAMA 9: Belge Manipülasyonu
 // ==========================================
 //
-// Döndürme, silme, boş sayfa ve annotation ekleme/silme artımlı yazılır (imzalı baytlar korunur);
-// imzalı belgede önce `ensureSignedIncrementalEditAccepted` bilgilendirir. Sayfa sıralaması
-// belgeyi tam yeniden yazar; `ensureSignatureLossAccepted` imzaların bozulacağını söyler
+// Döndürme, silme, sıralama, boş sayfa ve annotation ekleme/silme artımlı yazılır (imzalı
+// baytlar korunur); imzalı belgede önce `ensureSignedIncrementalEditAccepted` bilgilendirir
 // (bkz. signatureLossGuard.js).
 
 export async function rotatePage(sessionId, generation, pageIndex, degrees) {
@@ -37,7 +33,7 @@ export async function deletePages(sessionId, generation, pageIndices) {
 }
 
 export async function reorderPages(sessionId, generation, newOrder) {
-  await ensureSignatureLossAccepted(sessionId, generation, "Sayfa sıralaması");
+  await ensureSignedIncrementalEditAccepted(sessionId, generation, "Sayfa sıralaması");
   return await sessionBackend.reorderSessionPages(
     sessionId,
     generation,

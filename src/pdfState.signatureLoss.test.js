@@ -27,15 +27,13 @@ const runnable = { build: "development", platform: "macos" };
 const incrementalCases = [
   ["rotatePage", "rotateSessionPage", (id) => pdfState.rotatePage(id, 1, 0, 90)],
   ["deletePages", "deleteSessionPages", (id) => pdfState.deletePages(id, 1, [0])],
+  ["reorderPages", "reorderSessionPages", (id) => pdfState.reorderPages(id, 1, [1, 0])],
   [
     "addAnnotation",
     "addSessionAnnotation",
     (id) => pdfState.addAnnotation(id, 1, 0, "Highlight", { x: 0, y: 0, width: 0.1, height: 0.1 }, "#ffcc00", null, runnable),
   ],
   ["deleteAnnotation", "deleteSessionAnnotation", (id) => pdfState.deleteAnnotation(id, 1, 0, "0", runnable)],
-];
-const rewriteCases = [
-  ["reorderPages", "reorderSessionPages", (id) => pdfState.reorderPages(id, 1, [1, 0])],
 ];
 
 function expectDeclinedBeforeBackend() {
@@ -64,23 +62,13 @@ describe("incremental mutations on a signed document", () => {
   });
 });
 
-describe("full-rewrite mutations on a signed document", () => {
-  it.each(rewriteCases)("%s does not reach the backend when the warning is declined", expectDeclinedBeforeBackend());
-
-  it.each(rewriteCases)("%s runs after the warning is accepted", async (name, backend, run) => {
-    confirm.mockResolvedValueOnce(true);
-    await expect(run(`accepted-${name}`)).resolves.toEqual({ contentGeneration: 2 });
-    expect(sessionBackend[backend]).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0][0]).toContain("imzaları geçersiz kılar");
-  });
-
-  it("still warns after the incremental notice was accepted in the same session", async () => {
+describe("one notice per signed session", () => {
+  it("asks once and then lets every incremental mutation, reorder included, through", async () => {
     confirm.mockResolvedValue(true);
-    await pdfState.rotatePage("mixed", 1, 0, 90);
-    await pdfState.rotatePage("mixed", 2, 0, 90);
-    await pdfState.reorderPages("mixed", 3, [1, 0]);
-    expect(confirm).toHaveBeenCalledTimes(2);
+    await pdfState.rotatePage("shared", 1, 0, 90);
+    await pdfState.reorderPages("shared", 2, [1, 0]);
+    await pdfState.deletePages("shared", 3, [0]);
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(confirm.mock.calls[0][0]).toContain("imzalı içerik korunur");
-    expect(confirm.mock.calls[1][0]).toContain("imzaları geçersiz kılar");
   });
 });

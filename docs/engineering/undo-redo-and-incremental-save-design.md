@@ -553,9 +553,10 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
      annotation ekleme/silme) önce gösterilen uyarı bilgilendirmeye çevrildi: değişiklik sona
      eklenir, imzalı içerik korunur, imza panelleri belgeyi imzadan sonra değiştirilmiş gösterir
      (`ensureSignedIncrementalEditAccepted`). Metin, değişikliğin imzanın izin verdiği türden
-     olup olmadığını iddia etmez; bu DocMDP'ye bağlıdır. Sayfa sıralaması hâlâ tam yeniden
-     yazar ve "imzalar geçersiz olur" uyarısını korur. İki uyarının kabul belleği ayrıdır:
-     bilgilendirmeyi kabul etmek sıralama uyarısını atlatmaz.
+     olup olmadığını iddia etmez; bu DocMDP'ye bağlıdır. Adım 8'den sonra sayfa sıralaması
+     da artımlı yazıldığı için aynı bilgilendirmeye geçti; "imzalar geçersiz olur" uyarısı ve
+     `ensureSignatureLossAccepted` kaldırıldı, çünkü artık hiçbir oturum mutasyonu imzalı belgeyi
+     baştan yazmıyor (yazamazsa hata veriyor).
      `writeMode`'u frontend'e taşımak bu uyarı için gerekmedi: imzalı belgede bu işlemler ya
      artımlı yazılır ya hata verir, bu yüzden uyarı işlem türünden belirlenir. Undo geçmişi
      yazım modunu oturum tarafında prefix denetimiyle kendisi bulur (§5.3).
