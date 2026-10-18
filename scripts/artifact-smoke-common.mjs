@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, mkdtempSync, cpSync } from "node:fs";
 import { resolve, join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
@@ -113,7 +114,7 @@ export function generateRunId() {
 }
 
 export function createTempWorkspace(prefix = "artifact-smoke-") {
-  return mkdtempSync(join(process.env.TMPDIR || "/tmp", prefix));
+  return mkdtempSync(join(tmpdir(), prefix));
 }
 
 export function cleanupTempWorkspace(path, bestEffort = true) {
