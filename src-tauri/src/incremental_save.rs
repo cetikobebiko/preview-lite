@@ -1,12 +1,20 @@
-//! Artımlı (append-only) PDF kaydı
-//! (docs/engineering/undo-redo-and-incremental-save-design.md §4.2).
+//! Artımlı (append-only) PDF kaydı ve doğrulaması
+//! (docs/engineering/undo-redo-and-incremental-save-design.md §4.2–§4.4).
 //!
-//! PDFium'un `FPDF_SaveAsCopy(FPDF_INCREMENTAL)` yolu ve onun xref stream kusurunun onarımı
-//! burada toplanır. Yalnız job worker'da, session snapshot'ının kopyası üzerinde,
-//! `atomic_write_pdf` içinde çağrılır.
+//! PDFium'un `FPDF_SaveAsCopy(FPDF_INCREMENTAL)` yolu, onun xref stream kusurunun onarımı ve
+//! artımlı çıktının commit'ten önce denetlenmesi burada toplanır. Yalnız job worker'da, session
+//! snapshot'ının kopyası üzerinde, `atomic_write_pdf` içinde çağrılır.
+//!
+//! `find_xref_inconsistency` kullanıcı PDF'ini lopdf ile ayrıştırır. AGENTS.md'nin lopdf
+//! sınırları içindedir: yalnız yapısal denetimdir, render veya geometri üretmez, belgeyi
+//! değiştirmez ve aynı worker sınırında çalışır. Gerekçe: PDFium onarılmış (tutarsız) bir xref
+//! zinciri üzerine artımlı kayıtta `/Prev`'i sessizce düşürür ve zinciri koparır (tasarım §8.1,
+//! S4); PDFium bunu bildiren bir API sunmaz.
 
 use crate::document_io::DocumentIoFailure;
 use pdfium_render::prelude::*;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::ffi::c_void;
 use std::io::Write;
 use std::os::raw::{c_int, c_ulong};
@@ -14,6 +22,19 @@ use std::path::Path;
 
 pub(crate) const FPDF_INCREMENTAL: FPDF_DWORD = 1;
 pub(crate) const FPDF_FULL_REWRITE: FPDF_DWORD = 0;
+
+/// Bir mutasyonun working PDF'i nasıl yazdığı (tasarım §4.4).
+#[allow(dead_code)] // Recipe'lere tasarım §10 adım 4'te bağlanır.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum WriteMode {
+    /// Girdinin baytları aynen korundu, değişiklikler sona eklendi; §4.3 denetimleri geçti.
+    Appended,
+    /// Artımlı, ancak değişmemiş nesneler de yazıldı (ham PDFium çıktısı, karar K5).
+    AppendedUnminimized,
+    /// Belge baştan yazıldı; mevcut imzalar geçerliliğini yitirir.
+    Rewritten,
+}
 
 /// Saves as an incremental update: the original bytes stay byte-for-byte at the start of
 /// the file and the changes are appended, so the byte ranges existing signatures cover are
@@ -118,6 +139,159 @@ pub(crate) fn repair_incremental_xref_stream(output: &mut Vec<u8>, original_len:
     repaired
 }
 
+/// Artımlı olduğu iddia edilen çıktının commit'ten önceki denetimi (tasarım §4.3, 1–3):
+/// çıktı girdiden uzundur, ilk `input.len()` baytının SHA-256'sı `before_digest`'tir (girdi
+/// baytları aynen korunmuş), son `startxref` girdinin ötesindeki yeni bölümü gösterir ve o
+/// bölümün `/Prev`'i girdinin son `startxref` değeridir. PDFium ile yeniden açma ve recipe'ye
+/// özgü denetim (§4.3, 4) çağıranın işidir.
+#[allow(dead_code)] // Recipe'lere tasarım §10 adım 4'te bağlanır.
+pub(crate) fn validate_append_only(
+    input: &[u8],
+    before_digest: &str,
+    output: &[u8],
+) -> Result<(), DocumentIoFailure> {
+    if output.len() <= input.len() {
+        return Err(DocumentIoFailure::invariant(format!(
+            "Artımlı çıktı ({} bayt) girdiden ({} bayt) uzun değil",
+            output.len(),
+            input.len()
+        )));
+    }
+    let prefix_digest = format!("{:x}", Sha256::digest(&output[..input.len()]));
+    if prefix_digest != before_digest {
+        return Err(DocumentIoFailure::invariant(
+            "Artımlı çıktı girdinin baytlarıyla başlamıyor",
+        ));
+    }
+    let (_, input_xref) = last_startxref(input)
+        .ok_or_else(|| DocumentIoFailure::invariant("Girdide okunabilir startxref yok"))?;
+    let (keyword, output_xref) = last_startxref(output)
+        .ok_or_else(|| DocumentIoFailure::invariant("Artımlı çıktıda okunabilir startxref yok"))?;
+    if output_xref < input.len() || output_xref >= keyword {
+        return Err(DocumentIoFailure::invariant(format!(
+            "Son startxref ({output_xref}) girdiden sonra eklenen bölümü göstermiyor"
+        )));
+    }
+    let section = &output[output_xref..keyword];
+    let prev = section_prev(section)
+        .ok_or_else(|| DocumentIoFailure::invariant("Artımlı bölümün trailer'ında /Prev yok"))?;
+    if prev != input_xref {
+        return Err(DocumentIoFailure::invariant(format!(
+            "Artımlı bölümün /Prev değeri ({prev}) girdinin son startxref değeri ({input_xref}) değil"
+        )));
+    }
+    Ok(())
+}
+
+/// Belgenin xref zinciri dosyayla tutarlı mı, yani belge onarım gerektirmeden açılabiliyor mu
+/// (tasarım §4.4, S4). Tutarlıysa `None`, değilse nedeni. Tutarsız girdi üzerine artımlı kayıt
+/// yapılmaz: eklenecek sağlam bir zincir yoktur.
+///
+/// Denetim: lopdf belgeyi yükleyebilir; son `startxref` bir xref tablosunu (`xref`) ya da bir
+/// nesne başlığını gösterir; çözülen her `Normal` xref girdisi kendi `N G obj` başlığını
+/// gösterir. Şifreli belgeler parola gerektirmeden denetlenir (lopdf 0.34 yüklerken çözmez).
+/// lopdf belgenin tüm nesnelerini belleğe ayrıştırır (yaklaşık bir belge boyutu, tasarım S6).
+#[allow(dead_code)] // Recipe'lere tasarım §10 adım 4'te bağlanır.
+pub(crate) fn find_xref_inconsistency(bytes: &[u8]) -> Option<String> {
+    let document = match lopdf::Document::load_mem(bytes) {
+        Ok(document) => document,
+        Err(error) => return Some(format!("lopdf xref zincirini okuyamadı: {error}")),
+    };
+    let Some((_, xref)) = last_startxref(bytes) else {
+        return Some("Okunabilir startxref yok".to_string());
+    };
+    match bytes.get(xref..) {
+        Some(rest) if rest.starts_with(b"xref") || rest.first().is_some_and(u8::is_ascii_digit) => {
+        }
+        _ => return Some(format!("startxref ({xref}) bir xref bölümünü göstermiyor")),
+    }
+    for (&number, entry) in &document.reference_table.entries {
+        if let lopdf::xref::XrefEntry::Normal { offset, generation } = *entry {
+            if !object_header_at(bytes, offset as usize, number, u32::from(generation)) {
+                return Some(format!(
+                    "Nesne {number} {generation} için xref offset'i ({offset}) nesne başlığını göstermiyor"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Son `startxref` anahtar kelimesinin konumu ve gösterdiği offset.
+fn last_startxref(bytes: &[u8]) -> Option<(usize, usize)> {
+    let keyword = find_last(bytes, b"startxref")?;
+    let offset = leading_uint(skip_whitespace(&bytes[keyword + b"startxref".len()..]))?.0;
+    Some((keyword, usize::try_from(offset).ok()?))
+}
+
+/// Bir xref bölümünün (tablo + `trailer` ya da xref stream nesnesi) trailer sözlüğündeki `/Prev`.
+fn section_prev(section: &[u8]) -> Option<usize> {
+    let dict = if section.starts_with(b"xref") {
+        &section[find_last(section, b"trailer")?..]
+    } else {
+        &section[..find_first(section, b"stream").unwrap_or(section.len())]
+    };
+    let mut from = 0;
+    while let Some(at) = find_first(&dict[from..], b"/Prev") {
+        let after = &dict[from + at + b"/Prev".len()..];
+        // `/PrevX` gibi daha uzun bir ad değil, tam `/Prev` anahtarı olmalı.
+        if after
+            .first()
+            .is_some_and(|byte| is_pdf_whitespace(*byte) || byte.is_ascii_digit())
+        {
+            return usize::try_from(leading_uint(skip_whitespace(after))?.0).ok();
+        }
+        from += at + 1;
+    }
+    None
+}
+
+/// `offset`'te `number generation obj` başlığı var mı (aralarda PDF boşluğu).
+fn object_header_at(bytes: &[u8], offset: usize, number: u32, generation: u32) -> bool {
+    let Some(rest) = bytes.get(offset..) else {
+        return false;
+    };
+    let Some((found_number, rest)) = leading_uint(rest) else {
+        return false;
+    };
+    let after_number = skip_whitespace(rest);
+    if found_number != u64::from(number) || after_number.len() == rest.len() {
+        return false;
+    }
+    let Some((found_generation, rest)) = leading_uint(after_number) else {
+        return false;
+    };
+    let after_generation = skip_whitespace(rest);
+    found_generation == u64::from(generation)
+        && after_generation.len() < rest.len()
+        && after_generation.starts_with(b"obj")
+}
+
+fn leading_uint(bytes: &[u8]) -> Option<(u64, &[u8])> {
+    let digits = bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if digits == 0 || digits > 19 {
+        return None;
+    }
+    let value = std::str::from_utf8(&bytes[..digits]).ok()?.parse().ok()?;
+    Some((value, &bytes[digits..]))
+}
+
+fn skip_whitespace(bytes: &[u8]) -> &[u8] {
+    let skipped = bytes
+        .iter()
+        .take_while(|byte| is_pdf_whitespace(**byte))
+        .count();
+    &bytes[skipped..]
+}
+
+/// ISO 32000-1 Tablo 1: NUL, TAB, LF, FF, CR, SP.
+fn is_pdf_whitespace(byte: u8) -> bool {
+    matches!(byte, b'\0' | b'\t' | b'\n' | b'\x0C' | b'\r' | b' ')
+}
+
 fn find_first(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -188,12 +362,17 @@ pub(crate) fn save_copy(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document_io::DocumentIoStage;
     use std::path::PathBuf;
 
     fn fixture(relative: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(relative)
+    }
+
+    fn digest(bytes: &[u8]) -> String {
+        format!("{:x}", Sha256::digest(bytes))
     }
 
     fn last_xref_object(bytes: &[u8]) -> (usize, Vec<u8>) {
@@ -270,6 +449,24 @@ mod tests {
     }
 
     #[test]
+    fn pdfium_incremental_saves_pass_the_append_only_check() {
+        for (relative, password) in [
+            ("pdf/three-distinct-pages.pdf", None),
+            ("sanitization/incremental-revision.pdf", None),
+            ("sanitization/object-xref-stream.pdf", None),
+            ("sanitization/incremental-xref-stream-chain.pdf", None),
+            ("sanitization/hybrid-xref.pdf", None),
+            ("sanitization/signature.pdf", None),
+            ("pdf/encrypted.pdf", Some("fixture-password")),
+        ] {
+            let (input, output) = rotate_first_page(relative, password);
+            validate_append_only(&input, &digest(&input), &output)
+                .unwrap_or_else(|failure| panic!("{relative}: {}", failure.detail));
+            assert_eq!(find_xref_inconsistency(&output), None, "{relative}");
+        }
+    }
+
+    #[test]
     fn xref_stream_saves_are_repaired_into_well_formed_objects() {
         let (input, output) = rotate_first_page("sanitization/object-xref-stream.pdf", None);
         let (offset, object) = last_xref_object(&output);
@@ -277,5 +474,139 @@ mod tests {
         let text = String::from_utf8_lossy(&object);
         assert!(text.contains("/Type/XRef"), "{text}");
         assert!(text.trim_end().ends_with("endobj"), "{text}");
+    }
+
+    fn invariant_detail(input: &[u8], output: &[u8]) -> String {
+        let failure = validate_append_only(input, &digest(input), output).unwrap_err();
+        assert_eq!(failure.stage, DocumentIoStage::ValidateInvariant);
+        failure.detail
+    }
+
+    #[test]
+    fn append_only_check_rejects_each_broken_invariant() {
+        let (input, output) = rotate_first_page("pdf/three-distinct-pages.pdf", None);
+
+        // 1. Çıktı girdiden uzun değil.
+        assert!(invariant_detail(&input, &input).contains("uzun değil"));
+
+        // 2. Girdinin bir baytı değişmiş.
+        let mut changed = output.clone();
+        changed[20] ^= 0x01;
+        assert!(invariant_detail(&input, &changed).contains("baytlarıyla başlamıyor"));
+        // Yanlış beklenen digest de aynı sonucu verir.
+        let failure = validate_append_only(&input, &digest(b"other"), &output).unwrap_err();
+        assert!(failure.detail.contains("baytlarıyla başlamıyor"));
+
+        // 3a. Sona eklenen bölüm yeni bir startxref içermiyor.
+        let mut no_section = input.clone();
+        no_section.extend_from_slice(b"\n% only a comment\n");
+        assert!(invariant_detail(&input, &no_section).contains("startxref"));
+
+        // 3b. /Prev girdinin son startxref değeri değil.
+        let (_, input_xref) = last_startxref(&input).unwrap();
+        let prev = format!("/Prev {input_xref}");
+        let at = find_last(&output, prev.as_bytes()).expect("PDFium /Prev yazmalı");
+        let mut wrong_prev = output.clone();
+        let digit = at + "/Prev ".len();
+        wrong_prev[digit] = if wrong_prev[digit] == b'1' {
+            b'2'
+        } else {
+            b'1'
+        };
+        assert!(invariant_detail(&input, &wrong_prev).contains("/Prev"));
+
+        // 3c. /Prev hiç yok.
+        let mut no_prev = output.clone();
+        no_prev[at + 1..at + 5].copy_from_slice(b"Xrev");
+        assert!(invariant_detail(&input, &no_prev).contains("/Prev yok"));
+    }
+
+    #[test]
+    fn section_prev_reads_tables_and_streams_and_ignores_longer_names() {
+        assert_eq!(
+            section_prev(b"xref\n0 1\n0000000000 65535 f \ntrailer\n<</Size 1/Prev 186>>\n"),
+            Some(186)
+        );
+        assert_eq!(
+            section_prev(b"7 0 obj\n<</Type/XRef/Prev\n42/W[1 2 1]>>stream\n/Prev 9\nendstream"),
+            Some(42)
+        );
+        assert_eq!(
+            section_prev(b"xref\n0 1\ntrailer\n<</PrevX 5/Prev 7>>"),
+            Some(7)
+        );
+        assert_eq!(section_prev(b"xref\n0 1\ntrailer\n<</Size 1>>"), None);
+    }
+
+    #[test]
+    fn consistent_fixtures_have_no_xref_inconsistency() {
+        for relative in [
+            "pdf/minimal.pdf",
+            "pdf/three-distinct-pages.pdf",
+            "pdf/encrypted.pdf",
+            "sanitization/incremental-revision.pdf",
+            "sanitization/object-xref-stream.pdf",
+            "sanitization/incremental-xref-stream-chain.pdf",
+            "sanitization/hybrid-xref.pdf",
+            "sanitization/signature.pdf",
+            "redaction/object-stream.pdf",
+        ] {
+            let bytes = std::fs::read(fixture(relative)).unwrap();
+            assert_eq!(find_xref_inconsistency(&bytes), None, "{relative}");
+        }
+    }
+
+    #[test]
+    fn files_that_need_xref_repair_are_reported() {
+        let base = std::fs::read(fixture("pdf/three-distinct-pages.pdf")).unwrap();
+        let (keyword, xref) = last_startxref(&base).unwrap();
+
+        let mut shifted = base[..keyword].to_vec();
+        shifted.extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref + 7).as_bytes());
+
+        let mut wrong_entry = base.clone();
+        let entry = find_first(&wrong_entry[xref..], b" 00000 n").unwrap() + xref - 10;
+        wrong_entry[entry..entry + 10].copy_from_slice(b"0000000003");
+
+        let mut leading_garbage = b"XYZ".to_vec();
+        leading_garbage.extend_from_slice(&base);
+
+        for (name, bytes) in [
+            (
+                "malformed",
+                std::fs::read(fixture("pdf/malformed.pdf")).unwrap(),
+            ),
+            ("startxref-shifted", shifted),
+            ("entry-offset-wrong", wrong_entry),
+            ("leading-garbage", leading_garbage),
+            ("truncated-tail", base[..keyword].to_vec()),
+        ] {
+            assert!(find_xref_inconsistency(&bytes).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn object_headers_accept_pdf_whitespace_only_between_tokens() {
+        let bytes = b"xx1 0 obj<<>>12  3\r\nobj 4 0obj";
+        assert!(object_header_at(bytes, 2, 1, 0));
+        assert!(object_header_at(bytes, 13, 12, 3));
+        assert!(!object_header_at(bytes, 13, 12, 0));
+        assert!(!object_header_at(bytes, 2, 2, 0));
+        // `obj` tokenine boşluk olmadan bitişik numara geçerli bir başlık değil.
+        assert!(!object_header_at(bytes, 24, 4, 0));
+        assert!(!object_header_at(bytes, 999, 1, 0));
+    }
+
+    #[test]
+    fn write_modes_serialize_to_the_design_names() {
+        assert_eq!(
+            serde_json::to_string(&[
+                WriteMode::Appended,
+                WriteMode::AppendedUnminimized,
+                WriteMode::Rewritten,
+            ])
+            .unwrap(),
+            r#"["appended","appended-unminimized","rewritten"]"#
+        );
     }
 }

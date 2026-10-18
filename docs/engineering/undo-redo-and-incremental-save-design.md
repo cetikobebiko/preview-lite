@@ -136,7 +136,9 @@ ayrı bir worker işlemidir ve atomik commit/kurtarma makinesi vardır. Bu yüzd
 
 - `forms/fill.rs` içindeki `save_copy`, `FPDF_FILEWRITE` adaptörü,
   `save_preserving_signatures` ve `repair_incremental_xref_stream` tek bir paylaşılan modüle
-  taşınır (öneri: `document_io::incremental`). Davranış değişmez, yalnız yer değişir; mevcut
+  taşınır: [`incremental_save`](../../src-tauri/src/incremental_save.rs). `document_io` altına
+  konmadı, çünkü `tests/document_io_fs.rs` o dosyayı PDFium'suz ayrı bir binary olarak derliyor.
+  Davranış değişmez, yalnız yer değişir; mevcut
   testleri de onlarla birlikte taşınır.
 - Tüm PDFium tabanlı recipe'ler bu yardımcıyı kullanır.
 
@@ -482,8 +484,10 @@ production çıktısında da var ve B'den bağımsızdır.
 Her adım ayrı commit'tir ve kendi testleriyle gelir:
 
 1. Spike'lar S1–S7 (production kodu değişmez; bulgular bu dokümana işlenir).
-2. Artımlı kayıt yardımcılarını `forms/fill.rs`'den paylaşılan modüle taşı (davranış aynı).
-3. Append-only doğrulayıcısı (§4.3) ve `writeMode` raporlaması.
+2. Artımlı kayıt yardımcılarını `forms/fill.rs`'den paylaşılan modüle taşı (davranış aynı). **Yapıldı.**
+3. Append-only doğrulayıcısı (§4.3), xref tutarlılık dedektörü (S4) ve `WriteMode` türü.
+   **Yapıldı** (saf fonksiyonlar ve testleri; recipe'lere bağlanmadı). `writeMode`'un mutasyon
+   sonucunda raporlanması adım 4'e kaldı.
 4. PDFium recipe'lerini artımlı yaz (rotate, delete, insert, annotation); imza uyarısını
    backend'in bildirdiği moda bağla.
 5. `persisted_working_digest` ile `dirty` hesabı (§5.6).
