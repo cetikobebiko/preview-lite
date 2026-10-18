@@ -1646,12 +1646,19 @@ mod tests {
         let unassigned_addr = listener.local_addr().unwrap();
         drop(listener); // Drop to close socket immediately
 
+        // Windows retries SYN on a refused loopback port and reports the refusal
+        // only after ~2 s, so the total budget must outlast that there.
+        let total_timeout = if cfg!(windows) {
+            Duration::from_secs(4)
+        } else {
+            Duration::from_millis(500)
+        };
         let ctx = make_test_context(unassigned_addr);
         let res = SecureHttpClient::send_post_json(
             &ctx,
             "/api/test",
             &json!({}),
-            Duration::from_millis(500),
+            total_timeout,
             "application/json",
         )
         .await;

@@ -3322,7 +3322,7 @@ impl SessionJobContext {
 /// service sees the document's real name. The copy lives inside the job
 /// directory, so job cancellation, shutdown and normal cleanup remove it
 /// together with the snapshot. Only the macOS share command uses it.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 pub(crate) fn stage_job_share_copy(
     context: &SessionJobContext,
     file_name: &str,
@@ -14767,6 +14767,9 @@ mod tests {
         assert!(store.job_registry.lock().active.is_empty());
     }
 
+    // The display-name sanitizer is the macOS share flow's: it splits on `/`
+    // and turns `\` into `_`, so Windows display paths give a different name.
+    #[cfg(unix)]
     #[tokio::test]
     async fn share_copy_uses_display_name_and_is_removed_with_job() {
         let documents = tempfile::tempdir().unwrap();

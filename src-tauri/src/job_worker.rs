@@ -2017,14 +2017,21 @@ mod tests {
 
     #[test]
     fn protocol_paths_must_share_the_private_job_directory() {
+        // temp_dir() is absolute on every platform; "/tmp" is not on Windows.
+        let root = std::env::temp_dir();
         assert!(validate_protocol_paths(
-            Path::new("/tmp/job/worker-request-1.json"),
-            Path::new("/tmp/job/worker-response-1.json")
+            &root.join("job").join("worker-request-1.json"),
+            &root.join("job").join("worker-response-1.json")
         )
         .is_ok());
         assert!(validate_protocol_paths(
-            Path::new("/tmp/job/worker-request-1.json"),
-            Path::new("/tmp/other/worker-response-1.json")
+            &root.join("job").join("worker-request-1.json"),
+            &root.join("other").join("worker-response-1.json")
+        )
+        .is_err());
+        assert!(validate_protocol_paths(
+            Path::new("job/worker-request-1.json"),
+            Path::new("job/worker-response-1.json")
         )
         .is_err());
     }
