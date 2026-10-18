@@ -488,8 +488,21 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
 3. Append-only doğrulayıcısı (§4.3), xref tutarlılık dedektörü (S4) ve `WriteMode` türü.
    **Yapıldı** (saf fonksiyonlar ve testleri; recipe'lere bağlanmadı). `writeMode`'un mutasyon
    sonucunda raporlanması adım 4'e kaldı.
-4. PDFium recipe'lerini artımlı yaz (rotate, delete, insert, annotation); imza uyarısını
-   backend'in bildirdiği moda bağla.
+4. PDFium recipe'lerini artımlı yaz; imza uyarısını backend'in bildirdiği moda bağla.
+   - **4a. Yapıldı:** Rotate, DeletePages, InsertBlankPage ve form doldurma tek politikadan,
+     `incremental_save::save_mutation`'dan geçer: önce xref tutarlılığı (S4), sonra
+     `FPDF_INCREMENTAL` + xref stream onarımı, sonra `validate_append_only`. Biri tutmazsa
+     imzalı belge hata verir, imzasız belge tam yeniden yazılır. pdfium-render 0.8.37
+     `PdfDocument`'in handle'ını açmadığı için bu recipe'lerin yazma adımı ham binding'lerle
+     (`RawDocument`) yapılır; doğrulama adımı pdfium-render'da kalır. Seçilen mod şimdilik
+     yalnız loglanır.
+   - 4b. AddAnnotation / DeleteAnnotation (AP üretimi ham API'de yeniden kurulur).
+   - 4c. `writeMode`'u mutasyon sonucuyla frontend'e taşı; `signatureLossGuard` sabit liste
+     yerine backend'in bildirdiği moda baksın (4a sonrasında uyarı gereğinden temkinli:
+     artık artımlı yazılan işlemlerde de soruyor).
+   - Bilinen maliyet: xref tutarlılık denetimi her mutasyonda belgeyi lopdf ile bir kez
+     ayrıştırır. Tek yüklemenin bellek maliyeti ayrıca ölçülmedi (S6'daki ölçüm iki yüklemeyi
+     birlikte kapsar). Yalnız xref bölümlerini okuyan bir denetimle değiştirilmesi açık iş.
 5. `persisted_working_digest` ile `dirty` hesabı (§5.6).
 6. Geçmiş modeli, commit'te geçmişe yazma ve sınırlar (§5.2–5.5).
 7. Undo/redo komutları ve frontend (§5.4, §5.10).

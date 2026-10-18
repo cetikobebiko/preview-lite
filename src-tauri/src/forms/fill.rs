@@ -20,7 +20,7 @@ use super::{FormFieldKind, MAX_FORM_OPTIONS_PER_FIELD, MAX_FORM_TEXT_CHARS};
 use crate::document_io::{
     atomic_write_pdf, AtomicWriteReport, CommitState, DocumentIoError, DocumentIoFailure,
 };
-use crate::incremental_save;
+use crate::incremental_save::{self, RawDocument};
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -187,7 +187,8 @@ fn fill_and_save(
     let source = source
         .to_str()
         .ok_or_else(|| DocumentIoFailure::preflight("PDF yolu UTF-8 değil"))?;
-    let document = RawDocument::open(bindings, source, password)?;
+    let document = RawDocument::open(bindings, source, password)
+        .ok_or_else(|| DocumentIoFailure::preflight("PDF form yazımı için açılamadı"))?;
     if bindings.FPDF_GetSecurityHandlerRevision(document.handle) != -1 {
         return Err(DocumentIoFailure::preflight(
             "Şifreli PDF mutasyonları henüz desteklenmiyor",
@@ -225,12 +226,8 @@ fn fill_and_save(
             });
         }
     }
-    incremental_save::save_preserving_signatures(
-        bindings,
-        document.handle,
-        Path::new(source),
-        temp,
-    )?;
+    let mode = incremental_save::save_mutation(&document, Path::new(source), temp)?;
+    tracing::info!(operation = OPERATION, write_mode = ?mode, "Form değerleri yazıldı");
     Ok(expected)
 }
 
@@ -549,33 +546,6 @@ fn verify_saved(
 // Ham PDFium kaynakları. Bırakma sırası önemlidir: annotation → sayfa → form ortamı →
 // belge. Sarmalayıcılar ödünç alma ilişkisiyle bu sırayı derleyiciye zorlatır.
 // ---------------------------------------------------------------------------
-
-struct RawDocument<'b> {
-    bindings: &'b dyn PdfiumLibraryBindings,
-    handle: FPDF_DOCUMENT,
-}
-
-impl<'b> RawDocument<'b> {
-    fn open(
-        bindings: &'b dyn PdfiumLibraryBindings,
-        path: &str,
-        password: Option<&str>,
-    ) -> Result<Self, DocumentIoFailure> {
-        let handle = bindings.FPDF_LoadDocument(path, password);
-        if handle.is_null() {
-            return Err(DocumentIoFailure::preflight(
-                "PDF form yazımı için açılamadı",
-            ));
-        }
-        Ok(Self { bindings, handle })
-    }
-}
-
-impl Drop for RawDocument<'_> {
-    fn drop(&mut self) {
-        self.bindings.FPDF_CloseDocument(self.handle);
-    }
-}
 
 struct FormEnvironment<'d> {
     bindings: &'d dyn PdfiumLibraryBindings,

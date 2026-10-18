@@ -2,9 +2,11 @@ use crate::document_io::{
     atomic_write_pdf, ensure_unprotected, AtomicWriteReport, CommitState, DocumentIoError,
     DocumentIoFailure, DocumentIoStage,
 };
+use crate::incremental_save::{save_mutation, RawDocument};
 use pdfium_render::prelude::*;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::os::raw::c_int;
+use std::path::{Path, PathBuf};
 
 const MAX_PAGE_DIMENSION_POINTS: f32 = 14_400.0;
 
@@ -30,6 +32,47 @@ fn rotation_from_degrees(degrees: i32) -> Result<PdfPageRenderRotation, String> 
         270 => PdfPageRenderRotation::Degrees270,
         _ => PdfPageRenderRotation::None,
     })
+}
+
+/// Sayfa mutasyonları artımlı kaydedilebilsin diye belgeyi ham PDFium ile açar
+/// (`incremental_save::RawDocument`). Şifreli belgeler, `ensure_unprotected` gibi reddedilir.
+fn open_raw<'b>(
+    bindings: &'b dyn PdfiumLibraryBindings,
+    source: &Path,
+    password: Option<&str>,
+) -> Result<RawDocument<'b>, DocumentIoFailure> {
+    let path = source
+        .to_str()
+        .ok_or_else(|| DocumentIoFailure::preflight("PDF yolu UTF-8 değil"))?;
+    let document = RawDocument::open(bindings, path, password).ok_or_else(|| {
+        DocumentIoFailure::preflight(format!(
+            "PDF yüklenemedi (PDFium hata kodu {})",
+            bindings.FPDF_GetLastError()
+        ))
+    })?;
+    let revision = bindings.FPDF_GetSecurityHandlerRevision(document.handle);
+    if revision != -1 {
+        return Err(DocumentIoFailure::preflight(format!(
+            "Şifreli PDF mutasyonları henüz desteklenmiyor (security handler revision: {revision})"
+        )));
+    }
+    Ok(document)
+}
+
+fn raw_page_count(document: &RawDocument<'_>) -> Result<u16, DocumentIoFailure> {
+    u16::try_from(document.bindings.FPDF_GetPageCount(document.handle))
+        .map_err(|_| DocumentIoFailure::preflight("PDF sayfa sayısı desteklenen aralıkta değil"))
+}
+
+fn save_logged(
+    operation: &str,
+    document: &RawDocument<'_>,
+    source: &Path,
+    temp: &Path,
+) -> Result<(), DocumentIoFailure> {
+    let mode = save_mutation(document, source, temp)?;
+    tracing::info!(operation, write_mode = ?mode, "Sayfa mutasyonu kaydedildi");
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -314,36 +357,29 @@ pub(crate) fn rotate_page_report(
         std::slice::from_ref(&path),
         &path,
         move |pdfium, temp| {
-            let mut document = pdfium
-                .load_pdf_from_file(&source, password.as_deref())
-                .map_err(|error| {
-                    DocumentIoFailure::preflight(format!("PDF yüklenemedi: {error}"))
-                })?;
-            ensure_unprotected(&document)?;
-            let page_count = document.pages().len();
-            if page_index >= page_count as u32 {
+            let bindings = pdfium.bindings();
+            let document = open_raw(bindings, &source, password.as_deref())?;
+            let page_count = raw_page_count(&document)?;
+            if page_index >= u32::from(page_count) {
                 return Err(DocumentIoFailure::preflight(format!(
                     "Sayfa indeksi aralık dışında: {page_index} >= {page_count}"
                 )));
             }
-            let rotation = {
-                let mut page = document
-                    .pages_mut()
-                    .get(page_index as u16)
-                    .map_err(|error| {
-                        DocumentIoFailure::preflight(format!("Sayfa bulunamadı: {error}"))
-                    })?;
-                let current = page.rotation().map_err(|error| {
-                    DocumentIoFailure::preflight(format!("Sayfa rotasyonu okunamadı: {error}"))
-                })?;
-                let rotation = rotation_from_degrees(degrees_from_rotation(current) + degrees)
-                    .map_err(DocumentIoFailure::preflight)?;
-                page.set_rotation(rotation);
-                rotation
-            };
-            document.save_to_file(temp).map_err(|error| {
-                DocumentIoFailure::write(format!("Temp PDF kaydedilemedi: {error}"))
-            })?;
+            let page = bindings.FPDF_LoadPage(document.handle, page_index as c_int);
+            if page.is_null() {
+                return Err(DocumentIoFailure::preflight(format!(
+                    "Sayfa bulunamadı: {page_index}"
+                )));
+            }
+            // FPDFPage_{Get,Set}Rotation çeyrek dönüş sayısıdır (0–3).
+            let rotation =
+                rotation_from_degrees(bindings.FPDFPage_GetRotation(page) * 90 + degrees);
+            if let Ok(rotation) = rotation {
+                bindings.FPDFPage_SetRotation(page, degrees_from_rotation(rotation) / 90);
+            }
+            bindings.FPDF_ClosePage(page);
+            let rotation = rotation.map_err(DocumentIoFailure::preflight)?;
+            save_logged("rotate_page", &document, &source, temp)?;
             Ok((page_count, format!("{rotation:?}")))
         },
         move |document, (expected_count, expected_rotation)| {
@@ -381,13 +417,9 @@ pub(crate) fn delete_pages_report(
         std::slice::from_ref(&path),
         &path,
         move |pdfium, temp| {
-            let mut document = pdfium
-                .load_pdf_from_file(&source, password.as_deref())
-                .map_err(|error| {
-                    DocumentIoFailure::preflight(format!("PDF yüklenemedi: {error}"))
-                })?;
-            ensure_unprotected(&document)?;
-            let page_count = document.pages().len();
+            let bindings = pdfium.bindings();
+            let document = open_raw(bindings, &source, password.as_deref())?;
+            let page_count = raw_page_count(&document)?;
             if page_indices.is_empty() {
                 return Err(DocumentIoFailure::preflight("Silinecek sayfa listesi boş"));
             }
@@ -412,21 +444,15 @@ pub(crate) fn delete_pages_report(
             let mut sorted = unique.into_iter().collect::<Vec<_>>();
             sorted.sort_unstable_by(|left, right| right.cmp(left));
             for index in sorted {
-                document
-                    .pages_mut()
-                    .get(index as u16)
-                    .map_err(|error| {
-                        DocumentIoFailure::preflight(format!("Sayfa {index} bulunamadı: {error}"))
-                    })?
-                    .delete()
-                    .map_err(|error| {
-                        DocumentIoFailure::write(format!("Sayfa {index} silinemedi: {error}"))
-                    })?;
+                bindings.FPDFPage_Delete(document.handle, index as c_int);
             }
             let expected_count = page_count - page_indices.len() as u16;
-            document.save_to_file(temp).map_err(|error| {
-                DocumentIoFailure::write(format!("Temp PDF kaydedilemedi: {error}"))
-            })?;
+            if raw_page_count(&document)? != expected_count {
+                return Err(DocumentIoFailure::write(format!(
+                    "Sayfalar silinemedi: beklenen {expected_count} sayfa"
+                )));
+            }
+            save_logged("delete_pages", &document, &source, temp)?;
             Ok(expected_count)
         },
         |document, expected_count| {
@@ -472,31 +498,25 @@ pub(crate) fn insert_blank_page_report(
         std::slice::from_ref(&path),
         &path,
         move |pdfium, temp| {
-            let mut document = pdfium
-                .load_pdf_from_file(&source, password.as_deref())
-                .map_err(|error| {
-                    DocumentIoFailure::preflight(format!("PDF yüklenemedi: {error}"))
-                })?;
-            ensure_unprotected(&document)?;
-            let page_count = document.pages().len();
+            let bindings = pdfium.bindings();
+            let document = open_raw(bindings, &source, password.as_deref())?;
+            let page_count = raw_page_count(&document)?;
             if at_index > page_count as u32 {
                 return Err(DocumentIoFailure::preflight(format!(
                     "Ekleme indeksi aralık dışında: {at_index} > {page_count}"
                 )));
             }
-            {
-                let size =
-                    PdfPagePaperSize::new_custom(PdfPoints::new(width), PdfPoints::new(height));
-                document
-                    .pages_mut()
-                    .create_page_at_index(size, at_index as u16)
-                    .map_err(|error| {
-                        DocumentIoFailure::write(format!("Boş sayfa oluşturulamadı: {error}"))
-                    })?;
+            let page = bindings.FPDFPage_New(
+                document.handle,
+                at_index as c_int,
+                f64::from(width),
+                f64::from(height),
+            );
+            if page.is_null() {
+                return Err(DocumentIoFailure::write("Boş sayfa oluşturulamadı"));
             }
-            document.save_to_file(temp).map_err(|error| {
-                DocumentIoFailure::write(format!("Temp PDF kaydedilemedi: {error}"))
-            })?;
+            bindings.FPDF_ClosePage(page);
+            save_logged("insert_blank_page", &document, &source, temp)?;
             Ok((page_count + 1, width, height))
         },
         move |document, (expected_count, expected_width, expected_height)| {
@@ -868,6 +888,115 @@ mod tests {
         insert_blank_page_with_password(path.to_string_lossy().to_string(), 1, 200.0, 300.0, None)
             .unwrap();
         assert_page_sizes(&path, &[(612.0, 792.0), (200.0, 300.0)]);
+    }
+
+    fn copied_from(relative: &str, directory: &Path) -> PathBuf {
+        let target = directory.join(Path::new(relative).file_name().unwrap());
+        fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(relative),
+            &target,
+        )
+        .unwrap();
+        target
+    }
+
+    fn signature_bytes(path: &Path) -> Vec<Vec<u8>> {
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+            let document = pdfium
+                .load_pdf_from_file(path, None)
+                .map_err(|error| error.to_string())?;
+            Ok(document
+                .signatures()
+                .iter()
+                .map(|signature| signature.bytes())
+                .collect())
+        })
+        .unwrap()
+    }
+
+    fn last_xref_section(bytes: &[u8]) -> (usize, String) {
+        let keyword = bytes
+            .windows(b"startxref".len())
+            .rposition(|window| window == b"startxref")
+            .unwrap();
+        let offset: usize = String::from_utf8_lossy(&bytes[keyword + 9..])
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap();
+        (
+            offset,
+            String::from_utf8_lossy(&bytes[offset..keyword]).into_owned(),
+        )
+    }
+
+    type Mutation = fn(String) -> Result<(), String>;
+
+    const PAGE_MUTATIONS: [(&str, Mutation); 3] = [
+        ("rotate", |path| {
+            rotate_page_with_password(path, 0, 90, None)
+        }),
+        ("delete", |path| {
+            delete_pages_with_password(path, vec![1], None)
+        }),
+        ("insert", |path| {
+            insert_blank_page_with_password(path, 0, 200.0, 300.0, None)
+        }),
+    ];
+
+    #[test]
+    fn document_io_page_mutations_append_an_incremental_update() {
+        for (name, mutate) in PAGE_MUTATIONS {
+            let directory = tempfile::tempdir().unwrap();
+            let path = copied_fixture("three-distinct-pages.pdf", directory.path());
+            let original = fs::read(&path).unwrap();
+            mutate(path.to_string_lossy().to_string()).unwrap();
+            let saved = fs::read(&path).unwrap();
+            assert!(saved.len() > original.len(), "{name}");
+            assert!(
+                saved.starts_with(&original),
+                "{name}: original bytes were rewritten"
+            );
+        }
+    }
+
+    #[test]
+    fn document_io_page_mutations_keep_signed_bytes_and_signatures() {
+        // signature.pdf tek sayfalıdır; silme tüm sayfaları sileceği için burada denenmez.
+        for (name, mutate) in PAGE_MUTATIONS
+            .into_iter()
+            .filter(|(name, _)| *name != "delete")
+        {
+            let directory = tempfile::tempdir().unwrap();
+            let path = copied_from("sanitization/signature.pdf", directory.path());
+            let original = fs::read(&path).unwrap();
+            let before = signature_bytes(&path);
+            assert_eq!(before.len(), 1);
+            mutate(path.to_string_lossy().to_string()).unwrap();
+            assert!(
+                fs::read(&path).unwrap().starts_with(&original),
+                "{name}: signed bytes were rewritten"
+            );
+            assert_eq!(signature_bytes(&path), before, "{name}");
+        }
+    }
+
+    #[test]
+    fn document_io_rotate_of_an_xref_stream_pdf_writes_a_well_formed_xref_stream() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = copied_from("sanitization/object-xref-stream.pdf", directory.path());
+        let original = fs::read(&path).unwrap();
+        rotate_page_with_password(path.to_string_lossy().to_string(), 0, 90, None).unwrap();
+        let saved = fs::read(&path).unwrap();
+        assert!(saved.starts_with(&original));
+        let (offset, section) = last_xref_section(&saved);
+        assert!(offset >= original.len());
+        assert!(section.contains("/Type/XRef"), "{section}");
+        assert!(section.trim_end().ends_with("endobj"), "{section}");
     }
 
     #[test]

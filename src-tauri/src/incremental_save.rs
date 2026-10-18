@@ -24,7 +24,7 @@ pub(crate) const FPDF_INCREMENTAL: FPDF_DWORD = 1;
 pub(crate) const FPDF_FULL_REWRITE: FPDF_DWORD = 0;
 
 /// Bir mutasyonun working PDF'i nasıl yazdığı (tasarım §4.4).
-#[allow(dead_code)] // Recipe'lere tasarım §10 adım 4'te bağlanır.
+#[allow(dead_code)] // `Appended`, karar K5'in lopdf fark yazımıyla gelir (tasarım §9.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum WriteMode {
@@ -36,40 +36,89 @@ pub(crate) enum WriteMode {
     Rewritten,
 }
 
-/// Saves as an incremental update: the original bytes stay byte-for-byte at the start of
-/// the file and the changes are appended, so the byte ranges existing signatures cover are
-/// untouched and the signatures stay valid for their revision. Only an unsigned document
-/// falls back to a full rewrite when PDFium cannot save incrementally.
-pub(crate) fn save_preserving_signatures(
-    bindings: &dyn PdfiumLibraryBindings,
-    document: FPDF_DOCUMENT,
+/// Ham PDFium belge handle'ı. pdfium-render 0.8.37 `PdfDocument`'in handle'ını açmadığı için
+/// artımlı kayıt (`FPDF_SaveAsCopy` bayrakları) yalnız ham binding'lerle açılan belgede yapılabilir.
+pub(crate) struct RawDocument<'b> {
+    pub(crate) bindings: &'b dyn PdfiumLibraryBindings,
+    pub(crate) handle: FPDF_DOCUMENT,
+}
+
+impl<'b> RawDocument<'b> {
+    /// PDFium belgeyi açamazsa `None`; hata metnini çağıran kendi bağlamında verir.
+    pub(crate) fn open(
+        bindings: &'b dyn PdfiumLibraryBindings,
+        path: &str,
+        password: Option<&str>,
+    ) -> Option<Self> {
+        let handle = bindings.FPDF_LoadDocument(path, password);
+        (!handle.is_null()).then_some(Self { bindings, handle })
+    }
+}
+
+impl Drop for RawDocument<'_> {
+    fn drop(&mut self) {
+        self.bindings.FPDF_CloseDocument(self.handle);
+    }
+}
+
+/// PDFium ile düzenlenmiş `document`'i `source`'un artımlı güncellemesi olarak `temp`'e yazar
+/// (tasarım §4.3–§4.4). Sıra:
+///
+/// 1. `source`'un xref zinciri tutarsızsa eklenecek sağlam bir zincir yoktur (S4).
+/// 2. `FPDF_INCREMENTAL` ile kayıt ve PDFium'un xref stream kusurunun onarımı.
+/// 3. `validate_append_only`: çıktı `source`'un baytlarıyla başlar ve zincire doğru bağlanır.
+///
+/// Bunlardan biri tutmazsa imzalı belge hata verir (imzaları korumak için tam yeniden yazıma
+/// geçilmez); imzasız belge tam yeniden yazılır. Sonuç asla sessiz değildir: dönen `WriteMode`
+/// ve log hangi yolun seçildiğini söyler. PDFium ile yeniden açma ve recipe'ye özgü denetim
+/// `atomic_write_pdf`'in doğrulama adımıdır.
+pub(crate) fn save_mutation(
+    document: &RawDocument<'_>,
     source: &Path,
     temp: &Path,
-) -> Result<(), DocumentIoFailure> {
-    let signature_count = bindings.FPDF_GetSignatureCount(document);
-    if let Err(error) = save_copy(bindings, document, temp, FPDF_INCREMENTAL) {
-        if signature_count > 0 {
-            return Err(DocumentIoFailure::write(format!(
-                "İmzalı belge artımlı (incremental) kaydedilemedi; imzaları korumak için tam yeniden yazıma geçilmedi: {}",
-                error.detail
-            )));
-        }
-        return save_copy(bindings, document, temp, FPDF_FULL_REWRITE);
-    }
+) -> Result<WriteMode, DocumentIoFailure> {
+    let bindings = document.bindings;
+    let signed = bindings.FPDF_GetSignatureCount(document.handle) > 0;
     let original = std::fs::read(source)
         .map_err(|error| DocumentIoFailure::write(format!("Kaynak PDF okunamadı: {error}")))?;
+    let fall_back = |failure: DocumentIoFailure| -> Result<WriteMode, DocumentIoFailure> {
+        if signed {
+            return Err(DocumentIoFailure::new(
+                failure.stage,
+                format!(
+                    "İmzalı belge artımlı (incremental) kaydedilemedi; imzaları korumak için tam yeniden yazıma geçilmedi: {}",
+                    failure.detail
+                ),
+            ));
+        }
+        tracing::warn!(
+            code = "INCREMENTAL_WRITE_FALLBACK",
+            reason = %failure.detail,
+            "Artımlı kayıt kullanılamadı; imzasız belge tam yeniden yazılıyor"
+        );
+        save_copy(bindings, document.handle, temp, FPDF_FULL_REWRITE)?;
+        Ok(WriteMode::Rewritten)
+    };
+
+    if let Some(reason) = find_xref_inconsistency(&original) {
+        return fall_back(DocumentIoFailure::preflight(format!(
+            "Belgenin xref zinciri onarım gerektiriyor: {reason}"
+        )));
+    }
+    if let Err(failure) = save_copy(bindings, document.handle, temp, FPDF_INCREMENTAL) {
+        return fall_back(failure);
+    }
     let mut saved = std::fs::read(temp)
         .map_err(|error| DocumentIoFailure::write(format!("Temp PDF okunamadı: {error}")))?;
-    if signature_count > 0 && !saved.starts_with(&original) {
-        return Err(DocumentIoFailure::invariant(
-            "Artımlı kayıt imzalı baytları korumadı",
-        ));
-    }
     if saved.starts_with(&original) && repair_incremental_xref_stream(&mut saved, original.len()) {
         std::fs::write(temp, &saved)
             .map_err(|error| DocumentIoFailure::write(format!("Temp PDF yazılamadı: {error}")))?;
     }
-    Ok(())
+    let digest = format!("{:x}", Sha256::digest(&original));
+    if let Err(failure) = validate_append_only(&original, &digest, &saved) {
+        return fall_back(failure);
+    }
+    Ok(WriteMode::AppendedUnminimized)
 }
 
 /// PDFium (7961; `main`'de de aynı) kaynak dosya cross-reference stream kullanıyorsa artımlı
@@ -144,7 +193,6 @@ pub(crate) fn repair_incremental_xref_stream(output: &mut Vec<u8>, original_len:
 /// baytları aynen korunmuş), son `startxref` girdinin ötesindeki yeni bölümü gösterir ve o
 /// bölümün `/Prev`'i girdinin son `startxref` değeridir. PDFium ile yeniden açma ve recipe'ye
 /// özgü denetim (§4.3, 4) çağıranın işidir.
-#[allow(dead_code)] // Recipe'lere tasarım §10 adım 4'te bağlanır.
 pub(crate) fn validate_append_only(
     input: &[u8],
     before_digest: &str,
@@ -191,7 +239,6 @@ pub(crate) fn validate_append_only(
 /// nesne başlığını gösterir; çözülen her `Normal` xref girdisi kendi `N G obj` başlığını
 /// gösterir. Şifreli belgeler parola gerektirmeden denetlenir (lopdf 0.34 yüklerken çözmez).
 /// lopdf belgenin tüm nesnelerini belleğe ayrıştırır (yaklaşık bir belge boyutu, tasarım S6).
-#[allow(dead_code)] // Recipe'lere tasarım §10 adım 4'te bağlanır.
 pub(crate) fn find_xref_inconsistency(bytes: &[u8]) -> Option<String> {
     let document = match lopdf::Document::load_mem(bytes) {
         Ok(document) => document,
@@ -386,28 +433,74 @@ mod tests {
         (offset, bytes[offset..startxref].to_vec())
     }
 
-    /// Fixture'ın ilk sayfasını PDFium ile 90° döndürüp `save_preserving_signatures` ile kaydeder.
-    fn rotate_first_page(relative: &str, password: Option<&str>) -> (Vec<u8>, Vec<u8>) {
+    /// `input`'un ilk sayfasını PDFium ile 90° döndürüp `save_mutation` ile kaydeder; sonucu
+    /// ve (başarılıysa) temp çıktısını döner.
+    fn rotate_and_save(
+        input: &[u8],
+        password: Option<&str>,
+    ) -> (Result<WriteMode, DocumentIoFailure>, Vec<u8>) {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.pdf");
         let temp = directory.path().join("temp.pdf");
-        std::fs::copy(fixture(relative), &source).unwrap();
-        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+        std::fs::write(&source, input).unwrap();
+        let result = crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
             let bindings = pdfium.bindings();
-            let document = bindings.FPDF_LoadDocument(source.to_str().unwrap(), password);
-            assert!(!document.is_null(), "{relative} açılamadı");
-            let page = bindings.FPDF_LoadPage(document, 0);
+            let document = RawDocument::open(bindings, source.to_str().unwrap(), password)
+                .ok_or("PDFium belgeyi açamadı")?;
+            let page = bindings.FPDF_LoadPage(document.handle, 0);
             bindings.FPDFPage_SetRotation(page, 1);
             bindings.FPDF_ClosePage(page);
-            let result = save_preserving_signatures(bindings, document, &source, &temp);
-            bindings.FPDF_CloseDocument(document);
-            result.map_err(|failure| failure.detail)
+            Ok(save_mutation(&document, &source, &temp))
         })
         .unwrap();
-        (
-            std::fs::read(&source).unwrap(),
-            std::fs::read(&temp).unwrap(),
-        )
+        assert_eq!(std::fs::read(&source).unwrap(), input, "kaynak değişmemeli");
+        (result, std::fs::read(&temp).unwrap_or_default())
+    }
+
+    /// Fixture'ı döndürüp kaydeder; ham PDFium artımlı yolu seçilmiş olmalı.
+    fn rotate_first_page(relative: &str, password: Option<&str>) -> (Vec<u8>, Vec<u8>) {
+        let input = std::fs::read(fixture(relative)).unwrap();
+        let (result, output) = rotate_and_save(&input, password);
+        let mode = result.unwrap_or_else(|failure| panic!("{relative}: {}", failure.detail));
+        assert_eq!(mode, WriteMode::AppendedUnminimized, "{relative}");
+        (input, output)
+    }
+
+    fn shifted_startxref(relative: &str) -> Vec<u8> {
+        let bytes = std::fs::read(fixture(relative)).unwrap();
+        let (keyword, xref) = last_startxref(&bytes).unwrap();
+        let mut shifted = bytes[..keyword].to_vec();
+        shifted.extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref + 7).as_bytes());
+        shifted
+    }
+
+    #[test]
+    fn inconsistent_unsigned_input_falls_back_to_a_full_rewrite() {
+        let input = shifted_startxref("pdf/three-distinct-pages.pdf");
+        assert!(find_xref_inconsistency(&input).is_some());
+        let (result, output) = rotate_and_save(&input, None);
+        assert_eq!(result.unwrap(), WriteMode::Rewritten);
+        assert!(!output.starts_with(&input));
+        assert_eq!(find_xref_inconsistency(&output), None);
+    }
+
+    #[test]
+    fn inconsistent_signed_input_is_refused_instead_of_rewritten() {
+        let input = shifted_startxref("sanitization/signature.pdf");
+        assert!(find_xref_inconsistency(&input).is_some());
+        let (result, _) = rotate_and_save(&input, None);
+        let failure = result.unwrap_err();
+        assert_eq!(failure.stage, DocumentIoStage::Preflight);
+        assert!(
+            failure.detail.contains("imzaları korumak"),
+            "{}",
+            failure.detail
+        );
+        assert!(
+            failure.detail.contains("xref zinciri"),
+            "{}",
+            failure.detail
+        );
     }
 
     #[test]
