@@ -23,11 +23,15 @@ struct WorkerDocument<'a> {
 
 const MAX_WORKER_CREDENTIAL_DOCUMENT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_WORKER_ACCESSIBILITY_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
+// The address-space limit is applied with RLIMIT_AS, which only exists on Unix.
+#[cfg(any(unix, test))]
 const WORKER_PDFIUM_RUNTIME_HEADROOM_BYTES: u64 = 512 * 1024 * 1024;
+#[cfg(any(unix, test))]
 const WORKER_MAX_RENDER_PEAK_BYTES: u64 =
     (crate::pdf_engine::render_service::MAX_RENDER_BYTES as u64 * 3)
         + MAX_WORKER_CREDENTIAL_DOCUMENT_BYTES
         + WORKER_PDFIUM_RUNTIME_HEADROOM_BYTES;
+#[cfg(any(unix, test))]
 const WORKER_ADDRESS_SPACE_LIMIT_BYTES: u64 = WORKER_MAX_RENDER_PEAK_BYTES + 512 * 1024 * 1024;
 
 pub fn run_worker() {
@@ -1162,26 +1166,34 @@ fn send_response(
 }
 
 pub(crate) fn apply_resource_limits() -> Vec<WorkerDiagnostic> {
-    let mut diagnostics = Vec::new();
     #[cfg(target_family = "unix")]
-    unsafe {
-        let limit = libc::rlimit {
-            rlim_cur: WORKER_ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
-            rlim_max: WORKER_ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
-        };
-        if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
-            diagnostics.push(WorkerDiagnostic {
-                code: "PDFIUM_WORKER_RESOURCE_LIMIT_UNAVAILABLE".to_string(),
-                message: "Worker address-space resource limit could not be applied".to_string(),
-            });
+    {
+        let mut diagnostics = Vec::new();
+        unsafe {
+            let limit = libc::rlimit {
+                rlim_cur: WORKER_ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
+                rlim_max: WORKER_ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
+            };
+            if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
+                diagnostics.push(WorkerDiagnostic {
+                    code: "PDFIUM_WORKER_RESOURCE_LIMIT_UNAVAILABLE".to_string(),
+                    message: "Worker address-space resource limit could not be applied".to_string(),
+                });
+            }
         }
+        diagnostics
     }
     #[cfg(target_family = "windows")]
-    diagnostics.push(WorkerDiagnostic {
-        code: "PDFIUM_WORKER_WINDOWS_JOB_OBJECT_UNAVAILABLE".to_string(),
-        message: "Windows Job Object containment is not enabled for this worker".to_string(),
-    });
-    diagnostics
+    {
+        vec![WorkerDiagnostic {
+            code: "PDFIUM_WORKER_WINDOWS_JOB_OBJECT_UNAVAILABLE".to_string(),
+            message: "Windows Job Object containment is not enabled for this worker".to_string(),
+        }]
+    }
+    #[cfg(not(any(target_family = "unix", target_family = "windows")))]
+    {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

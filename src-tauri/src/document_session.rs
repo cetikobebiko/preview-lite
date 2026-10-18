@@ -3321,7 +3321,8 @@ impl SessionJobContext {
 /// Copies the job snapshot to `<job_dir>/share/<file_name>` so a platform share
 /// service sees the document's real name. The copy lives inside the job
 /// directory, so job cancellation, shutdown and normal cleanup remove it
-/// together with the snapshot.
+/// together with the snapshot. Only the macOS share command uses it.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn stage_job_share_copy(
     context: &SessionJobContext,
     file_name: &str,

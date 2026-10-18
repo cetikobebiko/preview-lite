@@ -522,7 +522,7 @@ impl SpeechController {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn current_pid(&self) -> Option<u32> {
         self.slot.lock().current.as_ref().map(|p| p.child.id())
     }

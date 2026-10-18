@@ -1,7 +1,13 @@
 fn main() {
     // tauri-build externalBin dosyasının var olmasını bekler; önce derlenmeli.
     compile_macos_helper();
-    tauri_build::build();
+    let windows_attributes = if embed_windows_app_manifest() {
+        tauri_build::WindowsAttributes::new_without_app_manifest()
+    } else {
+        tauri_build::WindowsAttributes::new()
+    };
+    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows_attributes))
+        .expect("failed to run tauri-build");
 
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -344,6 +350,25 @@ const MACOS_HELPER_UNIVERSAL_TRIPLE: &str = "universal-apple-darwin";
 /// ister), bundler ise `-universal-apple-darwin` dosyasını paketler. Kaynak ve
 /// deployment target değişmedikçe yeniden derlenmez; iki mimari çağrısı aynı
 /// stamp'i ürettiğinden universal build'de ikinci çağrı derleme yapmaz.
+/// tauri-build embeds its app manifest only into bin targets, so `cargo test`
+/// executables on Windows miss the Common Controls v6 dependency and exit with
+/// STATUS_ENTRYPOINT_NOT_FOUND before running. Embedding the same manifest
+/// through the linker covers bins, tests and examples alike; tauri-build's own
+/// copy is then turned off so the app still carries exactly one manifest.
+fn embed_windows_app_manifest() -> bool {
+    const WINDOWS_APP_MANIFEST: &str = "windows-app-manifest.xml";
+    println!("cargo:rerun-if-changed={WINDOWS_APP_MANIFEST}");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
+        || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc")
+    {
+        return false;
+    }
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(WINDOWS_APP_MANIFEST);
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+    true
+}
+
 fn compile_macos_helper() {
     use sha2::{Digest, Sha256};
 
