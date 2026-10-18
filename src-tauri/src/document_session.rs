@@ -14939,6 +14939,133 @@ mod tests {
         assert!(state.working_digest.is_some());
     }
 
+    // Uçtan uca form tasarımı: op'lar, form tasarım katmanının tarayıcıda gönderdiği JSON'un
+    // birebir aynısı (camelCase, `name: null`); her adım bir sonrakinin generation'ını ve
+    // sayfanın yeniden okunan `annot_index`'lerini kullanır, sonunda kayıt artımlı olmalıdır.
+    #[tokio::test]
+    async fn form_design_session_round_trip_uses_frontend_ops_and_saves_incrementally() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("form-design.pdf");
+        crate::forms::test_support::standard_fixture(&original);
+        let original_before = fs::read(&original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+        let session_id = open_test_session(&store, &original);
+
+        let working_widgets = |store: &DocumentSessionStore| {
+            let path = store.entry(&session_id).unwrap().state.lock().working_path.clone();
+            crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+                let document = pdfium
+                    .load_pdf_from_file(&path, None)
+                    .map_err(|error| error.to_string())?;
+                crate::forms::read_page_form_fields(&document, 0)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .unwrap()
+        };
+        let author = |generation: u64, ops: serde_json::Value| {
+            let ops: Vec<crate::forms::author::FormAuthorOp> =
+                serde_json::from_value(ops).expect("frontend op JSON must deserialize");
+            crate::forms::author::validate_request(&ops).unwrap();
+            store.mutate_isolated(
+                session_id.clone(),
+                generation,
+                MutationRecipe::AuthorFormFields { ops },
+            )
+        };
+        let before = working_widgets(&store);
+
+        // Sürükleyerek metin alanı ve tıklamayla radio (form tasarım katmanının çıktısı).
+        let added = author(
+            1,
+            serde_json::json!([{
+                "op": "add", "pageIndex": 0,
+                "normalizedRect": { "x": 0.17, "y": 0.53, "width": 0.52, "height": 0.033 },
+                "field": { "kind": "text", "multiline": false }, "name": null
+            }]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added.content_generation, 2);
+        let added = author(
+            2,
+            serde_json::json!([{
+                "op": "add", "pageIndex": 0,
+                "normalizedRect": { "x": 0.17, "y": 0.68, "width": 0.0229, "height": 0.0177 },
+                "field": { "kind": "radio", "group": "Group2", "export": "Choice1" }, "name": null
+            }]),
+        )
+        .await
+        .unwrap();
+        let widgets = working_widgets(&store);
+        assert_eq!(widgets.len(), before.len() + 2);
+        // Katman eklemeden sonra en yüksek `annot_index`'li widget'ı seçer.
+        let newest = widgets.iter().max_by_key(|widget| widget.annot_index).unwrap();
+        assert_eq!(newest.field_name, "Group2");
+        let text = widgets.iter().find(|widget| widget.field_name == "Text1").unwrap();
+
+        // Seç → boyutlandır, yeniden adlandır, zorunlu yap.
+        let moved = author(
+            added.content_generation,
+            serde_json::json!([{
+                "op": "move", "pageIndex": 0, "annotIndex": text.annot_index, "fieldName": "Text1",
+                "normalizedRect": { "x": 0.17, "y": 0.53, "width": 0.67, "height": 0.082 }
+            }]),
+        )
+        .await
+        .unwrap();
+        let renamed = author(
+            moved.content_generation,
+            serde_json::json!([{
+                "op": "set_props", "pageIndex": 0, "annotIndex": text.annot_index,
+                "fieldName": "Text1", "props": { "name": "adres", "required": true }
+            }]),
+        )
+        .await
+        .unwrap();
+        let widgets = working_widgets(&store);
+        let adres = widgets.iter().find(|widget| widget.field_name == "adres").unwrap();
+        assert!(adres.required);
+        let rect = adres.normalized_rect.as_ref().unwrap();
+        assert!((rect.width - 0.67).abs() < 0.005, "{rect:?}");
+        assert!((rect.height - 0.082).abs() < 0.005, "{rect:?}");
+
+        // Eski generation ile gelen işlem reddedilir (stale-result koruması).
+        let stale = author(
+            moved.content_generation,
+            serde_json::json!([{
+                "op": "delete", "pageIndex": 0, "annotIndex": adres.annot_index, "fieldName": "adres"
+            }]),
+        )
+        .await;
+        assert!(stale.is_err());
+
+        // Önceden var olan bir alanı sil; kalan indeksler yeniden okunur.
+        let first = widgets.iter().find(|widget| widget.field_name == "name").unwrap();
+        let deleted = author(
+            renamed.content_generation,
+            serde_json::json!([{
+                "op": "delete", "pageIndex": 0, "annotIndex": first.annot_index, "fieldName": "name"
+            }]),
+        )
+        .await
+        .unwrap();
+        let widgets = working_widgets(&store);
+        assert!(widgets.iter().all(|widget| widget.field_name != "name"));
+        assert!(widgets.iter().any(|widget| widget.field_name == "adres"));
+        assert_eq!(fs::read(&original).unwrap(), original_before);
+
+        let saved = store
+            .save(&session_id, deleted.state_revision, None)
+            .await
+            .unwrap();
+        assert!(!saved.dirty);
+        let saved_bytes = fs::read(&original).unwrap();
+        assert!(
+            saved_bytes.starts_with(&original_before),
+            "kayıt orijinal baytları korumalı (artımlı)"
+        );
+    }
+
     #[tokio::test]
     async fn save_failure_keeps_dirty_working_copy_and_reports_missing_target() {
         let documents = tempfile::tempdir().unwrap();
