@@ -3,3 +3,8 @@
 
 # PDF fixtures are byte-exact (xref offsets, digests); never convert line endings
 *.pdf binary
+
+# Node ES module scripts carry a #!/usr/bin/env node line. Checked out with CRLF (the
+# Windows runners' autocrlf default), vite 7's module runner fails to parse an imported
+# hashbang module ("SyntaxError: Invalid or unexpected token"), so keep them LF.
+*.mjs text eol=lf
