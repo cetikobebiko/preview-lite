@@ -1,0 +1,21 @@
+# cargo-audit configuration (read when `cargo audit` runs in src-tauri/).
+# CI: .github/workflows/dependency-audit.yml. Vulnerabilities fail the job;
+# unmaintained/unsound warnings are reported but do not.
+#
+# Every ignored advisory needs a reason, the boundary that contains it and
+# the exit condition. Remove the entry as soon as the exit condition is met.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0187: lopdf 0.34 can overflow the stack on deeply nested
+    # PDF objects; fixed in lopdf >= 0.42.
+    # Containment: user PDFs are parsed with lopdf only inside the ephemeral
+    # --run-job-worker / --run-worker processes (pdfium-worker-isolation.md),
+    # so an overflow aborts that worker and fails the job; the Tauri process
+    # survives. lib.rs uses lopdf only to build a new PDF, not to parse one.
+    # Not upgraded yet: the lopdf 0.45 migration is deferred because 0.45
+    # strips /Prev and auto-decrypts, which silently breaks the incremental
+    # save and security checks built on 0.34 behaviour.
+    # Exit: remove when lopdf is upgraded to >= 0.42.
+    "RUSTSEC-2026-0187",
+]
