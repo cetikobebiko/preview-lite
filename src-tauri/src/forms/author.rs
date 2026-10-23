@@ -377,7 +377,9 @@ fn author_and_save(
     let previous = lopdf::Document::load_mem(&bytes).map_err(|error| {
         DocumentIoFailure::preflight(format!("PDF yapısı ayrıştırılamadı: {error}"))
     })?;
-    if previous.is_encrypted() {
+    // lopdf 0.45 decrypts empty-user-password files on load; the bytes on disk are still
+    // encrypted, so plain incremental objects would corrupt them.
+    if crate::lopdf_compat::was_encrypted(&previous) {
         return Err(DocumentIoFailure::preflight(
             "Şifreli PDF'lerde form tasarımı desteklenmiyor",
         ));
@@ -1517,6 +1519,23 @@ mod tests {
         let path = directory.path().join("form.pdf");
         standard_fixture(&path);
         (directory, path)
+    }
+
+    #[test]
+    fn owner_only_encrypted_input_is_refused() {
+        // lopdf 0.45 decrypts it on load; appending plain form objects would corrupt it.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("owner-only.pdf");
+        std::fs::write(&path, crate::lopdf_compat::owner_only_encrypted_pdf(1)).unwrap();
+        let error = rejected(
+            &path,
+            vec![add(
+                NewField::Text { multiline: false },
+                Some("name"),
+                rect(0.1, 0.1, 0.4, 0.1),
+            )],
+        );
+        assert!(format!("{error:?}").contains("Şifreli PDF"), "{error:?}");
     }
 
     fn author(path: &Path, ops: Vec<FormAuthorOp>) -> Result<AtomicWriteReport, DocumentIoError> {

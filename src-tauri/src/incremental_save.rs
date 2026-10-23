@@ -318,6 +318,14 @@ pub(crate) fn find_xref_inconsistency(bytes: &[u8]) -> Option<String> {
         }
         _ => return Some(format!("startxref ({xref}) bir xref bölümünü göstermiyor")),
     }
+    // lopdf 0.45 silently corrects a startxref that misses its section, or rebuilds the
+    // table by scanning; its corrected start differing from the declared one is a repair.
+    if document.xref_start != xref {
+        return Some(format!(
+            "startxref ({xref}) lopdf tarafından {} olarak düzeltildi",
+            document.xref_start
+        ));
+    }
     for (&number, entry) in &document.reference_table.entries {
         if let lopdf::xref::XrefEntry::Normal { offset, generation } = *entry {
             if !object_header_at(bytes, offset as usize, number, u32::from(generation)) {

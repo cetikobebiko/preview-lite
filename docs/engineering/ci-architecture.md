@@ -125,5 +125,5 @@ CI EXECUTION: NOT RUN               — local agent is strict-offline; no workfl
 vulnerability fails the job; unmaintained/unsound warnings are reported only. It is
 kept out of FAST_LOCAL because fetching the advisory database is outside that job's
 network model. Ignored advisories live in `src-tauri/.cargo/audit.toml`, each with
-its containment and exit condition; today only RUSTSEC-2026-0187 (lopdf 0.34, until
-the lopdf >= 0.42 upgrade).
+its containment and exit condition. The list is empty: RUSTSEC-2026-0187 (lopdf 0.34)
+was removed with the lopdf 0.45 upgrade.

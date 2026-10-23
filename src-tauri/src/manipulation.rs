@@ -278,7 +278,9 @@ fn reorder_incrementally(
     }
     let previous =
         lopdf::Document::load_mem(input).map_err(|error| format!("lopdf açamadı: {error}"))?;
-    if previous.is_encrypted() {
+    // lopdf 0.45 decrypts empty-user-password files on load; the bytes on disk are still
+    // encrypted, so plain incremental objects would corrupt them.
+    if crate::lopdf_compat::was_encrypted(&previous) {
         return Err("şifreli belge lopdf ile artımlı yazılamaz".to_string());
     }
     let catalog = previous
@@ -785,6 +787,14 @@ pub fn merge_pdfs(file_paths: Vec<String>, output_path: String) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_only_encrypted_input_is_not_reordered_incrementally() {
+        // lopdf 0.45 decrypts it on load; appending plain objects would corrupt the file.
+        let input = crate::lopdf_compat::owner_only_encrypted_pdf(2);
+        let error = reorder_incrementally(&input, &[1, 0], 2).unwrap_err();
+        assert!(error.contains("şifreli"), "{error}");
+    }
     use std::fs;
     use std::path::Path;
 

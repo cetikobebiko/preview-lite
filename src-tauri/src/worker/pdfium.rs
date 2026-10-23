@@ -386,9 +386,9 @@ fn load_accessibility_document_from_path(path: &str) -> Result<lopdf::Document, 
     if length > MAX_WORKER_ACCESSIBILITY_DOCUMENT_BYTES {
         return Err("PDF exceeds the worker accessibility read limit".to_string());
     }
-    let document = lopdf::Document::load(path)
+    let bytes = std::fs::read(path)
         .map_err(|_| "PDF accessibility data could not be parsed in the worker".to_string())?;
-    prepare_accessibility_document(document, None)
+    load_accessibility_document(&bytes, None)
 }
 
 fn load_accessibility_document_from_bytes(
@@ -398,23 +398,27 @@ fn load_accessibility_document_from_bytes(
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_WORKER_ACCESSIBILITY_DOCUMENT_BYTES {
         return Err("PDF exceeds the worker accessibility read limit".to_string());
     }
-    let document = lopdf::Document::load_mem(bytes)
-        .map_err(|_| "PDF accessibility data could not be parsed in the worker".to_string())?;
-    prepare_accessibility_document(document, credential)
+    load_accessibility_document(bytes, credential)
 }
 
-fn prepare_accessibility_document(
-    mut document: lopdf::Document,
+/// lopdf 0.45 needs the password while loading; decrypting afterwards loses the objects in
+/// encrypted object streams. Empty-user-password files are decrypted by lopdf itself.
+fn load_accessibility_document(
+    bytes: &[u8],
     credential: Option<&str>,
 ) -> Result<lopdf::Document, String> {
-    if document.is_encrypted() {
-        document
-            .decrypt(credential.unwrap_or_default().as_bytes())
-            .map_err(|_| {
-                "PDF accessibility data could not be decrypted in the worker".to_string()
-            })?;
-    }
-    Ok(document)
+    crate::lopdf_compat::load_mem_with_credential(bytes, credential).map_err(|error| {
+        match error {
+            crate::lopdf_compat::CredentialedLoadError::Parse => {
+                "PDF accessibility data could not be parsed in the worker"
+            }
+            crate::lopdf_compat::CredentialedLoadError::CredentialRequired
+            | crate::lopdf_compat::CredentialedLoadError::CredentialRejected => {
+                "PDF accessibility data could not be decrypted in the worker"
+            }
+        }
+        .to_string()
+    })
 }
 
 fn extract_metadata(document: &PdfDocument<'_>) -> crate::PdfMetadata {

@@ -10,6 +10,17 @@ kalacağını kanıtlamaktır.
 
 > **8C-1 COMPLETE — THREAT MODEL AND SUPPORT MATRIX ESTABLISHED — 8C-2 READY**
 
+> **lopdf 0.45 (2026-10-23):** Bu belgedeki `lopdf 0.34.0` sonuçları o sürüm içindir.
+> 0.45 üç davranışı sessizce değiştirdi ve hepsi `src-tauri/src/lopdf_compat.rs` üzerinden
+> karşılanıyor: (1) `load` son trailer'dan `/Prev` ve `/XRefStm`'i siler; artımlı revizyon
+> bulgusu ve "tam yeniden yazım" doğrulaması ham baytlardaki son trailer'dan okunur
+> (`trailer_history`). (2) Kullanıcı parolası boş belgeler yüklenirken çözülür ve
+> `is_encrypted()` false döner; şifreli girdi raporları ve artımlı yazım korumaları
+> `was_encrypted` kullanır. (3) Parolası boş olmayan belge parolasız yüklenip sonra
+> çözülürse şifreli object stream'lerdeki nesneler (Catalog dahil) hiç yüklenmez; parola
+> yükleme sırasında verilir (`load_mem_with_credential`). Karakterizasyon testleri
+> (`tests/sanitization_capabilities.rs`) 0.45 davranışına güncellendi.
+
 Bu karar activation değildir. `sanitization.status == "disabled"`,
 `sanitization.enabled == false` ve `sanitize_pdf_document == FEATURE_UNAVAILABLE`
 değişmemiştir. Inspection IPC, production scanner/transform/verifier, output,
@@ -476,7 +487,7 @@ stream başına +1 ve toplam +1 durumları
 dictionary presence ile güvenilir saptanan metadata, attachment, XFA ve benzeri stream'ler
 sırf accounting için decode edilmez.
 
-`lopdf` 0.34 stream API'si whole-buffer decode döndürdüğünden bu limit parser'ın
+`lopdf` stream decode'u (0.34'te de, 0.45'te kullandığımız API'de de) whole-buffer döndürdüğünden bu limit parser'ın
 decode sırasındaki ilk allocation'ını preempt etmez. Decoded sonuç döner dönmez
 per-stream ve total budget enforce edilir; oversized payload finding veya başarı raporu
 üretemez. Parser-level DoS sınırı ayrı ephemeral process, worker address-space limiti

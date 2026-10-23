@@ -52,7 +52,9 @@ describe("8C.3 private sanitization transform architecture boundary", () => {
     expect(command).toContain("run_snapshot_job");
     expect(command).toContain("JobCommand::InspectDocumentSanitization");
     expect(command).not.toMatch(/Document::load|get_pdfium|open_pdfium_doc|lopdf::/);
-    expect(scanner).toContain("Document::load(snapshot_path)");
+    // lopdf 0.45 needs the snapshot's bytes (raw trailer, password at load time).
+    expect(scanner).toContain("std::fs::read(snapshot_path)");
+    expect(scanner).toContain("lopdf_compat::load_mem_with_credential(&bytes, credential)");
     expect(worker).toContain("InspectDocumentSanitization");
     expect(worker).toContain("SanitizationInspection");
     expect(contracts).toMatch(/inspectDocumentSanitization: command\("inspect_document_sanitization"/);
@@ -89,7 +91,8 @@ describe("8C.3 private sanitization transform architecture boundary", () => {
 
     expect(worker).toContain("SanitizePdf");
     expect(worker).toContain("SanitizationTransform");
-    expect(transform).toContain("Document::load(snapshot_path)");
+    expect(transform).toContain("std::fs::read(snapshot_path)");
+    expect(transform).toContain("Document::load_mem(&input)");
     expect(contracts).toContain('SANITIZATION_TRANSFORM_OUTPUT_NAME: &str = "sanitized-transform.pdf"');
     expect(transform).toContain("expected_inspection_digest");
     expect(transform).toContain("MAX_SANITIZATION_DECODED_STREAM_BYTES");

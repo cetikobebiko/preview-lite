@@ -653,8 +653,11 @@ fn inspect_incremental_revisions(
     lopdf_doc: Option<&lopdf::Document>,
     raw_bytes: Option<&[u8]>,
 ) -> InspectionFactState {
-    if let Some(lopdf_doc) = lopdf_doc {
-        if lopdf_doc.trailer.has(b"Prev") {
+    // lopdf 0.45 strips /Prev on load, so the trailer is read from the raw bytes.
+    if let (Some(lopdf_doc), Some(bytes)) = (lopdf_doc, raw_bytes) {
+        if crate::lopdf_compat::trailer_history(bytes, lopdf_doc)
+            .is_some_and(|history| history.prev)
+        {
             return InspectionFactState::Present;
         }
     }

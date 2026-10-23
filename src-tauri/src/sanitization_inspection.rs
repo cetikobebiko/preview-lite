@@ -138,10 +138,13 @@ struct ObjectGraphScanner<'a> {
     test_marker_path: std::path::PathBuf,
     accumulator: InspectionAccumulator,
     facts: SanitizationDocumentFacts,
+    previous_revision: bool,
 }
 
 struct ScannerStreamFlags {
     encrypted: bool,
+    /// Last trailer has /Prev; read from the raw bytes because lopdf 0.45 strips it.
+    previous_revision: bool,
     object_streams_detected: bool,
     xref_streams_detected: bool,
 }
@@ -163,6 +166,7 @@ impl<'a> ObjectGraphScanner<'a> {
         })?;
         let ScannerStreamFlags {
             encrypted,
+            previous_revision,
             object_streams_detected,
             xref_streams_detected,
         } = stream_flags;
@@ -189,6 +193,7 @@ impl<'a> ObjectGraphScanner<'a> {
                 page_count,
                 ..SanitizationDocumentFacts::default()
             },
+            previous_revision,
         })
     }
 
@@ -300,7 +305,7 @@ impl<'a> ObjectGraphScanner<'a> {
                 None,
             )?;
         }
-        if self.document.trailer.has(b"Prev") {
+        if self.previous_revision {
             self.facts.incremental_revisions_detected = true;
             self.accumulator.add(
                 "incremental_revisions",
@@ -1163,23 +1168,36 @@ fn inspect_snapshot_with_configuration(
         .map_err(|_| inspection_error("Sanitization immutable snapshot digest hesaplanamadı"))?;
     let (object_streams_detected, xref_streams_detected) =
         scan_raw_structural_markers(snapshot_path, checkpoint)?;
-    let mut document = Document::load(snapshot_path)
-        .map_err(|_| inspection_error("Sanitization worker snapshot PDF'i açamadı"))?;
-    let encrypted = document.is_encrypted();
-    if encrypted {
-        let password = credential.ok_or_else(|| {
-            SessionJobOperationError::failed_with_code(
-                "SANITIZATION_ENCRYPTED_INPUT_CREDENTIAL_REQUIRED",
-                "Encrypted PDF inspection için session credential context gerekli",
-            )
+    let bytes = std::fs::read(snapshot_path)
+        .map_err(|_| inspection_error("Sanitization worker snapshot PDF'i okuyamadı"))?;
+    // lopdf 0.45 needs the password while loading; decrypting afterwards loses the objects
+    // in encrypted object streams. Empty-user-password files are decrypted by lopdf itself.
+    let document =
+        crate::lopdf_compat::load_mem_with_credential(&bytes, credential).map_err(|error| {
+            match error {
+                crate::lopdf_compat::CredentialedLoadError::Parse => {
+                    inspection_error("Sanitization worker snapshot PDF'i açamadı")
+                }
+                crate::lopdf_compat::CredentialedLoadError::CredentialRequired => {
+                    SessionJobOperationError::failed_with_code(
+                        "SANITIZATION_ENCRYPTED_INPUT_CREDENTIAL_REQUIRED",
+                        "Encrypted PDF inspection için session credential context gerekli",
+                    )
+                }
+                crate::lopdf_compat::CredentialedLoadError::CredentialRejected => {
+                    SessionJobOperationError::failed_with_code(
+                        "SANITIZATION_ENCRYPTED_INPUT_CREDENTIAL_REJECTED",
+                        "Session credential encrypted PDF snapshot'ını açamadı",
+                    )
+                }
+            }
         })?;
-        document.decrypt(password.as_bytes()).map_err(|_| {
-            SessionJobOperationError::failed_with_code(
-                "SANITIZATION_ENCRYPTED_INPUT_CREDENTIAL_REJECTED",
-                "Session credential encrypted PDF snapshot'ını açamadı",
-            )
-        })?;
-    }
+    // An unreadable trailer counts as a previous revision: the finding only asks for a rewrite.
+    let previous_revision =
+        crate::lopdf_compat::trailer_history(&bytes, &document).is_none_or(|history| history.prev);
+    drop(bytes);
+    // Files lopdf decrypted on load (empty user password) are still encrypted input.
+    let encrypted = crate::lopdf_compat::was_encrypted(&document);
     checkpoint()?;
     ObjectGraphScanner::new(
         &document,
@@ -1187,6 +1205,7 @@ fn inspect_snapshot_with_configuration(
         checkpoint,
         ScannerStreamFlags {
             encrypted,
+            previous_revision,
             object_streams_detected,
             xref_streams_detected,
         },
@@ -1473,6 +1492,23 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/sanitization")
             .join(name)
+    }
+
+    #[test]
+    fn owner_only_encrypted_input_is_reported_encrypted_without_a_credential() {
+        // lopdf 0.45 decrypts it on load; the report must still flag encrypted input.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("owner-only.pdf");
+        std::fs::write(&path, crate::lopdf_compat::owner_only_encrypted_pdf(1)).unwrap();
+        let report = inspect_snapshot(
+            &path,
+            None,
+            SANITIZATION_REPORT_SCHEMA_VERSION,
+            SANITIZATION_POLICY_SCHEMA_VERSION,
+            SANITIZATION_INSPECTION_PROFILE,
+        )
+        .unwrap();
+        assert!(report.document_facts.encrypted);
     }
 
     fn inspect(name: &str) -> SanitizationInspectionReport {

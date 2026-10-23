@@ -1186,7 +1186,7 @@ pub(crate) fn inspect_print_resources(
             format!("Print resource inspection PDF snapshot'ını okuyamadı: {error}"),
         )
     })?;
-    let encrypted = document.is_encrypted();
+    let encrypted = crate::lopdf_compat::was_encrypted(&document);
     let scanner = InspectionScanner::new(&document, cancellation).scan()?;
     let mut page_boxes = scanner.page_boxes;
     apply_pdfium_page_geometry(&file_path, &mut page_boxes, cancellation)?;
@@ -1726,7 +1726,7 @@ fn inspect_icc_stream(
         if filters.is_empty() {
             Some(stream.content.clone())
         } else if filters.len() == 1
-            && (filters[0] == "FlateDecode" || filters[0] == "Fl")
+            && (filters[0] == b"FlateDecode" || filters[0] == b"Fl")
             && !stream.dict.has(b"DecodeParms")
         {
             match miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(

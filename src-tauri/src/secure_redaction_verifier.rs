@@ -85,10 +85,13 @@ fn artifact_path(job_dir: &Path) -> Result<PathBuf, SessionJobOperationError> {
 /// by `no_forbidden_document_structures()` below.
 fn full_rewrite_structure(
     doc: &lopdf::Document,
+    bytes: &[u8],
     pdfium_page_count: usize,
     expected_page_count: usize,
 ) -> Result<(), SessionJobOperationError> {
-    if doc.trailer.has(b"Prev") {
+    // lopdf 0.45 strips /Prev on load; the raw trailer is authoritative, and a trailer that
+    // cannot be located is not a proven fresh document.
+    if crate::lopdf_compat::trailer_history(bytes, doc).is_none_or(|history| history.prev) {
         return Err(verification_error(
             "Output trailer retains a prior-revision /Prev chain",
         ));
@@ -231,11 +234,9 @@ fn affected_page_serialized_image_only(
         .get_pages()
         .get(&page_number)
         .ok_or_else(|| verification_error("Affected page is absent from lopdf page tree"))?;
-    let content = lopdf::content::Content::decode(
-        &doc.get_page_content(page_id)
-            .map_err(|_| verification_error("Affected page content stream cannot be decoded"))?,
-    )
-    .map_err(|_| verification_error("Affected page content operators cannot be parsed"))?;
+    // An undecodable stream comes back as raw bytes (as in lopdf 0.34) and fails here.
+    let content = lopdf::content::Content::decode(&doc.get_page_content(page_id))
+        .map_err(|_| verification_error("Affected page content operators cannot be parsed"))?;
     let mut invoked_name = None;
     for operation in &content.operations {
         match operation.operator.as_str() {
@@ -726,8 +727,15 @@ pub fn verify_secure_redaction(
         .map_err(|e| verification_error(format!("PDFium unavailable: {e}")))?;
     let output = crate::pdf_engine::open_pdfium_doc(&pdfium, &artifact.to_string_lossy(), None)
         .map_err(|_| verification_error("PDFium cannot reopen output artifact"));
-    let lopdf = lopdf::Document::load(&artifact)
+    let artifact_bytes = std::fs::read(&artifact)
         .map_err(|_| verification_error("lopdf cannot reopen output artifact"));
+    let lopdf = artifact_bytes
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|bytes| {
+            lopdf::Document::load_mem(bytes)
+                .map_err(|_| verification_error("lopdf cannot reopen output artifact"))
+        });
     let parsers_ok = set(
         4,
         match (&output, &lopdf) {
@@ -746,6 +754,7 @@ pub fn verify_secure_redaction(
             5,
             full_rewrite_structure(
                 &lopdf,
+                artifact_bytes.as_deref().expect("checked above"),
                 usize::from(output.pages().len()),
                 plan.page_plans.len(),
             ),
