@@ -1593,6 +1593,58 @@ mod macos_arm64 {
         (started.elapsed(), outcome)
     }
 
+    /// Real PDFium: page 1 of `heavy-page.pdf` grows its footprint at about
+    /// 1.3 GB/s until the 20 s render deadline (25 GB measured). The macOS
+    /// watchdog must stop each surface at the 2 GiB budget within seconds.
+    /// Manual only: if the watchdog regressed, this page would fill a CI
+    /// runner's memory. Run under `scripts/memory-guard.py` with
+    /// `cargo test --test worker_pdfium_integration heavy_page_memory_runaway -- --ignored`.
+    #[tokio::test]
+    #[ignore = "manual: unbounded memory if the watchdog regresses"]
+    async fn heavy_page_memory_runaway_is_stopped_by_the_watchdog() {
+        let path = fixture("heavy-page.pdf");
+        let broker = broker();
+        for (generation, (command, timeout)) in [
+            ("render-page", CommandTimeout::RenderPage),
+            ("render-thumbnail", CommandTimeout::RenderThumbnail),
+            ("text-layout", CommandTimeout::TextLayout),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = WorkerDocumentKey {
+                session_id: "heavy-page-memory".to_string(),
+                content_generation: generation as u64 + 1,
+            };
+            let (elapsed, outcome) =
+                timed_heavy_page_command(&broker, &key, &path, 1, command, timeout).await;
+            eprintln!(
+                "heavy-page page=1 command={command} outcome={outcome} elapsed_ms={:.0}",
+                elapsed.as_secs_f64() * 1000.0
+            );
+            assert_eq!(outcome, "PDFIUM_WORKER_MEMORY_LIMIT", "{command}");
+            assert!(
+                elapsed < std::time::Duration::from_secs(6),
+                "{command}: {elapsed:?}"
+            );
+        }
+        // The light page still renders on the replacement worker.
+        let key = WorkerDocumentKey {
+            session_id: "heavy-page-memory".to_string(),
+            content_generation: 10,
+        };
+        let (_, outcome) = timed_heavy_page_command(
+            &broker,
+            &key,
+            &path,
+            0,
+            "render-page",
+            CommandTimeout::RenderPage,
+        )
+        .await;
+        assert_eq!(outcome, "ok");
+    }
+
     /// Baseline measurement, not a regression test: run with
     /// `cargo test --test worker_pdfium_integration heavy_page_command_timings -- --ignored --nocapture`.
     /// `HEAVY_PAGE_PDF` overrides the fixture path. Uses the production

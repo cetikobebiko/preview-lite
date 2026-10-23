@@ -5,11 +5,12 @@ export const PAGE_QUARANTINED = "PDFIUM_PAGE_QUARANTINED";
 export const PAGE_SURFACES = Object.freeze(["render", "thumbnail", "textLayout"]);
 
 // Worker failures after which another automatic request for the same page is
-// pointless or harmful: every repeated timeout or crash kills the shared PDF
-// worker for all open documents. Cancellations and ordinary errors are not
+// pointless or harmful: every repeated timeout, memory-limit kill or crash
+// kills the shared PDF worker for all open documents. Cancellations and ordinary errors are not
 // tracked, so they keep the existing per-request behaviour.
 const SUPPRESSED_CODES = new Set([
   "PDFIUM_WORKER_TIMEOUT",
+  "PDFIUM_WORKER_MEMORY_LIMIT",
   "PDFIUM_WORKER_CRASHED",
   PAGE_QUARANTINED,
   DOCUMENT_QUARANTINED,
@@ -112,10 +113,12 @@ export function pageFailureMessage(code, pageIndex) {
   switch (code) {
     case "PDFIUM_WORKER_TIMEOUT":
       return `${page} işlenirken zaman aşımı oluştu.`;
+    case "PDFIUM_WORKER_MEMORY_LIMIT":
+      return `${page} işlenirken PDF motoru bellek sınırını aştığı için durduruldu.`;
     case "PDFIUM_WORKER_CRASHED":
       return `${page} işlenirken PDF motoru beklenmedik şekilde durdu.`;
     case PAGE_QUARANTINED:
-      return `${page} tekrarlanan zaman aşımları nedeniyle askıya alındı.`;
+      return `${page} tekrarlanan zaman aşımı ya da bellek aşımı nedeniyle askıya alındı.`;
     case DOCUMENT_QUARANTINED:
       return "Belge PDF motorunu tekrar tekrar durdurduğu için askıya alındı.";
     default:

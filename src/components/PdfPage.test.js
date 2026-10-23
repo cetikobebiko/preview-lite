@@ -1033,7 +1033,7 @@ describe("PdfPage worker-safety failures", () => {
       return button;
     });
     expect(container.querySelector(".page-error")?.textContent).toContain(
-      "tekrarlanan zaman aşımları",
+      "tekrarlanan zaman aşımı ya da bellek aşımı",
     );
 
     renderPage.mockImplementationOnce(async (request) => resolvedRender(request));

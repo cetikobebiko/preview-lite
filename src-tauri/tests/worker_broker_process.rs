@@ -847,6 +847,81 @@ async fn release_page(
         .map_err(|error| error.code.to_string())
 }
 
+/// Renders with the real RenderPage deadline (20 s), so only the memory
+/// watchdog can end a runaway page early.
+#[cfg(target_os = "macos")]
+async fn render_page_with_render_timeout(
+    broker: &PdfiumWorkerBroker,
+    key: &WorkerDocumentKey,
+    page_index: u32,
+) -> Result<(), String> {
+    let admission = broker
+        .admit_read(key, None)
+        .await
+        .map_err(|error| error.code.to_string())?;
+    broker
+        .ensure_document(&admission, key.clone(), "fake.pdf".to_string(), None, None)
+        .await
+        .map_err(|error| error.code.to_string())?;
+    broker
+        .command_for_document(
+            &admission,
+            key,
+            |document_id| WorkerCommand::RenderPage {
+                document_id,
+                page_index,
+                target: preview_alternative_lib::worker::ipc::WorkerRenderTarget::Scale(1.0),
+                rotation: 0,
+            },
+            CommandTimeout::RenderPage,
+            None,
+        )
+        .await
+        .map(drop)
+        .map_err(|error| error.code.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn memory_watchdog_kills_a_runaway_worker_and_quarantines_the_page() {
+    // The fake worker touches 32 MiB every 20 ms on page 1; a 256 MiB budget
+    // is crossed in well under a second, far inside the 20 s render deadline.
+    let launcher =
+        helper_launcher("grow-render-pages=1").with_memory_limit_for_test(256 * 1024 * 1024);
+    let broker = PdfiumWorkerBroker::with_launcher(Ok(launcher));
+    let key = key("memory-watchdog");
+
+    for attempt in 0..2 {
+        let epoch = broker.worker_epoch().await;
+        let started = std::time::Instant::now();
+        assert_eq!(
+            render_page_with_render_timeout(&broker, &key, 1).await,
+            Err("PDFIUM_WORKER_MEMORY_LIMIT".to_string()),
+            "attempt {attempt}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "attempt {attempt} took {:?}",
+            started.elapsed()
+        );
+        // The runaway worker was killed and replaced on the next command.
+        render_page_with_render_timeout(&broker, &key, 0)
+            .await
+            .unwrap();
+        assert_ne!(broker.worker_epoch().await, epoch, "attempt {attempt}");
+    }
+
+    // Same page rule as timeouts: two kills inside the page window quarantine
+    // the page before it reaches the worker again.
+    assert_eq!(
+        render_page_with_render_timeout(&broker, &key, 1).await,
+        Err("PDFIUM_PAGE_QUARANTINED".to_string())
+    );
+    render_page_with_render_timeout(&broker, &key, 0)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn repeated_page_timeouts_quarantine_the_page_and_keep_the_document_usable() {
     let broker = PdfiumWorkerBroker::with_launcher(Ok(helper_launcher("hang-render-pages=1")));

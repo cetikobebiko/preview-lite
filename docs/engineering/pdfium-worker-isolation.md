@@ -54,8 +54,8 @@ Sanitization remains feature-disabled, but its read-only
 `InspectDocumentSanitization` job worker. The Tauri process validates/routs the typed report and
 does not parse the PDF. JavaScript stream payloads that require decoding are accounted against
 per-stream and total decoded-byte budgets after lopdf's whole-buffer decode returns; the parser
-allocation itself is bounded by process isolation, address-space limits (not in effect on
-macOS; see "Platform and CI status"), and the parent timeout, not by a cooperative bounded-decode
+allocation itself is bounded by process isolation, address-space limits (on macOS a parent-side
+footprint watchdog instead; see "Worker memory on macOS"), and the parent timeout, not by a cooperative bounded-decode
 API. Sanitization cancellation is parent-enforced process
 kill + wait/reap; there is no production worker-side cooperative cancellation IPC. Legacy
 8C.3 additionally provides a private `SanitizePdf` ephemeral operation. It receives only the
@@ -247,8 +247,9 @@ reserves one 256 MiB PDFium bitmap, one 256 MiB RGBA result, one 256 MiB seriali
 copy, an optional 256 MiB password-protected document buffer, 512 MiB PDFium/runtime headroom,
 and another 512 MiB safety margin. A unit invariant prevents the bounded peak model from
 exceeding the requested limit. The ceiling is not in effect on macOS: `setrlimit` rejects it
-there (see "Platform and CI status"), so on macOS worker memory is currently unbounded. Whether
-it is enforced on Linux has not been verified in this repository.
+there (see "Platform and CI status"). On macOS the parent enforces the same 2 GiB as a
+physical-footprint budget instead (see "Worker memory on macOS"). Whether the ceiling is
+enforced on Linux has not been verified in this repository.
 
 The frame length is checked before allocation; `u32`/`usize` and serialized length conversions
 are checked. Partial header, partial payload, malformed bincode, trailing bytes, oversized
@@ -507,7 +508,8 @@ Page 1 shows the case the policy addresses: one page makes all three surfaces ti
 under the previous document-wide rule those three timeouts (about 46 s) quarantined the whole
 generation. Now its second timeout quarantines only the page. Page 1 is used only for manual
 runs because its parse allocates far more than the 2 GiB peak model in "Framing and message
-limits", and nothing bounds worker memory on macOS (see "Worker memory on macOS"). The CI test
+limits": on macOS the footprint watchdog stops it, but if the watchdog regressed the page would
+fill a CI runner's memory (see "Worker memory on macOS"). The CI test
 `heavy_page_timeouts_quarantine_the_page_not_the_document` uses page 2 with a 2-second class
 (page 2 stays near 10 MB physical footprint for a full 20 s render).
 
@@ -534,6 +536,39 @@ the allocator's up-front reservation for about 8 s and only then starts to grow,
 address space would take effect far later than a limit on footprint. The earlier "2.6 GB RSS"
 reading came from `ps` sampling and understated the real footprint by an order of magnitude.
 These were manual probe runs, not a CI test.
+
+#### Footprint watchdog (2026-10-23)
+
+Because neither `RLIMIT_AS` nor `memorystatus_control` can bound a macOS worker, the parent
+watches it (`pdf_engine::memory_watchdog`). Every 100 ms it reads the child's
+`ri_phys_footprint` with `proc_pid_rusage(RUSAGE_INFO_V2)`; once it passes 2 GiB (the same value
+as the Linux `RLIMIT_AS` ceiling) the worker is killed:
+
+- Viewer worker: `exchange_raw` races the response read against the watchdog. A crossing returns
+  `PDFIUM_WORKER_MEMORY_LIMIT`; the broker records failure category `MemoryLimit`, kills and
+  replaces the worker. Like a timeout it is attributed to the page of a page-scoped command, so
+  the same thresholds apply: the same page twice in 5 minutes quarantines the page, three
+  distinct pages or six page failures quarantine the document generation.
+- Job workers: `run_job_worker_with_timeout` and the cooperative prepress path check the
+  footprint in their 50 ms / 25 ms wait loops and fail the job with
+  `SESSION_JOB_WORKER_MEMORY_LIMIT`; dropping the child guard kills and reaps the process.
+  Platform children (print, TTS helpers) keep `run_with_timeout`, which has no budget.
+
+At 1.27 GB/s growth the 100 ms interval overshoots by about 130 MB. On Linux and Windows the
+watchdog does not measure (Linux has `RLIMIT_AS`; Windows has no Job Object limit yet).
+
+Page 1 of `heavy-page.pdf` with the production timeout classes and budget, real PDFium
+(`cargo test --test worker_pdfium_integration heavy_page_memory_runaway -- --ignored`, manual):
+
+| Command | Before (timeout kill) | With the watchdog |
+|---|---|---|
+| Render page | 20 s, 25 GB footprint | `PDFIUM_WORKER_MEMORY_LIMIT` after 2.1 s |
+| Thumbnail | 10 s, 12.6 GB | after 1.8 s |
+| Text layout | 15 s, 18.9 GB | after 1.7 s |
+
+Page 0 renders on the replacement worker afterwards. CI covers the mechanism with the fake
+worker (`memory_watchdog_kills_a_runaway_worker_and_quarantines_the_page`: a 256 MiB test budget,
+two kills, then `PDFIUM_PAGE_QUARANTINED`) and a `perl` child for job workers.
 
 ## Mutation invalidation
 
@@ -685,9 +720,9 @@ The Unix worker attempts a 2 GiB address-space limit. On macOS this limit is nev
 
 The diagnostic is not silently dropped by the worker, but nothing consumes it: the broker
 ignores the `Hello` diagnostics and the job worker ignores the return value of
-`apply_resource_limits()`. On macOS the viewer worker and every job worker therefore run
-without a memory bound; a runaway page is stopped only by the command timeout, after which it
-may already have built up tens of gigabytes of footprint. Windows Job Object containment is not
+`apply_resource_limits()`. On macOS the bound comes from the parent-side footprint watchdog
+instead (2 GiB, see "Footprint watchdog"), which stops a runaway page within about 2 s.
+Windows Job Object containment is not
 implemented and is explicitly reported as unavailable; process kill/reap isolation still
 applies.
 

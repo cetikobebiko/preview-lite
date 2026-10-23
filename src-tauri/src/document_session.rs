@@ -2866,6 +2866,21 @@ impl SessionJobChildRegistrationGuard {
         self.child.lock().try_wait()
     }
 
+    /// macOS: an error once the child's phys_footprint passes `limit`. Returning
+    /// it drops the guard, which kills and reaps the child.
+    fn memory_limit_failure(&self, limit: Option<u64>) -> Option<SessionJobOperationError> {
+        let limit = limit?;
+        let footprint = crate::pdf_engine::memory_watchdog::over_limit(self.child_id, limit)?;
+        Some(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_WORKER_MEMORY_LIMIT",
+            format!(
+                "Job worker bellek bütçesini aştığı için durduruldu ({} MiB > {} MiB)",
+                crate::pdf_engine::memory_watchdog::mib(footprint),
+                crate::pdf_engine::memory_watchdog::mib(limit)
+            ),
+        ))
+    }
+
     fn take_output_pipes(
         &self,
     ) -> (
@@ -2911,6 +2926,35 @@ impl SessionJobChildProcessOwner {
         cancellation: &SessionJobCancellationCheckpoint,
         after_spawn: impl FnOnce(),
     ) -> Result<ExitStatus, SessionJobOperationError> {
+        self.run_with_timeout_watched(command, timeout, cancellation, after_spawn, None)
+    }
+
+    /// Runs a PDFium job worker. On macOS its footprint is held to the same
+    /// budget as the viewer worker (see `pdf_engine::memory_watchdog`).
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn run_job_worker_with_timeout(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancellation: &SessionJobCancellationCheckpoint,
+    ) -> Result<ExitStatus, SessionJobOperationError> {
+        self.run_with_timeout_watched(
+            command,
+            timeout,
+            cancellation,
+            || {},
+            Some(crate::pdf_engine::memory_watchdog::WORKER_FOOTPRINT_LIMIT_BYTES),
+        )
+    }
+
+    fn run_with_timeout_watched(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancellation: &SessionJobCancellationCheckpoint,
+        after_spawn: impl FnOnce(),
+        memory_limit: Option<u64>,
+    ) -> Result<ExitStatus, SessionJobOperationError> {
         cancellation.check_cancelled()?;
         let child = command.spawn().map_err(child_spawn_error)?;
         let child_guard = SessionJobChildRegistrationGuard::register(self, child);
@@ -2929,6 +2973,9 @@ impl SessionJobChildProcessOwner {
                 SessionJobOperationError::failed(format!("Platform süreci izlenemedi: {error}"))
             })? {
                 return Ok(status);
+            }
+            if let Some(error) = child_guard.memory_limit_failure(memory_limit) {
+                return Err(error);
             }
             if std::time::Instant::now() >= deadline {
                 return Err(SessionJobOperationError::failed(
@@ -2973,6 +3020,12 @@ impl SessionJobChildProcessOwner {
                     ));
                 }
                 return Ok(status);
+            }
+            // Only job workers use the cooperative path, so the budget always applies.
+            if let Some(error) = child_guard.memory_limit_failure(Some(
+                crate::pdf_engine::memory_watchdog::WORKER_FOOTPRINT_LIMIT_BYTES,
+            )) {
+                return Err(error);
             }
             if cancellation_deadline.is_some_and(|value| std::time::Instant::now() >= value) {
                 return Err(SessionJobOperationError::Cancelled(
@@ -13176,6 +13229,75 @@ mod tests {
         let mut command = Command::new("sh");
         command.arg("-c").arg(script);
         command
+    }
+
+    /// Touches ~512 MiB and holds it, like a runaway PDFium job worker.
+    #[cfg(target_os = "macos")]
+    fn memory_hog_command() -> Command {
+        let mut command = Command::new("perl");
+        command
+            .arg("-e")
+            .arg("my $x = 'a' x (512 * 1024 * 1024); sleep 30;");
+        command
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn job_worker_memory_budget_kills_a_runaway_child_before_its_deadline() {
+        let owner = SessionJobChildProcessOwner::default();
+        let cancellation = SessionJobCancellationCheckpoint::new(CancellationToken::new());
+        let started = std::time::Instant::now();
+
+        let error = owner
+            .run_with_timeout_watched(
+                &mut memory_hog_command(),
+                Duration::from_secs(20),
+                &cancellation,
+                || {},
+                Some(128 * 1024 * 1024),
+            )
+            .unwrap_err();
+
+        let SessionJobOperationError::Failed(failure) = error else {
+            panic!("expected a failure, got {error:?}");
+        };
+        assert_eq!(
+            failure.code, "SESSION_JOB_WORKER_MEMORY_LIMIT",
+            "{failure:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        // The guard killed and reaped the child; nothing stays registered.
+        assert!(owner.children.lock().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn platform_children_without_a_budget_are_not_memory_limited() {
+        let owner = SessionJobChildProcessOwner::default();
+        let cancellation = SessionJobCancellationCheckpoint::new(CancellationToken::new());
+
+        let error = owner
+            .run_with_timeout(
+                &mut memory_hog_command(),
+                Duration::from_secs(3),
+                &cancellation,
+            )
+            .unwrap_err();
+
+        // It runs to the deadline instead (a timeout failure).
+        let SessionJobOperationError::Failed(failure) = error else {
+            panic!("expected a failure, got {error:?}");
+        };
+        assert_ne!(
+            failure.code, "SESSION_JOB_WORKER_MEMORY_LIMIT",
+            "{failure:?}"
+        );
+        assert!(failure.message.contains("zaman aşımı"), "{failure:?}");
+        assert!(owner.children.lock().is_empty());
     }
 
     fn test_command_app() -> tauri::App<tauri::test::MockRuntime> {

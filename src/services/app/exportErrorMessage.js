@@ -7,6 +7,7 @@ const EXPORT_ERROR_TITLES = Object.freeze({
   SESSION_JOB_INVALID_PAGE: "Seçilen sayfa belgede bulunamadı.",
   SESSION_JOB_OUTPUT_TARGET_UNSUPPORTED: "Hedef klasördeki aynı adlı öğeler dosya olmadığı için değiştirilemez.",
   SESSION_JOB_OUTPUT_ROLLBACK_FAILED: "Dışa aktarma yarıda kaldı ve tamamen geri alınamadı.",
+  SESSION_JOB_WORKER_MEMORY_LIMIT: "İşlem PDF motorunun bellek sınırını aştığı için durduruldu.",
 });
 
 const FALLBACK_MESSAGE = "Dışa aktarma başarısız oldu.";

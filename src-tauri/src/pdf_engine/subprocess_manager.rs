@@ -1,3 +1,4 @@
+use super::memory_watchdog;
 use crate::worker::ipc::{
     decode_response, encode_request, WorkerCapability, WorkerCommand, WorkerCredential,
     WorkerFailure, WorkerFailureKind, WorkerRequest, WorkerResponse, WorkerResult,
@@ -92,6 +93,8 @@ pub enum WorkerFailureReason {
     Crash,
     Timeout,
     ProtocolViolation,
+    /// macOS: the worker's phys_footprint passed its budget and it was killed.
+    MemoryLimit,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +137,7 @@ pub struct WorkerLauncher {
     arguments: Vec<OsString>,
     pdfium_path: Option<OsString>,
     resolved_runtime_path: Option<PathBuf>,
+    memory_limit_bytes: u64,
 }
 
 impl WorkerLauncher {
@@ -151,6 +155,7 @@ impl WorkerLauncher {
             arguments: vec![OsString::from("--run-worker")],
             pdfium_path: std::env::var_os("PDFIUM_PATH"),
             resolved_runtime_path,
+            memory_limit_bytes: memory_watchdog::WORKER_FOOTPRINT_LIMIT_BYTES,
         })
     }
 
@@ -161,7 +166,16 @@ impl WorkerLauncher {
             arguments,
             pdfium_path: None,
             resolved_runtime_path: None,
+            memory_limit_bytes: memory_watchdog::WORKER_FOOTPRINT_LIMIT_BYTES,
         }
+    }
+
+    /// Lowers the macOS footprint budget so tests can cross it without
+    /// allocating gigabytes.
+    #[doc(hidden)]
+    pub fn with_memory_limit_for_test(mut self, bytes: u64) -> Self {
+        self.memory_limit_bytes = bytes;
+        self
     }
 }
 
@@ -213,6 +227,7 @@ struct RunningWorker {
     // read yet. A later exchange that finds it set cannot trust the stdout
     // stream position, so the worker is replaced instead of read from.
     in_flight: Option<u64>,
+    memory_limit_bytes: u64,
 }
 
 struct AdmissionState {
@@ -1255,6 +1270,7 @@ impl PdfiumWorkerBroker {
             stderr_drain: Some(stderr_drain),
             stderr_buffer,
             in_flight: None,
+            memory_limit_bytes: launcher.memory_limit_bytes,
         });
 
         let hello = self
@@ -1364,6 +1380,7 @@ impl PdfiumWorkerBroker {
                 }
                 let reason = match error.code {
                     "PDFIUM_WORKER_TIMEOUT" => Some(WorkerFailureReason::Timeout),
+                    "PDFIUM_WORKER_MEMORY_LIMIT" => Some(WorkerFailureReason::MemoryLimit),
                     "PDFIUM_WORKER_CRASHED" => Some(WorkerFailureReason::Crash),
                     "PDFIUM_WORKER_PROTOCOL_ERROR"
                     | "PDFIUM_WORKER_PROTOCOL_MISMATCH"
@@ -1463,11 +1480,27 @@ impl PdfiumWorkerBroker {
         };
         let shutdown_error =
             || BrokerError::unavailable("PDF worker command was stopped for shutdown");
+        let worker_pid = worker.child.id();
+        let memory_limit = worker.memory_limit_bytes;
         // The response future borrows the worker's stdout; keep it inside this
         // block so `in_flight` can be cleared once a whole frame was read.
         let (response, cancelled_and_drained) = {
-            let response_future =
-                tokio::time::timeout(timeout.duration(), read_response(&mut worker.stdout));
+            // macOS has no address-space limit for the worker, so its footprint
+            // is watched while the command runs. Crossing the budget ends the
+            // command like a worker failure; `in_flight` stays set and the
+            // caller kills and replaces the worker.
+            let response_future = async {
+                tokio::select! {
+                    biased;
+                    result = tokio::time::timeout(
+                        timeout.duration(),
+                        read_response(&mut worker.stdout),
+                    ) => result,
+                    footprint = memory_watchdog::wait_until_over_limit(worker_pid, memory_limit) => {
+                        Ok(Err(memory_limit_error(footprint, memory_limit)))
+                    }
+                }
+            };
             tokio::pin!(response_future);
             if !honor_shutdown_cancellation {
                 (response_future.await.map_err(|_| timeout_error())??, false)
@@ -1938,6 +1971,17 @@ fn worker_stream_is_idle(state: &BrokerState) -> bool {
         .is_some_and(|worker| worker.in_flight.is_none())
 }
 
+fn memory_limit_error(footprint: u64, limit: u64) -> BrokerError {
+    BrokerError::new(
+        "PDFIUM_WORKER_MEMORY_LIMIT",
+        format!(
+            "PDF worker exceeded its memory budget ({} MiB > {} MiB) and was stopped",
+            memory_watchdog::mib(footprint),
+            memory_watchdog::mib(limit)
+        ),
+    )
+}
+
 fn document_quarantined_error() -> BrokerError {
     BrokerError::new(
         "PDFIUM_DOCUMENT_QUARANTINED",
@@ -1998,7 +2042,14 @@ fn record_failure_at(
 ) {
     // Crash and protocol failures may mean a compromised or corrupted worker,
     // so they always count against the document, whichever page was involved.
-    let page = page.filter(|_| reason == WorkerFailureReason::Timeout);
+    // A timeout or a memory-limit kill means the page is too heavy for PDFium;
+    // both count toward the same page and document thresholds.
+    let page = page.filter(|_| {
+        matches!(
+            reason,
+            WorkerFailureReason::Timeout | WorkerFailureReason::MemoryLimit
+        )
+    });
     let failures = state.document_failures.entry(key.clone()).or_default();
     failures.retain(|event| now.duration_since(event.at) <= failure_window(event));
     failures.push_back(FailureEvent {

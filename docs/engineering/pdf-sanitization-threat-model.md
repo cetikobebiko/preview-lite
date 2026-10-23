@@ -482,8 +482,10 @@ per-stream ve total budget enforce edilir; oversized payload finding veya başar
 üretemez. Parser-level DoS sınırı ayrı ephemeral process, worker address-space limiti
 ve parent timeout/kill/wait birlikteliğidir; bounded/pre-allocation decode garantisi yoktur.
 macOS'ta address-space limiti uygulanmaz (`setrlimit` reddeder; bkz.
-`pdfium-worker-isolation.md`, "Platform and CI status"); orada sınır yalnız process
-izolasyonu ve parent timeout/kill/wait'tir.
+`pdfium-worker-isolation.md`, "Platform and CI status"). Orada sınırı parent tarafındaki
+footprint bekçisi koyar: job worker'ın `phys_footprint` değeri 2 GiB'ı geçince süreç
+öldürülür ve iş `SESSION_JOB_WORKER_MEMORY_LIMIT` ile başarısız olur (bkz. aynı belgede
+"Footprint watchdog"); ayrıca process izolasyonu ve parent timeout/kill/wait geçerlidir.
 
 Production sanitization cancellation cooperative worker IPC kullanmaz. Scanner'ın
 checkpoint-capable seam'i yalnız deterministic unit test authority'sidir; production
