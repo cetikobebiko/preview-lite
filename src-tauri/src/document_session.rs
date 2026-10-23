@@ -4010,8 +4010,14 @@ impl DocumentSessionStore {
         password_cache: Arc<Mutex<HashMap<String, String>>>,
         worker_broker: PdfiumWorkerBroker,
     ) -> Result<Self, DocumentSessionError> {
+        // Root kurulumu süreç içinde tek sıradadır: root henüz güvenli değilken iki store aynı anda
+        // DACL yazarsa, birinin yayılımı diğerinin yeni kurduğu instance dizinine denk gelir.
+        static TEMP_ROOT_SETUP: Mutex<()> = Mutex::new(());
         let temp_root = std::env::temp_dir().join(TEMP_ROOT_NAME);
-        create_secure_dir(&temp_root)?;
+        {
+            let _setup = TEMP_ROOT_SETUP.lock();
+            create_secure_dir(&temp_root)?;
+        }
         cleanup_orphan_instances(&temp_root)?;
 
         let mut ownership = None;
@@ -12431,8 +12437,10 @@ fn now_ms() -> u64 {
 }
 
 fn create_secure_dir(path: &Path) -> Result<(), DocumentSessionError> {
-    if let Err(error) = fs::create_dir(path) {
-        if error.kind() != std::io::ErrorKind::AlreadyExists {
+    let created = match fs::create_dir(path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => {
             return Err(DocumentSessionError::new(
                 "TEMP_SECURITY_ERROR",
                 format!(
@@ -12441,7 +12449,7 @@ fn create_secure_dir(path: &Path) -> Result<(), DocumentSessionError> {
                 ),
             ));
         }
-    }
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -12464,8 +12472,15 @@ fn create_secure_dir(path: &Path) -> Result<(), DocumentSessionError> {
             )
         })?;
     }
+    // Var olan paylaşılan dizinlere (temp root, jobs root) DACL her çağrıda yeniden yazılmaz:
+    // SetNamedSecurityInfoW kalıtılabilir ACE'leri bütün alt nesnelere yayar ve bu yayılım, o
+    // sırada alt dizinini kurup doğrulayan başka bir thread'in DACL kontrolüyle yarışır.
     #[cfg(windows)]
-    ensure_windows_current_user_acl(path, true)?;
+    if created || !windows_current_user_acl_already_enforced(path) {
+        ensure_windows_current_user_acl(path, true)?;
+    }
+    #[cfg(not(windows))]
+    let _ = created;
     Ok(())
 }
 
@@ -12828,6 +12843,80 @@ fn ensure_windows_current_user_acl(
         ));
     }
     Ok(())
+}
+
+/// Nesnenin DACL'i zaten `ensure_windows_current_user_acl`'in yazdığı biçimdeyse true: korumalı
+/// (inheritance kapalı), tek ACE'li ve yalnız current-user'a FILE_ALL_ACCESS veriyor. Okuma
+/// hatası dahil her belirsizlikte false döner; çağıran o zaman DACL'i yeniden yazar.
+#[cfg(windows)]
+fn windows_current_user_acl_already_enforced(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
+    use windows_sys::Win32::Security::Authorization::{
+        GetExplicitEntriesFromAclW, GetNamedSecurityInfoW, EXPLICIT_ACCESS_W, GRANT_ACCESS,
+        SET_ACCESS, SE_FILE_OBJECT, TRUSTEE_IS_SID,
+    };
+    use windows_sys::Win32::Security::{
+        EqualSid, GetSecurityDescriptorControl, ACL, DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+    };
+    use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+
+    let Ok(mut sid) = current_windows_user_sid() else {
+        return false;
+    };
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut acl: *mut ACL = std::ptr::null_mut();
+    let mut descriptor = std::ptr::null_mut();
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut acl,
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        if !descriptor.is_null() {
+            unsafe { LocalFree(descriptor) };
+        }
+        return false;
+    }
+    let mut control = 0_u16;
+    let mut revision = 0_u32;
+    let protected =
+        unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } != 0
+            && control & SE_DACL_PROTECTED != 0;
+    // AceCount kalıtılmış ACE'leri de sayar; GetExplicitEntriesFromAclW tek başına yetmez.
+    let single_ace = !acl.is_null() && unsafe { (*acl).AceCount } == 1;
+    let mut count = 0_u32;
+    let mut entries: *mut EXPLICIT_ACCESS_W = std::ptr::null_mut();
+    let enforced = protected
+        && single_ace
+        && unsafe { GetExplicitEntriesFromAclW(acl, &mut count, &mut entries) } == ERROR_SUCCESS
+        && count == 1
+        && !entries.is_null()
+        && unsafe {
+            let entry = &*entries;
+            matches!(entry.grfAccessMode, GRANT_ACCESS | SET_ACCESS)
+                && entry.grfAccessPermissions & FILE_ALL_ACCESS == FILE_ALL_ACCESS
+                && entry.Trustee.TrusteeForm == TRUSTEE_IS_SID
+                && EqualSid(entry.Trustee.ptstrName.cast(), sid.as_mut_ptr().cast()) != 0
+        };
+    unsafe {
+        if !entries.is_null() {
+            LocalFree(entries.cast());
+        }
+        LocalFree(descriptor);
+    }
+    enforced
 }
 
 #[cfg(windows)]
