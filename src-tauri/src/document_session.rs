@@ -19813,7 +19813,11 @@ mod tests {
             &child_owner,
             "test-external-await-",
         );
+        // The supervisor stays pending until released: registration starts the reaper,
+        // which may already collect a finished task before the count below is read.
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
         let task = spawn_managed_test_supervisor(execution_authority, async move {
+            let _ = release_rx.await;
             MutationTransactionOutcome::Aborted {
                 transaction_id: record_id.to_string(),
                 session_id: "external-await".to_string(),
@@ -19827,6 +19831,7 @@ mod tests {
 
         assert_eq!(manager.active_supervisor_count(), 1);
 
+        release_tx.send(()).unwrap();
         let res = manager.shutdown(3000).await;
         assert!(res.is_ok());
         assert_eq!(manager.active_supervisor_count(), 0);
