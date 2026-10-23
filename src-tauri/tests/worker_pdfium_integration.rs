@@ -3,7 +3,7 @@ mod macos_arm64 {
     use lopdf::content::{Content, Operation};
     use lopdf::{dictionary, Dictionary, Document, Object, Stream, StringFormat};
     use preview_alternative_lib::pdf_engine::subprocess_manager::{
-        CommandTimeout, PdfiumWorkerBroker, WorkerDocumentKey, WorkerLauncher,
+        BrokerError, CommandTimeout, PdfiumWorkerBroker, WorkerDocumentKey, WorkerLauncher,
     };
     use preview_alternative_lib::worker::ipc::{WorkerCommand, WorkerRenderTarget, WorkerResult};
     use std::collections::HashMap;
@@ -1210,11 +1210,18 @@ mod macos_arm64 {
         query: &str,
         max_results: u32,
     ) -> preview_alternative_lib::SearchResult {
-        let admission = broker.admit_read(key, None).await.unwrap();
+        // Each step names itself: a flaky failure must say which broker call broke.
+        let context = |step: &str, error: BrokerError| -> ! {
+            panic!("whole search {step} failed for query={query:?} limit={max_results}: {error:?}")
+        };
+        let admission = broker
+            .admit_read(key, None)
+            .await
+            .unwrap_or_else(|error| context("admission", error));
         broker
             .ensure_document(&admission, key.clone(), path.to_string(), None, None)
             .await
-            .unwrap();
+            .unwrap_or_else(|error| context("open", error));
         let result = broker
             .command_for_document(
                 &admission,
@@ -1228,7 +1235,7 @@ mod macos_arm64 {
                 None,
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|error| context("command", error));
         let WorkerResult::Search(result) = result else {
             panic!("unexpected whole-document search response");
         };
@@ -1273,7 +1280,75 @@ mod macos_arm64 {
                 &cancellation,
             )
             .await
-            .unwrap()
+            .unwrap_or_else(|error| {
+                panic!("chunked search failed for query={query:?} limit={max_results}: {error:?}")
+            })
+    }
+
+    /// The first difference between two search results, or None when equal.
+    /// Two serialized results can be thousands of lines; this names the spot.
+    fn first_search_difference(
+        chunked: &preview_alternative_lib::SearchResult,
+        whole: &preview_alternative_lib::SearchResult,
+    ) -> Option<String> {
+        if chunked.total_matches != whole.total_matches {
+            return Some(format!(
+                "total_matches chunked={} whole={}",
+                chunked.total_matches, whole.total_matches
+            ));
+        }
+        if chunked.matches.len() != whole.matches.len() {
+            return Some(format!(
+                "returned matches chunked={} whole={}",
+                chunked.matches.len(),
+                whole.matches.len()
+            ));
+        }
+        chunked
+            .matches
+            .iter()
+            .zip(&whole.matches)
+            .enumerate()
+            .find_map(|(index, (left, right))| {
+                let left = serde_json::to_value(left).unwrap();
+                let right = serde_json::to_value(right).unwrap();
+                (left != right).then(|| format!("match {index}: chunked={left} whole={right}"))
+            })
+            .or_else(|| {
+                (serde_json::to_value(chunked).unwrap() != serde_json::to_value(whole).unwrap())
+                    .then(|| "results differ outside matches and totals".to_string())
+            })
+    }
+
+    #[test]
+    fn first_search_difference_names_the_first_mismatch() {
+        let found = |index: usize, page: u32, snippet: &str| preview_alternative_lib::SearchMatch {
+            global_match_index: index,
+            page_index: page,
+            rects: Vec::new(),
+            snippet: snippet.to_string(),
+        };
+        let result = |matches: Vec<preview_alternative_lib::SearchMatch>, total: usize| {
+            preview_alternative_lib::SearchResult {
+                matches,
+                is_cancelled: false,
+                total_matches: total,
+            }
+        };
+        let whole = result(vec![found(0, 0, "a"), found(1, 2, "b")], 5);
+
+        assert_eq!(first_search_difference(&whole.clone(), &whole), None);
+        assert_eq!(
+            first_search_difference(&result(whole.matches.clone(), 4), &whole).as_deref(),
+            Some("total_matches chunked=4 whole=5")
+        );
+        let moved = result(vec![found(0, 0, "a"), found(1, 3, "b")], 5);
+        let difference = first_search_difference(&moved, &whole).unwrap();
+        assert!(difference.starts_with("match 1: "), "{difference}");
+        assert!(
+            difference.contains("\"pageIndex\":3") || difference.contains("\"page_index\":3"),
+            "{difference}"
+        );
     }
 
     #[tokio::test]
@@ -1309,11 +1384,9 @@ mod macos_arm64 {
                         usize::try_from(limit).unwrap(),
                     )
                     .await;
-                    assert_eq!(
-                        serde_json::to_value(&chunked).unwrap(),
-                        serde_json::to_value(&whole).unwrap(),
-                        "path={path} query={query} limit={limit}"
-                    );
+                    if let Some(difference) = first_search_difference(&chunked, &whole) {
+                        panic!("path={path} query={query} limit={limit}: {difference}");
+                    }
                     compared_matches += whole.matches.len();
                 }
             }

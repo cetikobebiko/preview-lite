@@ -202,7 +202,7 @@ Build başarılı (chunk boyutu ve dynamic import uyarıları duruyor)
 Clippy --all-targets --all-features -D warnings başarılı
 ```
 
-Açık kalan: `worker_pdfium_integration` içindeki `chunked_search_is_identical_to_whole_document_search` 8 seri koşudan birinde düştü, sonraki 26 koşuda tekrarlanmadı; flaky kabul edilir. Komut bazında ayrıntı `pdfium-worker-isolation.md` "Local verification" tablosundadır.
+İzlenen: `worker_pdfium_integration` içindeki `chunked_search_is_identical_to_whole_document_search` bir kez düştü (mesajı kaydedilmedi); ardından yaklaşık 120 lokal ve 40 CI koşusunda tekrarlanmadı. Test artık düşen adımı ve ilk farklı eşleşmeyi raporluyor. Komut bazında ayrıntı `pdfium-worker-isolation.md` "Local verification" tablosundadır.
 
 ## Prompt 8A-5 Doğrulaması (5 Ağustos 2026, tarihsel)
 

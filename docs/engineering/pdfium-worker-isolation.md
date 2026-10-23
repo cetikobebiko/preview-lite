@@ -784,7 +784,7 @@ that table.
 | `cargo check --locked --all-targets` | Passed; no warnings |
 | `cargo test --locked --all-targets -- --test-threads=1` | Passed: 1121 tests across 31 test targets (788 library tests), 10 ignored |
 | `cargo test --locked --test worker_broker_process -- --test-threads=1` | Passed: 30 |
-| `cargo test --locked --test worker_pdfium_integration -- --test-threads=1` | Passed: 13, 2 ignored. One of 8 runs failed `chunked_search_is_identical_to_whole_document_search`; 26 further runs (isolated and under CPU load) did not reproduce it. Treat as flaky until investigated. |
+| `cargo test --locked --test worker_pdfium_integration -- --test-threads=1` | Passed: 13, 2 ignored. One run failed `chunked_search_is_identical_to_whole_document_search`; its panic message was not captured. It did not recur in about 120 later local runs (isolated, under CPU load, whole file serially) or in the last 40 CI runs, and both search paths are deterministic in code. The test now names the failing broker step and the first differing match, so a recurrence is diagnosable. |
 | `cargo test --locked --test crash_tests -- --test-threads=1` | Passed: 3 |
 | `cargo test --locked --test session_worker_integration -- --test-threads=1` | Passed: 2 |
 | `npm run test` | Passed: 1409 tests in 137 files |
