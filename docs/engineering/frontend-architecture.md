@@ -116,7 +116,7 @@ Bounded altyapı noktaları:
 - `src/services/backend/client.js`: raw `invoke` sınırı.
 - `src/services/platform/dialogs.js`, `window.js`, `events.js`: platform adaptörleri.
 - `src/configManager.js`: AppData filesystem config sınırı.
-- `src/main.js`: shell plugin startup bağlantısı.
+- `src/main.js`: uygulama mount'u ve yalnız `VITE_ZOOM_STRESS=1` build'inde yüklenen zoom stres girişi. Uygulama dış bağlantı açmaz; shell plugin kaldırıldı.
 
 Henüz platform adaptörüne taşınmamış legacy bileşenler:
 

@@ -1303,7 +1303,6 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
         .manage(PasswordCache(password_cache))
         .manage(SearchCache(parking_lot::Mutex::new(lru::LruCache::new(
             std::num::NonZeroUsize::new(50).unwrap(),
