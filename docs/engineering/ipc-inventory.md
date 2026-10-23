@@ -325,9 +325,13 @@ Prompt 9A kapsamında eski global eventler (`ai_chat_token`, `ai_chat_done`, `ai
 
 ## Yapılandırma ve platform erişilebilirliği
 
-- Tauri builder dialog ve fs pluginlerini kaydeder. Shell plugin kaldırıldı:
-  uygulamada dış bağlantı açan bir yüzey yoktu.
-- Capability dosyaları dialog open/save ve geniş fs read/write izinleri içerir.
+- Tauri builder yalnız dialog plugin'ini kaydeder. Shell plugin (dış bağlantı
+  yüzeyi yoktu) ve fs plugin'i kaldırıldı: metin export ve ayar dosyası Rust'ta
+  `document_io::write_atomically` ile yazılır. `tauri-plugin-fs` crate'i
+  `tauri-plugin-dialog`'un bağımlılığı olarak derlenir, ancak kayıtlı değildir;
+  dialog yalnız `try_fs_scope()` kullanır.
+- Capability dosyaları core pencere izinleri ile dialog open/save izinlerini içerir;
+  webview'in dosya sistemi izni yoktur.
 - Updater dependency'si görülür, fakat updater plugin kaydı görülmez.
 - Continuity Camera, TTS, share ve macOS OCR command'larının macOS ve non-macOS
   dalları farklı davranır. Bu envanter macOS arm64 makinede çıkarılmış, runtime

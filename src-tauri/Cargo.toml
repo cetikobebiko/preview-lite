@@ -50,7 +50,6 @@ sha2 = "0.10"
 [dependencies]
 tauri = { version = "2.0.0", features = [] }
 tauri-plugin-dialog = "2.0.0"
-tauri-plugin-fs = "2.0.0"
 pdfium-render = "0.8"
 lopdf = "0.34"
 quick-xml = { version = "0.41", features = ["serialize"] }

@@ -50,6 +50,19 @@ describe("frontend architecture acceptance gates", () => {
     expect(appSource).not.toContain("onMount(async");
   });
 
+  it("grants the webview no filesystem or shell access", () => {
+    // File writes go through Rust (document_io::write_atomically); the webview only opens dialogs.
+    const capability = JSON.parse(read("src-tauri/capabilities/default.json"));
+    const pkg = JSON.parse(read("package.json"));
+    const lib = read("src-tauri/src/lib.rs");
+    for (const prefix of ["fs:", "shell:"]) {
+      expect(capability.permissions.filter((permission) => permission.startsWith(prefix))).toEqual([]);
+    }
+    expect(Object.keys(pkg.dependencies)).not.toContain("@tauri-apps/plugin-fs");
+    expect(Object.keys(pkg.dependencies)).not.toContain("@tauri-apps/plugin-shell");
+    expect(lib).not.toMatch(/tauri_plugin_(fs|shell)::init/);
+  });
+
   it("keeps every Svelte component on runes syntax (AGENTS.md)", () => {
     const components = readdirSync(resolve(process.cwd(), "src"), { recursive: true })
       .filter((file) => file.endsWith(".svelte"));

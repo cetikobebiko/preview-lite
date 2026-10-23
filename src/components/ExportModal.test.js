@@ -11,10 +11,8 @@ const backendMocks = vi.hoisted(() => ({
   exportSessionTextToFile: vi.fn(),
   printSessionPdf: vi.fn(),
 }));
-const fsMocks = vi.hoisted(() => ({ writeTextFile: vi.fn() }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => dialogMocks);
-vi.mock("@tauri-apps/plugin-fs", () => fsMocks);
 vi.mock("../services/backend/index.js", () => backendMocks);
 
 import ExportModal from "./ExportModal.svelte";
@@ -167,7 +165,6 @@ describe("ExportModal text export", () => {
 
     await waitFor(() => expect(onsuccess).toHaveBeenCalledWith("Metin başarıyla dışa aktarıldı!"));
     expect(backendMocks.exportSessionTextToFile).toHaveBeenCalledWith("session-1", 7, [0, 2], "markdown", "/out/notes.md");
-    expect(fsMocks.writeTextFile).not.toHaveBeenCalled();
   });
 
   it("shows the backend error and reports no success when the write is rejected", async () => {
