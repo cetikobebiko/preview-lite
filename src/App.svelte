@@ -178,7 +178,7 @@
   onMount(applicationRuntime.mount);
 </script>
 
-<svelte:window on:keydown={applicationRuntime.handleKeyDown} />
+<svelte:window onkeydown={applicationRuntime.handleKeyDown} />
 
 <AppPresentationHost
   {ui}
