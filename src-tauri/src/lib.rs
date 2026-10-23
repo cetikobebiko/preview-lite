@@ -1265,6 +1265,45 @@ fn init_release_tracing(
     guard
 }
 
+fn startup_failure_message(
+    error: &document_session::DocumentSessionError,
+    temp_dir: &Path,
+) -> String {
+    format!(
+        "Belgeler için gereken güvenli geçici çalışma alanı oluşturulamadı, bu yüzden uygulama \
+         açılamıyor.\n\nAyrıntı: {} ({})\n\nGeçici klasörün ({}) yazılabilir olduğunu ve diskte \
+         boş yer bulunduğunu kontrol edip uygulamayı yeniden açın.",
+        error.message,
+        error.code,
+        temp_dir.display()
+    )
+}
+
+/// Pencereleri gizler, hatayı loglar ve yerel bir hata diyaloğu gösterir; diyalog kapanınca
+/// süreç 1 koduyla çıkar. Store kayıtlı olmadığından kapanış koordinatörü atlanır.
+fn show_startup_failure_and_exit(
+    app: &mut tauri::App,
+    error: &document_session::DocumentSessionError,
+) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    tracing::error!(
+        code = %error.code,
+        error = %error.message,
+        "Belge oturumu temp alanı başlatılamadı; uygulama kapanıyor"
+    );
+    for window in app.webview_windows().values() {
+        let _ = window.hide();
+    }
+    // Setup ana thread'de çalışır; blocking_show burada event loop'u kilitler.
+    app.dialog()
+        .message(startup_failure_message(error, &std::env::temp_dir()))
+        .title("Preview Lite başlatılamadı")
+        .kind(MessageDialogKind::Error)
+        .buttons(MessageDialogButtons::Ok)
+        .show(|_| std::process::exit(1));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Release logging needs the app log directory, so it is installed in
@@ -1274,19 +1313,28 @@ pub fn run() {
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
     let password_cache = std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new()));
-    let document_sessions = document_session::DocumentSessionStore::initialize_with_password_cache(
-        std::sync::Arc::clone(&password_cache),
-    )
-    .expect("Güvenli document-session temp alanı başlatılamadı");
-    let pdfium_worker_broker = document_sessions.worker_broker();
+    // Belge oturumları güvenli temp alanı olmadan çalışamaz. Kurulamazsa uygulama yine de
+    // açılır ama yalnız hatayı gösterip çıkar; panic=abort ile sessizce kapanmaz.
+    let (document_sessions, startup_failure) =
+        match document_session::DocumentSessionStore::initialize_with_password_cache(
+            std::sync::Arc::clone(&password_cache),
+        ) {
+            Ok(store) => (Some(store), None),
+            Err(error) => (None, Some(error)),
+        };
 
-    tauri::Builder::default()
-        .setup(|app| {
+    let builder = tauri::Builder::default()
+        .setup(move |app| {
             #[cfg(not(debug_assertions))]
             let log_guard = init_release_tracing(app.path().app_log_dir());
             #[cfg(debug_assertions)]
             let log_guard = None;
             app.manage(LogGuard(parking_lot::Mutex::new(log_guard)));
+
+            if let Some(error) = startup_failure {
+                show_startup_failure_and_exit(app, &error);
+                return Ok(());
+            }
 
             app.state::<document_session::DocumentSessionStore>()
                 .start_job_reaper();
@@ -1322,9 +1370,12 @@ pub fn run() {
             lru::LruCache::new(std::num::NonZeroUsize::new(50).unwrap()),
         )))
         .manage(RenderService::new())
-        .manage(pdfium_worker_broker)
-        .manage(document_sessions)
-        .manage(plugins::PluginState::new())
+        .manage(plugins::PluginState::new());
+    let builder = match document_sessions {
+        Some(store) => builder.manage(store.worker_broker()).manage(store),
+        None => builder,
+    };
+    builder
         .invoke_handler(tauri::generate_handler![
             document_session::open_document_session,
             document_session::authenticate_document_session,
@@ -1434,8 +1485,10 @@ pub fn run() {
                     app_handle.state::<AppShutdownToken>().0.cancel();
                     let handle = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
+                        // Store yoksa (açılış hatası) kapatılacak oturum ya da worker da yoktur.
+                        if let Some(store) =
+                            handle.try_state::<document_session::DocumentSessionStore>()
                         {
-                            let store = handle.state::<document_session::DocumentSessionStore>();
                             let active_tasks = handle.state::<ActiveRenderTasks>();
                             let render_service =
                                 handle.state::<pdf_engine::render_service::RenderService>();
@@ -1463,6 +1516,20 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_failure_message_names_the_cause_and_the_temp_directory() {
+        let error = document_session::DocumentSessionError::new(
+            "TEMP_SECURITY_ERROR",
+            "Güvenli temp dizini oluşturulamadı",
+        );
+
+        let message = startup_failure_message(&error, Path::new("/var/folders/tmp"));
+
+        assert!(message.contains("Güvenli temp dizini oluşturulamadı (TEMP_SECURITY_ERROR)"));
+        assert!(message.contains("(/var/folders/tmp)"));
+        assert!(message.contains("yeniden açın"));
+    }
 
     #[test]
     fn prepare_log_dir_creates_missing_absolute_directory() {
