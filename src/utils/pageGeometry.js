@@ -22,6 +22,27 @@ export function renderDevicePixelRatio(devicePixelRatio) {
   return Math.min(Number.isFinite(ratio) && ratio > 0 ? ratio : 1, MAX_RENDER_DEVICE_PIXEL_RATIO);
 }
 
+/**
+ * Pixel budget of one viewer page bitmap: 16 Mi pixels, 64 MiB of RGBA. At 4x zoom and
+ * dpr 2 an A4 page would need 32 Mpx (128 MB) and an A3 page 64 Mpx (256 MB); the app
+ * process can hold several such frames the webview has not consumed yet, which took it to
+ * ~2.6 GB in the zoom stress run. Above the budget the page renders at a lower device
+ * pixel ratio and the canvas is shown at the same CSS size, so very high zoom looks softer
+ * instead of costing memory. Tiled rendering would keep it sharp; it is not built.
+ */
+export const MAX_VIEWER_RENDER_PIXELS = 16 * 1024 * 1024;
+
+/**
+ * Device pixel ratio a page is rendered with: the screen's (capped at 2), lowered so the
+ * bitmap stays within MAX_VIEWER_RENDER_PIXELS. Requests and CSS sizing must both use it.
+ */
+export function pageRenderDevicePixelRatio({ pageSize, scale, devicePixelRatio = 1 }) {
+  const dpr = renderDevicePixelRatio(devicePixelRatio);
+  if (!isValidPageSize(pageSize) || !(scale > 0)) return dpr;
+  const pixelsAtRatioOne = pageSize.widthPt * scale * pageSize.heightPt * scale;
+  return Math.min(dpr, Math.sqrt(MAX_VIEWER_RENDER_PIXELS / pixelsAtRatioOne));
+}
+
 export function isValidPageSize(size) {
   return Boolean(size)
     && Number.isFinite(size.widthPt) && size.widthPt > 0
@@ -44,7 +65,7 @@ export function normalizeRotation(rotation) {
 /** CSS width/height the rendered page will occupy, or null when it cannot be estimated. */
 export function estimateRenderedPageCssSize({ pageSize, scale, rotation = 0, devicePixelRatio = 1 }) {
   if (!isValidPageSize(pageSize) || !(scale > 0)) return null;
-  const dpr = renderDevicePixelRatio(devicePixelRatio);
+  const dpr = pageRenderDevicePixelRatio({ pageSize, scale, devicePixelRatio });
   // The worker holds f32 points; JSON hands them over as their shortest decimal form.
   const widthPt = Math.fround(pageSize.widthPt);
   const heightPt = Math.fround(pageSize.heightPt);

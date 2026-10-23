@@ -864,6 +864,35 @@ describe("PdfPage placeholder geometry and single-page mode", () => {
     expect(getPageSizes).toHaveBeenCalledWith("mixed-sizes", 1);
   });
 
+  it("requests a high-zoom render within the page pixel budget at the reserved CSS size", async () => {
+    const A3 = { widthPt: 841.89, heightPt: 1190.55 };
+    const originalRatio = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 2 });
+    try {
+      getPageSizes.mockResolvedValueOnce([A3]);
+      const { container } = renderPdfPage({
+        props: {
+          sessionId: "budget-a3",
+          pageIndex: 0,
+          isSinglePageMode: true,
+          currentPage: 0,
+          documentGenerationId: 1,
+          scale: 4,
+        },
+      });
+      await waitFor(() => expect(pageContainer(container).style.height).not.toBe(""));
+      await waitFor(() => expect(renderPage).toHaveBeenCalled());
+      const requested = renderPage.mock.calls.at(-1)[0].scale;
+      // Uncapped would be 4 * 2 = 8: a 64 Mpx (256 MB) bitmap.
+      expect(requested).toBeLessThan(8);
+      expect(A3.widthPt * requested * A3.heightPt * requested).toBeLessThanOrEqual(16 * 1024 * 1024 * 1.0001);
+      // The placeholder still reserves the zoomed point height.
+      expect(parseFloat(pageContainer(container).style.height)).toBeCloseTo(A3.heightPt * 4, -0.5);
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: originalRatio });
+    }
+  });
+
   it("asks for page sizes again when the content generation changes", async () => {
     getPageSizes
       .mockResolvedValueOnce([LETTER])

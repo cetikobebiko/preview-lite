@@ -60,6 +60,29 @@ Command ID'yi registry ile doğrular ve bounded action tablosuna yönlendirir. R
 
 Toast timer'ını ve doğrulanmış transient payload'ların `uiState`e yansıtılmasını taşır. Password attempt ID üretmez ve password operation kararı vermez.
 
+## Sayfa render çözünürlüğü ve bellek bütçesi
+
+`PdfPage` sayfayı `scale × dpr` hedefiyle ister; dpr ekrandan gelir ve en fazla 2'dir
+(`renderDevicePixelRatio`). Tek bir sayfa bitmap'i en fazla `MAX_VIEWER_RENDER_PIXELS`
+(16 Mi piksel, 64 MiB RGBA) olabilir: `pageRenderDevicePixelRatio` bu bütçeyi aşacak bir
+sayfada dpr'ı düşürür. Render isteği, placeholder boyutu (`estimateRenderedPageCssSize`) ve
+`pageLayoutModel` aynı değeri kullandığı için sayfanın CSS boyutu değişmez; yalnız çok yüksek
+zoom'da çözünürlük düşer (A4 için ~2.9x, A3 için ~2x üzerinde). Bütçe olmadan 4x zoom ve dpr 2'de
+bir A4 sayfası 128 MB, bir A3 sayfası 256 MB'lık frame demektir. Keskinliği koruyacak çözüm
+parçalı (tile) render'dır; yapılmadı.
+
+Ölçüm (2026-10-23, Apple M1 8 GiB, `VITE_ZOOM_STRESS=1` release build, `perf-heavy-400.pdf`,
+izole `HOME`, `scripts/memory-guard.py` ile phys_footprint, 150 sn):
+
+| Süreç | Bütçesiz | Bütçeli |
+|---|---|---|
+| Uygulama, tepe / sonrası | 398 / 398 MB | 282 / 282 MB |
+| PDFium worker, tepe | 492 MB | 317 MB |
+| Toplam, tepe / sonrası | 1638 / 1236 MB | 1327 / 942 MB |
+
+2026-10-13'te görülen ~2.6 GB'lık uygulama süreci birikimi bu ölçümde iki sürümde de oluşmadı;
+o zamandan beri zoom jesti sırasında render yapılmıyor (`isZooming`). Tek koşu, tek belge.
+
 ## Password attempt ownership
 
 Authoritative attempt ID, candidate path/name, resolver, supersede ve stale-response kararı yalnız `documentLifecycleController` private state'indedir.
