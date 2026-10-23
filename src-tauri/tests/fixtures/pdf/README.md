@@ -17,8 +17,10 @@ are released under the repository license.
   rotation on page two, and a text annotation on page three. It intentionally
   has no document metadata, outline, named destination, or AcroForm.
 - `reorder-with-{metadata,outline,named-destination,form}.pdf`: one unsupported
-  document-level feature per fixture. Reorder must reject these inputs before
-  writing because PDFium page-copy does not preserve those structures.
+  document-level feature per fixture. Extracting pages must reject these inputs
+  before writing because PDFium page-copy does not preserve those structures. An
+  in-place reorder keeps them: it rewrites only the page tree as an incremental
+  update.
 - `large-page-dimensions.pdf`: one 7200x7200 pt (100x100 in) page testing large
   page dimension handling without exceeding the 14,400 pt engine safety limit.
 - `release-smoke.pdf`: two-page canonical smoke fixture with distinct text tokens,

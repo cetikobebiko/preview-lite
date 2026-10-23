@@ -80,7 +80,7 @@ fn reorder_full_and_subset_preserve_text_rotation_and_annotations() {
 }
 
 #[test]
-fn reorder_rejects_document_features_it_cannot_preserve() {
+fn reorder_keeps_document_features_that_extract_cannot_preserve() {
     for fixture_name in [
         "reorder-with-metadata.pdf",
         "reorder-with-outline.pdf",
@@ -90,16 +90,41 @@ fn reorder_rejects_document_features_it_cannot_preserve() {
         let directory = tempfile::tempdir().unwrap();
         let source = copied_fixture(fixture_name, directory.path());
         let original = fs::read(&source).unwrap();
+        let before = visible_pages(&source);
+
+        // Ayıklama yeni bir belge üretir; PDFium sayfa kopyası bu yapıları korumaz.
+        let subset = directory.path().join("subset.pdf");
         let error = reorder_pdf_to_target(
+            source.to_string_lossy().to_string(),
+            vec![2, 0],
+            subset.to_string_lossy().to_string(),
+            None,
+            ReorderMode::OrderedSubset,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("güvenli biçimde koruyamıyor"),
+            "{fixture_name}: {error}"
+        );
+        assert_eq!(fs::read(&source).unwrap(), original);
+
+        // Yerinde sıralama yalnız sayfa ağacını artımlı yazar; diğer yapılar olduğu gibi kalır.
+        reorder_pdf_to_target(
             source.to_string_lossy().to_string(),
             vec![2, 0, 1],
             source.to_string_lossy().to_string(),
             None,
             ReorderMode::FullPermutation,
         )
-        .unwrap_err();
-
-        assert!(error.contains("güvenli biçimde koruyamıyor"), "{error}");
-        assert_eq!(fs::read(source).unwrap(), original);
+        .unwrap();
+        assert!(
+            fs::read(&source).unwrap().starts_with(&original),
+            "{fixture_name}: reorder rewrote the original bytes"
+        );
+        assert_eq!(
+            visible_pages(&source),
+            vec![before[2].clone(), before[0].clone(), before[1].clone()],
+            "{fixture_name}"
+        );
     }
 }

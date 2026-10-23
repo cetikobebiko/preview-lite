@@ -298,113 +298,121 @@
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-form",
-      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "testId": "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/src/manipulation.rs",
         "verificationType": "unit_assertion",
-        "notes": "Direct fail-closed rejection of unpreserved form fields on reorder-with-form.pdf"
+        "notes": "Unit: page extraction still rejects form fields it cannot preserve on reorder-with-form.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-form",
-      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "testId": "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
         "verificationType": "integration_assertion",
-        "notes": "Direct integration rejection of unpreserved form fields on reorder-with-form.pdf"
+        "notes": "Integration: page extraction still rejects form fields it cannot preserve on reorder-with-form.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-metadata",
-      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "testId": "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/src/manipulation.rs",
         "verificationType": "unit_assertion",
-        "notes": "Direct fail-closed rejection of unpreserved metadata on reorder-with-metadata.pdf"
+        "notes": "Unit: page extraction still rejects metadata it cannot preserve on reorder-with-metadata.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-metadata",
-      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "testId": "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
         "verificationType": "integration_assertion",
-        "notes": "Direct integration rejection of unpreserved metadata on reorder-with-metadata.pdf"
+        "notes": "Integration: page extraction still rejects metadata it cannot preserve on reorder-with-metadata.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-named-destination",
-      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "testId": "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/src/manipulation.rs",
         "verificationType": "unit_assertion",
-        "notes": "Direct fail-closed rejection of unpreserved named destinations on reorder-with-named-destination.pdf"
+        "notes": "Unit: page extraction still rejects named destinations it cannot preserve on reorder-with-named-destination.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-named-destination",
-      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "testId": "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
         "verificationType": "integration_assertion",
-        "notes": "Direct integration rejection of unpreserved named destinations on reorder-with-named-destination.pdf"
+        "notes": "Integration: page extraction still rejects named destinations it cannot preserve on reorder-with-named-destination.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-outline",
-      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "testId": "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/src/manipulation.rs",
         "verificationType": "unit_assertion",
-        "notes": "Direct fail-closed rejection of unpreserved outline tree on reorder-with-outline.pdf"
+        "notes": "Unit: page extraction still rejects outline tree it cannot preserve on reorder-with-outline.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "page_manipulation",
       "fixtureId": "core-reorder-with-outline",
-      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "testId": "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
         "verificationType": "integration_assertion",
-        "notes": "Direct integration rejection of unpreserved outline tree on reorder-with-outline.pdf"
+        "notes": "Integration: page extraction still rejects outline tree it cannot preserve on reorder-with-outline.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
@@ -1753,29 +1761,31 @@
     {
       "featureId": "form_editing",
       "fixtureId": "core-reorder-with-form",
-      "testId": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "testId": "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/src/manipulation.rs",
         "verificationType": "unit_assertion",
-        "notes": "Direct form field preservation rejection on reorder-with-form.pdf"
+        "notes": "Unit: page extraction still rejects form fields it cannot preserve on reorder-with-form.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
       "featureId": "form_editing",
       "fixtureId": "core-reorder-with-form",
-      "testId": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "testId": "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
       "relation": "direct",
       "dimensions": [
-        "negative"
+        "negative",
+        "persistence"
       ],
       "evidence": {
         "sourcePath": "src-tauri/tests/document_io_pdfium.rs",
         "verificationType": "integration_assertion",
-        "notes": "Direct integration rejection of form fields on reorder-with-form.pdf"
+        "notes": "Integration: page extraction still rejects form fields it cannot preserve on reorder-with-form.pdf; in-place reorder keeps them as an incremental page-tree update (original bytes kept, page order verified)"
       }
     },
     {
@@ -2107,7 +2117,7 @@
       "evidence": {
         "sourcePath": "src-tauri/tests/b4_integration_gaps.rs",
         "verificationType": "integration_assertion",
-        "notes": "Direct reorder persistence save\u2192close\u2192reopen\u2192observe via atomic_write_pdf on reorder-rich.pdf with temp cleanup verification"
+        "notes": "Direct reorder persistence save→close→reopen→observe via atomic_write_pdf on reorder-rich.pdf with temp cleanup verification"
       }
     },
     {
@@ -2384,13 +2394,13 @@
       "testIds": [
         "rust:b4_integration_gaps::b4_reorder_persistence_save_reopen_observes_order_and_cleans_temp",
         "rust:document_io_pdfium::reorder_full_and_subset_preserve_text_rotation_and_annotations",
-        "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+        "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
         "rust_unit:manipulation::document_io_delete_pages_preflights_and_preserves_invalid_source",
         "rust_unit:manipulation::document_io_insert_blank_page_validates_media_box",
         "rust_unit:manipulation::document_io_merge_validates_total_page_count",
         "rust_unit:manipulation::document_io_rejects_encrypted_mutation_without_changing_bytes",
         "rust_unit:manipulation::document_io_reorder_modes_preserve_full_and_subset_contracts",
-        "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+        "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them",
         "rust_unit:manipulation::document_io_rotate_page_commits_valid_pdf"
       ],
       "dimensions": {
@@ -3025,8 +3035,8 @@
         "core-reorder-with-form"
       ],
       "testIds": [
-        "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
-        "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features"
+        "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
+        "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them"
       ],
       "dimensions": {
         "positive": "planned",
@@ -3385,7 +3395,7 @@
       "sourcePath": "src-tauri/tests/document_io_pdfium.rs"
     },
     {
-      "id": "rust:document_io_pdfium::reorder_rejects_document_features_it_cannot_preserve",
+      "id": "rust:document_io_pdfium::reorder_keeps_document_features_that_extract_cannot_preserve",
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/document_io_pdfium.rs"
@@ -3415,7 +3425,7 @@
       "sourcePath": "src-tauri/src/manipulation.rs"
     },
     {
-      "id": "rust_unit:manipulation::document_io_reorder_rejects_unpreserved_document_features",
+      "id": "rust_unit:manipulation::document_io_reorder_keeps_document_features_and_extract_still_rejects_them",
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/manipulation.rs"

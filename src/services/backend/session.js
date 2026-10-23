@@ -209,6 +209,12 @@ export const rotateSessionPage = (
     degrees,
   });
 
+export const undoSessionMutation = (sessionId, expectedContentGeneration) =>
+  callBackend("undoSessionMutation", { sessionId, expectedContentGeneration });
+
+export const redoSessionMutation = (sessionId, expectedContentGeneration) =>
+  callBackend("redoSessionMutation", { sessionId, expectedContentGeneration });
+
 export const deleteSessionPages = (
   sessionId,
   expectedContentGeneration,

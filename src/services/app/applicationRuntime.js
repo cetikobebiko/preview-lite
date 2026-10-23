@@ -73,6 +73,8 @@ export function createApplicationRuntime({
     },
     save: documentRuntime.save,
     saveAs: documentRuntime.saveAs,
+    undo: documentRuntime.undo,
+    redo: documentRuntime.redo,
     toggleSidebar: () => ui.togglePanel("sidebar"),
     openFile: documentRuntime.selectFile,
     toggleCommandPalette: () => featureRuntime.runUiAction("command_palette", () => {

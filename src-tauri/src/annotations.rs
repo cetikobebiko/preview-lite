@@ -2,9 +2,12 @@ use crate::document_io::{
     atomic_write_pdf, ensure_unprotected, AtomicWriteReport, CommitState, DocumentIoError,
     DocumentIoFailure, DocumentIoStage,
 };
+use crate::incremental_save::{save_mutation, RawDocument, RawPage};
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Annotation IPC koordinat sözleşmesi: sayfanın görüntü uzayında normalize dikdörtgen.
 ///
@@ -349,61 +352,234 @@ fn requires_generated_appearance(annotation_type: &str) -> bool {
     matches!(annotation_type, "Highlight" | "Underline")
 }
 
+const FPDF_ANNOT_TEXT: FPDF_ANNOTATION_SUBTYPE = 1;
+const FPDF_ANNOT_HIGHLIGHT: FPDF_ANNOTATION_SUBTYPE = 9;
+const FPDF_ANNOT_UNDERLINE: FPDF_ANNOTATION_SUBTYPE = 10;
+const FPDF_ANNOT_FLAG_HIDDEN: c_int = 1 << 1;
+const COLORTYPE_COLOR: FPDFANNOT_COLORTYPE = 0;
+const COLORTYPE_INTERIOR_COLOR: FPDFANNOT_COLORTYPE = 1;
+/// `FPDF_RenderPageBitmap` bayrağı: etkileşim gerektirmeyen annotation'ları da çiz.
+const RENDER_ANNOTATIONS: c_int = 0x01;
+
+/// Ham PDFium annotation handle'ı; düşerken kapanır.
+struct RawAnnotation<'p> {
+    bindings: &'p dyn PdfiumLibraryBindings,
+    handle: FPDF_ANNOTATION,
+    _page: std::marker::PhantomData<&'p RawPage<'p>>,
+}
+
+impl<'p> RawAnnotation<'p> {
+    fn wrap(page: &'p RawPage<'_>, handle: FPDF_ANNOTATION) -> Option<Self> {
+        (!handle.is_null()).then_some(Self {
+            bindings: page.bindings,
+            handle,
+            _page: std::marker::PhantomData,
+        })
+    }
+
+    fn create(
+        page: &'p RawPage<'_>,
+        subtype: FPDF_ANNOTATION_SUBTYPE,
+        name: &str,
+    ) -> Result<Self, DocumentIoFailure> {
+        Self::wrap(
+            page,
+            page.bindings.FPDFPage_CreateAnnot(page.handle, subtype),
+        )
+        .ok_or_else(|| DocumentIoFailure::write(format!("{name} annotation oluşturulamadı")))
+    }
+
+    fn get(page: &'p RawPage<'_>, index: c_int) -> Result<Self, DocumentIoFailure> {
+        Self::wrap(page, page.bindings.FPDFPage_GetAnnot(page.handle, index))
+            .ok_or_else(|| DocumentIoFailure::write(format!("Annotation {index} okunamadı")))
+    }
+
+    fn check(&self, ok: FPDF_BOOL, what: &str) -> Result<(), DocumentIoFailure> {
+        if self.bindings.is_true(ok) {
+            Ok(())
+        } else {
+            Err(DocumentIoFailure::write(format!(
+                "Annotation {what} ayarlanamadı"
+            )))
+        }
+    }
+
+    fn set_string(&self, key: &str, value: &str) -> Result<(), DocumentIoFailure> {
+        self.check(
+            self.bindings
+                .FPDFAnnot_SetStringValue_str(self.handle, key, value),
+            key,
+        )
+    }
+
+    fn set_color(
+        &self,
+        color_type: FPDFANNOT_COLORTYPE,
+        (red, green, blue): (u8, u8, u8),
+    ) -> Result<(), DocumentIoFailure> {
+        let ok = self.bindings.FPDFAnnot_SetColor(
+            self.handle,
+            color_type,
+            u32::from(red),
+            u32::from(green),
+            u32::from(blue),
+            255,
+        );
+        self.check(ok, "rengi")
+    }
+
+    fn set_rect(&self, bounds: &PdfRect) -> Result<(), DocumentIoFailure> {
+        let rect = FS_RECTF {
+            left: bounds.left().value,
+            top: bounds.top().value,
+            right: bounds.right().value,
+            bottom: bounds.bottom().value,
+        };
+        self.check(
+            self.bindings.FPDFAnnot_SetRect(self.handle, &rect),
+            "bounds",
+        )
+    }
+
+    fn append_quad_points(&self, quad: &PdfQuadPoints) -> Result<(), DocumentIoFailure> {
+        let raw = FS_QUADPOINTSF {
+            x1: quad.x1.value,
+            y1: quad.y1.value,
+            x2: quad.x2.value,
+            y2: quad.y2.value,
+            x3: quad.x3.value,
+            y3: quad.y3.value,
+            x4: quad.x4.value,
+            y4: quad.y4.value,
+        };
+        self.check(
+            self.bindings
+                .FPDFAnnot_AppendAttachmentPoints(self.handle, &raw),
+            "QuadPoints",
+        )
+    }
+}
+
+impl Drop for RawAnnotation<'_> {
+    fn drop(&mut self) {
+        self.bindings.FPDFPage_CloseAnnot(self.handle);
+    }
+}
+
+/// pdfium-render'ın annotation tarihleriyle aynı biçim (UTC): `D:YYYYMMDDHHmmSSZ00'00'`.
+fn pdf_date_utc(time: SystemTime) -> String {
+    let seconds = time
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let (year, month, day) = civil_from_days((seconds / 86_400) as i64);
+    let of_day = seconds % 86_400;
+    format!(
+        "D:{year:04}{month:02}{day:02}{:02}{:02}{:02}Z00'00'",
+        of_day / 3_600,
+        of_day % 3_600 / 60,
+        of_day % 60
+    )
+}
+
+/// 1970-01-01'den itibaren gün sayısını proleptik Gregoryen takvim tarihine çevirir
+/// (Howard Hinnant, "chrono-Compatible Low-Level Date Algorithms", `civil_from_days`).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    } as u32;
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 /// Sayfanın son annotation'ı için normal görünüm akışını (`/AP /N`) PDFium'a ürettirir.
 ///
-/// pdfium-render 0.8.37 annotation/page handle'larını public açmadığından
-/// `FPDFAnnot_SetAP` mevcut nesne modelinden çağrılamıyor. PDFium'un kendi AP
-/// üreticisi (`CPDF_GenerateAP`), `/AP`'si olmayan ve gizli olmayan annotation'lar
-/// için sayfa annotation'larla render edilirken çalışır ve akışı annotation
-/// sözlüğüne yazar; ardından yapılan kayıt bu akışı dosyaya taşır. Highlight için
-/// `/C` renginde `re f` dolgusu ve `/BM /Multiply` ExtGState'i, Underline için
-/// dikdörtgenin altında 1 pt `/C` renginde çizgi üretir.
+/// PDFium'un kendi AP üreticisi (`CPDF_GenerateAP`), `/AP`'si olmayan ve gizli olmayan
+/// annotation'lar için sayfa annotation'larla render edilirken çalışır ve akışı annotation
+/// sözlüğüne yazar; ardından yapılan kayıt bu akışı dosyaya taşır. Highlight için `/C`
+/// renginde `re f` dolgusu ve `/BM /Multiply` ExtGState'i, Underline için dikdörtgenin altında
+/// 1 pt `/C` renginde çizgi üretir.
 ///
-/// Sayfadaki diğer annotation'lar render süresince gizlenir; aksi halde onların
-/// görünümleri de dosyaya kalıcı olarak yazılırdı. Bayrakları sonra geri yüklenir
-/// (`/F` hiç yoksa anlamca eşdeğer `/F 0` olarak yazılır).
-fn generate_last_annotation_appearance(page: &mut PdfPage<'_>) -> Result<(), DocumentIoFailure> {
-    let annotations = page.annotations_mut();
-    let target_index = annotations.len().checked_sub(1).ok_or_else(|| {
-        DocumentIoFailure::invariant("Görünüm akışı üretilecek annotation bulunamadı")
-    })?;
+/// Sayfadaki diğer annotation'lar render süresince gizlenir; aksi halde onların görünümleri de
+/// dosyaya kalıcı olarak yazılırdı. Bayrakları sonra geri yüklenir (`/F` hiç yoksa anlamca
+/// eşdeğer `/F 0` olarak yazılır).
+fn generate_last_annotation_appearance(page: &RawPage<'_>) -> Result<(), DocumentIoFailure> {
+    let bindings = page.bindings;
+    let target = bindings.FPDFPage_GetAnnotCount(page.handle) - 1;
+    if target < 0 {
+        return Err(DocumentIoFailure::invariant(
+            "Görünüm akışı üretilecek annotation bulunamadı",
+        ));
+    }
     let mut hidden_for_render = Vec::new();
-    for index in 0..target_index {
-        let mut annotation = annotations.get(index).map_err(|error| {
-            DocumentIoFailure::write(format!("Annotation {index} okunamadı: {error}"))
-        })?;
-        if !annotation.is_hidden() {
-            annotation.set_is_hidden(true).map_err(|error| {
-                DocumentIoFailure::write(format!("Annotation {index} gizlenemedi: {error}"))
-            })?;
-            hidden_for_render.push(index);
+    for index in 0..target {
+        let annotation = RawAnnotation::get(page, index)?;
+        let flags = bindings.FPDFAnnot_GetFlags(annotation.handle);
+        if flags & FPDF_ANNOT_FLAG_HIDDEN == 0 {
+            if !bindings.is_true(
+                bindings.FPDFAnnot_SetFlags(annotation.handle, flags | FPDF_ANNOT_FLAG_HIDDEN),
+            ) {
+                return Err(DocumentIoFailure::write(format!(
+                    "Annotation {index} gizlenemedi"
+                )));
+            }
+            hidden_for_render.push((index, flags));
         }
     }
 
     // Bitmap içeriği kullanılmaz; yalnız PDFium'un annotation listesini kurması gerekir.
-    let render_result = page
-        .render_with_config(
-            &PdfRenderConfig::new()
-                .set_target_width(16)
-                .render_annotations(true)
-                .render_form_data(false),
-        )
-        .map(|_| ());
+    let rendered = render_annotations_once(page);
 
-    let annotations = page.annotations_mut();
-    for index in hidden_for_render {
-        annotations
-            .get(index)
-            .and_then(|mut annotation| annotation.set_is_hidden(false))
-            .map_err(|error| {
-                DocumentIoFailure::write(format!(
-                    "Annotation {index} görünürlüğü geri yüklenemedi: {error}"
-                ))
-            })?;
+    for (index, flags) in hidden_for_render {
+        let annotation = RawAnnotation::get(page, index)?;
+        if !bindings.is_true(bindings.FPDFAnnot_SetFlags(annotation.handle, flags)) {
+            return Err(DocumentIoFailure::write(format!(
+                "Annotation {index} görünürlüğü geri yüklenemedi"
+            )));
+        }
     }
-    render_result.map_err(|error| {
-        DocumentIoFailure::write(format!("Annotation görünüm akışı üretilemedi: {error}"))
-    })
+    rendered
+}
+
+fn render_annotations_once(page: &RawPage<'_>) -> Result<(), DocumentIoFailure> {
+    const WIDTH: c_int = 16;
+    let bindings = page.bindings;
+    let page_width = bindings.FPDF_GetPageWidthF(page.handle);
+    let page_height = bindings.FPDF_GetPageHeightF(page.handle);
+    let height = if page_width > 0.0 && page_height.is_finite() {
+        ((WIDTH as f32 * page_height / page_width).round() as c_int).clamp(1, 4_096)
+    } else {
+        WIDTH
+    };
+    let bitmap = bindings.FPDFBitmap_Create(WIDTH, height, 0);
+    if bitmap.is_null() {
+        return Err(DocumentIoFailure::write(
+            "Annotation görünüm akışı üretilemedi: bitmap oluşturulamadı",
+        ));
+    }
+    bindings.FPDFBitmap_FillRect(bitmap, 0, 0, WIDTH, height, 0xFFFF_FFFF);
+    bindings.FPDF_RenderPageBitmap(
+        bitmap,
+        page.handle,
+        0,
+        0,
+        WIDTH,
+        height,
+        0,
+        RENDER_ANNOTATIONS,
+    );
+    bindings.FPDFBitmap_Destroy(bitmap);
+    Ok(())
 }
 
 fn last_annotation_has_appearance_objects(
@@ -536,142 +712,68 @@ pub(crate) fn add_annotation_report(
         std::slice::from_ref(&path),
         &path,
         move |pdfium, temp| {
-            let mut document = open_pdfium_doc(
-                pdfium,
-                source.to_string_lossy().as_ref(),
-                password.as_deref(),
-            )
-            .map_err(DocumentIoFailure::preflight)?;
-            ensure_unprotected(&document)?;
-            let page_count = validate_page_index(&document, page_index)?;
-            let before = page_annotation_fingerprints(&document, page_index as u16)?;
-            let (red, green, blue) = hex_to_rgb(&color);
-            let pdf_color = PdfColor::new(red, green, blue, 255);
-            let bounds = {
-                let page = document.pages().get(page_index as u16).map_err(|error| {
+            // Okumalar (görüntü dönüşümü, önceki parmak izleri) pdfium-render ile aynı dosyanın ayrı
+            // bir açılışında yapılır; düzenleme ve artımlı kayıt ham PDFium ile (`RawDocument`),
+            // çünkü pdfium-render 0.8.37 `PdfDocument`'in handle'ını açmaz.
+            let (page_count, before, bounds) = {
+                let reader = open_pdfium_doc(
+                    pdfium,
+                    source.to_string_lossy().as_ref(),
+                    password.as_deref(),
+                )
+                .map_err(DocumentIoFailure::preflight)?;
+                ensure_unprotected(&reader)?;
+                let page_count = validate_page_index(&reader, page_index)?;
+                let before = page_annotation_fingerprints(&reader, page_index as u16)?;
+                let page = reader.pages().get(page_index as u16).map_err(|error| {
                     DocumentIoFailure::preflight(format!("Sayfa bulunamadı: {error}"))
                 })?;
                 let display =
                     PageDisplayTransform::for_page(&page).map_err(DocumentIoFailure::preflight)?;
-                pdf_rect_from_rect_data(&display.normalized_to_user_rect(&normalized_rect))
+                let bounds =
+                    pdf_rect_from_rect_data(&display.normalized_to_user_rect(&normalized_rect));
+                (page_count, before, bounds)
             };
+            let (subtype, color_type) = match annot_type.as_str() {
+                "Highlight" => (FPDF_ANNOT_HIGHLIGHT, COLORTYPE_COLOR),
+                "Underline" => (FPDF_ANNOT_UNDERLINE, COLORTYPE_COLOR),
+                // pdfium-render'ın `set_fill_color`'ı gibi `/IC`.
+                "Text" => (FPDF_ANNOT_TEXT, COLORTYPE_INTERIOR_COLOR),
+                _ => {
+                    return Err(DocumentIoFailure::preflight(format!(
+                        "Desteklenmeyen annotation tipi: {annot_type}"
+                    )))
+                }
+            };
+            let bindings = pdfium.bindings();
+            let document = RawDocument::open_for_mutation(bindings, &source, password.as_deref())?;
             {
-                let mut page = document
-                    .pages_mut()
-                    .get(page_index as u16)
-                    .map_err(|error| {
-                        DocumentIoFailure::preflight(format!("Sayfa bulunamadı: {error}"))
-                    })?;
-                let annotations = page.annotations_mut();
-                match annot_type.as_str() {
-                    "Highlight" => {
-                        let mut annotation =
-                            annotations.create_highlight_annotation().map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Highlight annotation oluşturulamadı: {error}"
-                                ))
-                            })?;
-                        // Text markup rengi spec gereği `/C`'dir; `/IC` bu tiplerde tanımsızdır.
-                        // FPDFAnnot_SetColor AP varken başarısız olduğundan AP'den önce ayarlanır.
-                        annotation.set_stroke_color(pdf_color).map_err(|error| {
-                            DocumentIoFailure::write(format!(
-                                "Annotation rengi ayarlanamadı: {error}"
-                            ))
-                        })?;
-                        annotation.set_bounds(bounds).map_err(|error| {
-                            DocumentIoFailure::write(format!(
-                                "Annotation bounds ayarlanamadı: {error}"
-                            ))
-                        })?;
-                        annotation
-                            .attachment_points_mut()
-                            .create_attachment_point_at_end(text_markup_quad_points(&bounds))
-                            .map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Annotation QuadPoints ayarlanamadı: {error}"
-                                ))
-                            })?;
-                        if let Some(value) = contents.as_deref() {
-                            annotation.set_contents(value).map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Annotation içeriği ayarlanamadı: {error}"
-                                ))
-                            })?;
-                        }
+                let page = RawPage::load(&document, page_index)?;
+                {
+                    let annotation = RawAnnotation::create(&page, subtype, &annot_type)?;
+                    annotation.set_string("CreationDate", &pdf_date_utc(SystemTime::now()))?;
+                    if subtype == FPDF_ANNOT_TEXT {
+                        // pdfium-render'ın `create_text_annotation("")`'ı gibi.
+                        annotation.set_string("Contents", "")?;
                     }
-                    "Underline" => {
-                        let mut annotation =
-                            annotations.create_underline_annotation().map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Underline annotation oluşturulamadı: {error}"
-                                ))
-                            })?;
-                        // Text markup rengi spec gereği `/C`'dir; `/IC` bu tiplerde tanımsızdır.
-                        // FPDFAnnot_SetColor AP varken başarısız olduğundan AP'den önce ayarlanır.
-                        annotation.set_stroke_color(pdf_color).map_err(|error| {
-                            DocumentIoFailure::write(format!(
-                                "Annotation rengi ayarlanamadı: {error}"
-                            ))
-                        })?;
-                        annotation.set_bounds(bounds).map_err(|error| {
-                            DocumentIoFailure::write(format!(
-                                "Annotation bounds ayarlanamadı: {error}"
-                            ))
-                        })?;
-                        annotation
-                            .attachment_points_mut()
-                            .create_attachment_point_at_end(text_markup_quad_points(&bounds))
-                            .map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Annotation QuadPoints ayarlanamadı: {error}"
-                                ))
-                            })?;
-                        if let Some(value) = contents.as_deref() {
-                            annotation.set_contents(value).map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Annotation içeriği ayarlanamadı: {error}"
-                                ))
-                            })?;
-                        }
+                    // Text markup rengi spec gereği `/C`'dir; `/IC` bu tiplerde tanımsızdır.
+                    // FPDFAnnot_SetColor AP varken başarısız olduğundan AP'den önce ayarlanır.
+                    annotation.set_color(color_type, hex_to_rgb(&color))?;
+                    annotation.set_rect(&bounds)?;
+                    if subtype != FPDF_ANNOT_TEXT {
+                        annotation.append_quad_points(&text_markup_quad_points(&bounds))?;
                     }
-                    "Text" => {
-                        let mut annotation =
-                            annotations.create_text_annotation("").map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Text annotation oluşturulamadı: {error}"
-                                ))
-                            })?;
-                        annotation.set_fill_color(pdf_color).map_err(|error| {
-                            DocumentIoFailure::write(format!(
-                                "Annotation rengi ayarlanamadı: {error}"
-                            ))
-                        })?;
-                        annotation.set_bounds(bounds).map_err(|error| {
-                            DocumentIoFailure::write(format!(
-                                "Annotation bounds ayarlanamadı: {error}"
-                            ))
-                        })?;
-                        if let Some(value) = contents.as_deref() {
-                            annotation.set_contents(value).map_err(|error| {
-                                DocumentIoFailure::write(format!(
-                                    "Annotation içeriği ayarlanamadı: {error}"
-                                ))
-                            })?;
-                        }
+                    if let Some(value) = contents.as_deref() {
+                        annotation.set_string("Contents", value)?;
                     }
-                    _ => {
-                        return Err(DocumentIoFailure::preflight(format!(
-                            "Desteklenmeyen annotation tipi: {annot_type}"
-                        )))
-                    }
+                    annotation.set_string("M", &pdf_date_utc(SystemTime::now()))?;
                 }
                 if requires_generated_appearance(&annot_type) {
-                    generate_last_annotation_appearance(&mut page)?;
+                    generate_last_annotation_appearance(&page)?;
                 }
             }
-            document.save_to_file(temp).map_err(|error| {
-                DocumentIoFailure::write(format!("Temp PDF kaydedilemedi: {error}"))
-            })?;
+            let mode = save_mutation(&document, &source, temp)?;
+            tracing::info!(operation = "add_annotation", write_mode = ?mode, "Annotation eklendi");
             let expected = AnnotationFingerprint {
                 annotation_type: expected_type.clone(),
                 bounds: [
@@ -739,15 +841,21 @@ pub(crate) fn delete_annotation_report(
         std::slice::from_ref(&path),
         &path,
         move |pdfium, temp| {
-            let mut document = open_pdfium_doc(
-                pdfium,
-                source.to_string_lossy().as_ref(),
-                password.as_deref(),
-            )
-            .map_err(DocumentIoFailure::preflight)?;
-            ensure_unprotected(&document)?;
-            let page_count = validate_page_index(&document, page_index)?;
-            let before = page_annotation_fingerprints(&document, page_index as u16)?;
+            // Okumalar pdfium-render ile, silme ve artımlı kayıt ham PDFium ile (bkz. ekleme).
+            let (page_count, before) = {
+                let reader = open_pdfium_doc(
+                    pdfium,
+                    source.to_string_lossy().as_ref(),
+                    password.as_deref(),
+                )
+                .map_err(DocumentIoFailure::preflight)?;
+                ensure_unprotected(&reader)?;
+                let page_count = validate_page_index(&reader, page_index)?;
+                (
+                    page_count,
+                    page_annotation_fingerprints(&reader, page_index as u16)?,
+                )
+            };
             let target_fingerprint = before.get(annotation_index).cloned().ok_or_else(|| {
                 DocumentIoFailure::preflight(format!(
                     "Annotation indeksi aralık dışında: {annotation_index} >= {}",
@@ -758,24 +866,19 @@ pub(crate) fn delete_annotation_report(
                 .iter()
                 .filter(|item| item.matches(&target_fingerprint))
                 .count();
+            let bindings = pdfium.bindings();
+            let document = RawDocument::open_for_mutation(bindings, &source, password.as_deref())?;
             {
-                let mut page = document
-                    .pages_mut()
-                    .get(page_index as u16)
-                    .map_err(|error| {
-                        DocumentIoFailure::preflight(format!("Sayfa bulunamadı: {error}"))
-                    })?;
-                let annotations = page.annotations_mut();
-                let annotation = annotations.get(annotation_index).map_err(|error| {
-                    DocumentIoFailure::preflight(format!("Annotation bulunamadı: {error}"))
+                let page = RawPage::load(&document, page_index)?;
+                let index = c_int::try_from(annotation_index).map_err(|_| {
+                    DocumentIoFailure::preflight("Annotation indeksi PDFium sınırını aşıyor")
                 })?;
-                annotations.delete_annotation(annotation).map_err(|error| {
-                    DocumentIoFailure::write(format!("Annotation silinemedi: {error}"))
-                })?;
+                if !bindings.is_true(bindings.FPDFPage_RemoveAnnot(page.handle, index)) {
+                    return Err(DocumentIoFailure::write("Annotation silinemedi"));
+                }
             }
-            document.save_to_file(temp).map_err(|error| {
-                DocumentIoFailure::write(format!("Temp PDF kaydedilemedi: {error}"))
-            })?;
+            let mode = save_mutation(&document, &source, temp)?;
+            tracing::info!(operation = "delete_annotation", write_mode = ?mode, "Annotation silindi");
             Ok((
                 page_count,
                 before.len(),
@@ -1702,5 +1805,145 @@ mod tests {
             crate::document_io::DocumentIoStage::ValidateInvariant
         );
         assert!(error.detail.contains("Annotation bounds okunamadı"));
+    }
+
+    fn add_highlight(path: &Path) {
+        add_annotation_with_password(
+            path.to_string_lossy().to_string(),
+            0,
+            "Highlight".to_string(),
+            RectData {
+                x: 100.0,
+                y: 100.0,
+                width: 80.0,
+                height: 20.0,
+            },
+            "#FFCC00".to_string(),
+            Some("Incremental highlight".to_string()),
+            None,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn annotation_add_and_delete_append_incremental_updates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("annotations.pdf");
+        fs::copy(fixture(), &path).unwrap();
+        let original = fs::read(&path).unwrap();
+
+        add_highlight(&path);
+        let added = fs::read(&path).unwrap();
+        assert!(added.len() > original.len());
+        assert!(
+            added.starts_with(&original),
+            "add rewrote the original bytes"
+        );
+
+        delete_annotation_with_password(
+            path.to_string_lossy().to_string(),
+            0,
+            "0".to_string(),
+            None,
+        )
+        .unwrap();
+        let deleted = fs::read(&path).unwrap();
+        assert!(deleted.len() > added.len());
+        assert!(
+            deleted.starts_with(&added),
+            "delete rewrote the previous bytes"
+        );
+    }
+
+    #[test]
+    fn annotation_add_keeps_signed_bytes_and_signatures() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("signature.pdf");
+        fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/sanitization/signature.pdf"),
+            &path,
+        )
+        .unwrap();
+        let original = fs::read(&path).unwrap();
+        let signatures = |path: &Path| {
+            crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+                let document = pdfium
+                    .load_pdf_from_file(path, None)
+                    .map_err(|error| error.to_string())?;
+                Ok(document
+                    .signatures()
+                    .iter()
+                    .map(|signature| signature.bytes())
+                    .collect::<Vec<_>>())
+            })
+            .unwrap()
+        };
+        let before = signatures(&path);
+        assert_eq!(before.len(), 1);
+
+        add_highlight(&path);
+
+        assert!(
+            fs::read(&path).unwrap().starts_with(&original),
+            "signed bytes were rewritten"
+        );
+        assert_eq!(signatures(&path), before);
+    }
+
+    #[test]
+    fn added_annotation_carries_creation_and_modification_dates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("annotations.pdf");
+        fs::copy(fixture(), &path).unwrap();
+        add_highlight(&path);
+
+        let document = lopdf::Document::load(&path).unwrap();
+        let page = *document.get_pages().get(&1).unwrap();
+        let annots = document
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Annots")
+            .and_then(|annots| document.dereference(annots))
+            .and_then(|(_, annots)| annots.as_array())
+            .unwrap()
+            .clone();
+        let last = document
+            .get_dictionary(annots.last().unwrap().as_reference().unwrap())
+            .unwrap();
+        for key in [&b"CreationDate"[..], b"M"] {
+            let value = last.get(key).and_then(lopdf::Object::as_str).unwrap();
+            let text = std::str::from_utf8(value).unwrap();
+            assert_eq!(text.len(), "D:20261018125456Z00'00'".len(), "{text}");
+            assert!(
+                text.starts_with("D:") && text.ends_with("Z00'00'"),
+                "{text}"
+            );
+            assert!(
+                text[2..16].bytes().all(|byte| byte.is_ascii_digit()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn civil_from_days_matches_known_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(-1), (1969, 12, 31));
+        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
+        assert_eq!(civil_from_days(11_017), (2000, 3, 1));
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
+        assert_eq!(civil_from_days(20_744), (2026, 10, 18));
+    }
+
+    #[test]
+    fn pdf_dates_use_the_pdfium_render_utc_format() {
+        let at = |seconds| UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+        assert_eq!(pdf_date_utc(at(1_792_328_096)), "D:20261018125456Z00'00'");
+        assert_eq!(
+            pdf_date_utc(at(951_782_400 + 86_399)),
+            "D:20000229235959Z00'00'"
+        );
+        assert_eq!(pdf_date_utc(at(0)), "D:19700101000000Z00'00'");
     }
 }
