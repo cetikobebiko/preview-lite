@@ -18135,16 +18135,23 @@ mod tests {
 
         let (hit_tx, hit_rx) = tokio::sync::oneshot::channel::<()>();
         let hit_cell = Arc::new(Mutex::new(Some(hit_tx)));
-        let (tx_id_tx, tx_id_rx) = tokio::sync::oneshot::channel::<MutationTransactionId>();
-        let tx_id_cell = Arc::new(Mutex::new(Some(tx_id_tx)));
+        // Kayıt hook içinde alınır: caller abort edildikten sonra işlem bitip
+        // active_transactions'tan çıkmış olabilir; id ile sonradan aramak yarış yaratır.
+        let (record_tx, record_rx) =
+            tokio::sync::oneshot::channel::<Arc<MutationTransactionRecord>>();
+        let record_cell = Arc::new(Mutex::new(Some(record_tx)));
+        let hook_manager = Arc::clone(&manager);
 
         manager.register_test_hook(Arc::new(move |phase, id| {
             if phase == MutationTestHookPhase::MutationWorkerStarted {
                 if let Some(t) = hit_cell.lock().take() {
                     let _ = t.send(());
                 }
-                if let Some(t2) = tx_id_cell.lock().take() {
-                    let _ = t2.send(*id);
+                if let Some(t2) = record_cell.lock().take() {
+                    let record = hook_manager
+                        .get_transaction(id)
+                        .expect("işlem hook anında aktif");
+                    let _ = t2.send(record);
                 }
             }
         }));
@@ -18166,10 +18173,9 @@ mod tests {
         });
 
         let _ = hit_rx.await;
-        let tx_id = tx_id_rx.await.unwrap();
+        let record = record_rx.await.unwrap();
         handle.abort();
 
-        let record = manager.get_transaction(&tx_id).unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(5), record.wait_for_terminal())
             .await
             .unwrap();
@@ -18189,16 +18195,23 @@ mod tests {
 
         let (hit_tx, hit_rx) = tokio::sync::oneshot::channel::<()>();
         let hit_cell = Arc::new(Mutex::new(Some(hit_tx)));
-        let (tx_id_tx, tx_id_rx) = tokio::sync::oneshot::channel::<MutationTransactionId>();
-        let tx_id_cell = Arc::new(Mutex::new(Some(tx_id_tx)));
+        // Kayıt hook içinde alınır: caller abort edildikten sonra işlem bitip
+        // active_transactions'tan çıkmış olabilir; id ile sonradan aramak yarış yaratır.
+        let (record_tx, record_rx) =
+            tokio::sync::oneshot::channel::<Arc<MutationTransactionRecord>>();
+        let record_cell = Arc::new(Mutex::new(Some(record_tx)));
+        let hook_manager = Arc::clone(&manager);
 
         manager.register_test_hook(Arc::new(move |phase, id| {
             if phase == MutationTestHookPhase::BeforeValidation {
                 if let Some(t) = hit_cell.lock().take() {
                     let _ = t.send(());
                 }
-                if let Some(t2) = tx_id_cell.lock().take() {
-                    let _ = t2.send(*id);
+                if let Some(t2) = record_cell.lock().take() {
+                    let record = hook_manager
+                        .get_transaction(id)
+                        .expect("işlem hook anında aktif");
+                    let _ = t2.send(record);
                 }
             }
         }));
@@ -18220,10 +18233,9 @@ mod tests {
         });
 
         let _ = hit_rx.await;
-        let tx_id = tx_id_rx.await.unwrap();
+        let record = record_rx.await.unwrap();
         handle.abort();
 
-        let record = manager.get_transaction(&tx_id).unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(5), record.wait_for_terminal())
             .await
             .unwrap();
@@ -18276,16 +18288,23 @@ mod tests {
 
         let (hit_tx, hit_rx) = tokio::sync::oneshot::channel::<()>();
         let hit_cell = Arc::new(Mutex::new(Some(hit_tx)));
-        let (tx_id_tx, tx_id_rx) = tokio::sync::oneshot::channel::<MutationTransactionId>();
-        let tx_id_cell = Arc::new(Mutex::new(Some(tx_id_tx)));
+        // Kayıt hook içinde alınır: caller abort edildikten sonra işlem bitip
+        // active_transactions'tan çıkmış olabilir; id ile sonradan aramak yarış yaratır.
+        let (record_tx, record_rx) =
+            tokio::sync::oneshot::channel::<Arc<MutationTransactionRecord>>();
+        let record_cell = Arc::new(Mutex::new(Some(record_tx)));
+        let hook_manager = Arc::clone(&manager);
 
         manager.register_test_hook(Arc::new(move |phase, id| {
             if phase == MutationTestHookPhase::BeforeAtomicCommitCall {
                 if let Some(t) = hit_cell.lock().take() {
                     let _ = t.send(());
                 }
-                if let Some(t2) = tx_id_cell.lock().take() {
-                    let _ = t2.send(*id);
+                if let Some(t2) = record_cell.lock().take() {
+                    let record = hook_manager
+                        .get_transaction(id)
+                        .expect("işlem hook anında aktif");
+                    let _ = t2.send(record);
                 }
             }
         }));
@@ -18307,10 +18326,9 @@ mod tests {
         });
 
         let _ = hit_rx.await;
-        let tx_id = tx_id_rx.await.unwrap();
+        let record = record_rx.await.unwrap();
         handle.abort();
 
-        let record = manager.get_transaction(&tx_id).unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(5), record.wait_for_terminal())
             .await
             .unwrap();
@@ -18329,16 +18347,23 @@ mod tests {
 
         let (hit_tx, hit_rx) = tokio::sync::oneshot::channel::<()>();
         let hit_cell = Arc::new(Mutex::new(Some(hit_tx)));
-        let (tx_id_tx, tx_id_rx) = tokio::sync::oneshot::channel::<MutationTransactionId>();
-        let tx_id_cell = Arc::new(Mutex::new(Some(tx_id_tx)));
+        // Kayıt hook içinde alınır: caller abort edildikten sonra işlem bitip
+        // active_transactions'tan çıkmış olabilir; id ile sonradan aramak yarış yaratır.
+        let (record_tx, record_rx) =
+            tokio::sync::oneshot::channel::<Arc<MutationTransactionRecord>>();
+        let record_cell = Arc::new(Mutex::new(Some(record_tx)));
+        let hook_manager = Arc::clone(&manager);
 
         manager.register_test_hook(Arc::new(move |phase, id| {
             if phase == MutationTestHookPhase::BeforeStateApply {
                 if let Some(t) = hit_cell.lock().take() {
                     let _ = t.send(());
                 }
-                if let Some(t2) = tx_id_cell.lock().take() {
-                    let _ = t2.send(*id);
+                if let Some(t2) = record_cell.lock().take() {
+                    let record = hook_manager
+                        .get_transaction(id)
+                        .expect("işlem hook anında aktif");
+                    let _ = t2.send(record);
                 }
             }
         }));
@@ -18360,10 +18385,9 @@ mod tests {
         });
 
         let _ = hit_rx.await;
-        let tx_id = tx_id_rx.await.unwrap();
+        let record = record_rx.await.unwrap();
         handle.abort();
 
-        let record = manager.get_transaction(&tx_id).unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(5), record.wait_for_terminal())
             .await
             .unwrap();
@@ -18578,16 +18602,23 @@ mod tests {
 
         let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
         let started_cell = Arc::new(Mutex::new(Some(started_tx)));
-        let (tx_id_tx, tx_id_rx) = tokio::sync::oneshot::channel::<MutationTransactionId>();
-        let tx_id_cell = Arc::new(Mutex::new(Some(tx_id_tx)));
+        // Kayıt hook içinde alınır: caller abort edildikten sonra işlem bitip
+        // active_transactions'tan çıkmış olabilir; id ile sonradan aramak yarış yaratır.
+        let (record_tx, record_rx) =
+            tokio::sync::oneshot::channel::<Arc<MutationTransactionRecord>>();
+        let record_cell = Arc::new(Mutex::new(Some(record_tx)));
+        let hook_manager = Arc::clone(&manager);
 
         manager.register_test_hook(Arc::new(move |phase, id| {
             if phase == MutationTestHookPhase::MutationWorkerStarted {
                 if let Some(t) = started_cell.lock().take() {
                     let _ = t.send(());
                 }
-                if let Some(t2) = tx_id_cell.lock().take() {
-                    let _ = t2.send(*id);
+                if let Some(t2) = record_cell.lock().take() {
+                    let record = hook_manager
+                        .get_transaction(id)
+                        .expect("işlem hook anında aktif");
+                    let _ = t2.send(record);
                 }
             } else if phase == MutationTestHookPhase::BeforeCommit {
                 panic!("controlled owner task panic after caller drop");
@@ -18611,10 +18642,9 @@ mod tests {
         });
 
         let _ = started_rx.await;
-        let tx_id = tx_id_rx.await.unwrap();
+        let record = record_rx.await.unwrap();
         handle.abort();
 
-        let record = manager.get_transaction(&tx_id).unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(5), record.wait_for_terminal())
             .await
             .unwrap();
