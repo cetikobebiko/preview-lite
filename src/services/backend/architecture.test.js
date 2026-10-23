@@ -476,6 +476,7 @@ describe("backend service boundaries", () => {
       [sources.documentSession, "export_session_page_to_image"],
       [sources.documentSession, "export_session_pages_as_images"],
       [sources.documentSession, "export_session_text_content"],
+      [sources.documentSession, "export_session_text_to_file"],
       [sources.documentSession, "print_session_pdf"],
       [sources.documentSession, "inspect_session_print_resources"],
       [sources.documentSession, "generate_session_rgb_derived_coverage_preview"],

@@ -363,6 +363,15 @@ export const CONTRACTS = Object.freeze({
     pages: arrayOf(u32Type),
     format: stringType,
   }),
+  // Rust writes the file through document_io::write_atomically; the target must be .txt or .md.
+  exportSessionTextToFile: command("export_session_text_to_file", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    pages: arrayOf(u32Type),
+    format: stringType,
+    targetPath: stringType,
+  }),
   printSessionPdf: command(
     "print_session_pdf",
     {

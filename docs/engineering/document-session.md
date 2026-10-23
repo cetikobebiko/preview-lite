@@ -219,6 +219,7 @@ has a bounded timeout and kills/reaps a timed-out child.
 | `split_session_pdf` | `cooperative` | ranges, pages, staging and publish boundaries |
 | `merge_session_pdfs` | `cooperative` | input document and page-copy loops |
 | `export_session_text_content` | `cooperative` | between pages; each text extraction remains a boundary |
+| `export_session_text_to_file` | `cooperative` | same extraction boundaries; checked again before the atomic write, which is not interrupted once started |
 | `print_session_pdf` | `child-process-killable` | page preparation plus tracked spooler child |
 | `inspect_session_print_resources` | `cooperative` | bounded resource traversal and private worker cancellation marker |
 | `generate_session_rgb_derived_coverage_preview` | `cooperative` | PDFium render boundaries, bounded scanline groups, PNG encode and serialization checkpoints |

@@ -1336,6 +1336,7 @@ pub fn run() {
             document_session::export_session_page_to_image,
             document_session::export_session_pages_as_images,
             document_session::export_session_text_content,
+            document_session::export_session_text_to_file,
             document_session::print_session_pdf,
             document_session::inspect_session_print_resources,
             document_session::generate_session_rgb_derived_coverage_preview,

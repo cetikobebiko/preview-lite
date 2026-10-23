@@ -84,6 +84,24 @@ export const exportSessionTextContent = (
     }),
   ).promise;
 
+export const exportSessionTextToFile = (
+  sessionId,
+  expectedContentGeneration,
+  pages,
+  format,
+  targetPath,
+) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("exportSessionTextToFile", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      pages,
+      format,
+      targetPath,
+    }),
+  ).promise;
+
 export const printSessionPdf = (
   sessionId,
   expectedContentGeneration,

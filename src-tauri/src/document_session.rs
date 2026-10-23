@@ -8366,6 +8366,70 @@ pub async fn export_session_text_content(
         .await
 }
 
+/// Seçili sayfaların metnini job worker'da çıkarır ve hedefe `document_io::write_atomically`
+/// ile yazar; hedef ya eski içeriğini korur ya da tam metni alır. Hedef yalnız `.txt` veya
+/// `.md` olabilir, böylece aynı kaydetme diyaloğundan bir PDF'in üzerine metin yazılamaz.
+#[tauri::command]
+// Tauri IPC contract intentionally exposes each frontend field as a top-level argument.
+#[allow(clippy::too_many_arguments)]
+pub async fn export_session_text_to_file(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    pages: Vec<u32>,
+    format: String,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    let target = PathBuf::from(target_path);
+    validate_text_export_target(&target)?;
+    reject_private_target(&target, &store.temp_root)?;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let crate::job_worker::JobResult::Text(text) = crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::ExtractText {
+                        pages: Some(pages),
+                        format,
+                    },
+                    Duration::from_secs(180),
+                )?
+                else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Text export worker beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                context.cancellation.check_cancelled()?;
+                crate::document_io::write_atomically(&target, |staged| {
+                    std::io::Write::write_all(staged, text.as_bytes())
+                })
+                .map_err(job_output_write_failure)
+            },
+        )
+        .await
+}
+
+fn validate_text_export_target(target: &Path) -> Result<(), DocumentSessionError> {
+    let extension = target
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    if matches!(extension.as_deref(), Some("txt" | "md")) {
+        Ok(())
+    } else {
+        Err(DocumentSessionError::new(
+            "TEXT_EXPORT_TARGET_INVALID",
+            "Metin dışa aktarma hedefi .txt veya .md uzantılı olmalı",
+        ))
+    }
+}
+
 #[tauri::command]
 pub async fn print_session_pdf(
     job_id: String,
@@ -11848,24 +11912,28 @@ fn accept_job_output_file(
     crate::document_io::write_atomically(target, |staged| {
         std::io::copy(&mut input, staged).map(drop)
     })
-    .map_err(|error| {
-        use crate::document_io::AtomicWriteError;
-        let message = match error {
-            AtomicWriteError::CreateTemp(error) => {
-                format!("Hedef çıktı staging dosyası oluşturulamadı: {error}")
-            }
-            AtomicWriteError::Write(error) => {
-                format!("Job worker çıktısı staging dosyasına kopyalanamadı: {error}")
-            }
-            AtomicWriteError::Sync(error) => {
-                format!("Job worker çıktısı diske yazılamadı: {error}")
-            }
-            AtomicWriteError::Persist(error) => {
-                format!("Job worker çıktısı hedefe kabul edilemedi: {error}")
-            }
-        };
-        SessionJobOperationError::failed_with_code("SESSION_JOB_OUTPUT_WRITE_FAILED", message)
-    })
+    .map_err(job_output_write_failure)
+}
+
+fn job_output_write_failure(
+    error: crate::document_io::AtomicWriteError<std::io::Error>,
+) -> SessionJobOperationError {
+    use crate::document_io::AtomicWriteError;
+    let message = match error {
+        AtomicWriteError::CreateTemp(error) => {
+            format!("Hedef çıktı staging dosyası oluşturulamadı: {error}")
+        }
+        AtomicWriteError::Write(error) => {
+            format!("Job worker çıktısı staging dosyasına kopyalanamadı: {error}")
+        }
+        AtomicWriteError::Sync(error) => {
+            format!("Job worker çıktısı diske yazılamadı: {error}")
+        }
+        AtomicWriteError::Persist(error) => {
+            format!("Job worker çıktısı hedefe kabul edilemedi: {error}")
+        }
+    };
+    SessionJobOperationError::failed_with_code("SESSION_JOB_OUTPUT_WRITE_FAILED", message)
 }
 
 pub(crate) const SESSION_JOB_OUTPUT_CONFLICT_CODE: &str = "SESSION_JOB_OUTPUT_CONFLICT";
@@ -16742,6 +16810,112 @@ mod tests {
             "DOCUMENT_SESSION_INVALID_STATE"
         );
         assert!(candidate_validation_path(&state, 1).is_ok());
+    }
+
+    #[tokio::test]
+    async fn text_export_to_file_writes_exactly_the_extracted_text() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("text-source.pdf");
+        fs::copy(fixture_path("three-distinct-pages.pdf"), &original).unwrap();
+        let app = test_command_app();
+        let session_id = open_test_session(&app.state::<DocumentSessionStore>(), &original);
+
+        for (format, file_name) in [("text", "pages.txt"), ("markdown", "pages.md")] {
+            let target = documents.path().join(file_name);
+            // An existing target is replaced as a whole, not appended to or truncated in place.
+            fs::write(&target, b"previous export").unwrap();
+            let SessionJobOutcome::Completed {
+                value: expected, ..
+            } = export_session_text_content(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![0, 2],
+                format.to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap()
+            else {
+                panic!("text extraction did not complete");
+            };
+            let outcome = export_session_text_to_file(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![0, 2],
+                format.to_string(),
+                target.to_string_lossy().to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap();
+
+            assert!(
+                matches!(outcome, SessionJobOutcome::Completed { .. }),
+                "{format}: {outcome:?}"
+            );
+            assert!(!expected.is_empty(), "{format}: fixture produced no text");
+            assert_eq!(fs::read_to_string(&target).unwrap(), expected, "{format}");
+        }
+        let mut names = fs::read_dir(documents.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["pages.md", "pages.txt", "text-source.pdf"]);
+    }
+
+    #[tokio::test]
+    async fn text_export_to_file_rejects_non_text_and_private_targets_before_the_job() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("text-source.pdf");
+        fs::copy(fixture_path("three-distinct-pages.pdf"), &original).unwrap();
+        let original_bytes = fs::read(&original).unwrap();
+        let app = test_command_app();
+        let store = app.state::<DocumentSessionStore>();
+        let session_id = open_test_session(&store, &original);
+        let private_target = store.temp_root.join("export.txt");
+
+        for target in [
+            original.clone(),
+            documents.path().join("notes"),
+            documents.path().join("notes.txt.pdf"),
+        ] {
+            let error = export_session_text_to_file(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![0],
+                "text".to_string(),
+                target.to_string_lossy().to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                error.code,
+                "TEXT_EXPORT_TARGET_INVALID",
+                "{}",
+                target.display()
+            );
+        }
+        assert_eq!(fs::read(&original).unwrap(), original_bytes);
+        assert!(!documents.path().join("notes").exists());
+
+        let error = export_session_text_to_file(
+            Uuid::new_v4().to_string(),
+            session_id,
+            1,
+            vec![0],
+            "text".to_string(),
+            private_target.to_string_lossy().to_string(),
+            app.state(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "DOCUMENT_SESSION_PRIVATE_TARGET");
+        assert!(!private_target.exists());
     }
 
     #[tokio::test]

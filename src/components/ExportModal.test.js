@@ -8,11 +8,13 @@ const dialogMocks = vi.hoisted(() => ({
 }));
 const backendMocks = vi.hoisted(() => ({
   exportSessionPagesAsImages: vi.fn(),
-  exportSessionTextContent: vi.fn(),
+  exportSessionTextToFile: vi.fn(),
   printSessionPdf: vi.fn(),
 }));
+const fsMocks = vi.hoisted(() => ({ writeTextFile: vi.fn() }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => dialogMocks);
+vi.mock("@tauri-apps/plugin-fs", () => fsMocks);
 vi.mock("../services/backend/index.js", () => backendMocks);
 
 import ExportModal from "./ExportModal.svelte";
@@ -134,5 +136,57 @@ describe("ExportModal page range validation", () => {
 
     await waitFor(() => expect(onsuccess).toHaveBeenCalled());
     expect(backendMocks.exportSessionPagesAsImages.mock.calls[0][2]).toEqual([2, 0, 1]);
+  });
+});
+
+describe("ExportModal text export", () => {
+  const originalAnimate = Element.prototype.animate;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
+  });
+
+  afterEach(() => {
+    Element.prototype.animate = originalAnimate;
+  });
+
+  async function submitTextExport() {
+    const onsuccess = vi.fn();
+    render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 3, onsuccess } });
+    await fireEvent.click(screen.getByText("Metin (StExt)"));
+    await fireEvent.input(screen.getByLabelText(/Sayfa Aralığı/), { target: { value: "1, 3" } });
+    await fireEvent.click(screen.getByText("Dışa Aktar", { selector: "button" }));
+    return { onsuccess };
+  }
+
+  it("hands the chosen path to the backend instead of writing from the webview", async () => {
+    dialogMocks.save.mockResolvedValue("/out/notes.md");
+    backendMocks.exportSessionTextToFile.mockResolvedValue(null);
+    const { onsuccess } = await submitTextExport();
+
+    await waitFor(() => expect(onsuccess).toHaveBeenCalledWith("Metin başarıyla dışa aktarıldı!"));
+    expect(backendMocks.exportSessionTextToFile).toHaveBeenCalledWith("session-1", 7, [0, 2], "markdown", "/out/notes.md");
+    expect(fsMocks.writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("shows the backend error and reports no success when the write is rejected", async () => {
+    dialogMocks.save.mockResolvedValue("/out/notes.pdf");
+    backendMocks.exportSessionTextToFile.mockRejectedValue(
+      Object.assign(new Error("Metin dışa aktarma hedefi .txt veya .md uzantılı olmalı"), { code: "TEXT_EXPORT_TARGET_INVALID" }),
+    );
+    const { onsuccess } = await submitTextExport();
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(".txt veya .md"));
+    expect(onsuccess).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the save dialog is cancelled", async () => {
+    dialogMocks.save.mockResolvedValue(null);
+    const { onsuccess } = await submitTextExport();
+
+    await waitFor(() => expect(dialogMocks.save).toHaveBeenCalled());
+    expect(backendMocks.exportSessionTextToFile).not.toHaveBeenCalled();
+    expect(onsuccess).not.toHaveBeenCalled();
   });
 });
