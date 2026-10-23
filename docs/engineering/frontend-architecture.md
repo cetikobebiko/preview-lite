@@ -115,7 +115,7 @@ Bounded altyapı noktaları:
 
 - `src/services/backend/client.js`: raw `invoke` sınırı.
 - `src/services/platform/dialogs.js`, `window.js`, `events.js`: platform adaptörleri.
-- `src/configManager.js`: AppData filesystem config sınırı.
+- `src/configManager.js`: son dosyalar ve belge görünüm durumu (en fazla 200 belge, en uzun süredir güncellenmeyen düşer). Okuma/yazma `read_app_config`/`write_app_config` ile Rust'tadır: AppData'daki `app_config.json` `document_io::write_atomically` ile yazılır, okunamayan dosya üzerine yazılmak yerine `app_config.corrupt-*.json` olarak kenara alınır. Yazımlar frontend'de sıraya girer.
 - `src/main.js`: uygulama mount'u ve yalnız `VITE_ZOOM_STRESS=1` build'inde yüklenen zoom stres girişi. Uygulama dış bağlantı açmaz; shell plugin kaldırıldı.
 
 Henüz platform adaptörüne taşınmamış legacy bileşenler:

@@ -8,6 +8,7 @@ use tauri::Manager;
 pub mod a11y;
 pub mod ai;
 pub mod annotations;
+pub mod app_config;
 pub mod batch;
 pub mod document_io;
 pub mod document_session;
@@ -1337,6 +1338,8 @@ pub fn run() {
             document_session::export_session_pages_as_images,
             document_session::export_session_text_content,
             document_session::export_session_text_to_file,
+            app_config::read_app_config,
+            app_config::write_app_config,
             document_session::print_session_pdf,
             document_session::inspect_session_print_resources,
             document_session::generate_session_rgb_derived_coverage_preview,

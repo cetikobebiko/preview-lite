@@ -6,6 +6,11 @@ export const speakText = (text, voice) =>
 
 export const stopSpeaking = () => callBackend("stopSpeaking");
 
+export const readAppConfig = () => callBackend("readAppConfig");
+
+export const writeAppConfig = (contents) =>
+  callBackend("writeAppConfig", { contents });
+
 export const shareFileMacos = (sessionId, expectedContentGeneration) =>
   runSessionJob(sessionId, (jobId) =>
     callBackend("shareFileMacos", { jobId, sessionId, expectedContentGeneration }),

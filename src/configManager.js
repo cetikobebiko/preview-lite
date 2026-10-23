@@ -1,6 +1,8 @@
-import { BaseDirectory, readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
+import { readAppConfig, writeAppConfig } from './services/backend/platform.js';
 
-const CONFIG_FILE = 'app_config.json';
+const MAX_RECENT_FILES = 20;
+// Belge başına görünüm durumu (sayfa, zoom) için üst sınır; en uzun süredir güncellenmeyen düşer.
+export const MAX_DOCUMENT_STATES = 200;
 
 let configCache = {
   recentFiles: [],
@@ -8,38 +10,30 @@ let configCache = {
 };
 
 let isInitialized = false;
+// Yazımlar sıraya girer ve her biri yazıldığı anki önbelleği taşır: daha eski bir anlık
+// görüntü, sonra başlayan bir yazımın üzerine düşemez. Atomiklik Rust tarafındadır.
+let saveQueue = Promise.resolve();
 
 export async function initConfig() {
   if (isInitialized) return;
   try {
-    const dirExists = await exists('', { baseDir: BaseDirectory.AppData });
-    if (!dirExists) {
-      await mkdir('', { baseDir: BaseDirectory.AppData, recursive: true });
+    // Rust geçerli bir JSON nesnesi ya da null döndürür; okunamayan dosya kenara alınmıştır.
+    const text = await readAppConfig();
+    if (text) {
+      configCache = { ...configCache, ...JSON.parse(text) };
     }
-    
-    const hasConfig = await exists(CONFIG_FILE, { baseDir: BaseDirectory.AppData });
-    if (hasConfig) {
-      const text = await readTextFile(CONFIG_FILE, { baseDir: BaseDirectory.AppData });
-      try {
-        configCache = { ...configCache, ...JSON.parse(text) };
-      } catch (e) {
-        console.error("Config parse error, using defaults");
-      }
-    } else {
-      await saveConfig();
-    }
+    trimDocumentStates();
     isInitialized = true;
   } catch (error) {
     console.error("Config init error:", error);
   }
 }
 
-export async function saveConfig() {
-  try {
-    await writeTextFile(CONFIG_FILE, JSON.stringify(configCache, null, 2), { baseDir: BaseDirectory.AppData });
-  } catch (error) {
-    console.error("Config save error:", error);
-  }
+export function saveConfig() {
+  saveQueue = saveQueue
+    .then(() => writeAppConfig(JSON.stringify(configCache, null, 2)))
+    .catch((error) => console.error("Config save error:", error));
+  return saveQueue;
 }
 
 export function getConfigRecentFiles() {
@@ -50,7 +44,7 @@ export async function addRecentFile(filePath) {
   if (!configCache.recentFiles) configCache.recentFiles = [];
   configCache.recentFiles = configCache.recentFiles.filter(f => f !== filePath);
   configCache.recentFiles.unshift(filePath);
-  if (configCache.recentFiles.length > 20) {
+  if (configCache.recentFiles.length > MAX_RECENT_FILES) {
     configCache.recentFiles.pop();
   }
   await saveConfig();
@@ -63,9 +57,23 @@ export function getDocumentState(filePath) {
 
 export async function saveDocumentState(filePath, state) {
   if (!configCache.documentStates) configCache.documentStates = {};
-  configCache.documentStates[filePath] = {
-    ...configCache.documentStates[filePath],
-    ...state
-  };
+  const previous = configCache.documentStates[filePath];
+  // Silip yeniden eklemek girişi sona taşır; nesne sırası böylece güncellenme sırasıdır.
+  // Yollar tamsayı biçiminde olmadığından JavaScript bu sırayı korur.
+  delete configCache.documentStates[filePath];
+  configCache.documentStates[filePath] = { ...previous, ...state };
+  trimDocumentStates();
   await saveConfig();
+}
+
+function trimDocumentStates() {
+  const states = configCache.documentStates;
+  if (!states || typeof states !== "object" || Array.isArray(states)) {
+    configCache.documentStates = {};
+    return;
+  }
+  const paths = Object.keys(states);
+  for (const path of paths.slice(0, Math.max(0, paths.length - MAX_DOCUMENT_STATES))) {
+    delete states[path];
+  }
 }

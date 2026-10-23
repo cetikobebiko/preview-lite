@@ -133,6 +133,8 @@ const cases = [
 
   ["speakText", () => platform.speakText("hello", "Yelda"), "speak_text", { text: "hello", voice: "Yelda" }],
   ["stopSpeaking", () => platform.stopSpeaking(), "stop_speaking"],
+  ["readAppConfig", () => platform.readAppConfig(), "read_app_config"],
+  ["writeAppConfig", () => platform.writeAppConfig("{}"), "write_app_config", { contents: "{}" }],
   ["shareFileMacos", () => platform.shareFileMacos("sid", 1), "share_file_macos", { sessionId: "sid", expectedContentGeneration: 1 }],
   ["shareExternalFileMacos", () => platform.shareExternalFileMacos("/a.png"), "share_external_file_macos", { path: "/a.png" }],
   ["performOcrOnPage", () => platform.performOcrOnPage("sid", 1, 2), "perform_ocr_on_page", { sessionId: "sid", expectedContentGeneration: 1, pageIndex: 2 }],

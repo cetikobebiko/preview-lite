@@ -823,6 +823,11 @@ export const CONTRACTS = Object.freeze({
     },
   ),
   stopSpeaking: commandWithoutPayload("stop_speaking"),
+  // app_config.json in AppData; Rust validates a JSON object of at most 1 MiB and writes atomically.
+  readAppConfig: commandWithoutPayload("read_app_config"),
+  writeAppConfig: command("write_app_config", {
+    contents: stringType,
+  }),
   shareFileMacos: command("share_file_macos", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
