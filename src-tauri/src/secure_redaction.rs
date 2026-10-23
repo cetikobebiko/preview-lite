@@ -6629,30 +6629,21 @@ mod tests {
 
     #[test]
     fn test_real_no_io_planner_isolation() {
-        let temp_dir = std::env::temp_dir();
-        let before_entries: Vec<_> = std::fs::read_dir(&temp_dir)
-            .expect("Read temp dir before planner")
-            .filter_map(|e| e.ok().map(|entry| entry.file_name()))
-            .collect();
-
         let input = sample_planner_input_2pages();
         let plan = build_secure_redaction_plan(&input).expect("Build plan");
         assert!(plan.executable);
 
-        let after_entries: Vec<_> = std::fs::read_dir(&temp_dir)
-            .expect("Read temp dir after planner")
-            .filter_map(|e| e.ok().map(|entry| entry.file_name()))
-            .collect();
-
-        assert_eq!(
-            before_entries, after_entries,
-            "Planner must produce zero I/O side-effects or temporary files"
-        );
-
+        // The shared system temp dir is not a usable oracle: parallel tests and other processes
+        // create entries there at any time. The planner module must not reach the filesystem at
+        // all, so the guarantee is checked on its production source instead.
         let source = include_str!("secure_redaction.rs");
         let non_test_source = source.split("mod tests").next().unwrap_or(source);
-        assert!(!non_test_source.contains("File::create"));
-        assert!(!non_test_source.contains("OpenOptions"));
+        for forbidden in ["fs::", "File::", "OpenOptions", "tempfile", "temp_dir"] {
+            assert!(
+                !non_test_source.contains(forbidden),
+                "Planner must produce zero I/O side-effects; production source uses {forbidden}"
+            );
+        }
     }
 
     #[test]

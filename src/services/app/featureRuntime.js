@@ -314,6 +314,8 @@ export function createFeatureRuntime({
       "toggle-sidebar": () => ui.togglePanel("sidebar"),
       "open-search": () => ui.setPanel("search", true),
       "export-notes-md": exportNotesMarkdown,
+      "undo-mutation": documentRuntime.undo,
+      "redo-mutation": documentRuntime.redo,
       "split-pdf": documentExportController.splitPdf,
       "merge-pdf": transform.mergePdf,
       "reset-zoom": viewerRuntime.navigation.resetZoom,

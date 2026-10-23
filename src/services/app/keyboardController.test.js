@@ -4,7 +4,7 @@ import { createKeyboardController } from "./keyboardController.js";
 const actionNames = [
   "save", "saveAs", "toggleSidebar", "openFile", "toggleCommandPalette",
   "openSearch", "openExport", "requestPage", "goToPage", "adjustZoom",
-  "toggleShortcuts", "nextPage", "previousPage",
+  "toggleShortcuts", "nextPage", "previousPage", "undo", "redo",
 ];
 
 function createController(overrides = {}) {
@@ -52,6 +52,10 @@ describe("keyboard controller behavior matrix", () => {
     ["previous ArrowLeft", { key: "ArrowLeft" }, "previousPage", undefined],
     ["previous ArrowUp", { key: "ArrowUp" }, "previousPage", undefined],
     ["previous PageUp", { key: "PageUp" }, "previousPage", undefined],
+    ["Cmd+Z undo", { metaKey: true, key: "z" }, "undo", undefined],
+    ["Ctrl+Z undo", { ctrlKey: true, key: "Z" }, "undo", undefined],
+    ["Cmd+Shift+Z redo", { metaKey: true, shiftKey: true, key: "z" }, "redo", undefined],
+    ["Ctrl+Y redo", { ctrlKey: true, key: "y" }, "redo", undefined],
   ])("routes %s and prevents the browser default exactly once", async (_name, keys, actionName, argument) => {
     const { controller, actions } = createController();
     const event = keyboardEvent(keys);
@@ -106,5 +110,25 @@ describe("keyboard controller behavior matrix", () => {
 
     await expect(controller.handleKeyDown(event)).resolves.toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("document undo and redo shortcuts", () => {
+  it("leave Cmd+Z to the browser while a text field is focused", async () => {
+    const { controller, actions } = createController({ isEditableTarget: () => true });
+    for (const keys of [{ metaKey: true, key: "z" }, { metaKey: true, shiftKey: true, key: "z" }, { ctrlKey: true, key: "y" }]) {
+      const event = keyboardEvent(keys);
+      expect(await controller.handleKeyDown(event)).toBe(false);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    }
+    expect(actions.undo).not.toHaveBeenCalled();
+    expect(actions.redo).not.toHaveBeenCalled();
+  });
+
+  it("do nothing without an open document", async () => {
+    const { controller, actions } = createController({ hasDocument: () => false });
+    const event = keyboardEvent({ metaKey: true, key: "z" });
+    expect(await controller.handleKeyDown(event)).toBe(false);
+    expect(actions.undo).not.toHaveBeenCalled();
   });
 });

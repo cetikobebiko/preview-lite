@@ -2,7 +2,7 @@
 export function createKeyboardController({
   hasDocument, isEditableTarget, save, saveAs, toggleSidebar, openFile,
   toggleCommandPalette, openSearch, openExport, requestPage, goToPage,
-  adjustZoom, toggleShortcuts, nextPage, previousPage,
+  adjustZoom, toggleShortcuts, nextPage, previousPage, undo, redo,
 } = {}) {
   async function handleKeyDown(event) {
     const modifier = event.metaKey || event.ctrlKey;
@@ -20,7 +20,10 @@ export function createKeyboardController({
     if (modifier && event.key === "-") return handled(() => adjustZoom(-0.1));
     if (modifier && event.key === "0") return handled(() => adjustZoom(null));
     if (modifier && event.key === "/") return handled(toggleShortcuts);
+    // Metin alanında tarayıcının kendi undo'su çalışır; belge undo'su yalnız onun dışında.
     if (isEditableTarget()) return false;
+    if (modifier && key === "z") return handled(() => event.shiftKey ? redo() : undo());
+    if (modifier && key === "y") return handled(redo);
     if (event.key === "?") return handled(toggleShortcuts);
     if (["ArrowRight", "ArrowDown", "PageDown"].includes(event.key)) return handled(nextPage);
     if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) return handled(previousPage);

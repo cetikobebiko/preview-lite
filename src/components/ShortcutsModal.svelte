@@ -9,6 +9,8 @@
     { key: "Ctrl + P", desc: "Yazdır" },
     { key: "Ctrl + F", desc: "Arama Çubuğunu Aç/Kapat" },
     { key: "Ctrl + G", desc: "Sayfaya Git" },
+    { key: "Ctrl + Z", desc: "Son Değişikliği Geri Al" },
+    { key: "Ctrl + Shift + Z / Ctrl + Y", desc: "Geri Alınanı Yinele" },
     { key: "Ok Tuşları", desc: "Sayfalar Arası Geçiş" },
     { key: "PageUp / PageDown", desc: "Sayfalar Arası Geçiş" },
     { key: "Ctrl + (+/-)", desc: "Yakınlaştır / Uzaklaştır" },

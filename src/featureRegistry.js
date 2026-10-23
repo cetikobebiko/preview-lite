@@ -65,6 +65,15 @@ const RAW_FEATURES = [
     documentation: "docs/engineering/feature-matrix.md#page-manipulation",
   },
   {
+    id: "undo_redo",
+    label: "Undo / redo",
+    status: "experimental",
+    enabled: true,
+    warning: "Geri alma geçmişi oturum boyunca tutulur; en fazla 50 adım ve 1 GiB, uygulama kapanınca silinir.",
+    platform: ALL_DESKTOP_PLATFORMS,
+    documentation: "docs/engineering/undo-redo-and-incremental-save-design.md",
+  },
+  {
     id: "page_merge_direct",
     label: "Direct page merge command",
     status: "disabled",

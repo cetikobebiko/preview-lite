@@ -190,6 +190,8 @@ describe("backend service boundaries", () => {
 
   it("rejects unauthorized filePath arguments for session PDF operations in frontend contracts", () => {
     const sessionContractKeys = [
+      "undoSessionMutation",
+      "redoSessionMutation",
       "rotateSessionPage",
       "deleteSessionPages",
       "reorderSessionPages",
@@ -564,6 +566,24 @@ describe("backend service boundaries", () => {
         .toContain("mutate_isolated");
       expect(body, `${functionName} must carry a typed mutation recipe`)
         .toContain("MutationRecipe::");
+    }
+
+    // Undo/redo carry no recipe: they restore a history entry through the same isolated
+    // transaction (commit, cancellation and recovery), so the same PDFium ban applies.
+    for (const functionName of ["undo_session_mutation", "redo_session_mutation"]) {
+      const body = rustFunctionBody(sessionSource, functionName);
+      for (const call of forbidden) {
+        expect(body, `${functionName} must not call ${call}`).not.toContain(call);
+      }
+      expect(body, `${functionName} must use isolated mutation orchestration`)
+        .toContain("mutate_isolated_restore");
+      expect(body, `${functionName} must name its history direction`)
+        .toContain("HistoryDirection::");
+    }
+    const restore = rustFunctionBody(sessionSource, "mutate_isolated_restore");
+    expect(restore).toContain("run_mutation_transaction");
+    for (const call of forbidden) {
+      expect(restore, `mutate_isolated_restore must not call ${call}`).not.toContain(call);
     }
 
     const orchestration =
