@@ -691,19 +691,23 @@ may already have built up tens of gigabytes of footprint. Windows Job Object con
 implemented and is explicitly reported as unavailable; process kill/reap isolation still
 applies.
 
-## Local verification (2026-07-29, macOS arm64)
+## Local verification (2026-10-23, macOS arm64)
+
+Rerun of the same commands on `chore/audit-remediation` (main plus the audit fixes). The
+previous run (2026-07-29) recorded 147 library tests and 338 frontend tests; git history keeps
+that table.
 
 | Command | Result |
 |---|---|
 | `cargo fmt --all -- --check` | Passed |
-| `cargo check --locked --all-targets` | Passed; existing dead-code warnings remain |
-| `cargo test --locked --all-targets -- --test-threads=1` | Passed: 147 library tests plus all integration suites; mutation/reopen and split/merge process tests included |
-| `cargo test --locked --test worker_broker_process -- --test-threads=1` | Passed: 16 |
-| `cargo test --locked --test worker_pdfium_integration -- --test-threads=1` | Passed: 4, including worker-owned interactive reads, Unicode parity, and a >240 MiB render |
-| `cargo test --locked --test crash_tests -- --test-threads=1` | Passed: 2 |
-| `cargo test --locked --test session_worker_integration -- --test-threads=1` | Passed: 1 |
-| `npm run test` | Passed: 338 |
-| `npm run build` | Passed; existing Svelte/accessibility and chunking warnings remain |
+| `cargo check --locked --all-targets` | Passed; no warnings |
+| `cargo test --locked --all-targets -- --test-threads=1` | Passed: 1121 tests across 31 test targets (788 library tests), 10 ignored |
+| `cargo test --locked --test worker_broker_process -- --test-threads=1` | Passed: 30 |
+| `cargo test --locked --test worker_pdfium_integration -- --test-threads=1` | Passed: 13, 2 ignored. One of 8 runs failed `chunked_search_is_identical_to_whole_document_search`; 26 further runs (isolated and under CPU load) did not reproduce it. Treat as flaky until investigated. |
+| `cargo test --locked --test crash_tests -- --test-threads=1` | Passed: 3 |
+| `cargo test --locked --test session_worker_integration -- --test-threads=1` | Passed: 2 |
+| `npm run test` | Passed: 1409 tests in 137 files |
+| `npm run build` | Passed; the >500 kB chunk warning and two "dynamic import will not move module" warnings remain |
 | `cargo clippy --locked --all-targets --all-features -- -D warnings` | Passed; enforced as a CI gate. See `strict-clippy.md` for the category-by-category cleanup report. |
 
 ## Remaining native crash surface

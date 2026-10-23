@@ -15,9 +15,9 @@ bulunması tek başına özelliğin çalıştığı anlamına gelmez.
 | `unreachable` | Kod var, ancak handler kaydı, payload, frontend bağlantısı, platform veya yapılandırma nedeniyle normal uygulama yolundan ulaşılamıyor. |
 | `unknown` | Statik analiz ve mevcut doğrulamalar güvenilir karar vermeye yetmiyor. |
 
-Prompt 5.1 itibarıyla tüm frontend Vitest testleri (272 test) ve Rust Cargo testleri (85 test) yerel ortamda %100 oranında çalıştırılmış ve geçmiş; doğrulama basamağı tamamlanmıştır.
+Test sayılarının güncel kaydı aşağıdaki "Güncel doğrulama" bölümündedir. Prompt 5.1 kaydı tarihseldir (o tarihte 272 Vitest ve 85 Rust testi geçmişti).
 
-Document Session mimarisi, Guard API entegrasyonu, single-flight save kilitleri, PDFium-only motor kuralları ve Windows I/O / DACL güvenlik garantileri runtime & unit test seviyesinde tamamen `working` ve `verified` statüsündedir.
+Document Session mimarisi, Guard API entegrasyonu, single-flight save kilitleri ve PDFium-only motor kuralları runtime & unit test seviyesinde `working` ve `verified` statüsündedir. Windows temp DACL doğrulaması bir istisnadır: main'de paralel `DocumentSessionStore::initialize` çağrıları aralıklı olarak `TEMP_SECURITY_ACL_UNAVAILABLE` ile düşüyordu (Build Windows CI). Düzeltme `feat/undo-redo-incremental-save` dalındadır (PR #1) ve o dalın Windows CI'ında geçmiştir; merge edilene kadar main için bu garanti `partial` sayılmalıdır.
 
 ### Implementation status ve validation state ayrımı
 
@@ -190,9 +190,23 @@ backend command bulunmaması açıkça belirtilmiştir.
 | Command Palette ve keyboard shortcuts | `App.svelte:507-600,1441-1510,2008-2014,2089`; `CommandPalette.svelte`; `ShortcutsModal.svelte` | Backend command yok; seçilen bazı aksiyonlar mevcut IPC handler'larını çağırabilir | `partial` | Global key handler, palette command listesi ve dispatch switch'i kaynakta bağlıdır. | Liste ile gerçek shortcut/dispatch kapsamının senkron kalması ve input focus conflict'leri test edilmedi. | Statically verified / unrun / no test. |
 | Markdown notes export | `App.svelte:1342-1388`; Command Palette `export-notes-md` | Backend command veya fs write çağrısı yok | `mock` | Markdown string hazırlanır ve save dialog açılır; save path seçilince başarı toast'ı gösterilir. | Hazırlanan `mdContent` hiçbir dosyaya yazılmaz; kullanıcıya sahte başarılı export bildirimi verilir. | Statically verified / unrun / no test. |
 
-## Güncel Prompt 8A-5 Doğrulaması (5 Ağustos 2026)
+## Güncel doğrulama (23 Ekim 2026, macOS arm64)
 
-Tüm doğrulamalar yerel ortamda %100 oranında çalıştırılmış ve başarıyla geçmiştir:
+`chore/audit-remediation` dalında (main ve audit düzeltmeleri) yerel olarak çalıştırıldı:
+
+```text
+137 Vitest dosyası / 1409 test
+1121 Rust testi, 31 test hedefinde (788 library testi), 10 ignored
+Svelte check 0 error
+Build başarılı (chunk boyutu ve dynamic import uyarıları duruyor)
+Clippy --all-targets --all-features -D warnings başarılı
+```
+
+Açık kalan: `worker_pdfium_integration` içindeki `chunked_search_is_identical_to_whole_document_search` 8 seri koşudan birinde düştü, sonraki 26 koşuda tekrarlanmadı; flaky kabul edilir. Komut bazında ayrıntı `pdfium-worker-isolation.md` "Local verification" tablosundadır.
+
+## Prompt 8A-5 Doğrulaması (5 Ağustos 2026, tarihsel)
+
+O tarihte tüm doğrulamalar yerel ortamda %100 oranında çalıştırılmış ve başarıyla geçmişti:
 
 ```text
 75 Vitest dosyası / 540 test
@@ -202,7 +216,7 @@ Build başarılı
 Clippy -D warnings başarılı
 ```
 
-Güncel Mimari ve Güvenlik Gerçekleri:
+O tarihteki mimari ve güvenlik gerçekleri:
 - Production UI'da `apply_redactions` veya `sanitize_pdf_document` callsite'ı bulunmamaktadır.
 - `apply_redactions` ve `sanitize_pdf_document` backend action wrapper'ları fail-closed `FEATURE_UNAVAILABLE` döndürür; PDFium veya lopdf parser'ı tetiklemez.
 - `scan_sensitive_data` iptal edilebilir session-job kontratı (Job Worker Protocol v3) ve amber inceleme vurgu katmanı (`.review-highlight-layer`) ile güvenli şekilde çalışmaktadır.
