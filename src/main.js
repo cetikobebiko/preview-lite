@@ -13,4 +13,11 @@ if (import.meta.env.VITE_ZOOM_STRESS === '1') {
     .catch((err) => console.error("Zoom stress failed:", err));
 }
 
+// Cancellation baseline only: `VITE_CANCEL_BASELINE=1 npm run tauri build` (see devtools/cancelBaseline.js).
+if (import.meta.env.VITE_CANCEL_BASELINE === '1') {
+  Promise.all([import('./devtools/cancelBaseline.js'), import('./services/platform/window.js')])
+    .then(([baseline, platform]) => baseline.runCancelBaseline({ closeWindow: () => platform.getCurrentWindow().close() }))
+    .catch((err) => console.error("Cancel baseline failed:", err));
+}
+
 export default app

@@ -441,6 +441,52 @@ cancellation behavior. To measure, run a release build with
 `RUST_LOG=pdfium_worker_metrics=debug` (JSON lines go to `logs/antigravity.log.*`) and summarize
 with `node scripts/worker-metrics-report.mjs <log>`.
 
+### Cancellation baseline S1–S5 (2026-10-23, macOS 26.6.1, Apple M1, 8 GiB)
+
+First measurement of the provisional grace and chunk constants. Release build with
+`VITE_CANCEL_BASELINE=1`: `src/devtools/cancelBaseline.js` waits for the first painted page,
+then plays a fixed schedule against `tmp/perf-fixtures/perf-mixed-1000.pdf` (1000 pages; 824
+text, 76 image, 100 vector; mixed sizes, 142 rotated; from `scripts/generate-perf-fixtures.py`):
+S1 fast then slow scrolling, S2 pinch bursts plus Cmd+=/Cmd+-, S3 thumbnail-sidebar scrolling
+(fast, then stepped with 250 ms pauses), S4 five superseding searches while scrolling, S5 idle,
+with 5 s settle gaps. Run with an isolated `HOME` (app data and logs; the driver restores the
+`antigravity_settings` localStorage entry, which WKWebView keeps under the real user) and
+`RUST_LOG=pdfium_worker_metrics=debug`. The window has no close permission, so the run is
+stopped after the schedule. `node scripts/cancel-baseline-report.mjs <log>` slices the log into
+the phases, anchored at the first successful `render-page` exchange. Two runs; S3 is from run 2
+only (run 1 had fast scrolling only, which requested 3 thumbnails in total).
+
+| Phase | In-flight cancels (drained / killed) | Respawns | Page renders, p95 | Read admission wait p50 / p95 |
+|---|---|---|---|---|
+| S1 scroll | 1 / 0 · 0 / 0 | 0 · 0 | 104, 173 ms · 109, 177 ms | 0 / 18 ms · 0 / 17 ms |
+| S2 zoom | 6 / 3 · 5 / 0 | 3 · 0 | 70, 324 ms · 117, 183 ms | 0 / 14 ms · 0 / 18 ms |
+| S3 thumbnails | 0 / 0 | 0 | 92 thumbnails, p50 3 ms, p95 44 ms | 0 / 0 ms |
+| S4 search + scroll | 8 / 0 · 6 / 0 | 0 · 0 | 61, 205 ms · 64, 422 ms | 118 / 465 ms · 113 / 387 ms |
+| S5 idle | no worker traffic | 0 | — | — |
+
+Findings:
+
+- Render grace 400 ms: 20 of 23 in-flight render cancels drained. The 3 kills were run-1 zoom
+  renders that had run 644–758 ms. A cancel kill is cheap here: the replacement reached `Hello`
+  in 11–15 ms, the document reopened in about 1 ms, and cancel kills are not charged to the
+  restart budget. A longer grace would keep the single-command worker busy with a stale result
+  for longer, so 400 ms stays.
+- Thumbnail and text-layout grace 250 ms: never reached (thumbnail p95 44 ms, text layout
+  p95 ≤ 14 ms); no in-flight thumbnail cancel occurred. The 120 ms thumbnail dwell removes
+  almost all thumbnail work during fast scrolling.
+- Search: all 8 cancelled chunks drained (about 153 ms each). A full search took 32 chunks and
+  about 6 s with 19 matches; the 150 ms time budget, not the 64-page cap, ends every chunk. The
+  cost is visible elsewhere: while a search runs, page reads wait p50 113–118 ms and p95
+  387–465 ms for admission, against about 17 ms without one. A smaller time budget (for example
+  75 ms) should roughly halve that wait at the price of more chunks; it has not been measured.
+- S5: no background worker traffic while idle.
+
+Not established: the plan's acceptance target (at least 80% fewer cancel-driven restarts) needs
+a measurement of the code before the cancellation work, which does not exist. Limits: one
+machine, one synthetic document, two runs; input is dispatched by script (`scrollBy`, synthetic
+wheel and key events), not real trackpad momentum, and zoom results differ between runs (3 vs 0
+kills).
+
 Frontend coalescing reduces how often cancellation happens at all. During a zoom gesture,
 `PdfPage` lets the in-flight render finish (its result is dropped as stale) and cancels once the
 150 ms debounce settles, instead of cancelling on every step. Sidebar and organizer thumbnails

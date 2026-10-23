@@ -1862,8 +1862,9 @@ impl CommandTimeout {
 
     /// How long a cancelled command may keep running so its response can be
     /// drained instead of killing the worker. Zero means kill immediately.
-    /// Only commands that normally finish quickly get a grace period; the
-    /// values are initial bounds pending the worker-metrics baseline.
+    /// Only commands that normally finish quickly get a grace period. Checked
+    /// against the 2026-10-23 S1–S5 baseline (pdfium-worker-isolation.md): 20 of
+    /// 23 render cancels drained, and a cancel kill costs only a ~15 ms respawn.
     fn cancel_grace(self) -> Duration {
         match self {
             Self::RenderPage | Self::SearchChunk => Duration::from_millis(400),
