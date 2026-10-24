@@ -192,6 +192,7 @@ export function createDocumentRuntime({
       }],
     }),
     setError: onError,
+    onToast,
   });
 
   async function applyMutationSnapshot(snapshot, { mapPageIndex = null } = {}) {

@@ -11,7 +11,7 @@ export function createDocumentOpenController({
   renderSession, getCanvas, getIsMounted, tick, applyBackendSessionSnapshot,
   chooseTransition, chooseTransitionSaveRecovery, invalidateSearch, restoreDocumentPosition,
   addRecentFile, getOutline, getMetadata, setError, chooseFile,
-  onWarning = console.warn,
+  onWarning = console.warn, onToast = () => {},
 }) {
   let automaticCommitRetryAttemptId = null;
   let automaticRecoveryRetryAttemptId = null;
@@ -62,6 +62,10 @@ export function createDocumentOpenController({
       void getMetadata(snapshot.id, snapshot.contentGeneration)
         .then((metadata) => { if (getIsMounted() && isCurrentDocumentSnapshot(documentSession, snapshot)) viewer.pdfMetadata = metadata; })
         .catch((error) => onWarning("PDF metadata yüklenemedi:", error));
+      // An encrypted PDF opens read-only; say so instead of letting edits fail later.
+      if (snapshot.editable === false) {
+        onToast(`Belge salt okunur açıldı: ${snapshot.readOnlyReason || "düzenleme desteklenmiyor"}.`);
+      }
       restoreDocumentPosition(snapshot.displayPath);
       await addRecentFile(snapshot.displayPath);
     },

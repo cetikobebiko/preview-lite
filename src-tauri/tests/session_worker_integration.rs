@@ -36,6 +36,55 @@ mod macos_arm64 {
             .to_string()
     }
 
+    /// Owner password "owner", empty user password: viewers open it without asking.
+    fn owner_only_encrypted_pdf(page_count: usize) -> Vec<u8> {
+        use lopdf::{
+            dictionary, Document, EncryptionState, EncryptionVersion, Object, Permissions, Stream,
+        };
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let kids = (0..page_count)
+            .map(|index| {
+                let content = format!("BT /F1 12 Tf 20 100 Td (page {index}) Tj ET");
+                let content_id =
+                    document.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+                Object::Reference(document.add_object(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => pages_id,
+                    "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+                    "Contents" => content_id,
+                }))
+            })
+            .collect::<Vec<_>>();
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => kids,
+                "Count" => page_count as i64,
+            }),
+        );
+        let catalog_id =
+            document.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        document.trailer.set("Root", catalog_id);
+        let id = Object::string_literal("owner-only-id");
+        document
+            .trailer
+            .set("ID", Object::Array(vec![id.clone(), id]));
+        let state = EncryptionState::try_from(EncryptionVersion::V2 {
+            document: &document,
+            owner_password: "owner",
+            user_password: "",
+            key_length: 128,
+            permissions: Permissions::all(),
+        })
+        .unwrap();
+        document.encrypt(&state).unwrap();
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
     #[tokio::test]
     async fn production_session_commands_use_worker_identity_and_preserve_frontend_contracts() {
         let source_path = fixture("reorder-rich.pdf");
@@ -389,6 +438,39 @@ mod macos_arm64 {
         assert_eq!(encrypted_probe.page_count, 1);
         document_session::discard_candidate_session(
             encrypted.session_id,
+            app.state(),
+            app.state(),
+            app.state(),
+            app.state(),
+        )
+        .await
+        .unwrap();
+
+        // An empty user password opens without a prompt, read-only.
+        let owner_only_dir = tempfile::tempdir().unwrap();
+        let owner_only_path = owner_only_dir.path().join("owner-only.pdf");
+        std::fs::write(&owner_only_path, owner_only_encrypted_pdf(2)).unwrap();
+        let owner_only = document_session::open_document_session(
+            owner_only_path.to_string_lossy().to_string(),
+            app.state(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(owner_only.status, "candidate_ready");
+        let owner_only_snapshot = owner_only.snapshot.unwrap();
+        assert!(!owner_only_snapshot.editable);
+        assert!(owner_only_snapshot.read_only_reason.is_some());
+        let owner_only_probe = document_session::probe_candidate_render(
+            owner_only.session_id.clone(),
+            1,
+            app.state(),
+            app.state(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(owner_only_probe.page_count, 2);
+        document_session::discard_candidate_session(
+            owner_only.session_id,
             app.state(),
             app.state(),
             app.state(),
