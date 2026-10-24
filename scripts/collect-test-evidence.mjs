@@ -84,6 +84,18 @@ export function minimumExpectedForDefaultProfile(rec) {
   return rec.expectedTestCount ?? 1;
 }
 
+/**
+ * Exact count for this OS when a conditional target splits only by macOS vs. the rest
+ * (`on_macos` / `default_non_macos`); otherwise null and the default lower bound applies.
+ */
+export function platformExactExpected(rec, platform = process.platform) {
+  const profile = rec.expectedTestCountByProfile;
+  if (rec.expectedTestPresence !== "conditional" || !profile) return null;
+  const key = platform === "darwin" ? "on_macos" : "default_non_macos";
+  if (typeof profile.on_macos !== "number" || typeof profile.default_non_macos !== "number") return null;
+  return profile[key];
+}
+
 function parseArgs() {
   const argv = process.argv.slice(2);
   const opts = { output: null, offline: false, selftest: false, help: false };
@@ -112,6 +124,9 @@ function selftest() {
     ["minExpected at_least_one", minimumExpectedForDefaultProfile({ expectedTestPresence: "at_least_one", expectedTestCount: 28 }) === 1],
     ["minExpected exact", minimumExpectedForDefaultProfile({ expectedTestPresence: "exact", expectedTestCount: 19 }) === 19],
     ["minExpected conditional default", minimumExpectedForDefaultProfile({ expectedTestPresence: "conditional", expectedTestCountByProfile: { default: 1, with_x: 13 } }) === 1],
+    ["platform exact macOS", platformExactExpected({ expectedTestPresence: "conditional", expectedTestCountByProfile: { on_macos: 31, default_non_macos: 30 } }, "darwin") === 31],
+    ["platform exact linux", platformExactExpected({ expectedTestPresence: "conditional", expectedTestCountByProfile: { on_macos: 31, default_non_macos: 30 } }, "linux") === 30],
+    ["platform exact needs both keys", platformExactExpected({ expectedTestPresence: "conditional", expectedTestCountByProfile: { default: 1, with_x: 13 } }, "darwin") === null],
   ];
   const failed = checks.filter(([, ok]) => !ok);
   for (const [name, ok] of checks) console.log(`  ${ok ? "ok" : "FAIL"}  ${name}`);
@@ -206,6 +221,8 @@ function run() {
         errors.push(`ZERO_TESTS: '${rec.id}' observed 0 tests but expected >= ${minExpected}`);
       } else if (rec.expectedTestPresence === "exact" && ev.observedCount !== rec.expectedTestCount) {
         errors.push(`EXPECTED_EVIDENCE_MISSING: '${rec.id}' exact expected ${rec.expectedTestCount}, observed ${ev.observedCount}`);
+      } else if (platformExactExpected(rec) !== null && ev.observedCount !== platformExactExpected(rec)) {
+        errors.push(`EXPECTED_EVIDENCE_MISSING: '${rec.id}' expected ${platformExactExpected(rec)} on ${process.platform}, observed ${ev.observedCount}`);
       } else if (ev.observedCount < minExpected) {
         errors.push(`EXPECTED_EVIDENCE_MISSING: '${rec.id}' observed ${ev.observedCount} < default lower bound ${minExpected}`);
       }

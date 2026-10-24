@@ -568,9 +568,13 @@
         "pdfium_worker_test_helper_executable"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 30,
-      "expectedTestPresence": "exact",
-      "notes": "Fake worker via CARGO_BIN_EXE_pdfium-worker-test-helper (bin gated by required-features worker-test-support, enabled for test builds by the self dev-dependency in src-tauri/Cargo.toml so it is never bundled); realWorker=false canonical (see test-execution-architecture.md §5)"
+      "expectedTestCount": 31,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "on_macos": 31,
+        "default_non_macos": 30
+      },
+      "notes": "Fake worker via CARGO_BIN_EXE_pdfium-worker-test-helper (bin gated by required-features worker-test-support, enabled for test builds by the self dev-dependency in src-tauri/Cargo.toml so it is never bundled); realWorker=false canonical (see test-execution-architecture.md §5); memory_watchdog_kills_a_runaway_worker_and_quarantines_the_page is #[cfg(target_os = \"macos\")], so macOS runs 31 tests and other platforms 30 (collect-test-evidence checks the count for the running OS exactly)"
     },
     {
       "id": "rust:worker_pdfium_integration",
