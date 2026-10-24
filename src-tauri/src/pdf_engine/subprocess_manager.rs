@@ -1673,10 +1673,12 @@ pub struct SearchChunkPolicy {
 }
 
 /// Production chunking for viewer search: a chunk normally ends after
-/// ~150 ms, well inside the search-chunk cancellation grace period.
+/// ~75 ms, well inside the search-chunk cancellation grace period. 75 ms
+/// halved the wait of reads queued behind a search without slowing the
+/// search (pdfium-worker-isolation.md, "Search chunk budget").
 pub const VIEWER_SEARCH_CHUNK_POLICY: SearchChunkPolicy = SearchChunkPolicy {
     max_pages: 64,
-    time_budget_ms: 150,
+    time_budget_ms: 75,
     max_results: crate::worker::ipc::MAX_WORKER_SEARCH_RESULTS,
 };
 
