@@ -303,7 +303,7 @@ pub(crate) fn validate_append_only(
 ///
 /// Denetim: lopdf belgeyi yükleyebilir; son `startxref` bir xref tablosunu (`xref`) ya da bir
 /// nesne başlığını gösterir; çözülen her `Normal` xref girdisi kendi `N G obj` başlığını
-/// gösterir. Şifreli belgeler parola gerektirmeden denetlenir (lopdf 0.34 yüklerken çözmez).
+/// gösterir. Şifreli belgeler parola gerektirmeden denetlenir.
 /// lopdf belgenin tüm nesnelerini belleğe ayrıştırır (yaklaşık bir belge boyutu, tasarım S6).
 pub(crate) fn find_xref_inconsistency(bytes: &[u8]) -> Option<String> {
     let document = match lopdf::Document::load_mem(bytes) {
@@ -318,8 +318,14 @@ pub(crate) fn find_xref_inconsistency(bytes: &[u8]) -> Option<String> {
         }
         _ => return Some(format!("startxref ({xref}) bir xref bölümünü göstermiyor")),
     }
-    // lopdf 0.45 silently corrects a startxref that misses its section, or rebuilds the
-    // table by scanning; its corrected start differing from the declared one is a repair.
+    // Lenient loading silently corrects a startxref, /Prev or /XRefStm that misses its
+    // section, or rebuilds the table by scanning; lopdf 0.46 reports either in
+    // `xref_recovery`. A corrected start differing from the declared one is also a repair.
+    if let Some(recovery) = document.xref_recovery {
+        return Some(format!(
+            "lopdf xref zincirini onararak okudu ({recovery:?})"
+        ));
+    }
     if document.xref_start != xref {
         return Some(format!(
             "startxref ({xref}) lopdf tarafından {} olarak düzeltildi",
@@ -738,6 +744,19 @@ mod tests {
         let mut leading_garbage = b"XYZ".to_vec();
         leading_garbage.extend_from_slice(&base);
 
+        // lopdf 0.46 corrects a /Prev that misses the previous section by a few bytes and
+        // reports it only through `xref_recovery`; every object offset still checks out.
+        let revised = std::fs::read(fixture("sanitization/incremental-revision.pdf")).unwrap();
+        let (_, last_xref) = last_startxref(&revised).unwrap();
+        let prev = section_prev(&revised[last_xref..]).unwrap();
+        let prev_key = last_xref + find_last(&revised[last_xref..], b"/Prev").unwrap();
+        let prev_end = prev_key
+            + find_first(&revised[prev_key..], prev.to_string().as_bytes()).unwrap()
+            + prev.to_string().len();
+        let mut prev_shifted = revised[..prev_key].to_vec();
+        prev_shifted.extend_from_slice(format!("/Prev {}", prev + 3).as_bytes());
+        prev_shifted.extend_from_slice(&revised[prev_end..]);
+
         for (name, bytes) in [
             (
                 "malformed",
@@ -747,6 +766,7 @@ mod tests {
             ("entry-offset-wrong", wrong_entry),
             ("leading-garbage", leading_garbage),
             ("truncated-tail", base[..keyword].to_vec()),
+            ("prev-shifted", prev_shifted),
         ] {
             assert!(find_xref_inconsistency(&bytes).is_some(), "{name}");
         }
