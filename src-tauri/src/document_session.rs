@@ -53,6 +53,17 @@ const SESSION_JOB_SHUTDOWN_QUIESCE_MS: u64 = 2_000;
 const SUPERVISOR_COOPERATIVE_EXIT_MS: u64 = 100;
 const SUPERVISOR_ABORT_EXIT_MS: u64 = 2_000;
 
+/// How an opened file is protected, decided by whether the worker could open it without a
+/// password.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CandidateEncryption {
+    None,
+    /// Encrypted with an empty user password: opens without a prompt, read-only.
+    OwnerPasswordOnly,
+    /// Needs the user password before it can be opened.
+    PasswordRequired,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionLifecycle {
@@ -4363,15 +4374,17 @@ impl DocumentSessionStore {
         working_path: PathBuf,
         session_dir: PathBuf,
         digest: String,
-        encrypted: bool,
+        encryption: CandidateEncryption,
     ) -> OpenDocumentSessionResult {
+        let encrypted = encryption != CandidateEncryption::None;
+        let password_required = encryption == CandidateEncryption::PasswordRequired;
         let id = session_dir
             .file_name()
             .and_then(|value| value.to_str())
             .and_then(|value| value.strip_prefix("session-"))
             .unwrap_or_default()
             .to_string();
-        let lifecycle = if encrypted {
+        let lifecycle = if password_required {
             SessionLifecycle::CandidateAuthPending
         } else {
             SessionLifecycle::CandidateReady
@@ -4408,13 +4421,13 @@ impl DocumentSessionStore {
             }),
         );
         OpenDocumentSessionResult {
-            status: if encrypted {
+            status: if password_required {
                 "password_required".to_string()
             } else {
                 "candidate_ready".to_string()
             },
             session_id: id,
-            snapshot: (!encrypted).then_some(snapshot),
+            snapshot: (!password_required).then_some(snapshot),
         }
     }
 
@@ -8199,26 +8212,29 @@ pub async fn open_document_session(
         )
         .await;
     let mut pending_document = None;
-    let encrypted = match open_result {
+    let encryption = match open_result {
         Ok(reservation) if !reservation.protected() => {
             pending_document = Some(reservation);
-            false
+            CandidateEncryption::None
         }
+        // The worker opened it without a password, so the user password is empty and only
+        // an owner password restricts the file. Every viewer opens such a file without a
+        // prompt; it stays open, read-only like any encrypted session.
         Ok(reservation) => {
-            if let Err(error) = reservation.abort(&admission).await {
-                let _ = fs::remove_dir_all(&session_dir);
-                return Err(DocumentSessionError::from(error));
-            }
-            true
+            pending_document = Some(reservation);
+            CandidateEncryption::OwnerPasswordOnly
         }
-        Err(error) if error.code == "DOCUMENT_SESSION_PASSWORD_REQUIRED" => true,
+        Err(error) if error.code == "DOCUMENT_SESSION_PASSWORD_REQUIRED" => {
+            CandidateEncryption::PasswordRequired
+        }
         Err(error) => {
             let _ = fs::remove_dir_all(&session_dir);
             return Err(DocumentSessionError::from(error));
         }
     };
 
-    let candidate = store.insert_candidate(canonical, working_path, session_dir, digest, encrypted);
+    let candidate =
+        store.insert_candidate(canonical, working_path, session_dir, digest, encryption);
     if let Some(reservation) = pending_document {
         reservation.commit();
     }
@@ -13127,7 +13143,7 @@ pub(crate) fn open_test_session(
         working_path,
         session_dir,
         digest,
-        false,
+        CandidateEncryption::None,
     );
     let entry = store.entry(&result.session_id).unwrap();
     let mut state = entry.state.lock();
@@ -18095,6 +18111,83 @@ mod tests {
 
         assert!(store.entry(&candidate_id).is_err());
         assert!(!store.password_cache.lock().contains_key(&credential_path));
+    }
+
+    fn insert_test_candidate(
+        store: &DocumentSessionStore,
+        original: &Path,
+        encryption: CandidateEncryption,
+    ) -> OpenDocumentSessionResult {
+        let session_dir = store
+            .instance_dir
+            .join("sessions")
+            .join(format!("session-{}", Uuid::new_v4()));
+        create_secure_dir(&session_dir).unwrap();
+        let working_path = session_dir.join("working.pdf");
+        let digest = copy_source_consistent(original, &working_path).unwrap();
+        store.insert_candidate(
+            original.to_path_buf(),
+            working_path,
+            session_dir,
+            digest,
+            encryption,
+        )
+    }
+
+    #[tokio::test]
+    async fn owner_password_only_candidate_opens_without_prompt_and_rejects_mutations() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("owner-only.pdf");
+        let bytes = crate::lopdf_compat::owner_only_encrypted_pdf(1);
+        fs::write(&original, &bytes).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+
+        let opened =
+            insert_test_candidate(&store, &original, CandidateEncryption::OwnerPasswordOnly);
+        assert_eq!(opened.status, "candidate_ready");
+        let snapshot = opened.snapshot.expect("no password prompt, so a snapshot");
+        assert_eq!(snapshot.lifecycle, SessionLifecycle::CandidateReady);
+        assert!(!snapshot.editable);
+        assert_eq!(
+            snapshot.read_only_reason.as_deref(),
+            Some("Şifreli PDF mutasyonları desteklenmiyor")
+        );
+
+        let working_path = {
+            let entry = store.entry(&opened.session_id).unwrap();
+            let mut state = entry.state.lock();
+            state.lifecycle = SessionLifecycle::Open;
+            state.working_path.clone()
+        };
+        let rejected = store
+            .mutate(opened.session_id.clone(), 1, |path, password| {
+                manipulation::rotate_page_report(path, 0, 90, password)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.code, "DOCUMENT_SESSION_READ_ONLY");
+        assert_eq!(fs::read(working_path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn candidate_encryption_decides_prompt_and_editability() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("minimal.pdf");
+        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
+        let store = DocumentSessionStore::initialize().unwrap();
+
+        let plain = insert_test_candidate(&store, &original, CandidateEncryption::None);
+        assert_eq!(plain.status, "candidate_ready");
+        assert!(plain.snapshot.unwrap().editable);
+
+        let locked =
+            insert_test_candidate(&store, &original, CandidateEncryption::PasswordRequired);
+        assert_eq!(locked.status, "password_required");
+        assert!(locked.snapshot.is_none());
+        let entry = store.entry(&locked.session_id).unwrap();
+        let state = entry.state.lock();
+        assert_eq!(state.lifecycle, SessionLifecycle::CandidateAuthPending);
+        assert!(!state.editable);
     }
 
     #[tokio::test]

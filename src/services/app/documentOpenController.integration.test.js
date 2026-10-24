@@ -133,6 +133,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
     paintImage: vi.fn(),
   };
   const setError = vi.fn();
+  const onToast = vi.fn();
   const chooseTransition = vi.fn(async () => decision);
   const getOutline = vi.fn(async () => []);
   const getMetadata = vi.fn(async () => ({ title: "", author: "", subject: "", keywords: "", creator: "" }));
@@ -164,6 +165,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
     setError,
     chooseFile: vi.fn(),
     onWarning: vi.fn(),
+    onToast,
   });
 
   return {
@@ -175,6 +177,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
     viewer,
     viewerController,
     setError,
+    onToast,
     chooseTransition,
     getOutline,
     getMetadata,
@@ -194,6 +197,32 @@ describe("createDocumentOpenController integration boundary", () => {
     expect(harness.chooseTransition).not.toHaveBeenCalled();
     expect(harness.backend.discardTransition).toHaveBeenCalledWith("clean-document_switch");
     expect(harness.documentSession.active?.displayPath).toBe("/new.pdf");
+  });
+
+  it("tells the user when the opened PDF is read-only", async () => {
+    const harness = createHarness();
+    harness.backend.openDocumentSession.mockImplementationOnce(async (path) => {
+      const candidate = snapshot("owner-only", "candidate_ready", {
+        displayPath: path,
+        editable: false,
+        readOnlyReason: "Şifreli PDF mutasyonları desteklenmiyor",
+      });
+      harness.candidates.set(candidate.id, candidate);
+      return { status: "candidate_ready", sessionId: candidate.id, snapshot: candidate };
+    });
+
+    await expect(harness.controller.requestFile("/owner-only.pdf")).resolves.toMatchObject({ status: "committed" });
+
+    expect(harness.lifecycle.requestPassword).not.toHaveBeenCalled();
+    expect(harness.onToast).toHaveBeenCalledWith("Belge salt okunur açıldı: Şifreli PDF mutasyonları desteklenmiyor.");
+  });
+
+  it("opens an editable PDF without a read-only notice", async () => {
+    const harness = createHarness();
+
+    await expect(harness.controller.requestFile("/plain.pdf")).resolves.toMatchObject({ status: "committed" });
+
+    expect(harness.onToast).not.toHaveBeenCalled();
   });
 
   it("opens dirty PDF → save → new PDF", async () => {
