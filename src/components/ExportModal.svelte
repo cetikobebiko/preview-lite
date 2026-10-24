@@ -6,7 +6,7 @@
   import { ask, open, save } from "@tauri-apps/plugin-dialog";
   import {
     exportSessionPagesAsImages,
-    exportSessionTextContent,
+    exportSessionTextToFile,
     printSessionPdf,
   } from "../services/backend/index.js";
   import { exportErrorMessage } from "../services/app/exportErrorMessage.js";
@@ -105,14 +105,13 @@
               });
               
               if (savePath) {
-                  const textContent = await exportSessionTextContent(
+                  await exportSessionTextToFile(
                     sessionId,
                     contentGeneration,
                     selectedPages,
                     txtFormat,
+                    savePath,
                   );
-                  const { writeTextFile } = await import('@tauri-apps/plugin-fs');
-                  await writeTextFile(savePath, textContent);
                   onsuccess?.("Metin başarıyla dışa aktarıldı!");
                   onclose?.();
               }

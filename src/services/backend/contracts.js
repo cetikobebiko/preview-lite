@@ -363,6 +363,15 @@ export const CONTRACTS = Object.freeze({
     pages: arrayOf(u32Type),
     format: stringType,
   }),
+  // Rust writes the file through document_io::write_atomically; the target must be .txt or .md.
+  exportSessionTextToFile: command("export_session_text_to_file", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    pages: arrayOf(u32Type),
+    format: stringType,
+    targetPath: stringType,
+  }),
   printSessionPdf: command(
     "print_session_pdf",
     {
@@ -822,6 +831,11 @@ export const CONTRACTS = Object.freeze({
     },
   ),
   stopSpeaking: commandWithoutPayload("stop_speaking"),
+  // app_config.json in AppData; Rust validates a JSON object of at most 1 MiB and writes atomically.
+  readAppConfig: commandWithoutPayload("read_app_config"),
+  writeAppConfig: command("write_app_config", {
+    contents: stringType,
+  }),
   shareFileMacos: command("share_file_macos", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,

@@ -41,10 +41,25 @@ const CHUNKED_SEARCH_PAGES: u32 = 6;
 /// Pages in the "hang-render-pages=<i,j,...>" fake document.
 const HANG_RENDER_PAGES: u32 = 6;
 
-/// Page indexes whose RenderPage never answers in "hang-render-pages=1,3" mode.
+/// Page indexes whose RenderPage never answers in "hang-render-pages=1,3"
+/// mode, or, in "grow-render-pages=1,3" mode, keeps allocating memory instead.
 fn hanging_render_pages(mode: &str) -> Option<Vec<u32>> {
-    let pages = mode.strip_prefix("hang-render-pages=")?;
+    let pages = mode
+        .strip_prefix("hang-render-pages=")
+        .or_else(|| mode.strip_prefix("grow-render-pages="))?;
     Some(pages.split(',').map(|page| page.parse().unwrap()).collect())
+}
+
+/// Touches 32 MiB every 20 ms (up to 2 GiB) and keeps it, like a PDFium render
+/// whose footprint runs away. Only the broker's memory watchdog ends it early.
+fn grow_memory_then_hang() {
+    let mut held: Vec<Vec<u8>> = Vec::new();
+    for _ in 0..64 {
+        held.push(vec![1u8; 32 * 1024 * 1024]);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_secs(60));
+    drop(held);
 }
 
 fn accessibility_audit_fixture() -> AccessibilityAuditReport {
@@ -217,7 +232,11 @@ fn main() {
                 .as_ref()
                 .is_some_and(|pages| pages.contains(page_index))
             {
-                std::thread::sleep(Duration::from_secs(60));
+                if mode.starts_with("grow-render-pages=") {
+                    grow_memory_then_hang();
+                } else {
+                    std::thread::sleep(Duration::from_secs(60));
+                }
                 return;
             }
         }

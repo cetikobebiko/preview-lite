@@ -22,6 +22,15 @@ describe("pageFailureRegistry", () => {
     expect(registry.failure({ ...page, pageIndex: 5, surface: "render" })).toBeNull();
   });
 
+  it("treats a memory-limit kill like a timeout and explains it", () => {
+    const registry = createPageFailureRegistry();
+    expect(registry.record({ ...page, surface: "render" }, failure("PDFIUM_WORKER_MEMORY_LIMIT"))).toBe(true);
+    expect(registry.failure({ ...page, surface: "render" })).toBe("PDFIUM_WORKER_MEMORY_LIMIT");
+    expect(pageFailureMessage("PDFIUM_WORKER_MEMORY_LIMIT", 4)).toBe(
+      "Sayfa 5 işlenirken PDF motoru bellek sınırını aştığı için durduruldu.",
+    );
+  });
+
   it("blocks every page and surface of a quarantined document generation", () => {
     const registry = createPageFailureRegistry();
     registry.record({ ...page, surface: "thumbnail" }, failure("PDFIUM_DOCUMENT_QUARANTINED"));

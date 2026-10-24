@@ -51,6 +51,7 @@
   import {
     DEFAULT_PAGE_SIZE_PT,
     estimateRenderedPageCssSize,
+    pageRenderDevicePixelRatio,
     renderDevicePixelRatio,
   } from "../utils/pageGeometry.js";
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
@@ -526,7 +527,13 @@
       !isDestroyed;
 
     try {
-      const requestDpr = currentDevicePixelRatio();
+      // Same per-page ratio as the placeholder size, so a capped high-zoom render keeps
+      // the CSS size the layout already reserved.
+      const requestDpr = pageRenderDevicePixelRatio({
+        pageSize: pageSizePt ?? pageSizeFallback.get(documentKey),
+        scale: viewScale,
+        devicePixelRatio: currentDevicePixelRatio(),
+      });
       const targetRenderScale = viewScale * requestDpr;
       const sessionSnapshot = requireActiveRenderSession(
         renderSession,

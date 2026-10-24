@@ -383,9 +383,11 @@ pub fn run_job(
                 || create_cancellation_marker(&marker),
             )?
         } else {
-            context
-                .child_processes
-                .run_with_timeout(&mut child, _timeout, &context.cancellation)?
+            context.child_processes.run_job_worker_with_timeout(
+                &mut child,
+                _timeout,
+                &context.cancellation,
+            )?
         };
         if !status.success() {
             return Err(SessionJobOperationError::failed_with_code(

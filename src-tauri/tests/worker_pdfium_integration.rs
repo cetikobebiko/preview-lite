@@ -3,7 +3,7 @@ mod macos_arm64 {
     use lopdf::content::{Content, Operation};
     use lopdf::{dictionary, Dictionary, Document, Object, Stream, StringFormat};
     use preview_alternative_lib::pdf_engine::subprocess_manager::{
-        CommandTimeout, PdfiumWorkerBroker, WorkerDocumentKey, WorkerLauncher,
+        BrokerError, CommandTimeout, PdfiumWorkerBroker, WorkerDocumentKey, WorkerLauncher,
     };
     use preview_alternative_lib::worker::ipc::{WorkerCommand, WorkerRenderTarget, WorkerResult};
     use std::collections::HashMap;
@@ -1210,11 +1210,18 @@ mod macos_arm64 {
         query: &str,
         max_results: u32,
     ) -> preview_alternative_lib::SearchResult {
-        let admission = broker.admit_read(key, None).await.unwrap();
+        // Each step names itself: a flaky failure must say which broker call broke.
+        let context = |step: &str, error: BrokerError| -> ! {
+            panic!("whole search {step} failed for query={query:?} limit={max_results}: {error:?}")
+        };
+        let admission = broker
+            .admit_read(key, None)
+            .await
+            .unwrap_or_else(|error| context("admission", error));
         broker
             .ensure_document(&admission, key.clone(), path.to_string(), None, None)
             .await
-            .unwrap();
+            .unwrap_or_else(|error| context("open", error));
         let result = broker
             .command_for_document(
                 &admission,
@@ -1228,7 +1235,7 @@ mod macos_arm64 {
                 None,
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|error| context("command", error));
         let WorkerResult::Search(result) = result else {
             panic!("unexpected whole-document search response");
         };
@@ -1273,7 +1280,75 @@ mod macos_arm64 {
                 &cancellation,
             )
             .await
-            .unwrap()
+            .unwrap_or_else(|error| {
+                panic!("chunked search failed for query={query:?} limit={max_results}: {error:?}")
+            })
+    }
+
+    /// The first difference between two search results, or None when equal.
+    /// Two serialized results can be thousands of lines; this names the spot.
+    fn first_search_difference(
+        chunked: &preview_alternative_lib::SearchResult,
+        whole: &preview_alternative_lib::SearchResult,
+    ) -> Option<String> {
+        if chunked.total_matches != whole.total_matches {
+            return Some(format!(
+                "total_matches chunked={} whole={}",
+                chunked.total_matches, whole.total_matches
+            ));
+        }
+        if chunked.matches.len() != whole.matches.len() {
+            return Some(format!(
+                "returned matches chunked={} whole={}",
+                chunked.matches.len(),
+                whole.matches.len()
+            ));
+        }
+        chunked
+            .matches
+            .iter()
+            .zip(&whole.matches)
+            .enumerate()
+            .find_map(|(index, (left, right))| {
+                let left = serde_json::to_value(left).unwrap();
+                let right = serde_json::to_value(right).unwrap();
+                (left != right).then(|| format!("match {index}: chunked={left} whole={right}"))
+            })
+            .or_else(|| {
+                (serde_json::to_value(chunked).unwrap() != serde_json::to_value(whole).unwrap())
+                    .then(|| "results differ outside matches and totals".to_string())
+            })
+    }
+
+    #[test]
+    fn first_search_difference_names_the_first_mismatch() {
+        let found = |index: usize, page: u32, snippet: &str| preview_alternative_lib::SearchMatch {
+            global_match_index: index,
+            page_index: page,
+            rects: Vec::new(),
+            snippet: snippet.to_string(),
+        };
+        let result = |matches: Vec<preview_alternative_lib::SearchMatch>, total: usize| {
+            preview_alternative_lib::SearchResult {
+                matches,
+                is_cancelled: false,
+                total_matches: total,
+            }
+        };
+        let whole = result(vec![found(0, 0, "a"), found(1, 2, "b")], 5);
+
+        assert_eq!(first_search_difference(&whole.clone(), &whole), None);
+        assert_eq!(
+            first_search_difference(&result(whole.matches.clone(), 4), &whole).as_deref(),
+            Some("total_matches chunked=4 whole=5")
+        );
+        let moved = result(vec![found(0, 0, "a"), found(1, 3, "b")], 5);
+        let difference = first_search_difference(&moved, &whole).unwrap();
+        assert!(difference.starts_with("match 1: "), "{difference}");
+        assert!(
+            difference.contains("\"pageIndex\":3") || difference.contains("\"page_index\":3"),
+            "{difference}"
+        );
     }
 
     #[tokio::test]
@@ -1309,11 +1384,9 @@ mod macos_arm64 {
                         usize::try_from(limit).unwrap(),
                     )
                     .await;
-                    assert_eq!(
-                        serde_json::to_value(&chunked).unwrap(),
-                        serde_json::to_value(&whole).unwrap(),
-                        "path={path} query={query} limit={limit}"
-                    );
+                    if let Some(difference) = first_search_difference(&chunked, &whole) {
+                        panic!("path={path} query={query} limit={limit}: {difference}");
+                    }
                     compared_matches += whole.matches.len();
                 }
             }
@@ -1591,6 +1664,58 @@ mod macos_arm64 {
             Err(error) => error.code.to_string(),
         };
         (started.elapsed(), outcome)
+    }
+
+    /// Real PDFium: page 1 of `heavy-page.pdf` grows its footprint at about
+    /// 1.3 GB/s until the 20 s render deadline (25 GB measured). The macOS
+    /// watchdog must stop each surface at the 2 GiB budget within seconds.
+    /// Manual only: if the watchdog regressed, this page would fill a CI
+    /// runner's memory. Run under `scripts/memory-guard.py` with
+    /// `cargo test --test worker_pdfium_integration heavy_page_memory_runaway -- --ignored`.
+    #[tokio::test]
+    #[ignore = "manual: unbounded memory if the watchdog regresses"]
+    async fn heavy_page_memory_runaway_is_stopped_by_the_watchdog() {
+        let path = fixture("heavy-page.pdf");
+        let broker = broker();
+        for (generation, (command, timeout)) in [
+            ("render-page", CommandTimeout::RenderPage),
+            ("render-thumbnail", CommandTimeout::RenderThumbnail),
+            ("text-layout", CommandTimeout::TextLayout),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = WorkerDocumentKey {
+                session_id: "heavy-page-memory".to_string(),
+                content_generation: generation as u64 + 1,
+            };
+            let (elapsed, outcome) =
+                timed_heavy_page_command(&broker, &key, &path, 1, command, timeout).await;
+            eprintln!(
+                "heavy-page page=1 command={command} outcome={outcome} elapsed_ms={:.0}",
+                elapsed.as_secs_f64() * 1000.0
+            );
+            assert_eq!(outcome, "PDFIUM_WORKER_MEMORY_LIMIT", "{command}");
+            assert!(
+                elapsed < std::time::Duration::from_secs(6),
+                "{command}: {elapsed:?}"
+            );
+        }
+        // The light page still renders on the replacement worker.
+        let key = WorkerDocumentKey {
+            session_id: "heavy-page-memory".to_string(),
+            content_generation: 10,
+        };
+        let (_, outcome) = timed_heavy_page_command(
+            &broker,
+            &key,
+            &path,
+            0,
+            "render-page",
+            CommandTimeout::RenderPage,
+        )
+        .await;
+        assert_eq!(outcome, "ok");
     }
 
     /// Baseline measurement, not a regression test: run with

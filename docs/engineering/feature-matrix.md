@@ -15,9 +15,9 @@ bulunması tek başına özelliğin çalıştığı anlamına gelmez.
 | `unreachable` | Kod var, ancak handler kaydı, payload, frontend bağlantısı, platform veya yapılandırma nedeniyle normal uygulama yolundan ulaşılamıyor. |
 | `unknown` | Statik analiz ve mevcut doğrulamalar güvenilir karar vermeye yetmiyor. |
 
-Prompt 5.1 itibarıyla tüm frontend Vitest testleri (272 test) ve Rust Cargo testleri (85 test) yerel ortamda %100 oranında çalıştırılmış ve geçmiş; doğrulama basamağı tamamlanmıştır.
+Test sayılarının güncel kaydı aşağıdaki "Güncel doğrulama" bölümündedir. Prompt 5.1 kaydı tarihseldir (o tarihte 272 Vitest ve 85 Rust testi geçmişti).
 
-Document Session mimarisi, Guard API entegrasyonu, single-flight save kilitleri, PDFium-only motor kuralları ve Windows I/O / DACL güvenlik garantileri runtime & unit test seviyesinde tamamen `working` ve `verified` statüsündedir.
+Document Session mimarisi, Guard API entegrasyonu, single-flight save kilitleri ve PDFium-only motor kuralları runtime & unit test seviyesinde `working` ve `verified` statüsündedir. Windows temp DACL doğrulaması bir istisnadır: main'de paralel `DocumentSessionStore::initialize` çağrıları aralıklı olarak `TEMP_SECURITY_ACL_UNAVAILABLE` ile düşüyordu (Build Windows CI). Düzeltme `feat/undo-redo-incremental-save` dalındadır (PR #1) ve o dalın Windows CI'ında geçmiştir; merge edilene kadar main için bu garanti `partial` sayılmalıdır.
 
 ### Implementation status ve validation state ayrımı
 
@@ -62,7 +62,7 @@ değildir.
 | Belge çapında arama | `src/pdfState.js:161`; `SearchBar.svelte` | `search_pdf_text`; `pdf_engine/mod.rs:543-747` | `partial` | PDFium text tarama, NFKC normalizasyonu, geometry, cache ve cancellation gerçek implementasyondur. | Uçtan uca test çalışmadı; büyük/şifreli belgelerde doğrulanmadı. | `SearchBar.test.js`, `searchResultUtils.test.js`, `searchCoordinator.test.js` unrun; UI testleri backend'i doğrulamaz. |
 | Sayfa text layout/DOM text layer | `PdfPage.svelte:278`; text-layer utils | `get_page_text_layout`; `pdf_engine/mod.rs:748+` | `partial` | PDFium karakter/kelime geometrisi frontend DOM katmanına taşınır. | Koordinat, rotation, zoom ve stale-result davranışı runtime doğrulanmadı. | `textLayerUtils.test.js`, `canvasUtils.test.js`, `PdfPage.test.js` unrun; PdfPage IPC mock. |
 | Search cache temizleme | Consumer yok | `clear_search_cache`; `pdf_engine/mod.rs:533` | `unreachable` | Handler kaydı var. | Frontend çağrısı yok; cache yaşam döngüsü UI'dan tetiklenmiyor. | Test yok. |
-| Text export | Export modal üzerinden `src/pdfState.js:210` | `document_session::export_session_text_content` (ephemeral job worker); path-native `export::export_text_content` kaldırıldı | `partial` | PDFium text extraction ve text/JSON benzeri çıktı yolu var. | Format doğruluğu ve encoding test edilmedi. | Test yok. |
+| Text export | `ExportModal.svelte` → `exportSessionTextToFile` | `document_session::export_session_text_to_file`: ephemeral job worker çıkarır, Rust hedefe `document_io::write_atomically` ile yazar; hedef yalnız `.txt`/`.md`, session temp root reddedilir. Webview artık dosya yazmaz. | `partial` | PDFium text extraction, atomic hedef yazımı ve hedef doğrulaması gerçek. | Markdown biçim doğruluğu ve encoding kenar durumları test edilmedi; çalışan uygulamada elle doğrulanmadı. | Rust: `text_export_to_file_*` (çıkarılan metinle birebir içerik, mevcut hedefin tamamen değişmesi, geçersiz/özel hedef reddi); Vitest: `ExportModal.test.js` text export, `wrappers.test.js`. |
 
 ## Annotation
 
@@ -187,13 +187,27 @@ backend command bulunmaması açıkça belirtilmiştir.
 | Bionic Reading | `readingPresentationController.js`; `pageTextSource.js`; `BionicReadingModal.svelte` | Yalnız geçerli fiziksel sayfa: önce `export_session_text_content` (PDFium, worker job), metin katmanı boşsa aynı sayfanın önbellekteki OCR metni veya `perform_ocr_on_page` | `partial` | Frontend metni kelimelere ayırıp başlangıç karakterlerini `<b>` ile biçimler; modal "Yalnız sayfa N · PDF metin katmanı/OCR" etiketini gösterir. Belge değişince metin sıfırlanır ve modal kapanır. | Tüm belge kapsamı yok; erişilebilirlik runtime doğrulanmadı. | Vitest: `readingPresentationController.test.js`, `BionicReadingModal.test.js`; runtime unrun. |
 | Reading Ruler | `App.svelte:75,1454-1457,1974-1975,2362`; `ReadingRuler.svelte` | Backend command yok | `partial` | Frontend toggle ve pointer/focus overlay component'i bağlıdır. | Farklı zoom, DPI ve klavye erişilebilirliği runtime doğrulanmadı. | Statically verified / unrun / no test. |
 | Session analytics | `App.svelte:215-218,650-654,1992-2000`; `AnalyticsModal.svelte` | Backend command yok | `partial` | Açık belge varken saniye sayacı ilerler ve modal süre/sayfa/zoom özetini gösterir. | Sayaç yalnız mevcut process session'ındadır; background/idle ayrımı ve persistence yoktur. | Statically verified / unrun / no test. |
-| Document-state ve recent-file persistence | `App.svelte:471-502,642-648,917-918,987`; `configManager.js:1-70` | Tauri command yok; `@tauri-apps/plugin-fs` ile AppData `config.json` okunur/yazılır | `partial` | Recent list, son sayfa/zoom/book/single state save/restore ve son dosyayı auto-load yolları bağlıdır. | Dosya taşınması/silinmesi, path gizliliği, concurrent write ve bozuk config recovery runtime doğrulanmadı. | Statically verified / unrun / no test. |
+| Document-state ve recent-file persistence | `configManager.js`; `documentRuntime.js`, `documentPositionMemory.js` | `app_config::read_app_config` / `write_app_config`: AppData `app_config.json`, `document_io::write_atomically`, en fazla 1 MiB JSON nesnesi; okunamayan dosya `app_config.corrupt-*.json` olarak kenara alınır | `partial` | Recent list (20), belge başına sayfa/zoom durumu (en fazla 200, en uzun süredir güncellenmeyen düşer) ve son dosyayı auto-load yolları bağlıdır; yazımlar frontend'de sıraya girer. | Dosya taşınması/silinmesi ve path gizliliği (yollar düz metin saklanır) ele alınmadı; çalışan uygulamada elle doğrulanmadı. | Rust: `app_config::tests`; Vitest: `configManager.test.js`. |
 | Command Palette ve keyboard shortcuts | `App.svelte:507-600,1441-1510,2008-2014,2089`; `CommandPalette.svelte`; `ShortcutsModal.svelte` | Backend command yok; seçilen bazı aksiyonlar mevcut IPC handler'larını çağırabilir | `partial` | Global key handler, palette command listesi ve dispatch switch'i kaynakta bağlıdır. | Liste ile gerçek shortcut/dispatch kapsamının senkron kalması ve input focus conflict'leri test edilmedi. | Statically verified / unrun / no test. |
 | Markdown notes export | `App.svelte:1342-1388`; Command Palette `export-notes-md` | Backend command veya fs write çağrısı yok | `mock` | Markdown string hazırlanır ve save dialog açılır; save path seçilince başarı toast'ı gösterilir. | Hazırlanan `mdContent` hiçbir dosyaya yazılmaz; kullanıcıya sahte başarılı export bildirimi verilir. | Statically verified / unrun / no test. |
 
-## Güncel Prompt 8A-5 Doğrulaması (5 Ağustos 2026)
+## Güncel doğrulama (23 Ekim 2026, macOS arm64)
 
-Tüm doğrulamalar yerel ortamda %100 oranında çalıştırılmış ve başarıyla geçmiştir:
+`chore/audit-remediation` dalında (main ve audit düzeltmeleri) yerel olarak çalıştırıldı:
+
+```text
+137 Vitest dosyası / 1409 test
+1121 Rust testi, 31 test hedefinde (788 library testi), 10 ignored
+Svelte check 0 error
+Build başarılı (chunk boyutu ve dynamic import uyarıları duruyor)
+Clippy --all-targets --all-features -D warnings başarılı
+```
+
+İzlenen: `worker_pdfium_integration` içindeki `chunked_search_is_identical_to_whole_document_search` bir kez düştü (mesajı kaydedilmedi); ardından yaklaşık 120 lokal ve 40 CI koşusunda tekrarlanmadı. Test artık düşen adımı ve ilk farklı eşleşmeyi raporluyor. Komut bazında ayrıntı `pdfium-worker-isolation.md` "Local verification" tablosundadır.
+
+## Prompt 8A-5 Doğrulaması (5 Ağustos 2026, tarihsel)
+
+O tarihte tüm doğrulamalar yerel ortamda %100 oranında çalıştırılmış ve başarıyla geçmişti:
 
 ```text
 75 Vitest dosyası / 540 test
@@ -203,7 +217,7 @@ Build başarılı
 Clippy -D warnings başarılı
 ```
 
-Güncel Mimari ve Güvenlik Gerçekleri:
+O tarihteki mimari ve güvenlik gerçekleri:
 - Production UI'da `apply_redactions` veya `sanitize_pdf_document` callsite'ı bulunmamaktadır.
 - `apply_redactions` ve `sanitize_pdf_document` backend action wrapper'ları fail-closed `FEATURE_UNAVAILABLE` döndürür; PDFium veya lopdf parser'ı tetiklemez.
 - `scan_sensitive_data` iptal edilebilir session-job kontratı (Job Worker Protocol v3) ve amber inceleme vurgu katmanı (`.review-highlight-layer`) ile güvenli şekilde çalışmaktadır.

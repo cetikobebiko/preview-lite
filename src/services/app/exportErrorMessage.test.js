@@ -30,6 +30,16 @@ describe("exportErrorMessage", () => {
     );
   });
 
+  it("explains a job worker stopped by the memory budget", () => {
+    expect(
+      exportErrorMessage(
+        jobError("SESSION_JOB_WORKER_MEMORY_LIMIT", "Job worker bellek bütçesini aştığı için durduruldu (2100 MiB > 2048 MiB)"),
+      ),
+    ).toBe(
+      "İşlem PDF motorunun bellek sınırını aştığı için durduruldu. Job worker bellek bütçesini aştığı için durduruldu (2100 MiB > 2048 MiB)",
+    );
+  });
+
   it("falls back to the raw message without an Error: prefix", () => {
     expect(exportErrorMessage(jobError("SESSION_JOB_WORKER_CRASHED", "Worker çöktü"))).toBe(
       "Worker çöktü",

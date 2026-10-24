@@ -84,6 +84,7 @@ const cases = [
   ["exportSessionPagesAsImages", () => session.exportSessionPagesAsImages("session-1", 7, [0, 1], "/tmp", "png", 300), "export_session_pages_as_images", { sessionId: "session-1", expectedContentGeneration: 7, pages: [0, 1], outputDir: "/tmp", format: "png", dpi: 300, overwrite: false }],
   ["exportSessionPagesAsImages overwrite", () => session.exportSessionPagesAsImages("session-1", 7, [0, 1], "/tmp", "png", 300, true), "export_session_pages_as_images", { sessionId: "session-1", expectedContentGeneration: 7, pages: [0, 1], outputDir: "/tmp", format: "png", dpi: 300, overwrite: true }],
   ["exportSessionTextContent", () => session.exportSessionTextContent("session-1", 7, [0, 1], "markdown"), "export_session_text_content", { sessionId: "session-1", expectedContentGeneration: 7, pages: [0, 1], format: "markdown" }],
+  ["exportSessionTextToFile", () => session.exportSessionTextToFile("session-1", 7, [0, 1], "text", "/out/a.txt"), "export_session_text_to_file", { sessionId: "session-1", expectedContentGeneration: 7, pages: [0, 1], format: "text", targetPath: "/out/a.txt" }],
   ["printSessionPdf", () => session.printSessionPdf("session-1", 7, null), "print_session_pdf", { sessionId: "session-1", expectedContentGeneration: 7, pageRange: null }],
   ["extractSessionPages", () => session.extractSessionPages("session-1", 7, [0, 2], "/b.pdf"), "extract_session_pages", { sessionId: "session-1", expectedContentGeneration: 7, pageIndices: [0, 2], targetPath: "/b.pdf" }],
   ["getSessionStructureTree", () => session.getSessionStructureTree("session-1", 7), "get_session_structure_tree", { sessionId: "session-1", expectedContentGeneration: 7 }],
@@ -132,6 +133,8 @@ const cases = [
 
   ["speakText", () => platform.speakText("hello", "Yelda"), "speak_text", { text: "hello", voice: "Yelda" }],
   ["stopSpeaking", () => platform.stopSpeaking(), "stop_speaking"],
+  ["readAppConfig", () => platform.readAppConfig(), "read_app_config"],
+  ["writeAppConfig", () => platform.writeAppConfig("{}"), "write_app_config", { contents: "{}" }],
   ["shareFileMacos", () => platform.shareFileMacos("sid", 1), "share_file_macos", { sessionId: "sid", expectedContentGeneration: 1 }],
   ["shareExternalFileMacos", () => platform.shareExternalFileMacos("/a.png"), "share_external_file_macos", { path: "/a.png" }],
   ["performOcrOnPage", () => platform.performOcrOnPage("sid", 1, 2), "perform_ocr_on_page", { sessionId: "sid", expectedContentGeneration: 1, pageIndex: 2 }],

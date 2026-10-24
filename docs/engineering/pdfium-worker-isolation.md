@@ -54,8 +54,8 @@ Sanitization remains feature-disabled, but its read-only
 `InspectDocumentSanitization` job worker. The Tauri process validates/routs the typed report and
 does not parse the PDF. JavaScript stream payloads that require decoding are accounted against
 per-stream and total decoded-byte budgets after lopdf's whole-buffer decode returns; the parser
-allocation itself is bounded by process isolation, address-space limits (not in effect on
-macOS; see "Platform and CI status"), and the parent timeout, not by a cooperative bounded-decode
+allocation itself is bounded by process isolation, address-space limits (on macOS a parent-side
+footprint watchdog instead; see "Worker memory on macOS"), and the parent timeout, not by a cooperative bounded-decode
 API. Sanitization cancellation is parent-enforced process
 kill + wait/reap; there is no production worker-side cooperative cancellation IPC. Legacy
 8C.3 additionally provides a private `SanitizePdf` ephemeral operation. It receives only the
@@ -247,8 +247,9 @@ reserves one 256 MiB PDFium bitmap, one 256 MiB RGBA result, one 256 MiB seriali
 copy, an optional 256 MiB password-protected document buffer, 512 MiB PDFium/runtime headroom,
 and another 512 MiB safety margin. A unit invariant prevents the bounded peak model from
 exceeding the requested limit. The ceiling is not in effect on macOS: `setrlimit` rejects it
-there (see "Platform and CI status"), so on macOS worker memory is currently unbounded. Whether
-it is enforced on Linux has not been verified in this repository.
+there (see "Platform and CI status"). On macOS the parent enforces the same 2 GiB as a
+physical-footprint budget instead (see "Worker memory on macOS"). Whether the ceiling is
+enforced on Linux has not been verified in this repository.
 
 The frame length is checked before allocation; `u32`/`usize` and serialized length conversions
 are checked. Partial header, partial payload, malformed bincode, trailing bytes, oversized
@@ -440,6 +441,52 @@ cancellation behavior. To measure, run a release build with
 `RUST_LOG=pdfium_worker_metrics=debug` (JSON lines go to `logs/antigravity.log.*`) and summarize
 with `node scripts/worker-metrics-report.mjs <log>`.
 
+### Cancellation baseline S1–S5 (2026-10-23, macOS 26.6.1, Apple M1, 8 GiB)
+
+First measurement of the provisional grace and chunk constants. Release build with
+`VITE_CANCEL_BASELINE=1`: `src/devtools/cancelBaseline.js` waits for the first painted page,
+then plays a fixed schedule against `tmp/perf-fixtures/perf-mixed-1000.pdf` (1000 pages; 824
+text, 76 image, 100 vector; mixed sizes, 142 rotated; from `scripts/generate-perf-fixtures.py`):
+S1 fast then slow scrolling, S2 pinch bursts plus Cmd+=/Cmd+-, S3 thumbnail-sidebar scrolling
+(fast, then stepped with 250 ms pauses), S4 five superseding searches while scrolling, S5 idle,
+with 5 s settle gaps. Run with an isolated `HOME` (app data and logs; the driver restores the
+`antigravity_settings` localStorage entry, which WKWebView keeps under the real user) and
+`RUST_LOG=pdfium_worker_metrics=debug`. The window has no close permission, so the run is
+stopped after the schedule. `node scripts/cancel-baseline-report.mjs <log>` slices the log into
+the phases, anchored at the first successful `render-page` exchange. Two runs; S3 is from run 2
+only (run 1 had fast scrolling only, which requested 3 thumbnails in total).
+
+| Phase | In-flight cancels (drained / killed) | Respawns | Page renders, p95 | Read admission wait p50 / p95 |
+|---|---|---|---|---|
+| S1 scroll | 1 / 0 · 0 / 0 | 0 · 0 | 104, 173 ms · 109, 177 ms | 0 / 18 ms · 0 / 17 ms |
+| S2 zoom | 6 / 3 · 5 / 0 | 3 · 0 | 70, 324 ms · 117, 183 ms | 0 / 14 ms · 0 / 18 ms |
+| S3 thumbnails | 0 / 0 | 0 | 92 thumbnails, p50 3 ms, p95 44 ms | 0 / 0 ms |
+| S4 search + scroll | 8 / 0 · 6 / 0 | 0 · 0 | 61, 205 ms · 64, 422 ms | 118 / 465 ms · 113 / 387 ms |
+| S5 idle | no worker traffic | 0 | — | — |
+
+Findings:
+
+- Render grace 400 ms: 20 of 23 in-flight render cancels drained. The 3 kills were run-1 zoom
+  renders that had run 644–758 ms. A cancel kill is cheap here: the replacement reached `Hello`
+  in 11–15 ms, the document reopened in about 1 ms, and cancel kills are not charged to the
+  restart budget. A longer grace would keep the single-command worker busy with a stale result
+  for longer, so 400 ms stays.
+- Thumbnail and text-layout grace 250 ms: never reached (thumbnail p95 44 ms, text layout
+  p95 ≤ 14 ms); no in-flight thumbnail cancel occurred. The 120 ms thumbnail dwell removes
+  almost all thumbnail work during fast scrolling.
+- Search: all 8 cancelled chunks drained (about 153 ms each). A full search took 32 chunks and
+  about 6 s with 19 matches; the 150 ms time budget, not the 64-page cap, ends every chunk. The
+  cost is visible elsewhere: while a search runs, page reads wait p50 113–118 ms and p95
+  387–465 ms for admission, against about 17 ms without one. A smaller time budget (for example
+  75 ms) should roughly halve that wait at the price of more chunks; it has not been measured.
+- S5: no background worker traffic while idle.
+
+Not established: the plan's acceptance target (at least 80% fewer cancel-driven restarts) needs
+a measurement of the code before the cancellation work, which does not exist. Limits: one
+machine, one synthetic document, two runs; input is dispatched by script (`scrollBy`, synthetic
+wheel and key events), not real trackpad momentum, and zoom results differ between runs (3 vs 0
+kills).
+
 Frontend coalescing reduces how often cancellation happens at all. During a zoom gesture,
 `PdfPage` lets the in-flight render finish (its result is dropped as stale) and cancels once the
 150 ms debounce settles, instead of cancelling on every step. Sidebar and organizer thumbnails
@@ -507,7 +554,8 @@ Page 1 shows the case the policy addresses: one page makes all three surfaces ti
 under the previous document-wide rule those three timeouts (about 46 s) quarantined the whole
 generation. Now its second timeout quarantines only the page. Page 1 is used only for manual
 runs because its parse allocates far more than the 2 GiB peak model in "Framing and message
-limits", and nothing bounds worker memory on macOS (see "Worker memory on macOS"). The CI test
+limits": on macOS the footprint watchdog stops it, but if the watchdog regressed the page would
+fill a CI runner's memory (see "Worker memory on macOS"). The CI test
 `heavy_page_timeouts_quarantine_the_page_not_the_document` uses page 2 with a 2-second class
 (page 2 stays near 10 MB physical footprint for a full 20 s render).
 
@@ -534,6 +582,39 @@ the allocator's up-front reservation for about 8 s and only then starts to grow,
 address space would take effect far later than a limit on footprint. The earlier "2.6 GB RSS"
 reading came from `ps` sampling and understated the real footprint by an order of magnitude.
 These were manual probe runs, not a CI test.
+
+#### Footprint watchdog (2026-10-23)
+
+Because neither `RLIMIT_AS` nor `memorystatus_control` can bound a macOS worker, the parent
+watches it (`pdf_engine::memory_watchdog`). Every 100 ms it reads the child's
+`ri_phys_footprint` with `proc_pid_rusage(RUSAGE_INFO_V2)`; once it passes 2 GiB (the same value
+as the Linux `RLIMIT_AS` ceiling) the worker is killed:
+
+- Viewer worker: `exchange_raw` races the response read against the watchdog. A crossing returns
+  `PDFIUM_WORKER_MEMORY_LIMIT`; the broker records failure category `MemoryLimit`, kills and
+  replaces the worker. Like a timeout it is attributed to the page of a page-scoped command, so
+  the same thresholds apply: the same page twice in 5 minutes quarantines the page, three
+  distinct pages or six page failures quarantine the document generation.
+- Job workers: `run_job_worker_with_timeout` and the cooperative prepress path check the
+  footprint in their 50 ms / 25 ms wait loops and fail the job with
+  `SESSION_JOB_WORKER_MEMORY_LIMIT`; dropping the child guard kills and reaps the process.
+  Platform children (print, TTS helpers) keep `run_with_timeout`, which has no budget.
+
+At 1.27 GB/s growth the 100 ms interval overshoots by about 130 MB. On Linux and Windows the
+watchdog does not measure (Linux has `RLIMIT_AS`; Windows has no Job Object limit yet).
+
+Page 1 of `heavy-page.pdf` with the production timeout classes and budget, real PDFium
+(`cargo test --test worker_pdfium_integration heavy_page_memory_runaway -- --ignored`, manual):
+
+| Command | Before (timeout kill) | With the watchdog |
+|---|---|---|
+| Render page | 20 s, 25 GB footprint | `PDFIUM_WORKER_MEMORY_LIMIT` after 2.1 s |
+| Thumbnail | 10 s, 12.6 GB | after 1.8 s |
+| Text layout | 15 s, 18.9 GB | after 1.7 s |
+
+Page 0 renders on the replacement worker afterwards. CI covers the mechanism with the fake
+worker (`memory_watchdog_kills_a_runaway_worker_and_quarantines_the_page`: a 256 MiB test budget,
+two kills, then `PDFIUM_PAGE_QUARANTINED`) and a `perl` child for job workers.
 
 ## Mutation invalidation
 
@@ -685,25 +766,29 @@ The Unix worker attempts a 2 GiB address-space limit. On macOS this limit is nev
 
 The diagnostic is not silently dropped by the worker, but nothing consumes it: the broker
 ignores the `Hello` diagnostics and the job worker ignores the return value of
-`apply_resource_limits()`. On macOS the viewer worker and every job worker therefore run
-without a memory bound; a runaway page is stopped only by the command timeout, after which it
-may already have built up tens of gigabytes of footprint. Windows Job Object containment is not
+`apply_resource_limits()`. On macOS the bound comes from the parent-side footprint watchdog
+instead (2 GiB, see "Footprint watchdog"), which stops a runaway page within about 2 s.
+Windows Job Object containment is not
 implemented and is explicitly reported as unavailable; process kill/reap isolation still
 applies.
 
-## Local verification (2026-07-29, macOS arm64)
+## Local verification (2026-10-23, macOS arm64)
+
+Rerun of the same commands on `chore/audit-remediation` (main plus the audit fixes). The
+previous run (2026-07-29) recorded 147 library tests and 338 frontend tests; git history keeps
+that table.
 
 | Command | Result |
 |---|---|
 | `cargo fmt --all -- --check` | Passed |
-| `cargo check --locked --all-targets` | Passed; existing dead-code warnings remain |
-| `cargo test --locked --all-targets -- --test-threads=1` | Passed: 147 library tests plus all integration suites; mutation/reopen and split/merge process tests included |
-| `cargo test --locked --test worker_broker_process -- --test-threads=1` | Passed: 16 |
-| `cargo test --locked --test worker_pdfium_integration -- --test-threads=1` | Passed: 4, including worker-owned interactive reads, Unicode parity, and a >240 MiB render |
-| `cargo test --locked --test crash_tests -- --test-threads=1` | Passed: 2 |
-| `cargo test --locked --test session_worker_integration -- --test-threads=1` | Passed: 1 |
-| `npm run test` | Passed: 338 |
-| `npm run build` | Passed; existing Svelte/accessibility and chunking warnings remain |
+| `cargo check --locked --all-targets` | Passed; no warnings |
+| `cargo test --locked --all-targets -- --test-threads=1` | Passed: 1121 tests across 31 test targets (788 library tests), 10 ignored |
+| `cargo test --locked --test worker_broker_process -- --test-threads=1` | Passed: 30 |
+| `cargo test --locked --test worker_pdfium_integration -- --test-threads=1` | Passed: 13, 2 ignored. One run failed `chunked_search_is_identical_to_whole_document_search`; its panic message was not captured. It did not recur in about 120 later local runs (isolated, under CPU load, whole file serially) or in the last 40 CI runs, and both search paths are deterministic in code. The test now names the failing broker step and the first differing match, so a recurrence is diagnosable. |
+| `cargo test --locked --test crash_tests -- --test-threads=1` | Passed: 3 |
+| `cargo test --locked --test session_worker_integration -- --test-threads=1` | Passed: 2 |
+| `npm run test` | Passed: 1409 tests in 137 files |
+| `npm run build` | Passed; the >500 kB chunk warning and two "dynamic import will not move module" warnings remain |
 | `cargo clippy --locked --all-targets --all-features -- -D warnings` | Passed; enforced as a CI gate. See `strict-clippy.md` for the category-by-category cleanup report. |
 
 ## Remaining native crash surface

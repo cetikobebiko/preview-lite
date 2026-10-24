@@ -30,6 +30,7 @@ CI does not invent new, conflicting test classifications.
 | `LINUX_ARTIFACT_SMOKE` | EXACT_ARTIFACT | `ubuntu-22.04` | F3+ |
 | `WINDOWS_ARTIFACT_SMOKE` | EXACT_ARTIFACT | `windows-latest` | F3+ |
 | `EXTERNAL_VALIDATION` | optional diagnostic | — | not required (disabled) |
+| `DEPENDENCY_AUDIT` | supply-chain check (no test class) | `ubuntu-22.04` | implemented: `dependency-audit.yml`, `cargo audit` on PRs, `main` and weekly |
 | `RELEASE_GATE` | signing/publish | — | 11I-G/11R scope |
 
 ## 3. CI DAG
@@ -106,6 +107,7 @@ evidence files. Vitest runs with `passWithNoTests: false` and `allowOnly: false`
 | ARTIFACT_BUILD | `DEPENDENCY_PROVISIONING_ONLY` |
 | ARTIFACT_SMOKE | `ARTIFACT_TRANSFER` (download-artifact; runtime bundled in artifact) |
 | RELEASE_GATE | `EXTERNAL_SERVICE_REQUIRED` (trusted publish) |
+| DEPENDENCY_AUDIT | `ADVISORY_DB_FETCH` (crates.io for the pinned cargo-audit, RustSec advisory-db) |
 
 ## 10. Known gaps (unchanged by F2)
 
@@ -115,3 +117,13 @@ RUNTIME_PROVISIONING_INPUT_INCOMPLETE — Linux libpdfium.so / Windows pdfium.dl
 BRANCH_PROTECTION_REQUIREMENTS: UNKNOWN — not visible from codebase
 CI EXECUTION: NOT RUN               — local agent is strict-offline; no workflow dispatch
 ```
+
+## 11. Dependency audit
+
+`dependency-audit.yml` runs `cargo audit` (cargo-audit 0.22.2, Rust 1.99.1) in
+`src-tauri/` on every pull request, on `main` and every Monday. A RustSec
+vulnerability fails the job; unmaintained/unsound warnings are reported only. It is
+kept out of FAST_LOCAL because fetching the advisory database is outside that job's
+network model. Ignored advisories live in `src-tauri/.cargo/audit.toml`, each with
+its containment and exit condition; today only RUSTSEC-2026-0187 (lopdf 0.34, until
+the lopdf >= 0.42 upgrade).

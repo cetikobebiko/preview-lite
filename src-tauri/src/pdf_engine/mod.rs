@@ -1,3 +1,4 @@
+pub(crate) mod memory_watchdog;
 pub mod render_service;
 pub mod render_wire;
 pub mod runtime_metadata;

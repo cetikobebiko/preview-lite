@@ -2997,6 +2997,21 @@ impl SessionJobChildRegistrationGuard {
         self.child.lock().try_wait()
     }
 
+    /// macOS: an error once the child's phys_footprint passes `limit`. Returning
+    /// it drops the guard, which kills and reaps the child.
+    fn memory_limit_failure(&self, limit: Option<u64>) -> Option<SessionJobOperationError> {
+        let limit = limit?;
+        let footprint = crate::pdf_engine::memory_watchdog::over_limit(self.child_id, limit)?;
+        Some(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_WORKER_MEMORY_LIMIT",
+            format!(
+                "Job worker bellek bütçesini aştığı için durduruldu ({} MiB > {} MiB)",
+                crate::pdf_engine::memory_watchdog::mib(footprint),
+                crate::pdf_engine::memory_watchdog::mib(limit)
+            ),
+        ))
+    }
+
     fn take_output_pipes(
         &self,
     ) -> (
@@ -3042,6 +3057,35 @@ impl SessionJobChildProcessOwner {
         cancellation: &SessionJobCancellationCheckpoint,
         after_spawn: impl FnOnce(),
     ) -> Result<ExitStatus, SessionJobOperationError> {
+        self.run_with_timeout_watched(command, timeout, cancellation, after_spawn, None)
+    }
+
+    /// Runs a PDFium job worker. On macOS its footprint is held to the same
+    /// budget as the viewer worker (see `pdf_engine::memory_watchdog`).
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn run_job_worker_with_timeout(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancellation: &SessionJobCancellationCheckpoint,
+    ) -> Result<ExitStatus, SessionJobOperationError> {
+        self.run_with_timeout_watched(
+            command,
+            timeout,
+            cancellation,
+            || {},
+            Some(crate::pdf_engine::memory_watchdog::WORKER_FOOTPRINT_LIMIT_BYTES),
+        )
+    }
+
+    fn run_with_timeout_watched(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancellation: &SessionJobCancellationCheckpoint,
+        after_spawn: impl FnOnce(),
+        memory_limit: Option<u64>,
+    ) -> Result<ExitStatus, SessionJobOperationError> {
         cancellation.check_cancelled()?;
         let child = command.spawn().map_err(child_spawn_error)?;
         let child_guard = SessionJobChildRegistrationGuard::register(self, child);
@@ -3060,6 +3104,9 @@ impl SessionJobChildProcessOwner {
                 SessionJobOperationError::failed(format!("Platform süreci izlenemedi: {error}"))
             })? {
                 return Ok(status);
+            }
+            if let Some(error) = child_guard.memory_limit_failure(memory_limit) {
+                return Err(error);
             }
             if std::time::Instant::now() >= deadline {
                 return Err(SessionJobOperationError::failed(
@@ -3104,6 +3151,12 @@ impl SessionJobChildProcessOwner {
                     ));
                 }
                 return Ok(status);
+            }
+            // Only job workers use the cooperative path, so the budget always applies.
+            if let Some(error) = child_guard.memory_limit_failure(Some(
+                crate::pdf_engine::memory_watchdog::WORKER_FOOTPRINT_LIMIT_BYTES,
+            )) {
+                return Err(error);
             }
             if cancellation_deadline.is_some_and(|value| std::time::Instant::now() >= value) {
                 return Err(SessionJobOperationError::Cancelled(
@@ -8691,6 +8744,70 @@ pub async fn export_session_text_content(
         .await
 }
 
+/// Seçili sayfaların metnini job worker'da çıkarır ve hedefe `document_io::write_atomically`
+/// ile yazar; hedef ya eski içeriğini korur ya da tam metni alır. Hedef yalnız `.txt` veya
+/// `.md` olabilir, böylece aynı kaydetme diyaloğundan bir PDF'in üzerine metin yazılamaz.
+#[tauri::command]
+// Tauri IPC contract intentionally exposes each frontend field as a top-level argument.
+#[allow(clippy::too_many_arguments)]
+pub async fn export_session_text_to_file(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    pages: Vec<u32>,
+    format: String,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    let target = PathBuf::from(target_path);
+    validate_text_export_target(&target)?;
+    reject_private_target(&target, &store.temp_root)?;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let crate::job_worker::JobResult::Text(text) = crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::ExtractText {
+                        pages: Some(pages),
+                        format,
+                    },
+                    Duration::from_secs(180),
+                )?
+                else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Text export worker beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                context.cancellation.check_cancelled()?;
+                crate::document_io::write_atomically(&target, |staged| {
+                    std::io::Write::write_all(staged, text.as_bytes())
+                })
+                .map_err(job_output_write_failure)
+            },
+        )
+        .await
+}
+
+fn validate_text_export_target(target: &Path) -> Result<(), DocumentSessionError> {
+    let extension = target
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    if matches!(extension.as_deref(), Some("txt" | "md")) {
+        Ok(())
+    } else {
+        Err(DocumentSessionError::new(
+            "TEXT_EXPORT_TARGET_INVALID",
+            "Metin dışa aktarma hedefi .txt veya .md uzantılı olmalı",
+        ))
+    }
+}
+
 #[tauri::command]
 pub async fn print_session_pdf(
     job_id: String,
@@ -12211,24 +12328,28 @@ fn accept_job_output_file(
     crate::document_io::write_atomically(target, |staged| {
         std::io::copy(&mut input, staged).map(drop)
     })
-    .map_err(|error| {
-        use crate::document_io::AtomicWriteError;
-        let message = match error {
-            AtomicWriteError::CreateTemp(error) => {
-                format!("Hedef çıktı staging dosyası oluşturulamadı: {error}")
-            }
-            AtomicWriteError::Write(error) => {
-                format!("Job worker çıktısı staging dosyasına kopyalanamadı: {error}")
-            }
-            AtomicWriteError::Sync(error) => {
-                format!("Job worker çıktısı diske yazılamadı: {error}")
-            }
-            AtomicWriteError::Persist(error) => {
-                format!("Job worker çıktısı hedefe kabul edilemedi: {error}")
-            }
-        };
-        SessionJobOperationError::failed_with_code("SESSION_JOB_OUTPUT_WRITE_FAILED", message)
-    })
+    .map_err(job_output_write_failure)
+}
+
+fn job_output_write_failure(
+    error: crate::document_io::AtomicWriteError<std::io::Error>,
+) -> SessionJobOperationError {
+    use crate::document_io::AtomicWriteError;
+    let message = match error {
+        AtomicWriteError::CreateTemp(error) => {
+            format!("Hedef çıktı staging dosyası oluşturulamadı: {error}")
+        }
+        AtomicWriteError::Write(error) => {
+            format!("Job worker çıktısı staging dosyasına kopyalanamadı: {error}")
+        }
+        AtomicWriteError::Sync(error) => {
+            format!("Job worker çıktısı diske yazılamadı: {error}")
+        }
+        AtomicWriteError::Persist(error) => {
+            format!("Job worker çıktısı hedefe kabul edilemedi: {error}")
+        }
+    };
+    SessionJobOperationError::failed_with_code("SESSION_JOB_OUTPUT_WRITE_FAILED", message)
 }
 
 pub(crate) const SESSION_JOB_OUTPUT_CONFLICT_CODE: &str = "SESSION_JOB_OUTPUT_CONFLICT";
@@ -13554,6 +13675,75 @@ mod tests {
         let mut command = Command::new("sh");
         command.arg("-c").arg(script);
         command
+    }
+
+    /// Touches ~512 MiB and holds it, like a runaway PDFium job worker.
+    #[cfg(target_os = "macos")]
+    fn memory_hog_command() -> Command {
+        let mut command = Command::new("perl");
+        command
+            .arg("-e")
+            .arg("my $x = 'a' x (512 * 1024 * 1024); sleep 30;");
+        command
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn job_worker_memory_budget_kills_a_runaway_child_before_its_deadline() {
+        let owner = SessionJobChildProcessOwner::default();
+        let cancellation = SessionJobCancellationCheckpoint::new(CancellationToken::new());
+        let started = std::time::Instant::now();
+
+        let error = owner
+            .run_with_timeout_watched(
+                &mut memory_hog_command(),
+                Duration::from_secs(20),
+                &cancellation,
+                || {},
+                Some(128 * 1024 * 1024),
+            )
+            .unwrap_err();
+
+        let SessionJobOperationError::Failed(failure) = error else {
+            panic!("expected a failure, got {error:?}");
+        };
+        assert_eq!(
+            failure.code, "SESSION_JOB_WORKER_MEMORY_LIMIT",
+            "{failure:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        // The guard killed and reaped the child; nothing stays registered.
+        assert!(owner.children.lock().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn platform_children_without_a_budget_are_not_memory_limited() {
+        let owner = SessionJobChildProcessOwner::default();
+        let cancellation = SessionJobCancellationCheckpoint::new(CancellationToken::new());
+
+        let error = owner
+            .run_with_timeout(
+                &mut memory_hog_command(),
+                Duration::from_secs(3),
+                &cancellation,
+            )
+            .unwrap_err();
+
+        // It runs to the deadline instead (a timeout failure).
+        let SessionJobOperationError::Failed(failure) = error else {
+            panic!("expected a failure, got {error:?}");
+        };
+        assert_ne!(
+            failure.code, "SESSION_JOB_WORKER_MEMORY_LIMIT",
+            "{failure:?}"
+        );
+        assert!(failure.message.contains("zaman aşımı"), "{failure:?}");
+        assert!(owner.children.lock().is_empty());
     }
 
     fn test_command_app() -> tauri::App<tauri::test::MockRuntime> {
@@ -17511,6 +17701,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn text_export_to_file_writes_exactly_the_extracted_text() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("text-source.pdf");
+        fs::copy(fixture_path("three-distinct-pages.pdf"), &original).unwrap();
+        let app = test_command_app();
+        let session_id = open_test_session(&app.state::<DocumentSessionStore>(), &original);
+
+        for (format, file_name) in [("text", "pages.txt"), ("markdown", "pages.md")] {
+            let target = documents.path().join(file_name);
+            // An existing target is replaced as a whole, not appended to or truncated in place.
+            fs::write(&target, b"previous export").unwrap();
+            let SessionJobOutcome::Completed {
+                value: expected, ..
+            } = export_session_text_content(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![0, 2],
+                format.to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap()
+            else {
+                panic!("text extraction did not complete");
+            };
+            let outcome = export_session_text_to_file(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![0, 2],
+                format.to_string(),
+                target.to_string_lossy().to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap();
+
+            assert!(
+                matches!(outcome, SessionJobOutcome::Completed { .. }),
+                "{format}: {outcome:?}"
+            );
+            assert!(!expected.is_empty(), "{format}: fixture produced no text");
+            assert_eq!(fs::read_to_string(&target).unwrap(), expected, "{format}");
+        }
+        let mut names = fs::read_dir(documents.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["pages.md", "pages.txt", "text-source.pdf"]);
+    }
+
+    #[tokio::test]
+    async fn text_export_to_file_rejects_non_text_and_private_targets_before_the_job() {
+        let documents = tempfile::tempdir().unwrap();
+        let original = documents.path().join("text-source.pdf");
+        fs::copy(fixture_path("three-distinct-pages.pdf"), &original).unwrap();
+        let original_bytes = fs::read(&original).unwrap();
+        let app = test_command_app();
+        let store = app.state::<DocumentSessionStore>();
+        let session_id = open_test_session(&store, &original);
+        let private_target = store.temp_root.join("export.txt");
+
+        for target in [
+            original.clone(),
+            documents.path().join("notes"),
+            documents.path().join("notes.txt.pdf"),
+        ] {
+            let error = export_session_text_to_file(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![0],
+                "text".to_string(),
+                target.to_string_lossy().to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                error.code,
+                "TEXT_EXPORT_TARGET_INVALID",
+                "{}",
+                target.display()
+            );
+        }
+        assert_eq!(fs::read(&original).unwrap(), original_bytes);
+        assert!(!documents.path().join("notes").exists());
+
+        let error = export_session_text_to_file(
+            Uuid::new_v4().to_string(),
+            session_id,
+            1,
+            vec![0],
+            "text".to_string(),
+            private_target.to_string_lossy().to_string(),
+            app.state(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "DOCUMENT_SESSION_PRIVATE_TARGET");
+        assert!(!private_target.exists());
+    }
+
+    #[tokio::test]
     async fn candidate_ready_public_commands_reject_mutation_save_job_ocr_export_and_ai() {
         let documents = tempfile::tempdir().unwrap();
         let original = documents.path().join("candidate.pdf");
@@ -19517,7 +19813,11 @@ mod tests {
             &child_owner,
             "test-external-await-",
         );
+        // The supervisor stays pending until released: registration starts the reaper,
+        // which may already collect a finished task before the count below is read.
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
         let task = spawn_managed_test_supervisor(execution_authority, async move {
+            let _ = release_rx.await;
             MutationTransactionOutcome::Aborted {
                 transaction_id: record_id.to_string(),
                 session_id: "external-await".to_string(),
@@ -19531,6 +19831,7 @@ mod tests {
 
         assert_eq!(manager.active_supervisor_count(), 1);
 
+        release_tx.send(()).unwrap();
         let res = manager.shutdown(3000).await;
         assert!(res.is_ok());
         assert_eq!(manager.active_supervisor_count(), 0);

@@ -32,7 +32,8 @@ const WORKER_MAX_RENDER_PEAK_BYTES: u64 =
         + MAX_WORKER_CREDENTIAL_DOCUMENT_BYTES
         + WORKER_PDFIUM_RUNTIME_HEADROOM_BYTES;
 #[cfg(any(unix, test))]
-const WORKER_ADDRESS_SPACE_LIMIT_BYTES: u64 = WORKER_MAX_RENDER_PEAK_BYTES + 512 * 1024 * 1024;
+pub(crate) const WORKER_ADDRESS_SPACE_LIMIT_BYTES: u64 =
+    WORKER_MAX_RENDER_PEAK_BYTES + 512 * 1024 * 1024;
 
 pub fn run_worker() {
     let diagnostics = apply_resource_limits();

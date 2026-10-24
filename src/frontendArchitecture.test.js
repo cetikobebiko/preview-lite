@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -48,6 +48,32 @@ describe("frontend architecture acceptance gates", () => {
     ]) expect(appSource, forbidden).not.toContain(forbidden);
     expect(appSource).not.toMatch(/\bswitch\s*\(/);
     expect(appSource).not.toContain("onMount(async");
+  });
+
+  it("grants the webview no filesystem or shell access", () => {
+    // File writes go through Rust (document_io::write_atomically); the webview only opens dialogs.
+    const capability = JSON.parse(read("src-tauri/capabilities/default.json"));
+    const pkg = JSON.parse(read("package.json"));
+    const lib = read("src-tauri/src/lib.rs");
+    for (const prefix of ["fs:", "shell:"]) {
+      expect(capability.permissions.filter((permission) => permission.startsWith(prefix))).toEqual([]);
+    }
+    expect(Object.keys(pkg.dependencies)).not.toContain("@tauri-apps/plugin-fs");
+    expect(Object.keys(pkg.dependencies)).not.toContain("@tauri-apps/plugin-shell");
+    expect(lib).not.toMatch(/tauri_plugin_(fs|shell)::init/);
+  });
+
+  it("keeps every Svelte component on runes syntax (AGENTS.md)", () => {
+    const components = readdirSync(resolve(process.cwd(), "src"), { recursive: true })
+      .filter((file) => file.endsWith(".svelte"));
+    expect(components.length).toBeGreaterThan(0);
+    for (const file of components) {
+      const source = read(`src/${file}`);
+      expect(source, file).not.toMatch(/^\s*\$:/m);
+      expect(source, file).not.toMatch(/\bexport let\b/);
+      expect(source, file).not.toMatch(/\son:[a-z]+(\||=|\s|\/?>)/);
+      expect(source, file).not.toContain("createEventDispatcher");
+    }
   });
 
   it("keeps secure-redaction business logic in its canonical controller and behind panel/runtime gates", () => {

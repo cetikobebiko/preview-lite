@@ -5,7 +5,9 @@ import {
   DEFAULT_PAGE_SIZE_PT,
   createPageSizeFallback,
   estimateRenderedPageCssSize,
+  MAX_VIEWER_RENDER_PIXELS,
   normalizePageSizes,
+  pageRenderDevicePixelRatio,
   renderDevicePixelRatio,
 } from "./pageGeometry.js";
 
@@ -92,5 +94,36 @@ describe("page geometry helpers", () => {
     expect(fallback.get("doc-a:1")).toBe(DEFAULT_PAGE_SIZE_PT);
     fallback.remember("doc-b:1", { widthPt: Number.NaN, heightPt: 1 });
     expect(fallback.get("doc-b:1")).toEqual({ widthPt: 841.89, heightPt: 595.276 });
+  });
+});
+
+describe("viewer render pixel budget", () => {
+  const A4 = { widthPt: 595.276, heightPt: 841.89 };
+  const A3 = { widthPt: 841.89, heightPt: 1190.55 };
+  const bitmapPixels = (pageSize, scale, devicePixelRatio) => {
+    const ratio = pageRenderDevicePixelRatio({ pageSize, scale, devicePixelRatio });
+    return pageSize.widthPt * scale * ratio * pageSize.heightPt * scale * ratio;
+  };
+
+  it("keeps the screen ratio while the bitmap fits the budget", () => {
+    expect(pageRenderDevicePixelRatio({ pageSize: A4, scale: 1, devicePixelRatio: 2 })).toBe(2);
+    expect(pageRenderDevicePixelRatio({ pageSize: A4, scale: 2.5, devicePixelRatio: 2 })).toBe(2);
+    expect(pageRenderDevicePixelRatio({ pageSize: null, scale: 4, devicePixelRatio: 2 })).toBe(2);
+  });
+
+  it("lowers the ratio at high zoom so one page stays within 64 MiB", () => {
+    // Uncapped: A4 at 4x and dpr 2 is 32 Mpx (128 MB), A3 64 Mpx (256 MB).
+    for (const pageSize of [A4, A3]) {
+      const ratio = pageRenderDevicePixelRatio({ pageSize, scale: 4, devicePixelRatio: 2 });
+      expect(ratio).toBeLessThan(2);
+      expect(bitmapPixels(pageSize, 4, 2)).toBeLessThanOrEqual(MAX_VIEWER_RENDER_PIXELS * 1.0001);
+      expect(bitmapPixels(pageSize, 4, 2)).toBeGreaterThan(MAX_VIEWER_RENDER_PIXELS * 0.99);
+    }
+  });
+
+  it("keeps the CSS size of a capped page at its zoomed point size", () => {
+    const size = estimateRenderedPageCssSize({ pageSize: A3, scale: 4, devicePixelRatio: 2 });
+    expect(size.width).toBeCloseTo(A3.widthPt * 4, -0.5);
+    expect(size.height).toBeCloseTo(A3.heightPt * 4, -0.5);
   });
 });

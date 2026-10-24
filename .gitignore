@@ -18,3 +18,7 @@ src-tauri/binaries/
 # scripts/provision-pdfium-runtime.mjs (SHA-256 pinned in platform-support.json)
 src-tauri/lib/libpdfium.so
 src-tauri/lib/pdfium.dll
+
+# Locally copied Windows build outputs (MSI/NSIS installers, app executable)
+/bundle/
+*.exe
