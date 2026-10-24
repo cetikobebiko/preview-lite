@@ -1548,6 +1548,10 @@ mod macos_arm64 {
     /// 10-20 s; see `heavy_page_command_timings`). Two timeouts on different
     /// surfaces of that page quarantine only the page. The nested-form page
     /// (index 1) is not used: its parse allocates gigabytes.
+    ///
+    /// The thumbnail is 300 px wide: a 150 px one took 3.4 s on an M1 and finished
+    /// under 2 s on the faster `macos-latest` runner, while 300 px did not finish
+    /// within 10 s on the M1 (2026-10-24), so the margin no longer depends on the host.
     #[tokio::test]
     async fn heavy_page_timeouts_quarantine_the_page_not_the_document() {
         let path = fixture("heavy-page.pdf");
@@ -1583,7 +1587,7 @@ mod macos_arm64 {
             run(Box::new(|document_id| WorkerCommand::RenderThumbnail {
                 document_id,
                 page_index: 2,
-                target_width: 150,
+                target_width: 300,
             }))
             .await
             .unwrap_err(),
