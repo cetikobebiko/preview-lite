@@ -161,6 +161,8 @@ impl MutationEvidence {
 
 struct Mutator<'a> {
     document: &'a mut Document,
+    /// Input's last trailer has /Prev; read from the raw bytes because lopdf 0.45 strips it.
+    previous_revision: bool,
     requested: BTreeSet<String>,
     evidence: MutationEvidence,
     visited_action_objects: HashSet<ObjectId>,
@@ -204,7 +206,7 @@ impl<'a> Mutator<'a> {
     }
 
     fn mutate_trailer(&mut self) -> Result<(), SessionJobOperationError> {
-        if self.requested("incremental_revisions") && self.document.trailer.has(b"Prev") {
+        if self.requested("incremental_revisions") && self.previous_revision {
             self.evidence
                 .record(["incremental_revisions"], "Trailer/Prev", None, None)?;
             self.document.trailer.remove(b"Prev");
@@ -1034,12 +1036,8 @@ fn capture_expected_document_invariants(
             .and_then(|value| value.as_i64().ok())
             .unwrap_or(0)
             .rem_euclid(360) as i32;
-        let content = document.get_page_content(page_id).map_err(|_| {
-            transform_error(
-                "SANITIZATION_TRANSFORM_FAILED",
-                "Input page content digest hesaplanamadı",
-            )
-        })?;
+        // lopdf 0.34 also fell back to raw bytes on decode failure; only the Result is gone.
+        let content = document.get_page_content(page_id);
         pages.push(SanitizationPageInvariant {
             page_index: page_number - 1,
             width_points,
@@ -1220,17 +1218,28 @@ pub(crate) fn execute_transform(
         SanitizationTransformTestPhase::Mutation,
     );
 
-    let mut document = Document::load(snapshot_path).map_err(|_| {
+    let input = std::fs::read(snapshot_path).map_err(|_| {
+        crate::job_worker::JobFailure::new(
+            "SANITIZATION_TRANSFORM_FAILED",
+            "Worker snapshot PDF'i okunamadı",
+        )
+    })?;
+    let mut document = Document::load_mem(&input).map_err(|_| {
         crate::job_worker::JobFailure::new(
             "SANITIZATION_TRANSFORM_FAILED",
             "Worker snapshot PDF object graph'ini açamadı",
         )
     })?;
+    // An unreadable trailer counts as a previous revision so its removal is recorded.
+    let previous_revision =
+        crate::lopdf_compat::trailer_history(&input, &document).is_none_or(|history| history.prev);
+    drop(input);
     let expected_document_invariants =
         capture_expected_document_invariants(&document).map_err(map_job_error)?;
     let requested = policy.controls.iter().cloned().collect();
     let (mutation, pruned_count) = Mutator {
         document: &mut document,
+        previous_revision,
         requested,
         evidence: MutationEvidence::default(),
         visited_action_objects: HashSet::new(),
@@ -1285,13 +1294,22 @@ pub(crate) fn execute_transform(
             format!("Output digest hesaplanamadı: {error}"),
         )
     })?;
-    let reopened = Document::load(staging.path()).map_err(|_| {
+    let output = std::fs::read(staging.path()).map_err(|_| {
+        crate::job_worker::JobFailure::new(
+            "SANITIZATION_TRANSFORM_FAILED",
+            "Private artifact okunamadı",
+        )
+    })?;
+    let reopened = Document::load_mem(&output).map_err(|_| {
         crate::job_worker::JobFailure::new(
             "SANITIZATION_TRANSFORM_FAILED",
             "Private artifact parser ile yeniden açılamadı",
         )
     })?;
-    if reopened.trailer.has(b"Prev") || reopened.trailer.has(b"XRefStm") {
+    // lopdf 0.45 strips /Prev and /XRefStm on load; the raw trailer is authoritative, and
+    // a trailer that cannot be located is not a proven full rewrite.
+    if crate::lopdf_compat::trailer_history(&output, &reopened).is_none_or(|history| history.any())
+    {
         return Err(crate::job_worker::JobFailure::new(
             "SANITIZATION_TRANSFORM_FAILED",
             "Full rewrite history pointer taşıyor",

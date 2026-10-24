@@ -18,6 +18,8 @@ pub mod external_validation;
 pub mod forms;
 pub(crate) mod incremental_save;
 pub mod job_worker;
+#[doc(hidden)]
+pub mod lopdf_compat;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod macos_helper;

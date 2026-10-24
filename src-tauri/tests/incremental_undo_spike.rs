@@ -1144,7 +1144,7 @@ fn minimize_with_lopdf(input: &[u8], pdfium_out: &[u8]) -> (Vec<u8>, usize, usiz
             .objects
             .get(id)
             .is_some_and(|old| same_object(old, obj));
-        if !same && !matches!(obj.type_name().ok(), Some("XRef" | "ObjStm")) {
+        if !same && !matches!(obj.type_name().ok(), Some(b"XRef" | b"ObjStm")) {
             changed.push(*id);
         }
     }

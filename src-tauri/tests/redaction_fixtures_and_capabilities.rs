@@ -644,8 +644,8 @@ fn test_semantic_fixture_corpus_assertions() {
             lopdf::Document::load(&ann_path).expect("lopdf load annotations-fixture.pdf");
         let annot_dict = lopdf_doc.get_object((6, 0)).unwrap().as_dict().unwrap();
         assert_eq!(
-            annot_dict.get(b"Subtype").unwrap().as_name_str().unwrap(),
-            "Text"
+            annot_dict.get(b"Subtype").unwrap().as_name().unwrap(),
+            b"Text"
         );
 
         // 5.9 acroform-widget.pdf
@@ -661,10 +661,10 @@ fn test_semantic_fixture_corpus_assertions() {
         );
         let widget_dict = lopdf_doc.get_object((6, 0)).unwrap().as_dict().unwrap();
         assert_eq!(
-            widget_dict.get(b"Subtype").unwrap().as_name_str().unwrap(),
-            "Widget"
+            widget_dict.get(b"Subtype").unwrap().as_name().unwrap(),
+            b"Widget"
         );
-        assert_eq!(widget_dict.get(b"FT").unwrap().as_name_str().unwrap(), "Tx");
+        assert_eq!(widget_dict.get(b"FT").unwrap().as_name().unwrap(), b"Tx");
         let field_name =
             String::from_utf8_lossy(widget_dict.get(b"T").unwrap().as_str().unwrap_or(b""));
         assert_eq!(field_name, "CustomerName");
@@ -698,7 +698,7 @@ fn test_semantic_fixture_corpus_assertions() {
             "Signature dictionary carrying /ByteRange present"
         );
         let sig_dict = sig_obj.unwrap().as_dict().unwrap();
-        assert_eq!(sig_dict.get(b"Type").unwrap().as_name_str().unwrap(), "Sig");
+        assert_eq!(sig_dict.get(b"Type").unwrap().as_name().unwrap(), b"Sig");
 
         // 5.13 incremental-revision.pdf
         let inc_path = dir.join("incremental-revision.pdf");

@@ -1353,7 +1353,7 @@ pub(crate) fn audit_accessibility_document(doc: &Document) -> AccessibilityAudit
         effective_version,
         pdfua_declaration: declaration.clone(),
         page_count: doc.get_pages().len().try_into().unwrap_or(u32::MAX),
-        encrypted: doc.is_encrypted(),
+        encrypted: crate::lopdf_compat::was_encrypted(doc),
         has_structure_tree: inspection.root.is_some(),
         has_mark_info,
         has_marked_entry,
@@ -1915,6 +1915,18 @@ fn human_review_items() -> Vec<AccessibilityHumanReviewItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_only_encrypted_document_is_reported_encrypted() {
+        // lopdf 0.45 decrypts it on load and drops /Encrypt; the audit must still say so.
+        let bytes = crate::lopdf_compat::owner_only_encrypted_pdf(1);
+        let document = Document::load_mem(&bytes).unwrap();
+        assert!(
+            audit_accessibility_document(&document)
+                .document_facts
+                .encrypted
+        );
+    }
     use lopdf::{dictionary, Stream, StringFormat};
 
     fn minimal_document() -> Document {

@@ -285,12 +285,8 @@ fn observe_document_invariants(
             .and_then(|value| value.as_i64().ok())
             .unwrap_or(0)
             .rem_euclid(360) as i32;
-        let content = document.get_page_content(page_id).map_err(|_| {
-            verification_error(
-                "SANITIZATION_VERIFICATION_PRESERVATION_FAILED",
-                "Output page content çözümlenemedi",
-            )
-        })?;
+        // lopdf 0.34 also fell back to raw bytes on decode failure; only the Result is gone.
+        let content = document.get_page_content(page_id);
         pages.push(SanitizationPageInvariant {
             page_index: page_number - 1,
             width_points,
@@ -410,7 +406,9 @@ fn count_marker(bytes: &[u8], marker: &[u8]) -> usize {
 }
 
 fn verify_full_rewrite(document: &Document, bytes: &[u8]) -> Result<(), SessionJobOperationError> {
-    if document.trailer.has(b"Prev") || document.trailer.has(b"XRefStm") {
+    // lopdf 0.45 strips /Prev and /XRefStm on load; the raw trailer is authoritative, and a
+    // trailer that cannot be located is not a proven full rewrite.
+    if crate::lopdf_compat::trailer_history(bytes, document).is_none_or(|history| history.any()) {
         return Err(verification_error(
             "SANITIZATION_VERIFICATION_FULL_REWRITE_FAILED",
             "Output active history pointer içeriyor",

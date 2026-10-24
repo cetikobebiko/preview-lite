@@ -48,6 +48,14 @@ fn fixture_dir() -> PathBuf {
         .join("sanitization")
 }
 
+/// lopdf 0.45 consumes /Prev (and /XRefStm) while loading; the raw last trailer keeps it.
+fn raw_trailer_history(name: &str) -> preview_alternative_lib::lopdf_compat::TrailerHistory {
+    let bytes = fs::read(fixture_dir().join(name)).unwrap();
+    let document = Document::load_mem(&bytes).unwrap();
+    preview_alternative_lib::lopdf_compat::trailer_history(&bytes, &document)
+        .unwrap_or_else(|| panic!("{name}: last trailer not found"))
+}
+
 fn load_fixture(name: &str) -> Document {
     Document::load(fixture_dir().join(name))
         .unwrap_or_else(|error| panic!("lopdf failed to parse {name}: {error:?}"))
@@ -560,7 +568,11 @@ fn parser_supports_classic_incremental_object_xref_and_hybrid_inputs() {
     assert!(matches!(page.get(b"AA").unwrap(), Object::Dictionary(_)));
 
     let incremental = load_fixture("incremental-revision.pdf");
-    assert!(incremental.trailer.has(b"Prev"));
+    assert!(
+        !incremental.trailer.has(b"Prev"),
+        "lopdf 0.45 consumes /Prev"
+    );
+    assert!(raw_trailer_history("incremental-revision.pdf").prev);
     assert!(document_contains_marker(&incremental, OLD_REVISION_MARKER));
 
     let object_stream = load_fixture("object-xref-stream.pdf");
@@ -576,7 +588,8 @@ fn parser_supports_classic_incremental_object_xref_and_hybrid_inputs() {
         &hybrid,
         b"SANITIZATION_HYBRID_OBJECT_001"
     ));
-    assert!(hybrid.trailer.has(b"Prev"));
+    assert!(!hybrid.trailer.has(b"Prev"), "lopdf 0.45 consumes /Prev");
+    assert!(raw_trailer_history("hybrid-xref.pdf").prev);
     assert!(
         !hybrid.trailer.has(b"XRefStm"),
         "lopdf consumes XRefStm while merging it"
@@ -598,7 +611,8 @@ fn incremental_xref_stream_chain_parses_latest_graph_and_retains_physical_histor
         .any(|window| window == XREF_STREAM_OLD_REVISION_MARKER));
 
     let document = Document::load(&path).expect("lopdf parses xref-stream Prev chain");
-    assert!(document.trailer.has(b"Prev"));
+    assert!(!document.trailer.has(b"Prev"), "lopdf 0.45 consumes /Prev");
+    assert!(raw_trailer_history("incremental-xref-stream-chain.pdf").prev);
     assert_eq!(
         document
             .catalog()
@@ -1223,20 +1237,24 @@ fn pruning_removes_unreachable_payloads_but_retains_reachable_and_shared_objects
     assert!(reopened.get_object(shared_id).is_ok());
 }
 
+/// lopdf 0.34 copied the input's stale /Prev into a full save, so the transform had to
+/// remove it explicitly (it still does). 0.45 drops /Prev on load: a full save carries no
+/// history pointer and reopens.
 #[test]
-fn lopdf_full_save_copies_stale_prev_and_requires_explicit_trailer_cleanup() {
+fn lopdf_full_save_does_not_copy_a_stale_prev() {
     let mut document = load_fixture("incremental-revision.pdf");
-    assert!(document.trailer.has(b"Prev"));
+    assert!(!document.trailer.has(b"Prev"));
     let dir = tempdir().unwrap();
-    let output = dir.path().join("preserved-prev.pdf");
+    let output = dir.path().join("no-stale-prev.pdf");
     document.save(&output).unwrap();
     let bytes = fs::read(&output).unwrap();
-    assert!(bytes
+    assert!(!bytes
         .windows(b"/Prev".len())
         .any(|window| window == b"/Prev"));
-    assert!(
-        Document::load(&output).is_err(),
-        "stale input offsets are not rewritten"
+    let reopened = Document::load_mem(&bytes).expect("full save reopens");
+    assert_eq!(
+        preview_alternative_lib::lopdf_compat::trailer_history(&bytes, &reopened),
+        Some(preview_alternative_lib::lopdf_compat::TrailerHistory::default())
     );
 }
 
@@ -1303,7 +1321,7 @@ fn xref_stream_chain_full_rewrite_normalizes_history_and_uses_output_local_offse
     let input_path = fixture_dir().join("incremental-xref-stream-chain.pdf");
     let input = fs::read(&input_path).unwrap();
     let mut document = Document::load(&input_path).unwrap();
-    assert!(document.trailer.has(b"Prev"));
+    assert!(raw_trailer_history("incremental-xref-stream-chain.pdf").prev);
     document.catalog_mut().unwrap().remove(b"Metadata");
     document.trailer.remove(b"Prev");
     document.trailer.remove(b"XRefStm");
@@ -1407,38 +1425,43 @@ fn reachable_dangling_critical_references_open_but_block_graph_completeness() {
     assert_eq!(unresolved, BTreeSet::from([(98, 0), (99, 0)]));
 }
 
+/// lopdf 0.45: an encrypted file must get its password while loading. Loaded without it,
+/// the objects in encrypted object streams (the catalog included) are never parsed and a
+/// later `decrypt` cannot bring them back, so nothing may load first and decrypt after
+/// (production uses `lopdf_compat::load_mem_with_credential`). A decrypted save is plain.
 #[test]
 fn encrypted_input_requires_credentials_and_decrypt_save_becomes_unencrypted() {
-    let path = fixture_dir().join("encrypted.pdf");
-    let mut encrypted = Document::load(&path).expect("parse encrypted object graph");
-    assert!(encrypted.is_encrypted());
-    assert!(encrypted.clone().decrypt(b"wrong-password").is_err());
+    let bytes = fs::read(fixture_dir().join("encrypted.pdf")).unwrap();
+    let marker = b"SANITIZATION_ENCRYPTED_PAYLOAD_001";
+
+    let mut without_password = Document::load_mem(&bytes).expect("parse encrypted xref");
+    assert!(without_password.is_encrypted());
+    assert!(without_password.catalog().is_err());
+    without_password.decrypt_raw(b"fixture-password").unwrap();
+    assert!(
+        without_password.catalog().is_err(),
+        "decrypting after load does not recover object-stream objects"
+    );
+
+    let with_password = |password: &str| {
+        Document::load_mem_with_options(&bytes, lopdf::LoadOptions::with_password(password))
+    };
+    assert!(with_password("wrong-password").is_err());
+    let encrypted = with_password("fixture-password").expect("load with the password");
+    assert!(!encrypted.is_encrypted());
+    assert!(encrypted.was_encrypted());
+    assert!(document_contains_marker(&encrypted, marker));
 
     let dir = tempdir().unwrap();
-    let untouched_path = dir.path().join("untouched-encrypted-rewrite.pdf");
-    encrypted.clone().save(&untouched_path).unwrap();
-    let mut untouched = Document::load(&untouched_path).unwrap();
-    assert!(untouched.is_encrypted());
-    untouched.decrypt(b"fixture-password").unwrap();
-    assert!(document_contains_marker(
-        &untouched,
-        b"SANITIZATION_ENCRYPTED_PAYLOAD_001"
-    ));
-
-    encrypted.decrypt(b"fixture-password").unwrap();
-    assert!(!encrypted.is_encrypted());
-    assert!(document_contains_marker(
-        &encrypted,
-        b"SANITIZATION_ENCRYPTED_PAYLOAD_001"
-    ));
     let decrypted_path = dir.path().join("decrypted-rewrite.pdf");
-    encrypted.save(&decrypted_path).unwrap();
+    encrypted.clone().save(&decrypted_path).unwrap();
     let decrypted = Document::load(&decrypted_path).unwrap();
     assert!(!decrypted.is_encrypted());
+    assert!(!decrypted.was_encrypted());
     assert!(fs::read(&decrypted_path)
         .unwrap()
-        .windows(b"SANITIZATION_ENCRYPTED_PAYLOAD_001".len())
-        .any(|window| window == b"SANITIZATION_ENCRYPTED_PAYLOAD_001"));
+        .windows(marker.len())
+        .any(|window| window == marker));
 }
 
 #[test]
