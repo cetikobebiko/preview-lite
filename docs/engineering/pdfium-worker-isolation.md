@@ -152,7 +152,7 @@ Viewer search runs as a sequence of bounded `SearchTextPages` chunks
 (`PdfiumWorkerBroker::search_text_in_chunks`). Every chunk repeats the full read sequence above
 (admission, session read lease, generation check), so reads queued behind a search are served
 between chunks, and a generation change between chunks fails the next chunk. A chunk stops after
-64 pages or ~150 ms (checked between pages, always at least one page). The broker validates each
+64 pages or ~75 ms (checked between pages, always at least one page). The broker validates each
 chunk against its request (page range, match numbering, result capacity) and concatenates them;
 because matches never span pages the result is identical to a whole-document `SearchText`, which
 the real-PDFium parity test checks on every chunk boundary.
@@ -478,7 +478,8 @@ Findings:
   about 6 s with 19 matches; the 150 ms time budget, not the 64-page cap, ends every chunk. The
   cost is visible elsewhere: while a search runs, page reads wait p50 113–118 ms and p95
   387–465 ms for admission, against about 17 ms without one. A smaller time budget (for example
-  75 ms) should roughly halve that wait at the price of more chunks; it has not been measured.
+  75 ms) should roughly halve that wait at the price of more chunks; it was measured on
+  2026-10-24 and adopted (below).
 - S5: no background worker traffic while idle.
 
 Not established: the plan's acceptance target (at least 80% fewer cancel-driven restarts) needs
@@ -486,6 +487,26 @@ a measurement of the code before the cancellation work, which does not exist. Li
 machine, one synthetic document, two runs; input is dispatched by script (`scrollBy`, synthetic
 wheel and key events), not real trackpad momentum, and zoom results differ between runs (3 vs 0
 kills).
+
+### Search chunk budget 150 → 75 ms (2026-10-24, same machine and fixture)
+
+The same release driver ran twice at 150 ms and three times at 75 ms. The phase windows are not
+used for this comparison. How much the driver gets done per phase varies a lot between runs
+(19–109 page renders in S1). Instead, each Read admission is classified by whether a
+`search-chunk` exchange was running when the read was requested. The chunk's own admission is
+excluded.
+
+| Budget | Chunk duration p50 | Reads during a search: wait p50 / p95 / max | Full search, median |
+|---|---|---|---|
+| 150 ms | 152 ms | 95 / 152 / 153 ms (n = 18) | 4.35 s, 27 chunks (7 searches) |
+| 75 ms | 78 ms | 51 / 87 / 104 ms (n = 156) | 4.21 s, 53 chunks (9 searches) |
+
+Halving the budget roughly halves the wait of a read that arrives during a search. Twice the
+number of chunks did not lengthen a search. One 75 ms search took 6.0 s; it ran in the run that
+served 143 reads between its chunks (281 page renders in total), so that time went to reads,
+which is the intent. The production budget is now 75 ms, still far inside the 400 ms
+search-chunk grace. Limits: one machine, one document, few reads during searches at 150 ms, and
+most 75 ms samples come from that one busy run.
 
 Frontend coalescing reduces how often cancellation happens at all. During a zoom gesture,
 `PdfPage` lets the in-flight render finish (its result is dropped as stale) and cancels once the
