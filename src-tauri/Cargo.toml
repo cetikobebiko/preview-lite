@@ -101,11 +101,21 @@ sha2 = "0.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# `tauri dev` and `cargo test` build the app unoptimized, but the heavy work on large PDFs
-# (hashing, lopdf parsing, decompression) happens in dependencies. Unoptimized, rotating a
-# page of a 130 MiB book took 46 s instead of 5 s. Optimizing only dependencies keeps the
-# app's own code debuggable.
-[profile.dev.package."*"]
+# `tauri dev` and `cargo test` build unoptimized, but the heavy work on large PDFs (hashing,
+# lopdf parsing, decompression) happens in these crates. Unoptimized, rotating a page of a
+# 130 MiB book took 46 s instead of under 1 s. Only these small crates are optimized: doing
+# it for every dependency doubled CI build times and hit the FAST_LOCAL 30-minute timeout.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.lopdf]
+opt-level = 3
+[profile.dev.package.nom]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.weezl]
 opt-level = 3
 
 [profile.release]
