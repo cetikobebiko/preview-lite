@@ -3,10 +3,10 @@ use crate::document_io::{
     DocumentIoFailure, DocumentIoStage,
 };
 use crate::incremental_save::{
-    find_xref_inconsistency, save_mutation, validate_append_only, RawDocument, RawPage, WriteMode,
+    find_xref_inconsistency, read_appended_section, save_mutation, validate_appended_section,
+    InputFingerprint, RawDocument, RawPage, WriteMode,
 };
 use pdfium_render::prelude::*;
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
@@ -268,16 +268,45 @@ fn collect_page_leaves(
 /// AGENTS.md lopdf sınırları: job worker'da, snapshot'ın kopyası üzerinde, `atomic_write_pdf`
 /// içinde çalışır; şifreli belge reddedilir; çıktı `validate_append_only` ve ardından PDFium
 /// sayfa doğrulamasından geçer. Gerekçe: PDFium'un sayfa sırasını değiştiren bir API'si yoktur.
+/// Lets the reorder see the page tree without holding a copy of every stream: content is
+/// emptied except in object and xref streams, which lopdf still has to read. Only page-tree
+/// dictionaries are written, so the emptied streams are never serialized.
+///
+/// lopdf uses the filter two ways: for a top-level object it keeps the object as modified in
+/// place and only checks the result for `None`; for a member of an object stream it keeps the
+/// returned object. Streams are never object-stream members, so only non-streams are returned.
+fn page_tree_only(
+    id: lopdf::ObjectId,
+    object: &mut lopdf::Object,
+) -> Option<(lopdf::ObjectId, lopdf::Object)> {
+    match object {
+        lopdf::Object::Stream(stream) => {
+            if !stream.dict.has_type(b"ObjStm") && !stream.dict.has_type(b"XRef") {
+                stream.content = Vec::new();
+            }
+            Some((id, lopdf::Object::Null))
+        }
+        other => Some((id, other.clone())),
+    }
+}
+
+/// Writes the reordered document to `temp` as an incremental update of `input`. `input` is
+/// consumed so the bytes are held once; the output goes straight to the file and is checked
+/// from disk.
 fn reorder_incrementally(
-    input: &[u8],
+    input: Vec<u8>,
     order: &[u32],
     page_count: usize,
-) -> Result<Vec<u8>, String> {
-    if let Some(reason) = find_xref_inconsistency(input) {
+    temp: &Path,
+) -> Result<(), String> {
+    if let Some(reason) = find_xref_inconsistency(&input) {
         return Err(format!("xref zinciri onarım gerektiriyor: {reason}"));
     }
-    let previous =
-        lopdf::Document::load_mem(input).map_err(|error| format!("lopdf açamadı: {error}"))?;
+    let previous = lopdf::Document::load_mem_with_options(
+        &input,
+        lopdf::LoadOptions::with_filter(page_tree_only),
+    )
+    .map_err(|error| format!("lopdf açamadı: {error}"))?;
     // lopdf 0.45 decrypts empty-user-password files on load; the bytes on disk are still
     // encrypted, so plain incremental objects would corrupt them.
     if crate::lopdf_compat::was_encrypted(&previous) {
@@ -310,7 +339,8 @@ fn reorder_incrementally(
         ));
     }
     let version = previous.version.clone();
-    let mut incremental = lopdf::IncrementalDocument::create_from(input.to_vec(), previous);
+    let fingerprint = InputFingerprint::of(&input);
+    let mut incremental = lopdf::IncrementalDocument::create_from(input, previous);
     // Artımlı bölümün başına yazılan `%PDF-x.y` satırı yalnız bir yorumdur; sürümü koru.
     incremental.new_document.version = version;
     for leaf in leaves.iter().filter(|leaf| leaf.parent != root) {
@@ -347,22 +377,24 @@ fn reorder_incrementally(
         ),
     );
     root_dictionary.set("Count", lopdf::Object::Integer(page_count as i64));
-    let mut output = Vec::with_capacity(input.len() + 4096);
-    incremental
-        .save_to(&mut output)
-        .map_err(|error| format!("artımlı güncelleme yazılamadı: {error}"))?;
-    let digest = format!("{:x}", Sha256::digest(input));
-    validate_append_only(input, &digest, &output).map_err(|failure| failure.detail)?;
-    Ok(output)
-}
-
-fn write_temp(temp: &Path, bytes: &[u8]) -> Result<(), DocumentIoFailure> {
-    use std::io::Write;
-    let mut file = std::fs::File::create(temp)
-        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF açılamadı: {error}")))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF yazılamadı: {error}")))
+    {
+        let file =
+            std::fs::File::create(temp).map_err(|error| format!("temp PDF açılamadı: {error}"))?;
+        let mut writer = std::io::BufWriter::new(file);
+        incremental
+            .save_to(&mut writer)
+            .map_err(|error| format!("artımlı güncelleme yazılamadı: {error}"))?;
+        writer
+            .into_inner()
+            .map_err(|error| error.into_error())
+            .and_then(|file| file.sync_all())
+            .map_err(|error| format!("temp PDF yazılamadı: {error}"))?;
+    }
+    drop(incremental);
+    let appended = read_appended_section(temp, &fingerprint)
+        .map_err(|error| format!("temp PDF okunamadı: {error}"))?
+        .map_err(|failure| failure.detail)?;
+    validate_appended_section(&fingerprint, &appended).map_err(|failure| failure.detail)
 }
 
 #[derive(Clone, Copy)]
@@ -456,9 +488,8 @@ pub(crate) fn reorder_pdf_to_target_report(
                 let input = std::fs::read(&source_for_write).map_err(|error| {
                     DocumentIoFailure::write(format!("Kaynak PDF okunamadı: {error}"))
                 })?;
-                match reorder_incrementally(&input, &page_order, usize::from(source_count)) {
-                    Ok(output) => {
-                        write_temp(temp, &output)?;
+                match reorder_incrementally(input, &page_order, usize::from(source_count), temp) {
+                    Ok(()) => {
                         tracing::info!(
                             operation = "reorder_pages",
                             write_mode = ?WriteMode::Appended,
@@ -792,7 +823,9 @@ mod tests {
     fn owner_only_encrypted_input_is_not_reordered_incrementally() {
         // lopdf 0.45 decrypts it on load; appending plain objects would corrupt the file.
         let input = crate::lopdf_compat::owner_only_encrypted_pdf(2);
-        let error = reorder_incrementally(&input, &[1, 0], 2).unwrap_err();
+        let directory = tempfile::tempdir().unwrap();
+        let error = reorder_incrementally(input, &[1, 0], 2, &directory.path().join("out.pdf"))
+            .unwrap_err();
         assert!(error.contains("şifreli"), "{error}");
     }
     use std::fs;
@@ -810,6 +843,52 @@ mod tests {
         let target = directory.join(name);
         fs::copy(fixture(name), &target).unwrap();
         target
+    }
+
+    /// Peak-memory harness for one production mutation on a large file, not a regular test.
+    /// Run one file per process and read "peak memory footprint" from `/usr/bin/time -l`:
+    /// `MEASURE_PDF=<file> MEASURE_OP=rotate|reorder /usr/bin/time -l cargo test --release
+    /// --config 'profile.release.panic="unwind"' --lib -- --ignored --exact
+    /// manipulation::tests::measure_mutation_memory`.
+    #[test]
+    #[ignore]
+    fn measure_mutation_memory() {
+        let source = PathBuf::from(std::env::var("MEASURE_PDF").expect("MEASURE_PDF"));
+        let operation = std::env::var("MEASURE_OP").unwrap_or_else(|_| "rotate".into());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("working.pdf");
+        fs::copy(&source, &path).unwrap();
+        let before = fs::metadata(&path).unwrap().len();
+        let started = std::time::Instant::now();
+        let path_string = path.to_string_lossy().to_string();
+        match operation.as_str() {
+            "rotate" => rotate_page_report(path_string, 0, 90, None).map(|_| ()),
+            "reorder" => {
+                let pages = {
+                    let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+                    let document = pdfium.load_pdf_from_file(&path, None).unwrap();
+                    document.pages().len() as u32
+                };
+                let mut order: Vec<u32> = (0..pages).collect();
+                order.swap(0, 1);
+                reorder_pdf_to_target_report(
+                    path_string.clone(),
+                    order,
+                    path_string,
+                    None,
+                    ReorderMode::FullPermutation,
+                )
+                .map(|_| ())
+            }
+            other => panic!("unknown MEASURE_OP {other}"),
+        }
+        .unwrap();
+        let after = fs::metadata(&path).unwrap().len();
+        eprintln!(
+            "MEASURE op={operation} input={before} growth={} elapsed_ms={}",
+            after - before,
+            started.elapsed().as_millis()
+        );
     }
 
     fn rotate_page_with_password(
@@ -1232,6 +1311,64 @@ mod tests {
         assert!(fs::read(&source).unwrap().starts_with(&original));
         // Metin (miras Resources), boyut (miras MediaBox) ve dönüş (miras + override) korunur.
         assert_reordered_pages(&before, &source, &[2, 1, 0]);
+    }
+
+    /// Three pages of distinct sizes whose page dictionaries live in an object stream.
+    fn pages_in_object_stream(path: &Path) {
+        use lopdf::{dictionary, Object, Stream};
+        let mut document = lopdf::Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let kids = [(300, 400), (400, 500), (500, 600)]
+            .into_iter()
+            .map(|(width, height)| {
+                let content = document.add_object(Stream::new(dictionary! {}, Vec::new()));
+                Object::Reference(document.add_object(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => pages_id,
+                    "MediaBox" => vec![0.into(), 0.into(), width.into(), height.into()],
+                    "Contents" => content,
+                }))
+            })
+            .collect::<Vec<_>>();
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => 3 }),
+        );
+        let catalog = document.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document
+            .save_with_options(
+                &mut bytes,
+                lopdf::SaveOptions::builder()
+                    .use_object_streams(true)
+                    .build(),
+            )
+            .unwrap();
+        assert!(bytes.windows(6).any(|window| window == b"ObjStm"));
+        fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn document_io_reorder_appends_when_page_dictionaries_are_in_an_object_stream() {
+        // The reorder loads lopdf with a filter; object-stream members take the filter's
+        // returned object, so a wrong return value would lose the pages and force a rewrite.
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("object-stream.pdf");
+        pages_in_object_stream(&source);
+        let original = fs::read(&source).unwrap();
+
+        reorder_pdf_to_target(
+            source.to_string_lossy().to_string(),
+            vec![2, 0, 1],
+            source.to_string_lossy().to_string(),
+            None,
+            ReorderMode::FullPermutation,
+        )
+        .unwrap();
+
+        assert!(fs::read(&source).unwrap().starts_with(&original));
+        assert_page_sizes(&source, &[(500.0, 600.0), (300.0, 400.0), (400.0, 500.0)]);
     }
 
     fn shifted_startxref(path: &Path) {
