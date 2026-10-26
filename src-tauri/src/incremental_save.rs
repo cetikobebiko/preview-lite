@@ -213,7 +213,7 @@ impl InputFingerprint {
     pub(crate) fn of(bytes: &[u8]) -> Self {
         Self {
             len: bytes.len(),
-            digest: format!("{:x}", Sha256::digest(bytes)),
+            digest: crate::hex_lower(Sha256::digest(bytes)),
             startxref: last_startxref(bytes).map(|(_, offset)| offset),
         }
     }
@@ -244,7 +244,7 @@ pub(crate) fn read_appended_section(
         hasher.update(&buffer[..chunk]);
         remaining -= chunk;
     }
-    if format!("{:x}", hasher.finalize()) != input.digest {
+    if crate::hex_lower(hasher.finalize()) != input.digest {
         return Ok(Err(DocumentIoFailure::invariant(
             "Artımlı çıktı girdinin baytlarıyla başlamıyor",
         )));
@@ -365,7 +365,7 @@ pub(crate) fn validate_append_only(
             input.len()
         )));
     }
-    let prefix_digest = format!("{:x}", Sha256::digest(&output[..input.len()]));
+    let prefix_digest = crate::hex_lower(Sha256::digest(&output[..input.len()]));
     if prefix_digest != before_digest {
         return Err(DocumentIoFailure::invariant(
             "Artımlı çıktı girdinin baytlarıyla başlamıyor",
@@ -610,7 +610,7 @@ mod tests {
     }
 
     fn digest(bytes: &[u8]) -> String {
-        format!("{:x}", Sha256::digest(bytes))
+        crate::hex_lower(Sha256::digest(bytes))
     }
 
     fn last_xref_object(bytes: &[u8]) -> (usize, Vec<u8>) {

@@ -123,7 +123,7 @@ impl MutationEvidence {
             })?,
             decoded_stream,
         )?;
-        Ok(Some(format!("{:x}", Sha256::digest(bytes))))
+        Ok(Some(crate::hex_lower(Sha256::digest(bytes))))
     }
 
     // lopdf exposes decoded streams as whole buffers. This is therefore
@@ -1043,7 +1043,7 @@ fn capture_expected_document_invariants(
             width_points,
             height_points,
             rotation_degrees,
-            content_sha256: format!("{:x}", Sha256::digest(content)),
+            content_sha256: crate::hex_lower(Sha256::digest(content)),
         });
     }
     let form_field_count = catalog

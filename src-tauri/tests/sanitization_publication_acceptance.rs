@@ -37,7 +37,7 @@ mod macos_arm64 {
     }
 
     fn digest(path: &Path) -> String {
-        format!("{:x}", Sha256::digest(std::fs::read(path).unwrap()))
+        preview_alternative_lib::hex_lower(Sha256::digest(std::fs::read(path).unwrap()))
     }
 
     fn app() -> tauri::App<tauri::test::MockRuntime> {

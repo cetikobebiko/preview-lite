@@ -295,7 +295,7 @@ fn b4_atomic_save_persistence_merge_roundtrip_verifies_digest_and_no_original_co
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         h.update(&first_before);
-        format!("{:x}", h.finalize())
+        preview_alternative_lib::hex_lower(h.finalize())
     };
     let output = dir.path().join("b4_merged_atomic.pdf");
     // Production atomic merge path via manipulation::merge_pdfs (uses atomic_write_pdf internally)
@@ -333,7 +333,7 @@ fn b4_atomic_save_persistence_merge_roundtrip_verifies_digest_and_no_original_co
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
             h.update(fs::read(&first).unwrap());
-            format!("{:x}", h.finalize())
+            preview_alternative_lib::hex_lower(h.finalize())
         },
         first_digest_before
     );

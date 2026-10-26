@@ -513,7 +513,10 @@ fn manifest_is_strict_complete_ordered_and_digest_bound() {
         assert!(!fixture.future_verification_expectation.is_empty());
         let bytes = fs::read(fixture_dir().join(&fixture.name)).expect("fixture bytes");
         assert_eq!(fixture.byte_size, bytes.len());
-        assert_eq!(fixture.sha256, format!("{:x}", Sha256::digest(&bytes)));
+        assert_eq!(
+            fixture.sha256,
+            preview_alternative_lib::hex_lower(Sha256::digest(&bytes))
+        );
     }
 
     let mut unknown: serde_json::Value = serde_json::from_slice(&raw).expect("manifest value");
@@ -814,7 +817,7 @@ fn embedded_file_edges_payload_and_privacy_metadata_are_observable() {
         .windows(EMBEDDED_MARKER.len())
         .any(|w| w == EMBEDDED_MARKER));
     assert_eq!(
-        format!("{:x}", Sha256::digest(EMBEDDED_MARKER)),
+        preview_alternative_lib::hex_lower(Sha256::digest(EMBEDDED_MARKER)),
         "90411ddd5f6ac7513cf00a1e983c65418dc62a3cbf343e5c7255071a18ac3cf0"
     );
 }

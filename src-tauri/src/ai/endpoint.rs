@@ -194,7 +194,7 @@ pub fn compute_endpoint_fingerprint(
 
     bytes.extend_from_slice(&port.to_be_bytes()); // 2 bytes
 
-    format!("{:x}", Sha256::digest(&bytes))
+    crate::hex_lower(Sha256::digest(&bytes))
 }
 
 pub fn canonicalize_hostname_string(host: &str) -> String {

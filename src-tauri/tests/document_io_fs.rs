@@ -19,6 +19,9 @@ mod pdf_engine {
     }
 }
 
+// `document_io` formats digests with `crate::hex_lower`.
+use preview_alternative_lib::hex_lower;
+
 #[path = "../src/document_io.rs"]
 mod document_io;
 
