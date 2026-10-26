@@ -384,7 +384,10 @@ fn author_and_save(
             "Şifreli PDF'lerde form tasarımı desteklenmiyor",
         ));
     }
-    let mut writer = Writer::new(IncrementalDocument::create_from(bytes.clone(), previous));
+    // The writer owns the only copy of the input; the output goes straight to `temp` and its
+    // prefix is checked from disk, so the document is not held three times.
+    let input = crate::incremental_save::InputFingerprint::of(&bytes);
+    let mut writer = Writer::new(IncrementalDocument::create_from(bytes, previous));
     let pages = writer.page_ids();
 
     // Hedefler istekteki tüm işlemlerden önce, orijinal annotation sırasına göre çözülür.
@@ -493,17 +496,25 @@ fn author_and_save(
         }
     }
 
-    let mut output = Vec::with_capacity(bytes.len() + 16 * 1024);
+    let file = std::fs::File::create(temp)
+        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF açılamadı: {error}")))?;
+    let mut output = std::io::BufWriter::new(file);
     writer.incremental.save_to(&mut output).map_err(|error| {
         DocumentIoFailure::write(format!("Artımlı güncelleme yazılamadı: {error}"))
     })?;
-    if !output.starts_with(&bytes) {
+    output
+        .into_inner()
+        .map_err(|error| error.into_error())
+        .and_then(|file| file.sync_all())
+        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF yazılamadı: {error}")))?;
+    drop(writer);
+    let prefixed = crate::incremental_save::read_appended_section(temp, &input)
+        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF okunamadı: {error}")))?;
+    if prefixed.is_err() {
         return Err(DocumentIoFailure::invariant(
             "Artımlı güncelleme orijinal baytları korumadı",
         ));
     }
-    std::fs::write(temp, &output)
-        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF yazılamadı: {error}")))?;
     Ok(Expected {
         widget_counts,
         checks,

@@ -560,9 +560,41 @@ Her adım ayrı commit'tir ve kendi testleriyle gelir:
      `writeMode`'u frontend'e taşımak bu uyarı için gerekmedi: imzalı belgede bu işlemler ya
      artımlı yazılır ya hata verir, bu yüzden uyarı işlem türünden belirlenir. Undo geçmişi
      yazım modunu oturum tarafında prefix denetimiyle kendisi bulur (§5.3).
-   - Bilinen maliyet: xref tutarlılık denetimi her mutasyonda belgeyi lopdf ile bir kez
-     ayrıştırır. Tek yüklemenin bellek maliyeti ayrıca ölçülmedi (S6'daki ölçüm iki yüklemeyi
-     birlikte kapsar). Yalnız xref bölümlerini okuyan bir denetimle değiştirilmesi açık iş.
+   - Bellek (2026-10-26, ölçüldü ve düzeltildi). Kayıt yolu girdiyi ve çıktıyı bütünüyle
+     bellekte tutuyordu. xref denetimi de belgeyi tüm stream içerikleriyle lopdf'e
+     ayrıştırıyordu. Döndürme belge boyutunun ~3 katı, sıralama ~5–6 katı tepe bellek
+     kullanıyordu. Şimdi:
+     - xref denetimi lopdf'i her nesneyi yüklerken bırakan bir filtreyle yükler; bellekte
+       yalnız xref tablosu kalır.
+     - `save_mutation` girdiyi yalnız denetim ve parmak izi (`InputFingerprint`) için okuyup
+       bırakır. Çıktının öneki diskten akışla SHA-256'lanır, yalnız eklenen bölüm belleğe
+       alınır (`read_appended_section`). xref stream onarımı da o bölüm üzerinde yapılır.
+     - Sıralama belgeyi bir kez yükler; nesne/xref stream'leri dışında stream içerikleri
+       boşaltılır, çünkü yalnız sayfa ağacı yazılır. lopdf filtrenin dönüş değerini yalnız
+       nesne akışı üyelerinde kullanır; üst düzey nesnede yerinde değiştirilmiş nesneyi tutar
+       (test: `document_io_reorder_appends_when_page_dictionaries_are_in_an_object_stream`).
+       Girdi kopyalanmaz, çıktı doğrudan temp dosyaya yazılır.
+     - Form tasarımı girdiyi kopyalamaz ve çıktıyı doğrudan temp dosyaya yazar.
+
+     Ölçüm: `manipulation::tests::measure_mutation_memory` (`#[ignore]`). Release, her işlem
+     ayrı süreçte, `/usr/bin/time -l` "peak memory footprint", M1 8 GiB:
+
+     | İşlem | Girdi | Önce | Sonra |
+     |---|---|---|---|
+     | Döndürme | text-3000 (6,1 MiB) | 32 MiB | 13 MiB |
+     | Döndürme | mixed-1000 (71 MiB) | 227 MiB | 86 MiB |
+     | Döndürme | heavy-400 (153 MiB) | 474 MiB | 168 MiB |
+     | Sıralama | text-3000 | 120 MiB | 120 MiB |
+     | Sıralama | mixed-1000 | 419 MiB | 200 MiB |
+     | Sıralama | heavy-400 | 800 MiB | 338 MiB |
+
+     - Eklenen bayt sayısı ve süre değişmedi.
+     - Sıralamada kalan bellek girdinin kendisi (IncrementalDocument yazarken tutar), PDFium
+       belgesi ve doğrulama için her sayfanın metin anlık görüntüsüdür.
+     - text-3000'de 12 s'lik sürenin çoğu bu anlık görüntülerdir: her sayfanın metni önce ve
+       sonra çıkarılır. Bu açık bir iş.
+     - §9.1'deki geçici 64 MiB kuralı yalnız K5-B (lopdf ile yalnız değişen nesneleri yazma)
+       içindi; K5-B üretime alınmadı, bu yüzden bugün hiçbir boyut sınırı yok.
 5. `dirty`'nin digest ile hesaplanması (§5.6). **Yapıldı:** `baseline.digest` kullanılır, ayrı alan
    eklenmedi.
 6. Geçmiş modeli, commit'te geçmişe yazma ve sınırlar (§5.2–5.5). **Yapıldı** (§5.11).

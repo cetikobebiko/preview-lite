@@ -134,6 +134,10 @@ impl Drop for RawPage<'_> {
 /// 2. `FPDF_INCREMENTAL` ile kayıt ve PDFium'un xref stream kusurunun onarımı.
 /// 3. `validate_append_only`: çıktı `source`'un baytlarıyla başlar ve zincire doğru bağlanır.
 ///
+/// Ne girdi ne çıktı bütünüyle bellekte tutulur: girdi yalnız xref denetimi ve parmak izi için
+/// bir kez okunup bırakılır, çıktının öneki diskten akışla doğrulanır ve yalnız eklenen bölüm
+/// belleğe alınır. Büyük belgede tepe bellek böylece belge boyutunun üç katından bir katına iner.
+///
 /// Bunlardan biri tutmazsa imzalı belge hata verir (imzaları korumak için tam yeniden yazıma
 /// geçilmez); imzasız belge tam yeniden yazılır. Sonuç asla sessiz değildir: dönen `WriteMode`
 /// ve log hangi yolun seçildiğini söyler. PDFium ile yeniden açma ve recipe'ye özgü denetim
@@ -145,8 +149,6 @@ pub(crate) fn save_mutation(
 ) -> Result<WriteMode, DocumentIoFailure> {
     let bindings = document.bindings;
     let signed = bindings.FPDF_GetSignatureCount(document.handle) > 0;
-    let original = std::fs::read(source)
-        .map_err(|error| DocumentIoFailure::write(format!("Kaynak PDF okunamadı: {error}")))?;
     let fall_back = |failure: DocumentIoFailure| -> Result<WriteMode, DocumentIoFailure> {
         if signed {
             return Err(DocumentIoFailure::new(
@@ -166,7 +168,15 @@ pub(crate) fn save_mutation(
         Ok(WriteMode::Rewritten)
     };
 
-    if let Some(reason) = find_xref_inconsistency(&original) {
+    let (input, inconsistency) = {
+        let original = std::fs::read(source)
+            .map_err(|error| DocumentIoFailure::write(format!("Kaynak PDF okunamadı: {error}")))?;
+        (
+            InputFingerprint::of(&original),
+            find_xref_inconsistency(&original),
+        )
+    };
+    if let Some(reason) = inconsistency {
         return fall_back(DocumentIoFailure::preflight(format!(
             "Belgenin xref zinciri onarım gerektiriyor: {reason}"
         )));
@@ -174,17 +184,84 @@ pub(crate) fn save_mutation(
     if let Err(failure) = save_copy(bindings, document.handle, temp, FPDF_INCREMENTAL) {
         return fall_back(failure);
     }
-    let mut saved = std::fs::read(temp)
-        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF okunamadı: {error}")))?;
-    if saved.starts_with(&original) && repair_incremental_xref_stream(&mut saved, original.len()) {
-        std::fs::write(temp, &saved)
+    let mut appended = match read_appended_section(temp, &input)
+        .map_err(|error| DocumentIoFailure::write(format!("Temp PDF okunamadı: {error}")))?
+    {
+        Ok(appended) => appended,
+        Err(failure) => return fall_back(failure),
+    };
+    if repair_appended_xref_stream(&mut appended, input.len) {
+        replace_appended_section(temp, input.len, &appended)
             .map_err(|error| DocumentIoFailure::write(format!("Temp PDF yazılamadı: {error}")))?;
     }
-    let digest = format!("{:x}", Sha256::digest(&original));
-    if let Err(failure) = validate_append_only(&original, &digest, &saved) {
+    if let Err(failure) = validate_appended_section(&input, &appended) {
         return fall_back(failure);
     }
     Ok(WriteMode::AppendedUnminimized)
+}
+
+/// Artımlı çıktıyı girdiyle karşılaştırmak için girdiden gereken her şey; girdinin kendisi
+/// bellekte tutulmaz.
+pub(crate) struct InputFingerprint {
+    pub(crate) len: usize,
+    digest: String,
+    /// Son `startxref` değeri; girdide yoksa `None` (çıktı o zaman zincire bağlanamaz).
+    startxref: Option<usize>,
+}
+
+impl InputFingerprint {
+    pub(crate) fn of(bytes: &[u8]) -> Self {
+        Self {
+            len: bytes.len(),
+            digest: format!("{:x}", Sha256::digest(bytes)),
+            startxref: last_startxref(bytes).map(|(_, offset)| offset),
+        }
+    }
+}
+
+/// `path`'teki çıktının girdiden sonra eklenen bölümü. Öneki diskten akışla SHA-256'lanır;
+/// çıktı girdiden uzun değilse ya da girdinin baytlarıyla başlamıyorsa iç `Err` (artımlı
+/// değil), okuma hatasıysa dış `Err`.
+pub(crate) fn read_appended_section(
+    path: &Path,
+    input: &InputFingerprint,
+) -> std::io::Result<Result<Vec<u8>, DocumentIoFailure>> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let output_len = file.metadata()?.len();
+    if output_len <= input.len as u64 {
+        return Ok(Err(DocumentIoFailure::invariant(format!(
+            "Artımlı çıktı ({output_len} bayt) girdiden ({} bayt) uzun değil",
+            input.len
+        ))));
+    }
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 128 * 1024];
+    let mut remaining = input.len;
+    while remaining > 0 {
+        let chunk = remaining.min(buffer.len());
+        file.read_exact(&mut buffer[..chunk])?;
+        hasher.update(&buffer[..chunk]);
+        remaining -= chunk;
+    }
+    if format!("{:x}", hasher.finalize()) != input.digest {
+        return Ok(Err(DocumentIoFailure::invariant(
+            "Artımlı çıktı girdinin baytlarıyla başlamıyor",
+        )));
+    }
+    let mut appended = Vec::with_capacity((output_len - input.len as u64) as usize);
+    file.read_to_end(&mut appended)?;
+    Ok(Ok(appended))
+}
+
+/// `path`'i ilk `input_len` baytına kısaltıp `appended`'ı ekler ve diske indirir.
+fn replace_appended_section(path: &Path, input_len: usize, appended: &[u8]) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+    file.set_len(input_len as u64)?;
+    file.seek(SeekFrom::End(0))?;
+    file.write_all(appended)?;
+    file.sync_all()
 }
 
 /// PDFium (7961; `main`'de de aynı) kaynak dosya cross-reference stream kullanıyorsa artımlı
@@ -195,7 +272,20 @@ pub(crate) fn save_mutation(
 /// Onarım yalnız PDFium'un yazdığı kalıp birebir eşleşirse yapılır: `startxref` güncellemenin
 /// içinde `N 0 obj <<` ile başlayan bir nesneyi göstermeli. Eklemeler o nesnenin başlangıcından
 /// sonradır; `startxref`, xref girdileri ve stream `/Length` değişmez. Onarım yapıldıysa true.
+#[cfg(test)]
 pub(crate) fn repair_incremental_xref_stream(output: &mut Vec<u8>, original_len: usize) -> bool {
+    if original_len > output.len() {
+        return false;
+    }
+    let mut appended = output.split_off(original_len);
+    let repaired = repair_appended_xref_stream(&mut appended, original_len);
+    output.append(&mut appended);
+    repaired
+}
+
+/// [`repair_incremental_xref_stream`]'in yalnız eklenen bölüm üzerinde çalışanı: `output`,
+/// dosyanın `base` ofsetinden sonraki baytlarıdır; `startxref` değerleri dosya ofsetidir.
+fn repair_appended_xref_stream(output: &mut Vec<u8>, base: usize) -> bool {
     let Some(startxref) = find_last(output, b"startxref") else {
         return false;
     };
@@ -211,7 +301,10 @@ pub(crate) fn repair_incremental_xref_stream(output: &mut Vec<u8>, original_len:
     else {
         return false;
     };
-    if xref_offset < original_len || xref_offset >= startxref {
+    let Some(xref_offset) = xref_offset.checked_sub(base) else {
+        return false;
+    };
+    if xref_offset >= startxref {
         return false;
     }
     let object = &output[xref_offset..startxref];
@@ -259,6 +352,7 @@ pub(crate) fn repair_incremental_xref_stream(output: &mut Vec<u8>, original_len:
 /// baytları aynen korunmuş), son `startxref` girdinin ötesindeki yeni bölümü gösterir ve o
 /// bölümün `/Prev`'i girdinin son `startxref` değeridir. PDFium ile yeniden açma ve recipe'ye
 /// özgü denetim (§4.3, 4) çağıranın işidir.
+#[cfg(test)]
 pub(crate) fn validate_append_only(
     input: &[u8],
     before_digest: &str,
@@ -277,16 +371,29 @@ pub(crate) fn validate_append_only(
             "Artımlı çıktı girdinin baytlarıyla başlamıyor",
         ));
     }
-    let (_, input_xref) = last_startxref(input)
+    validate_appended_section(&InputFingerprint::of(input), &output[input.len()..])
+}
+
+/// [`validate_append_only`]'nin önek denetiminden sonraki kısmı, yalnız eklenen bölüm üzerinde
+/// ([`read_appended_section`] önek denetimini diskten yapar).
+pub(crate) fn validate_appended_section(
+    input: &InputFingerprint,
+    appended: &[u8],
+) -> Result<(), DocumentIoFailure> {
+    let input_xref = input
+        .startxref
         .ok_or_else(|| DocumentIoFailure::invariant("Girdide okunabilir startxref yok"))?;
-    let (keyword, output_xref) = last_startxref(output)
+    let (keyword, output_xref) = last_startxref(appended)
         .ok_or_else(|| DocumentIoFailure::invariant("Artımlı çıktıda okunabilir startxref yok"))?;
-    if output_xref < input.len() || output_xref >= keyword {
+    let Some(section_start) = output_xref
+        .checked_sub(input.len)
+        .filter(|&start| start < keyword)
+    else {
         return Err(DocumentIoFailure::invariant(format!(
             "Son startxref ({output_xref}) girdiden sonra eklenen bölümü göstermiyor"
         )));
-    }
-    let section = &output[output_xref..keyword];
+    };
+    let section = &appended[section_start..keyword];
     let prev = section_prev(section)
         .ok_or_else(|| DocumentIoFailure::invariant("Artımlı bölümün trailer'ında /Prev yok"))?;
     if prev != input_xref {
@@ -304,9 +411,13 @@ pub(crate) fn validate_append_only(
 /// Denetim: lopdf belgeyi yükleyebilir; son `startxref` bir xref tablosunu (`xref`) ya da bir
 /// nesne başlığını gösterir; çözülen her `Normal` xref girdisi kendi `N G obj` başlığını
 /// gösterir. Şifreli belgeler parola gerektirmeden denetlenir.
-/// lopdf belgenin tüm nesnelerini belleğe ayrıştırır (yaklaşık bir belge boyutu, tasarım S6).
+/// lopdf nesneleri yine ayrıştırır ama her birini hemen bırakır; bellekte yalnız xref tablosu
+/// kalır.
 pub(crate) fn find_xref_inconsistency(bytes: &[u8]) -> Option<String> {
-    let document = match lopdf::Document::load_mem(bytes) {
+    // Only the xref data is needed; dropping every object while loading keeps the check from
+    // holding a parsed copy of the whole document. Encrypted files ignore the filter in lopdf.
+    let options = lopdf::LoadOptions::with_filter(|_, _| None);
+    let document = match lopdf::Document::load_mem_with_options(bytes, options) {
         Ok(document) => document,
         Err(error) => return Some(format!("lopdf xref zincirini okuyamadı: {error}")),
     };
