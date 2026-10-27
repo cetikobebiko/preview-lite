@@ -376,6 +376,15 @@ export const CONTRACTS = Object.freeze({
     format: stringType,
     targetPath: stringType,
   }),
+  // PdfCraft's writers in the job worker; the target is published atomically.
+  exportSessionDocument: command("export_session_document", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    pages: arrayOf(u32Type),
+    format: Object.freeze({ type: "string", enum: Object.freeze(["docx", "pptx", "html", "rtf"]) }),
+    targetPath: stringType,
+  }),
   printSessionPdf: command(
     "print_session_pdf",
     {

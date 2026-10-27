@@ -102,6 +102,25 @@ export const exportSessionTextToFile = (
     }),
   ).promise;
 
+// Word, PowerPoint, HTML or RTF of the given physical pages; Rust writes targetPath atomically.
+export const exportSessionDocument = (
+  sessionId,
+  expectedContentGeneration,
+  pages,
+  format,
+  targetPath,
+) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("exportSessionDocument", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      pages,
+      format,
+      targetPath,
+    }),
+  ).promise;
+
 export const printSessionPdf = (
   sessionId,
   expectedContentGeneration,

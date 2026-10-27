@@ -113,6 +113,13 @@ pub enum JobCommand {
         other_input_name: String,
         current_is_old: bool,
     },
+    /// Writes the snapshot as Word, PowerPoint, HTML or RTF into the job directory.
+    ExportDocument {
+        format: crate::document_export::DocumentExportFormat,
+        title: String,
+        pages: Vec<u32>,
+        output_name: String,
+    },
     DetectScannedPages,
     RenderOcrPage {
         page_index: u32,
@@ -663,6 +670,31 @@ fn execute_command(
             let comparison =
                 crate::compare::compare_documents(&pdfium, &current, &other, current_is_old)?;
             Ok(JobResult::Comparison(comparison))
+        }
+        JobCommand::ExportDocument {
+            format,
+            title,
+            pages,
+            output_name,
+        } => {
+            let output_path = checked_output_path(job_dir, &output_name)?;
+            let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+            let document = crate::pdf_engine::open_pdfium_doc(
+                &pdfium,
+                &snapshot_path.to_string_lossy(),
+                credential,
+            )
+            .map_err(pdf_open_failed)?;
+            let bytes = crate::document_export::export_document(
+                &pdfium, &document, &pages, format, &title,
+            )?;
+            fs::write(&output_path, bytes).map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_OUTPUT_WRITE_FAILED",
+                    format!("Dışa aktarılan belge yazılamadı: {error}"),
+                )
+            })?;
+            Ok(JobResult::File(output_path))
         }
         JobCommand::DetectScannedPages => with_document(snapshot_path, credential, |document| {
             let page_count = usize::from(document.pages().len());
@@ -2501,6 +2533,63 @@ mod tests {
         assert_eq!(
             compare("encrypted.pdf").unwrap_err().code,
             "SESSION_JOB_COMPARE_INPUT_PASSWORD_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn export_document_job_writes_the_office_file_into_the_job_directory() {
+        use crate::document_export::{sample_pdf, DocumentExportFormat};
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        fs::write(&snapshot, sample_pdf(0)).unwrap();
+        let export_pages = |format, pages: Vec<u32>, output_name: &str| {
+            let command = JobCommand::ExportDocument {
+                format,
+                title: "Rapor".to_string(),
+                pages,
+                output_name: output_name.to_string(),
+            };
+            // The job IPC carries commands as JSON.
+            let command = serde_json::from_str(&serde_json::to_string(&command).unwrap()).unwrap();
+            execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "export-job",
+                "export-session",
+                command,
+            )
+        };
+        let export = |format, output_name: &str| export_pages(format, vec![0], output_name);
+
+        let result = export(DocumentExportFormat::Docx, "document-export.docx").unwrap();
+        let output = directory.path().join("document-export.docx");
+        assert!(matches!(result, JobResult::File(ref path) if path == &output));
+        assert!(fs::read(&output).unwrap().starts_with(b"PK\x03\x04"));
+        let html = export(DocumentExportFormat::Html, "document-export.html").unwrap();
+        assert!(matches!(html, JobResult::File(_)));
+        assert!(
+            fs::read_to_string(directory.path().join("document-export.html"))
+                .unwrap()
+                .contains("Quarterly Report")
+        );
+        assert_eq!(
+            export(DocumentExportFormat::Rtf, "../outside.rtf")
+                .unwrap_err()
+                .code,
+            "SESSION_JOB_WORKER_PATH_REJECTED"
+        );
+        for pages in [vec![], vec![1]] {
+            assert_eq!(
+                export_pages(DocumentExportFormat::Rtf, pages, "document-export.rtf")
+                    .unwrap_err()
+                    .code,
+                "SESSION_JOB_INVALID_PAGE_SELECTION"
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(DocumentExportFormat::Pptx).unwrap(),
+            serde_json::json!("pptx")
         );
     }
 }
