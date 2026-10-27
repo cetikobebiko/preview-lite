@@ -1,8 +1,8 @@
 PdfCraft (https://github.com/storytold/pdfcraft), version 0.14.0
-Used for: src-tauri/src/forms/af.rs (ported from crates/forms/src/af.rs and the actions_of
-function of crates/forms/src/lib.rs). PdfCraft is licensed under MIT OR Apache-2.0; this
-project uses it under the MIT License below. The ArtCraft name and logos are trademarks of
-the ArtCraft Team and are not used here.
+Used for: source files ported from PdfCraft. Each one starts with this copyright notice and
+names the PdfCraft file it was ported from and what was changed. PdfCraft is licensed under
+MIT OR Apache-2.0; this project uses it under the MIT License below. The ArtCraft name and
+logos are trademarks of the ArtCraft Team and are not used here.
 
 MIT License
 
