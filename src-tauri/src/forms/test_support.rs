@@ -11,6 +11,18 @@ pub(crate) fn name(text: &str) -> Object {
     Object::Name(text.as_bytes().to_vec())
 }
 
+/// An additional-actions dictionary of JavaScript actions, e.g. `[("F", "AFNumber_Format(…)")]`.
+pub(crate) fn scripts(events: &[(&str, &str)]) -> Dictionary {
+    let mut aa = Dictionary::new();
+    for (event, js) in events {
+        aa.set(
+            *event,
+            dictionary! { "S" => "JavaScript", "JS" => string(js) },
+        );
+    }
+    aa
+}
+
 pub(crate) fn rect(r: [f32; 4]) -> Object {
     Object::Array(r.iter().map(|v| Object::Real(*v)).collect())
 }
@@ -23,6 +35,8 @@ pub(crate) struct FormFixture {
     certification: Option<ObjectId>,
     signed: bool,
     doc: Document,
+    /// Earlier pages, closed by [`FormFixture::next_page`], with their annotations.
+    pages: Vec<(ObjectId, Vec<Object>)>,
     page_id: ObjectId,
     font: ObjectId,
     annots: Vec<Object>,
@@ -41,6 +55,7 @@ impl FormFixture {
             certification: None,
             signed: false,
             doc,
+            pages: Vec::new(),
             page_id,
             font,
             annots: Vec::new(),
@@ -58,6 +73,14 @@ impl FormFixture {
             Vec::new(),
         ));
         Object::Dictionary(dictionary! { "N" => dictionary! { on => on_ap, "Off" => off_ap } })
+    }
+
+    /// Widgets added after this go on a new page.
+    pub(crate) fn next_page(&mut self) {
+        let page_id = self.doc.new_object_id();
+        let previous = std::mem::replace(&mut self.page_id, page_id);
+        self.pages
+            .push((previous, std::mem::take(&mut self.annots)));
     }
 
     pub(crate) fn widget(&mut self, dict: Dictionary, r: [f32; 4]) {
@@ -83,6 +106,19 @@ impl FormFixture {
         if listed {
             self.fields.push(Object::Reference(id));
         }
+    }
+
+    /// A terminal field whose only widget is a separate kid dictionary without `/T`.
+    pub(crate) fn field_with_kid_widget(&mut self, mut field: Dictionary, r: [f32; 4]) {
+        let parent = self.doc.new_object_id();
+        let kid = self.doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "Rect" => rect(r), "F" => 4,
+            "P" => self.page_id, "Parent" => parent, "DA" => string("/Helv 10 Tf 0 g"),
+        });
+        field.set("Kids", vec![Object::Reference(kid)]);
+        self.doc.objects.insert(parent, Object::Dictionary(field));
+        self.annots.push(Object::Reference(kid));
+        self.fields.push(Object::Reference(parent));
     }
 
     pub(crate) fn checkbox(&mut self, t: &str, r: [f32; 4], on: &str, state: &str) {
@@ -148,20 +184,25 @@ impl FormFixture {
 
     pub(crate) fn save(mut self, path: &Path, with_acroform: bool) {
         let pages_id = self.doc.new_object_id();
-        let content = self.doc.add_object(Stream::new(dictionary! {}, Vec::new()));
-        self.doc.objects.insert(
-            self.page_id,
-            Object::Dictionary(dictionary! {
-                "Type" => "Page", "Parent" => pages_id,
-                "MediaBox" => rect([0.0, 0.0, 612.0, 792.0]), "Contents" => content,
-                "Annots" => self.annots.clone(),
-            }),
-        );
+        let mut pages = std::mem::take(&mut self.pages);
+        pages.push((self.page_id, std::mem::take(&mut self.annots)));
+        let count = pages.len() as i64;
+        let mut kids = Vec::with_capacity(pages.len());
+        for (page_id, annots) in pages {
+            let content = self.doc.add_object(Stream::new(dictionary! {}, Vec::new()));
+            self.doc.objects.insert(
+                page_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => "Page", "Parent" => pages_id,
+                    "MediaBox" => rect([0.0, 0.0, 612.0, 792.0]), "Contents" => content,
+                    "Annots" => annots,
+                }),
+            );
+            kids.push(Object::Reference(page_id));
+        }
         self.doc.objects.insert(
             pages_id,
-            Object::Dictionary(dictionary! {
-                "Type" => "Pages", "Kids" => vec![Object::Reference(self.page_id)], "Count" => 1,
-            }),
+            Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }),
         );
         let mut catalog = dictionary! { "Type" => "Catalog", "Pages" => pages_id };
         if let Some(signature) = self.certification {
