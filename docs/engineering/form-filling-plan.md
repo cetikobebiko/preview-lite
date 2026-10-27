@@ -665,10 +665,48 @@ penceresinde görsel olarak doğrulanmadı.
 
 - **Formu temizle (Reset)**: `/DV`'ye dönüş. PDFium'da doğrudan API yok, `/DV` okunup Faz 3 yoluyla yazılır.
 - **Düzleştirme (Flatten)**: `FPDFPage_Flatten(FLAT_NORMALDISPLAY)`, ucuz bir kazanım.
-- **Format/Calculate script'leri**: PDFium build'imizde JS yok. PdfCraft `af.rs` (AFNumber_Format, AFSimple_Calculate...) Rust'ta yeniden yazılabilir. Sandbox ve güvenlik değerlendirmesi gerektirir.
+- **Format/Calculate script'leri**: yapıldı, bkz. "AF betikleri" (2026-10-27).
 - **FDF/XFDF içe/dışa aktarma**: PdfCraft `crates/xfdf` referans.
 - **Incremental save**: imzaları korumak için `FPDF_INCREMENTAL`. Atomic I/O sözleşmesi ve `pades-architecture-design.md` ile birlikte ele alınmalı.
 - **Alan oluşturma (authoring)**: PdfCraft `author.rs`.
+
+#### AF betikleri: format, validate, calculate (2026-10-27)
+
+PdfCraft 0.14.0'ın `crates/forms/src/af.rs` dosyası `src-tauri/src/forms/af.rs` olarak taşındı
+(MIT; lisans `src-tauri/licenses/pdfcraft.txt`). Edition 2021'e uyarlandı, mesajlar Türkçe,
+push-button tanıma çıkarıldı, proptest yerine sabit örnekli testler var. Yeni bağımlılık yok.
+
+- **JavaScript çalıştırılmaz.** Acrobat'ın sekmelerinin yazdığı `AFNumber_Format`,
+  `AFPercent_Format`, `AFDate_FormatEx`, `AFTime_Format`, `AFSpecial_Format`,
+  `AFSpecial_KeystrokeEx`, `AFRange_Validate`, `AFSimple_Calculate` çağrıları ve basit alan
+  gösterimi (`/** BVCALC a * b EVCALC **/`) metin olarak tanınıp Rust'ta çalıştırılır. Başka
+  betikler çalışmaz; o alanlar biçimsiz/hesaplanmamış kalır. Ayrıştırıcının iç içelik sınırı
+  64'tür; 64 KiB'tan uzun betik okunmaz.
+- **Okuma:** betikler fill job'ında PDFium'dan okunur
+  (`FPDFAnnot_GetFormAdditionalActionJavaScript`; alan sözlüğünün `/AA`'sı, kalıtımla).
+  pdfium-render okuma yolunun form handle'ları dışarı açık olmadığından frontend'e AF bilgisi
+  gönderilmez; biçimli görünüm PDFium bitmap'iyle zaten görünür.
+- **Commit:** metin edit'i Keystroke'tan (biçime uymayan değer reddedilir, sayılar
+  normalleşir: `$1,234.5` → `1234.5`) ve Validate'ten geçer. Hata preflight hatasıdır, dosyaya
+  dokunulmaz, mesaj alanın hata ipucunda görünür.
+- **Görünüm:** biçimli alanda `/AP` biçimli metni çizer, `/V` ham değeri tutar (Acrobat gibi).
+  Yalnız widget sözlüğü alanın kendisiyse (`/T`) yapılır; ayrı kid widget'ta görünüm ham değeri
+  çizer.
+- **Yeniden hesaplama:** her commit'te tüm alanlar ayrı, salt-okunur bir PDFium belgesinde
+  taranır (yazılan belgede her sayfayı yüklemek `/NeedAppearances` belgelerde dokunulmamış
+  widget'lara görünüm akışı üretip kayda katıyordu; testle doğrulandı). Hesaplanan metin
+  alanları bağımlılık sırasıyla çalışır, değişenler yazılır; read-only hesaplanan alanlar da
+  yazılır. Sıra `/CO` değildir: `/CO` yanlış sıralıysa Acrobat eski değer kullanır, biz
+  kullanmayız. Sınırlar: 100 000 widget, 2 000 hesaplanan alan; aşılırsa commit reddedilir.
+- **Bilinen sınırlar:** hesaplanan combo alanları yazılmaz; Validate hesaplanan değerlere
+  uygulanmaz (PdfCraft gibi); Format yalnız commit'te görünüme yansır, dosya dışarıda
+  değiştirilip `/NeedAppearances` ile açılırsa PDFium görünümü ham değerden yeniden üretir.
+  Yerel Tauri penceresinde uçtan uca doğrulanmadı.
+- **Testler:** `forms::af::*` (31, PdfCraft'tan taşınan ve uyarlanan), `forms::fill::tests`
+  içinde 15 yeni test (biçim/normalleşme, € ve maske görünümü, keystroke/aralık reddi,
+  bağımlılık sırası, sayfalar arası hesaplama, kullanıcı girdisinin hesaplananla ezilmesi,
+  checkbox export değeri, kid widget, betiksiz alanların korunması, `/NeedAppearances` yan etkisi,
+  sıralama/döngü, grup okuma, sınır).
 
 ---
 
@@ -723,7 +761,8 @@ penceresinde görsel olarak doğrulanmadı.
 
 ## 8. Kapsam dışı
 
-- JavaScript (format, keystroke, validate, calculate) ve push button eylemleri
+- AF dışı JavaScript ve push button eylemleri (AF format/keystroke/validate/calculate
+  2026-10-27'de eklendi, bkz. Faz 4)
 - XFA formları
 - Alan oluşturma ve düzenleme (authoring), alan özellikleri
 - Formu temizle, düzleştirme, FDF/XFDF

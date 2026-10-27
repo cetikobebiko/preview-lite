@@ -15,7 +15,23 @@
 //!
 //! Kayıt artımlıdır (`FPDF_INCREMENTAL`): orijinal baytlar korunur ve değişiklikler sona
 //! eklenir, böylece mevcut dijital imzalar kendi revizyonları için geçerli kalır.
+//!
+//! Acrobat'ın Format, Validate ve Calculate sekmelerinin yazdığı AF betikleri ([`super::af`])
+//! JavaScript motoru olmadan çalışır. Betikler PDFium'dan (`FPDFAnnot_GetFormAdditionalAction
+//! JavaScript`) okunur:
+//! - Metin edit'i önce Keystroke'tan geçer (biçime uymayan değer reddedilir, sayılar
+//!   normalleşir), sonra Validate'ten (aralık dışı değer reddedilir).
+//! - Biçimli alanın görünüm akışı biçimli metni çizer (`$1,234.50`), `/V` ham değeri tutar
+//!   (`1234.5`); Acrobat da böyle saklar. Bu yalnız widget'ı alanın kendisi olan (`/T` taşıyan)
+//!   widget'larda yapılır; diğerlerinde görünüm ham değeri çizer.
+//! - Edit'lerden sonra hesaplanan metin alanları yeniden hesaplanır ve değişenler yazılır.
+//!   Sıra `/CO` değil bağımlılık sırasıdır: her alan okuduğu hesaplanan alanlardan sonra
+//!   çalışır (döngüdekiler belge sırasıyla bir kez). Acrobat `/CO`'yu izler; `/CO` yanlış
+//!   sıralıysa Acrobat eski değeri kullanır, biz kullanmayız.
+//!
+//! AF dışındaki özel betikler çalıştırılmaz; o alanlar biçimsiz/hesaplanmamış kalır.
 
+use super::af;
 use super::{FormFieldKind, MAX_FORM_OPTIONS_PER_FIELD, MAX_FORM_TEXT_CHARS};
 use crate::document_io::{
     atomic_write_pdf, AtomicWriteReport, CommitState, DocumentIoError, DocumentIoFailure,
@@ -23,7 +39,7 @@ use crate::document_io::{
 use crate::incremental_save::{self, RawDocument};
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::os::raw::{c_int, c_ulong};
 use std::path::{Path, PathBuf};
 
@@ -42,6 +58,18 @@ const FPDF_FORMFIELD_RADIOBUTTON: c_int = 3;
 const FPDF_FORMFIELD_COMBOBOX: c_int = 4;
 const FPDF_FORMFIELD_LISTBOX: c_int = 5;
 const FPDF_FORMFIELD_TEXTFIELD: c_int = 6;
+const FPDF_ANNOT_AACTION_KEY_STROKE: c_int = 12;
+const FPDF_ANNOT_AACTION_FORMAT: c_int = 13;
+const FPDF_ANNOT_AACTION_VALIDATE: c_int = 14;
+const FPDF_ANNOT_AACTION_CALCULATE: c_int = 15;
+
+/// Bir alan betiğinin okunacak en fazla uzunluğu (UTF-16LE bayt, sonlandırıcı dahil). Daha
+/// uzun betik okunmaz; alan o betik yokmuş gibi davranır.
+const MAX_FIELD_SCRIPT_BYTES: c_ulong = 64 * 1024;
+/// Yeniden hesaplama için taranacak en fazla widget sayısı.
+const MAX_CALCULATION_WIDGETS: usize = 100_000;
+/// En fazla hesaplanan alan sayısı; sıralama bu sayının karesiyle büyür.
+const MAX_CALCULATED_FIELDS: usize = 2_000;
 
 /// Bir widget'a yazılacak değer. `field_name` ve `annot_index` birlikte doğrulanır:
 /// annotation indeksi okumadan bu yana kaydıysa istek reddedilir.
@@ -214,29 +242,83 @@ fn fill_and_save(
     }
 
     let mut expected = Vec::with_capacity(edits.len());
+    // Edit'lerden sonra alanların `/V` değerleri; hesaplamalar bunları okur.
+    let mut edited = BTreeMap::new();
     for (page_index, page_edits) in by_page {
         let page = RawPage::load(bindings, &document, &form, page_index)?;
         for edit in page_edits {
-            apply_edit(bindings, &form, &page, edit)?;
+            let (stored, field_value) = apply_edit(bindings, &form, &page, edit)?;
+            edited.insert(edit.field_name.clone(), field_value);
             expected.push(ExpectedWidget {
                 page_index,
                 annot_index: edit.annot_index,
                 field_name: edit.field_name.clone(),
-                value: edit.value.clone(),
+                value: stored,
             });
         }
     }
+
+    let fields = scan_fields(bindings, source, password)?;
+    let calculated = recalculate(&fields, &edited)?;
+    let mut writes_by_page: BTreeMap<u32, Vec<&CalculatedValue>> = BTreeMap::new();
+    for write in &calculated {
+        writes_by_page
+            .entry(write.page_index)
+            .or_default()
+            .push(write);
+    }
+    for (page_index, writes) in writes_by_page {
+        let page = RawPage::load(bindings, &document, &form, page_index)?;
+        for write in writes {
+            let annot_index = c_int::try_from(write.annot_index)
+                .map_err(|_| DocumentIoFailure::write("Annotation indeksi sınır dışı"))?;
+            let annot = RawAnnotation::get(bindings, &page, annot_index)?;
+            if field_name(bindings, &form, &annot) != write.field_name {
+                return Err(DocumentIoFailure::write(format!(
+                    "Hesaplanan '{}' alanı belgede yerinde değil",
+                    write.field_name
+                )));
+            }
+            write_text(
+                bindings,
+                &form,
+                &page,
+                &annot,
+                &write.field_name,
+                &write.value,
+                &write.format,
+            )?;
+            // Kullanıcı hesaplanan alanı da düzenlediyse hesaplanan değer kazanır.
+            expected.retain(|item| item.field_name != write.field_name);
+            expected.push(ExpectedWidget {
+                page_index,
+                annot_index: write.annot_index,
+                field_name: write.field_name.clone(),
+                value: FormFieldValue::Text {
+                    text: write.value.clone(),
+                },
+            });
+        }
+    }
+
     let mode = incremental_save::save_mutation(&document, Path::new(source), temp)?;
-    tracing::info!(operation = OPERATION, write_mode = ?mode, "Form değerleri yazıldı");
+    tracing::info!(
+        operation = OPERATION,
+        write_mode = ?mode,
+        calculated_fields = calculated.len(),
+        "Form değerleri yazıldı"
+    );
     Ok(expected)
 }
 
+/// Bir edit'i yazar. Kayıttan sonra beklenen değeri (metin Keystroke'la normalleşmiş olabilir)
+/// ve alanın hesaplamaların okuyacağı `/V` değerini döndürür.
 fn apply_edit(
     bindings: &dyn PdfiumLibraryBindings,
     form: &FormEnvironment<'_>,
     page: &RawPage<'_>,
     edit: &FormFieldEdit,
-) -> Result<(), DocumentIoFailure> {
+) -> Result<(FormFieldValue, String), DocumentIoFailure> {
     let annot_index = c_int::try_from(edit.annot_index)
         .map_err(|_| DocumentIoFailure::preflight("Annotation indeksi sınır dışı"))?;
     if annot_index >= bindings.FPDFPage_GetAnnotCount(page.handle) {
@@ -252,9 +334,7 @@ fn apply_edit(
             edit.annot_index
         )));
     }
-    let name = wide_string(|buffer, length| {
-        bindings.FPDFAnnot_GetFormFieldName(form.handle, annot.handle, buffer, length)
-    });
+    let name = field_name(bindings, form, &annot);
     if name != edit.field_name {
         return Err(DocumentIoFailure::preflight(format!(
             "Annotation {} '{}' alanına ait, istek '{}' bekliyordu; belge okumadan bu yana değişmiş",
@@ -284,8 +364,23 @@ fn apply_edit(
         )));
     }
 
-    match &edit.value {
-        FormFieldValue::Text { text } => write_text(bindings, form, page, &annot, edit, text),
+    let stored = match &edit.value {
+        FormFieldValue::Text { text } => {
+            let actions = field_actions(bindings, form, &annot);
+            let raw = af::keystroke(&actions.format, &edit.field_name, text)
+                .map_err(DocumentIoFailure::preflight)?;
+            af::validate(&actions.validate, &raw).map_err(DocumentIoFailure::preflight)?;
+            write_text(
+                bindings,
+                form,
+                page,
+                &annot,
+                &edit.field_name,
+                &raw,
+                &actions.format,
+            )?;
+            FormFieldValue::Text { text: raw }
+        }
         FormFieldValue::Checkbox { checked } => {
             if is_checked(bindings, form, &annot) != *checked {
                 press_space(bindings, form, page, &annot)?;
@@ -296,7 +391,7 @@ fn apply_edit(
                     edit.field_name
                 )));
             }
-            Ok(())
+            edit.value.clone()
         }
         FormFieldValue::Radio => {
             if !is_checked(bindings, form, &annot) {
@@ -308,47 +403,310 @@ fn apply_edit(
                     edit.field_name
                 )));
             }
-            Ok(())
+            edit.value.clone()
         }
-        FormFieldValue::Choice { selected } => write_choice(
-            bindings, form, page, &annot, edit, selected, field_type, flags,
-        ),
-    }
+        FormFieldValue::Choice { selected } => {
+            write_choice(
+                bindings, form, page, &annot, edit, selected, field_type, flags,
+            )?;
+            edit.value.clone()
+        }
+    };
+    Ok((stored, field_value(bindings, form, &annot)))
 }
 
+/// Metin alanına ham değeri yazar. Alanın biçimi varsa görünüm akışı biçimli metni çizer ve
+/// `/V` ham değeri tutar (Acrobat'ın saklama biçimi); bu ancak widget sözlüğü alanın kendisiyse
+/// (`/T` taşıyorsa) güvenlidir, yoksa `/V` widget'a yazılırdı. Biçimli metin yazılamazsa (ör.
+/// MaxLen onu keserse) görünüm ham değeri çizer.
 fn write_text(
     bindings: &dyn PdfiumLibraryBindings,
     form: &FormEnvironment<'_>,
     page: &RawPage<'_>,
     annot: &RawAnnotation<'_>,
-    edit: &FormFieldEdit,
-    text: &str,
+    field_name: &str,
+    raw: &str,
+    format: &af::Format,
 ) -> Result<(), DocumentIoFailure> {
-    focus(bindings, form, annot, &edit.field_name)?;
-    bindings.FORM_SelectAllText(form.handle, page.handle);
-    let wide = wide(text);
-    bindings.FORM_ReplaceSelection(form.handle, page.handle, wide.as_ptr());
-    bindings.FORM_ForceToKillFocus(form.handle);
+    let display = af::format_value(format, raw);
+    if display != raw && bindings.is_true(bindings.FPDFAnnot_HasKey(annot.handle, "T")) {
+        replace_text(bindings, form, page, annot, field_name, &display)?;
+        let raw_value = wide(raw);
+        if same_text(&field_value(bindings, form, annot), &display)
+            && bindings.is_true(bindings.FPDFAnnot_SetStringValue(
+                annot.handle,
+                "V",
+                raw_value.as_ptr(),
+            ))
+            && same_text(&field_value(bindings, form, annot), raw)
+        {
+            return Ok(());
+        }
+    }
+    replace_text(bindings, form, page, annot, field_name, raw)?;
 
-    let written = wide_string(|buffer, length| {
-        bindings.FPDFAnnot_GetFormFieldValue(form.handle, annot.handle, buffer, length)
-    });
-    if normalize_newlines(&written) == normalize_newlines(text) {
+    let written = field_value(bindings, form, annot);
+    if same_text(&written, raw) {
         return Ok(());
     }
-    let requested = normalize_newlines(text);
+    let requested = normalize_newlines(raw);
     let stored = normalize_newlines(&written);
     if requested.starts_with(&stored) {
         return Err(DocumentIoFailure::preflight(format!(
-            "'{}' alanı en fazla {} karakter kabul ediyor (MaxLen)",
-            edit.field_name,
+            "'{field_name}' alanı en fazla {} karakter kabul ediyor (MaxLen)",
             stored.chars().count()
         )));
     }
     Err(DocumentIoFailure::write(format!(
-        "'{}' alanına yazılan değer PDFium'dan farklı geri okundu",
-        edit.field_name
+        "'{field_name}' alanına yazılan değer PDFium'dan farklı geri okundu"
     )))
+}
+
+fn replace_text(
+    bindings: &dyn PdfiumLibraryBindings,
+    form: &FormEnvironment<'_>,
+    page: &RawPage<'_>,
+    annot: &RawAnnotation<'_>,
+    field_name: &str,
+    text: &str,
+) -> Result<(), DocumentIoFailure> {
+    focus(bindings, form, annot, field_name)?;
+    bindings.FORM_SelectAllText(form.handle, page.handle);
+    let wide = wide(text);
+    bindings.FORM_ReplaceSelection(form.handle, page.handle, wide.as_ptr());
+    bindings.FORM_ForceToKillFocus(form.handle);
+    Ok(())
+}
+
+fn same_text(left: &str, right: &str) -> bool {
+    normalize_newlines(left) == normalize_newlines(right)
+}
+
+fn field_name(
+    bindings: &dyn PdfiumLibraryBindings,
+    form: &FormEnvironment<'_>,
+    annot: &RawAnnotation<'_>,
+) -> String {
+    wide_string(|buffer, length| {
+        bindings.FPDFAnnot_GetFormFieldName(form.handle, annot.handle, buffer, length)
+    })
+}
+
+fn field_value(
+    bindings: &dyn PdfiumLibraryBindings,
+    form: &FormEnvironment<'_>,
+    annot: &RawAnnotation<'_>,
+) -> String {
+    wide_string(|buffer, length| {
+        bindings.FPDFAnnot_GetFormFieldValue(form.handle, annot.handle, buffer, length)
+    })
+}
+
+/// Alanın Format, Keystroke, Validate ve Calculate betikleri. PDFium betiği alan sözlüğünden
+/// (kalıtımla) okur.
+fn field_actions(
+    bindings: &dyn PdfiumLibraryBindings,
+    form: &FormEnvironment<'_>,
+    annot: &RawAnnotation<'_>,
+) -> af::Actions {
+    let script = |event: c_int| {
+        let fetch = |buffer: *mut FPDF_WCHAR, length: c_ulong| {
+            bindings.FPDFAnnot_GetFormAdditionalActionJavaScript(
+                form.handle,
+                annot.handle,
+                event,
+                buffer,
+                length,
+            )
+        };
+        let length = fetch(std::ptr::null_mut(), 0);
+        if length > MAX_FIELD_SCRIPT_BYTES {
+            tracing::warn!(
+                operation = OPERATION,
+                event,
+                length,
+                "Alan betiği sınırdan uzun; okunmadı"
+            );
+            return None;
+        }
+        Some(wide_string(fetch)).filter(|script| !script.is_empty())
+    };
+    af::actions_from_scripts(
+        script(FPDF_ANNOT_AACTION_FORMAT).as_deref(),
+        script(FPDF_ANNOT_AACTION_KEY_STROKE).as_deref(),
+        script(FPDF_ANNOT_AACTION_VALIDATE).as_deref(),
+        script(FPDF_ANNOT_AACTION_CALCULATE).as_deref(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Yeniden hesaplama
+// ---------------------------------------------------------------------------
+
+/// Bir alanın hesaplama için okunan durumu (belge sırasındaki ilk widget'ından).
+struct ScannedField {
+    name: String,
+    page_index: u32,
+    annot_index: u32,
+    field_type: c_int,
+    value: String,
+    actions: af::Actions,
+}
+
+/// Bir hesaplamanın yazılacak sonucu.
+#[derive(Debug, Clone, PartialEq)]
+struct CalculatedValue {
+    page_index: u32,
+    annot_index: u32,
+    field_name: String,
+    value: String,
+    format: af::Format,
+}
+
+/// Belgedeki tüm alanları ayrı, salt-okunur bir PDFium belgesinde tarar. Yazılan belgede
+/// yalnız edit'lerin ve değişen hesaplanan alanların sayfaları yüklenir: bir sayfanın form
+/// görünümünü kurmak `/NeedAppearances` belgelerde o sayfanın widget'larına görünüm akışı
+/// üretir ve bu, dokunulmamış sayfaları da kayda katardı.
+fn scan_fields(
+    bindings: &dyn PdfiumLibraryBindings,
+    source: &str,
+    password: Option<&str>,
+) -> Result<Vec<ScannedField>, DocumentIoFailure> {
+    let document = RawDocument::open(bindings, source, password)
+        .ok_or_else(|| DocumentIoFailure::preflight("PDF form hesaplaması için açılamadı"))?;
+    let form = FormEnvironment::init(bindings, &document)?;
+    let page_count = u32::try_from(bindings.FPDF_GetPageCount(document.handle)).unwrap_or(0);
+    let mut names = HashSet::new();
+    let mut fields = Vec::new();
+    let mut widgets = 0usize;
+    for page_index in 0..page_count {
+        let page = RawPage::load(bindings, &document, &form, page_index)?;
+        for index in 0..bindings.FPDFPage_GetAnnotCount(page.handle) {
+            let annot = RawAnnotation::get(bindings, &page, index)?;
+            if bindings.FPDFAnnot_GetSubtype(annot.handle) != FPDF_ANNOT_WIDGET {
+                continue;
+            }
+            widgets += 1;
+            if widgets > MAX_CALCULATION_WIDGETS {
+                return Err(DocumentIoFailure::preflight(format!(
+                    "Belgede form hesaplaması için {MAX_CALCULATION_WIDGETS}'den fazla widget var"
+                )));
+            }
+            let name = field_name(bindings, &form, &annot);
+            if name.is_empty() || !names.insert(name.clone()) {
+                continue;
+            }
+            fields.push(ScannedField {
+                page_index,
+                annot_index: u32::try_from(index).unwrap_or(u32::MAX),
+                field_type: bindings.FPDFAnnot_GetFormFieldType(form.handle, annot.handle),
+                value: field_value(bindings, &form, &annot),
+                actions: field_actions(bindings, &form, &annot),
+                name,
+            });
+        }
+    }
+    Ok(fields)
+}
+
+/// Hesaplanan metin alanlarını bağımlılık sırasıyla çalıştırır; değeri değişenleri döndürür.
+/// `edited`, bu istekte yazılan alanların yeni değerleridir.
+fn recalculate(
+    fields: &[ScannedField],
+    edited: &BTreeMap<String, String>,
+) -> Result<Vec<CalculatedValue>, DocumentIoFailure> {
+    let mut values: BTreeMap<String, String> = fields
+        .iter()
+        .map(|field| (field.name.clone(), field.value.clone()))
+        .collect();
+    values.extend(
+        edited
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    let mut writes = Vec::new();
+    for index in calculation_order(fields)? {
+        let field = &fields[index];
+        if field.field_type != FPDF_FORMFIELD_TEXTFIELD {
+            continue;
+        }
+        let lookup = |name: &str| values_under(&values, name);
+        let Some(value) = af::calculate(&field.actions.calculate, &lookup) else {
+            continue;
+        };
+        if values.get(&field.name) == Some(&value) {
+            continue;
+        }
+        values.insert(field.name.clone(), value.clone());
+        writes.push(CalculatedValue {
+            page_index: field.page_index,
+            annot_index: field.annot_index,
+            field_name: field.name.clone(),
+            value,
+            format: field.actions.format.clone(),
+        });
+    }
+    Ok(writes)
+}
+
+/// `name` alanının ve altındaki alanların (`name.0`, `name.1`) değerleri; AF'nin grup okuması.
+fn values_under(values: &BTreeMap<String, String>, name: &str) -> Vec<String> {
+    values
+        .range(name.to_string()..)
+        .take_while(|(key, _)| key.starts_with(name))
+        .filter(|(key, _)| key.len() == name.len() || key[name.len()..].starts_with('.'))
+        .map(|(_, value)| value.clone())
+        .collect()
+}
+
+/// Hesaplanan alanların (`fields` indeksleri) çalışma sırası: her alan okuduğu hesaplanan
+/// alanlardan sonra, bunun dışında belge sırasıyla. Bir döngüdeki alanlar sona, belge
+/// sırasıyla eklenir; döngü için doğru sıra yoktur.
+fn calculation_order(fields: &[ScannedField]) -> Result<Vec<usize>, DocumentIoFailure> {
+    let calculated: Vec<usize> = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| field.actions.calculate != af::Calculate::None)
+        .map(|(index, _)| index)
+        .collect();
+    if calculated.len() > MAX_CALCULATED_FIELDS {
+        return Err(DocumentIoFailure::preflight(format!(
+            "Belgede {MAX_CALCULATED_FIELDS}'den fazla hesaplanan alan var"
+        )));
+    }
+    let reads = |field: &str, read: &str| {
+        field
+            .strip_prefix(read)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+    };
+    let count = calculated.len();
+    let mut dependents = vec![Vec::new(); count];
+    let mut waiting = vec![0usize; count];
+    for (k, &index) in calculated.iter().enumerate() {
+        let names = fields[index].actions.calculate.reads();
+        for (j, &other) in calculated.iter().enumerate() {
+            if j != k && names.iter().any(|read| reads(&fields[other].name, read)) {
+                dependents[j].push(k);
+                waiting[k] += 1;
+            }
+        }
+    }
+    let mut ready: BTreeSet<usize> = (0..count).filter(|&k| waiting[k] == 0).collect();
+    let mut order = Vec::with_capacity(count);
+    while let Some(k) = ready.pop_first() {
+        order.push(k);
+        for &dependent in &dependents[k] {
+            waiting[dependent] -= 1;
+            if waiting[dependent] == 0 {
+                ready.insert(dependent);
+            }
+        }
+    }
+    if order.len() < count {
+        let placed: HashSet<usize> = order.iter().copied().collect();
+        order.extend((0..count).filter(|k| !placed.contains(k)));
+    }
+    Ok(order.into_iter().map(|k| calculated[k]).collect())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1089,5 +1447,437 @@ mod tests {
             }
         );
         assert_eq!(parsed[3].page_index, 1);
+    }
+
+    // --- AF format, validate and calculate --------------------------------------------------
+
+    const MONEY_FORMAT: &str = "AFNumber_Format(2, 0, 0, 0, \"$\", true);";
+    const MONEY_KEYSTROKE: &str = "AFNumber_Keystroke(2, 0, 0, 0, \"$\", true);";
+
+    fn text_field(name: &str, events: &[(&str, &str)]) -> lopdf::Dictionary {
+        let mut field = dictionary! { "FT" => "Tx", "T" => string(name) };
+        if !events.is_empty() {
+            field.set("AA", scripts(events));
+        }
+        field
+    }
+
+    /// Text fields stacked down page 0 in the order given; field `i` is annotation `i`.
+    fn text_fields(path: &Path, fields: Vec<lopdf::Dictionary>) {
+        let mut f = FormFixture::new();
+        for (i, field) in fields.into_iter().enumerate() {
+            let top = 760.0 - 30.0 * i as f32;
+            f.widget(field, [50.0, top - 20.0, 300.0, top]);
+        }
+        f.save(path, true);
+    }
+
+    /// The content of the normal appearance stream of annotation `annot_index` on `page`.
+    fn normal_appearance(path: &Path, page: u32, annot_index: usize) -> String {
+        let document = lopdf::Document::load(path).unwrap();
+        let page_id = *document.get_pages().get(&(page + 1)).unwrap();
+        let page = document.get_dictionary(page_id).unwrap();
+        let annots = document
+            .dereference(page.get(b"Annots").unwrap())
+            .unwrap()
+            .1
+            .as_array()
+            .unwrap();
+        let widget = document
+            .dereference(&annots[annot_index])
+            .unwrap()
+            .1
+            .as_dict()
+            .unwrap();
+        let ap = document
+            .dereference(widget.get(b"AP").unwrap())
+            .unwrap()
+            .1
+            .as_dict()
+            .unwrap();
+        let lopdf::Object::Stream(stream) = document.dereference(ap.get(b"N").unwrap()).unwrap().1
+        else {
+            panic!("/AP /N is not a stream");
+        };
+        let content = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        String::from_utf8_lossy(&content).into_owned()
+    }
+
+    fn value_of(path: &Path, page: u32, annot_index: u32) -> Option<String> {
+        let widgets = crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+            let document = pdfium
+                .load_pdf_from_file(path, None)
+                .map_err(|error| error.to_string())?;
+            super::super::read_page_form_fields(&document, page)
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        widget(&widgets, annot_index).value.clone()
+    }
+
+    #[test]
+    fn a_formatted_number_is_stored_raw_and_drawn_formatted() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("money.pdf");
+        text_fields(
+            &path,
+            vec![text_field(
+                "total",
+                &[("F", MONEY_FORMAT), ("K", MONEY_KEYSTROKE)],
+            )],
+        );
+        fill(&path, vec![edit(0, 0, "total", text("$1,234.5"))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("1234.5"));
+        let appearance = normal_appearance(&path, 0, 0);
+        assert!(appearance.contains("($1,234.50) Tj"), "{appearance}");
+    }
+
+    #[test]
+    fn non_ascii_currency_from_an_escaped_script_is_drawn() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("euro.pdf");
+        text_fields(
+            &path,
+            vec![text_field(
+                "price",
+                &[("F", "AFNumber_Format(2, 2, 0, 0, \" \\u20AC\", false);")],
+            )],
+        );
+        fill(&path, vec![edit(0, 0, "price", text("1234,5"))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("1234.5"));
+        // WinAnsi encodes the euro sign as 0x80.
+        let appearance = normal_appearance(&path, 0, 0);
+        assert!(appearance.contains("1.234,50 \u{fffd}"), "{appearance}");
+    }
+
+    #[test]
+    fn a_special_format_keeps_the_typed_value_and_draws_the_mask() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("phone.pdf");
+        text_fields(
+            &path,
+            vec![text_field(
+                "phone",
+                &[
+                    ("F", "AFSpecial_Format(2);"),
+                    ("K", "AFSpecial_Keystroke(2);"),
+                ],
+            )],
+        );
+        fill(&path, vec![edit(0, 0, "phone", text("5551234567"))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("5551234567"));
+        let appearance = normal_appearance(&path, 0, 0);
+        assert!(
+            appearance.contains("(\\(555\\) 123-4567) Tj"),
+            "{appearance}"
+        );
+    }
+
+    #[test]
+    fn text_that_does_not_fit_the_format_is_rejected_without_touching_the_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("formats.pdf");
+        text_fields(
+            &path,
+            vec![
+                text_field("total", &[("F", MONEY_FORMAT), ("K", MONEY_KEYSTROKE)]),
+                text_field("due", &[("F", "AFDate_FormatEx(\"mm/dd/yyyy\");")]),
+                text_field("zip", &[("K", "AFSpecial_KeystrokeEx(\"99999\");")]),
+            ],
+        );
+        let error = rejected(&path, vec![edit(0, 0, "total", text("ten"))]);
+        assert_eq!(error.stage, DocumentIoStage::Preflight);
+        assert!(
+            error.detail.contains("[ total ] alanının biçimine uymuyor"),
+            "{}",
+            error.detail
+        );
+        let error = rejected(&path, vec![edit(0, 1, "due", text("2/30/2024"))]);
+        assert!(error.detail.contains("mm/dd/yyyy"), "{}", error.detail);
+        let error = rejected(&path, vec![edit(0, 2, "zip", text("12a45"))]);
+        assert!(error.detail.contains("[ zip ]"), "{}", error.detail);
+        // A blank value clears a formatted field.
+        fill(&path, vec![edit(0, 0, "total", text("  "))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref().unwrap_or(""), "");
+    }
+
+    #[test]
+    fn a_value_outside_the_validated_range_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("range.pdf");
+        text_fields(
+            &path,
+            vec![text_field(
+                "percent",
+                &[("V", "AFRange_Validate(true, 0, true, 100);")],
+            )],
+        );
+        let error = rejected(&path, vec![edit(0, 0, "percent", text("120"))]);
+        assert_eq!(error.stage, DocumentIoStage::Preflight);
+        assert!(
+            error
+                .detail
+                .contains("0 veya daha büyük ve 100 veya daha küçük"),
+            "{}",
+            error.detail
+        );
+        fill(&path, vec![edit(0, 0, "percent", text("100"))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("100"));
+    }
+
+    #[test]
+    fn calculated_fields_follow_the_fields_they_read() {
+        // `total` comes first in the document but reads `subtotal`, which reads the edited
+        // fields: the dependency order, not document order, decides. Both are read-only, as
+        // calculated fields usually are.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("invoice.pdf");
+        let mut total = text_field(
+            "total",
+            &[
+                (
+                    "C",
+                    "AFSimple_Calculate(\"SUM\", new Array (\"subtotal\", \"shipping\"));",
+                ),
+                ("F", MONEY_FORMAT),
+            ],
+        );
+        total.set("Ff", 1);
+        let mut subtotal = text_field(
+            "subtotal",
+            &[(
+                "C",
+                "/** BVCALC unit\\ price * qty EVCALC **/ event.value = AFMakeNumber(getField(\"unit price\").value) * AFMakeNumber(getField(\"qty\").value);",
+            )],
+        );
+        subtotal.set("Ff", 1);
+        let mut shipping = text_field("shipping", &[]);
+        shipping.set("V", string("5"));
+        text_fields(
+            &path,
+            vec![
+                total,
+                subtotal,
+                text_field("unit price", &[]),
+                text_field("qty", &[]),
+                shipping,
+            ],
+        );
+        let original = std::fs::read(&path).unwrap();
+        fill(
+            &path,
+            vec![
+                edit(0, 2, "unit price", text("2.5")),
+                edit(0, 3, "qty", text("4")),
+            ],
+        )
+        .unwrap();
+        assert!(std::fs::read(&path).unwrap().starts_with(&original));
+        assert_eq!(value_of(&path, 0, 1).as_deref(), Some("10"));
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("15"));
+        let appearance = normal_appearance(&path, 0, 0);
+        assert!(appearance.contains("($15.00) Tj"), "{appearance}");
+
+        // A later edit recalculates from the stored values.
+        fill(&path, vec![edit(0, 4, "shipping", text("0.5"))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("10.5"));
+    }
+
+    #[test]
+    fn a_calculation_reads_fields_on_other_pages() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pages.pdf");
+        let mut f = FormFixture::new();
+        f.widget(text_field("qty", &[]), [50.0, 700.0, 300.0, 720.0]);
+        f.next_page();
+        f.widget(
+            text_field("double", &[("C", "/** BVCALC qty * 2 EVCALC **/")]),
+            [50.0, 700.0, 300.0, 720.0],
+        );
+        f.save(&path, true);
+        fill(&path, vec![edit(0, 0, "qty", text("21"))]).unwrap();
+        assert_eq!(value_of(&path, 1, 0).as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn a_calculated_field_the_user_typed_into_takes_the_calculated_value() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("override.pdf");
+        text_fields(
+            &path,
+            vec![
+                text_field("a", &[]),
+                text_field("sum", &[("C", "AFSimple_Calculate(\"SUM\", \"a\");")]),
+            ],
+        );
+        fill(
+            &path,
+            vec![edit(0, 0, "a", text("3")), edit(0, 1, "sum", text("99"))],
+        )
+        .unwrap();
+        assert_eq!(value_of(&path, 0, 1).as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn checkbox_export_values_feed_calculations() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checkbox.pdf");
+        let mut f = FormFixture::new();
+        f.checkbox("extra", [50.0, 700.0, 66.0, 716.0], "10", "Off");
+        f.widget(
+            text_field(
+                "cost",
+                &[("C", "AFSimple_Calculate(\"SUM\", new Array(\"extra\"));")],
+            ),
+            [100.0, 700.0, 300.0, 720.0],
+        );
+        f.save(&path, true);
+        fill(
+            &path,
+            vec![edit(
+                0,
+                0,
+                "extra",
+                FormFieldValue::Checkbox { checked: true },
+            )],
+        )
+        .unwrap();
+        assert_eq!(value_of(&path, 0, 1).as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn a_widget_that_is_not_the_field_draws_the_raw_value() {
+        // `/V` belongs to the parent field; writing it to the kid widget would leave the
+        // field and the widget disagreeing, so the appearance shows the raw value instead.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("kid.pdf");
+        let mut f = FormFixture::new();
+        f.field_with_kid_widget(
+            text_field("total", &[("F", MONEY_FORMAT)]),
+            [50.0, 700.0, 300.0, 720.0],
+        );
+        f.save(&path, true);
+        fill(&path, vec![edit(0, 0, "total", text("7"))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("7"));
+        let appearance = normal_appearance(&path, 0, 0);
+        assert!(appearance.contains("(7) Tj"), "{appearance}");
+        let document = lopdf::Document::load(&path).unwrap();
+        let kids_with_v = document
+            .objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .filter(|dict| dict.has(b"Parent") && dict.has(b"V"))
+            .count();
+        assert_eq!(kids_with_v, 0, "a kid widget got its own /V");
+    }
+
+    #[test]
+    fn fields_without_scripts_are_written_as_before() {
+        let (_directory, path) = fixture();
+        fill(&path, vec![edit(0, 0, "name", text("  spaced  "))]).unwrap();
+        assert_eq!(value_of(&path, 0, 0).as_deref(), Some("  spaced  "));
+    }
+
+    #[test]
+    fn scanning_for_calculations_leaves_untouched_pages_as_they_were() {
+        // With /NeedAppearances, loading a page's form view generates appearances for its
+        // widgets. The scan loads every page, so it runs in its own document: a fill on page 1
+        // must not give page 2's widget an appearance stream in the saved file.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("untouched.pdf");
+        let mut f = FormFixture::new();
+        f.widget(text_field("first", &[]), [50.0, 700.0, 300.0, 720.0]);
+        f.next_page();
+        let mut second = text_field("second", &[]);
+        second.set("V", string("keep"));
+        f.widget(second, [50.0, 700.0, 300.0, 720.0]);
+        f.save(&path, true);
+        let mut document = lopdf::Document::load(&path).unwrap();
+        let acroform = document
+            .catalog()
+            .unwrap()
+            .get(b"AcroForm")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_dictionary_mut(acroform)
+            .unwrap()
+            .set("NeedAppearances", true);
+        document.save(&path).unwrap();
+
+        fill(&path, vec![edit(0, 0, "first", text("x"))]).unwrap();
+
+        let saved = lopdf::Document::load(&path).unwrap();
+        let second = saved
+            .objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .find(|dict| dict.get(b"T").ok() == Some(&string("second")))
+            .unwrap();
+        assert!(!second.has(b"AP"), "page 2's widget got an appearance");
+    }
+
+    fn scanned(name: &str, calculate: &str) -> ScannedField {
+        ScannedField {
+            name: name.to_string(),
+            page_index: 0,
+            annot_index: 0,
+            field_type: FPDF_FORMFIELD_TEXTFIELD,
+            value: String::new(),
+            actions: af::actions_from_scripts(
+                None,
+                None,
+                None,
+                Some(calculate).filter(|c| !c.is_empty()),
+            ),
+        }
+    }
+
+    #[test]
+    fn calculation_order_puts_each_field_after_what_it_reads() {
+        let fields = vec![
+            scanned("total", "AFSimple_Calculate(\"SUM\", \"row\");"),
+            scanned("row.0", "/** BVCALC a * 2 EVCALC **/"),
+            scanned("a", ""),
+            scanned("row.1", "/** BVCALC row.0 + 1 EVCALC **/"),
+            scanned("rowing", "/** BVCALC 1 EVCALC **/"),
+        ];
+        // `total` reads the group `row` (row.0 and row.1) but not `rowing`.
+        assert_eq!(calculation_order(&fields).unwrap(), vec![1, 3, 0, 4]);
+        // A loop has no right order: its fields run once, in document order, after the rest.
+        let looped = vec![
+            scanned("x", "/** BVCALC y + 1 EVCALC **/"),
+            scanned("y", "/** BVCALC x + 1 EVCALC **/"),
+            scanned("z", "/** BVCALC 3 EVCALC **/"),
+        ];
+        assert_eq!(calculation_order(&looped).unwrap(), vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn group_reads_take_the_field_and_its_children_only() {
+        let values: BTreeMap<String, String> = [
+            ("row", "1"),
+            ("row.0", "2"),
+            ("row.1", "3"),
+            ("rowing", "9"),
+            ("rox", "8"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        assert_eq!(values_under(&values, "row"), ["1", "2", "3"]);
+        assert_eq!(values_under(&values, "row.1"), ["3"]);
+        assert!(values_under(&values, "missing").is_empty());
+    }
+
+    #[test]
+    fn too_many_calculated_fields_are_refused() {
+        let fields: Vec<_> = (0..=MAX_CALCULATED_FIELDS)
+            .map(|i| scanned(&format!("f{i}"), "/** BVCALC 1 EVCALC **/"))
+            .collect();
+        assert!(calculation_order(&fields).is_err());
     }
 }
