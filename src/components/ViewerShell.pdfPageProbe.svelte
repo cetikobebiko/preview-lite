@@ -4,6 +4,7 @@
     "currentPage",
     "searchMatches",
     "sensitiveDataHighlights",
+    "compareHighlights",
     "pendingRedactionRegions",
     "approximateCoveragePreview",
     "approximateProcessPreview",

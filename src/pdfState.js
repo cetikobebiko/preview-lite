@@ -1,4 +1,4 @@
-import { guardFeatureAction } from "./featureActionGuard.js";
+import { assertFeatureRunnable, guardFeatureAction } from "./featureActionGuard.js";
 import { getRuntimeFeatureContext } from "./featureRegistry.js";
 import * as manipulationBackend from "./services/backend/manipulation.js";
 import * as ocrBackend from "./services/backend/ocr.js";
@@ -68,6 +68,12 @@ export async function mergeSessionPdfs(sessionId, expectedContentGeneration, add
 
 export async function splitSessionPdf(sessionId, expectedContentGeneration, ranges, outputDir, overwrite = false) {
   return await manipulationBackend.splitSessionPdf(sessionId, expectedContentGeneration, ranges, outputDir, overwrite);
+}
+
+// Read-only text comparison with another PDF; returns { jobId, promise, cancel }.
+export function startDocumentCompare(sessionId, expectedContentGeneration, otherPath, currentIsOld) {
+  assertFeatureRunnable("document_compare", getRuntimeFeatureContext());
+  return manipulationBackend.startDocumentCompare(sessionId, expectedContentGeneration, otherPath, currentIsOld);
 }
 
 // ==========================================

@@ -8725,6 +8725,54 @@ pub async fn merge_session_pdfs(
         .await
 }
 
+/// Açık belgenin metnini `other_path`'teki PDF'le karşılaştırır. Dosya iş dizinine kopyalanır
+/// ve yalnız job worker'da açılır; hiçbir şey yazılmaz.
+#[tauri::command]
+pub async fn compare_session_pdf(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    other_path: String,
+    current_is_old: bool,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<crate::compare::DocumentComparison>, DocumentSessionError> {
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let job_dir = context.snapshot_path.parent().ok_or_else(|| {
+                    SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Karşılaştırma job dizini çözümlenemedi",
+                    )
+                })?;
+                let other_input_name = "compare-input.pdf".to_string();
+                copy_source_consistent(Path::new(&other_path), &job_dir.join(&other_input_name))
+                    .map_err(|error| {
+                        SessionJobOperationError::failed_with_code(error.code, error.message)
+                    })?;
+                match crate::job_worker::run_job(
+                    &context,
+                    JobCommand::CompareDocuments {
+                        other_input_name,
+                        current_is_old,
+                    },
+                    Duration::from_secs(300),
+                )? {
+                    JobResult::Comparison(comparison) => Ok(comparison),
+                    _ => Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Karşılaştırma worker beklenmeyen sonuç döndürdü",
+                    )),
+                }
+            },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn export_session_text_content(
     job_id: String,

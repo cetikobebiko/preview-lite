@@ -38,6 +38,7 @@
   import { createPrepressState } from "./stores/prepressState.svelte.js";
   import { createSearchState } from "./stores/searchState.svelte.js";
   import { createSensitiveDataScanState } from "./stores/sensitiveDataScanState.svelte.js";
+  import { createDocumentCompareState } from "./stores/documentCompareState.svelte.js";
   import { createSecureRedactionState } from "./stores/secureRedactionState.svelte.js";
   import { createSanitizationState } from "./stores/sanitizationState.svelte.js";
   import { createUiState } from "./stores/uiState.svelte.js";
@@ -58,6 +59,7 @@
   const annotation = createAnnotationState();
   const searchState = createSearchState();
   const sensitiveScanState = createSensitiveDataScanState();
+  const documentCompareState = createDocumentCompareState();
   const secureRedactionState = createSecureRedactionState();
   const sanitizationState = createSanitizationState();
   const prepress = createPrepressState();
@@ -235,6 +237,7 @@
       {viewer}
       {documentSession}
       {sensitiveScanState}
+      {documentCompareState}
       {secureRedactionState}
       featureUi={featureRuntime.featureUi}
       physicalPageIndex={viewer.physicalPageIndex}
@@ -261,6 +264,8 @@
         errorMsg={ui.error}
         {getActivePrepressPayload}
         getSensitiveDataHighlights={featureRuntime.getSensitiveDataHighlightsForPage}
+        {documentCompareState}
+        showCompareHighlights={ui.panels.documentCompare}
         {secureRedactionState}
         secureRedaction={featureRuntime.secureRedaction}
         onSelectFile={documentRuntime.selectFile}

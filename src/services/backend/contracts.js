@@ -648,6 +648,14 @@ export const CONTRACTS = Object.freeze({
     additionalPaths: arrayOf(stringType),
     targetPath: stringType,
   }),
+  // Read-only: Rust copies otherPath into the job directory and compares text in the job worker.
+  compareSessionPdf: command("compare_session_pdf", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    otherPath: stringType,
+    currentIsOld: booleanType,
+  }),
   splitSessionPdf: command("split_session_pdf", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
@@ -884,6 +892,7 @@ export const PROTECTED_CONTRACT_IDS = Object.freeze([
   "performOcrOnPage",
   "mergeSessionPdfs",
   "splitSessionPdf",
+  "compareSessionPdf",
 ]);
 
 const contractEntries = Object.entries(CONTRACTS);

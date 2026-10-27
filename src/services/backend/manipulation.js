@@ -13,3 +13,9 @@ export const splitSessionPdf = (sessionId, expectedContentGeneration, ranges, ou
   runSessionJob(sessionId, (jobId) =>
     callBackend("splitSessionPdf", { jobId, sessionId, expectedContentGeneration, ranges, outputDir, overwrite }),
   ).promise;
+
+// Returns { jobId, promise, cancel }; the promise resolves to the comparison.
+export const startDocumentCompare = (sessionId, expectedContentGeneration, otherPath, currentIsOld) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("compareSessionPdf", { jobId, sessionId, expectedContentGeneration, otherPath, currentIsOld }),
+  );

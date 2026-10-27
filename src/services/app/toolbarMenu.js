@@ -73,6 +73,7 @@ export function buildToolbarMenu({ isPdf, hasDocument, viewer, ui, featureUi, on
         feature("print_resource_inspection", "Baskı kaynakları", () => ui.togglePanel("prepress"), panel("prepress"),
           featureUi("print_resource_inspection").visible || featureUi("rgb_derived_print_preview").visible),
         feature("sensitive_data_scan", "Hassas veri taraması", () => ui.togglePanel("sensitiveDataScan"), panel("sensitiveDataScan")),
+        feature("document_compare", "Belgeyi karşılaştır…", () => ui.togglePanel("documentCompare"), panel("documentCompare")),
       ],
     });
   }

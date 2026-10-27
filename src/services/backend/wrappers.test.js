@@ -100,6 +100,7 @@ const cases = [
   ["mergePdfs", () => manipulation.mergePdfs(["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_pdfs", { filePaths: ["/a.pdf", "/b.pdf"], outputPath: "/out.pdf" }],
   ["mergeSessionPdfs", () => manipulation.mergeSessionPdfs("sid", 1, ["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_session_pdfs", { sessionId: "sid", expectedContentGeneration: 1, additionalPaths: ["/a.pdf", "/b.pdf"], targetPath: "/out.pdf" }],
   ["splitSessionPdf", () => manipulation.splitSessionPdf("sid", 1, [[0, 2], [3, 4]], "/tmp"), "split_session_pdf", { sessionId: "sid", expectedContentGeneration: 1, ranges: [[0, 2], [3, 4]], outputDir: "/tmp", overwrite: false }],
+  ["startDocumentCompare", () => manipulation.startDocumentCompare("sid", 1, "/v1.pdf", true).promise, "compare_session_pdf", { sessionId: "sid", expectedContentGeneration: 1, otherPath: "/v1.pdf", currentIsOld: true }],
   ["splitSessionPdf overwrite", () => manipulation.splitSessionPdf("sid", 1, [[0, 2], [3, 4]], "/tmp", true), "split_session_pdf", { sessionId: "sid", expectedContentGeneration: 1, ranges: [[0, 2], [3, 4]], outputDir: "/tmp", overwrite: true }],
   ["detectScannedPages", () => ocr.detectScannedPages("sid", 1), "detect_scanned_pages", { sessionId: "sid", expectedContentGeneration: 1 }],
   ["getAvailableOcrLanguages", () => ocr.getAvailableOcrLanguages(), "get_available_ocr_languages"],

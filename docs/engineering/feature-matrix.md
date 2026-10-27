@@ -103,6 +103,12 @@ değildir.
 | RAG chat streaming | `AiSidebar.svelte` | `ai::{query_document_rag,cancel_ai_request}`; `ai_stream_event` | `working` | Connect/send race cancellation, fail-closed EOF check, single terminal delivery state machine, session generation guard. | Model yanıt üretme hızına bağlıdır. | Tokio select cancel race, single terminal delivery & stream sequence testleri. |
 | Selection/page summary streaming | `AiContextMenu.svelte` | `ai::{summarize_selection_or_page,cancel_ai_request}`; `ai_stream_event` | `working` | Selection-scoped attempt ID, connect/send race cancellation, fail-closed EOF check, single terminal delivery state machine. | Model yanıt üretme hızına bağlıdır. | Attempt ID validation, cancel race & terminal delivery testleri. |
 
+## Document compare
+
+| Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |
+|---|---|---|---|---|---|---|
+| Belge karşılaştırma (metin) | `DocumentComparePanel.svelte` (İnceleme → Belgeyi karşılaştır…); `documentCompareState.svelte.js`; `PdfPage.svelte` compare highlight katmanı | `document_session::compare_session_pdf` → job worker `CompareDocuments`; `compare.rs` (PDFium kelime/geometri), `compare/diff.rs` (PdfCraft 0.14.0 `crates/compare` portu, MIT) | `experimental` | Seçilen PDF iş dizinine kopyalanır ve yalnız job worker'da açılır. Kelimeler metin katmanıyla aynı kuralla ayrılır (`worker::pdfium::for_each_word`), Myers + patience anchor diff'i ile ekleme/silme/değişiklik olarak gruplanır; açık belgedeki yerleri effective box'a göre normalize edilip sayfa döndürmesiyle çizilir. Açık belge eski ya da yeni sürüm seçilebilir. | Yalnız metin: biçim, görsel ve taranmış sayfalardaki farklar görünmez (`diff::visual_regions` portlandı ama arayüze bağlı değil). Parolalı seçilen dosya reddedilir. Sınırlar: belge başına 500 000 kelime, 10 000 sayfa; arayüze en fazla 5 000 değişiklik gönderilir. Çalışan uygulamada doğrulanmadı. | `compare::diff::tests`, `compare::tests` (gerçek PDFium: konum, crop box, `/Rotate`), `job_worker::tests::compare_job_reads_only_its_own_input_and_names_password_protected_files`, `src/utils/documentCompare.test.js`, `src/stores/documentCompareState.test.js`, `src/components/DocumentComparePanel.test.js`. |
+
 ## Redaction
 
 | Feature | Frontend entry point | Backend command/module | Status | Evidence | Known risks | Tests |

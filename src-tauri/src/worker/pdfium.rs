@@ -629,6 +629,20 @@ fn extract_text_layout(
     })?;
 
     let mut layouts = Vec::new();
+    for_each_word(&text_page, |text, bounds| {
+        push_layout(&mut layouts, text, bounds, [page_width, page_height])
+    })?;
+    Ok(layouts)
+}
+
+/// Splits a page's text into words: at whitespace, and where the next character is
+/// further from the previous one than the line height allows. `visit` gets each word
+/// with its box `[min_x, min_y, max_x, max_y]` in page space; the last call may be for
+/// an empty word.
+pub(crate) fn for_each_word<E>(
+    text_page: &PdfPageText<'_>,
+    mut visit: impl FnMut(&str, [f32; 4]) -> Result<(), E>,
+) -> Result<(), E> {
     let mut current_word_text = String::with_capacity(50);
     let mut min_x = f32::MAX;
     let mut min_y = f32::MAX;
@@ -672,12 +686,7 @@ fn extract_text_layout(
                 || gap_y > ch_height * 0.5;
         }
         if starts_new_word {
-            push_layout(
-                &mut layouts,
-                &current_word_text,
-                [min_x, min_y, max_x, max_y],
-                [page_width, page_height],
-            )?;
+            visit(&current_word_text, [min_x, min_y, max_x, max_y])?;
             current_word_text.clear();
             min_x = f32::MAX;
             min_y = f32::MAX;
@@ -694,13 +703,7 @@ fn extract_text_layout(
         prev_char_max_x = ch_max_x;
         prev_char_min_y = ch_min_y;
     }
-    push_layout(
-        &mut layouts,
-        &current_word_text,
-        [min_x, min_y, max_x, max_y],
-        [page_width, page_height],
-    )?;
-    Ok(layouts)
+    visit(&current_word_text, [min_x, min_y, max_x, max_y])
 }
 
 fn push_layout(
