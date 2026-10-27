@@ -12772,15 +12772,30 @@ fn secure_remove_tree(path: &Path) -> Result<(), DocumentSessionError> {
         }
         return Err(error);
     }
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(DocumentSessionError::new(
-            "TEMP_CLEANUP_ERROR",
-            format!("Temp tree silinemedi ({}): {error}", path.display()),
-        )),
+    // Aynı `cleanup-*` ağacını başka bir store ya da ikinci bir uygulama örneği de siliyor olabilir.
+    // Windows'ta onun bekleyen silmeleri burada "Access is denied" olarak döner; ağaç kaybolana
+    // kadar kısa aralıklarla yeniden denenir.
+    let mut attempt = 0;
+    loop {
+        match fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) if !path.exists() => return Ok(()),
+            Err(_) if attempt < TREE_REMOVE_RETRIES => {
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(20 * attempt as u64));
+            }
+            Err(error) => {
+                return Err(DocumentSessionError::new(
+                    "TEMP_CLEANUP_ERROR",
+                    format!("Temp tree silinemedi ({}): {error}", path.display()),
+                ))
+            }
+        }
     }
 }
+
+const TREE_REMOVE_RETRIES: u32 = 5;
 
 fn reject_linked_descendants(path: &Path) -> Result<(), DocumentSessionError> {
     let entries = match fs::read_dir(path) {
@@ -14128,6 +14143,34 @@ mod tests {
         fs::rename(&staging, &quarantine).unwrap();
         cleanup_orphan_instances(&store.temp_root).unwrap();
         assert!(!quarantine.exists());
+    }
+
+    #[test]
+    fn concurrent_cleanups_of_the_same_tree_both_succeed() {
+        let root = std::env::temp_dir().join(format!("cleanup-race-{}", Uuid::new_v4()));
+        for _ in 0..20 {
+            for dir in 0..4 {
+                let dir = root.join(format!("d{dir}"));
+                fs::create_dir_all(&dir).unwrap();
+                for file in 0..16 {
+                    fs::write(dir.join(format!("f{file}")), b"x").unwrap();
+                }
+            }
+            let start = Arc::new(std::sync::Barrier::new(4));
+            let removers: Vec<_> = (0..4)
+                .map(|_| {
+                    let (root, start) = (root.clone(), Arc::clone(&start));
+                    std::thread::spawn(move || {
+                        start.wait();
+                        secure_remove_tree(&root)
+                    })
+                })
+                .collect();
+            for remover in removers {
+                remover.join().unwrap().unwrap();
+            }
+            assert!(!root.exists());
+        }
     }
 
     #[tokio::test]
