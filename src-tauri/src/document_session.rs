@@ -12757,45 +12757,41 @@ fn ensure_safe_tree_root(path: &Path) -> Result<(), DocumentSessionError> {
 }
 
 fn secure_remove_tree(path: &Path) -> Result<(), DocumentSessionError> {
-    if !path.exists() {
-        return Ok(());
-    }
-    if let Err(error) = ensure_safe_tree_root(path) {
-        if !path.exists() {
-            return Ok(());
-        }
-        return Err(error);
-    }
-    if let Err(error) = reject_linked_descendants(path) {
-        if !path.exists() {
-            return Ok(());
-        }
-        return Err(error);
-    }
     // Aynı `cleanup-*` ağacını başka bir store ya da ikinci bir uygulama örneği de siliyor olabilir.
-    // Windows'ta onun bekleyen silmeleri burada "Access is denied" olarak döner; ağaç kaybolana
-    // kadar kısa aralıklarla yeniden denenir.
+    // Windows'ta onun bekleyen silmeleri hem link taramasında hem silmede "Access is denied" olarak
+    // döner; ağaç kaybolana kadar G/Ç hataları kısa aralıklarla yeniden denenir. Link/reparse-point
+    // reddi yeniden denenmez.
     let mut attempt = 0;
     loop {
-        match fs::remove_dir_all(path) {
+        match remove_tree_once(path) {
             Ok(()) => return Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(_) if !path.exists() => return Ok(()),
-            Err(_) if attempt < TREE_REMOVE_RETRIES => {
+            Err(error) if error.code == "TEMP_CLEANUP_ERROR" && attempt < TREE_REMOVE_RETRIES => {
                 attempt += 1;
-                std::thread::sleep(Duration::from_millis(20 * attempt as u64));
+                std::thread::sleep(Duration::from_millis(20 * u64::from(attempt)));
             }
-            Err(error) => {
-                return Err(DocumentSessionError::new(
-                    "TEMP_CLEANUP_ERROR",
-                    format!("Temp tree silinemedi ({}): {error}", path.display()),
-                ))
-            }
+            Err(error) => return Err(error),
         }
     }
 }
 
-const TREE_REMOVE_RETRIES: u32 = 5;
+const TREE_REMOVE_RETRIES: u32 = 8;
+
+fn remove_tree_once(path: &Path) -> Result<(), DocumentSessionError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    ensure_safe_tree_root(path)?;
+    reject_linked_descendants(path)?;
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(DocumentSessionError::new(
+            "TEMP_CLEANUP_ERROR",
+            format!("Temp tree silinemedi ({}): {error}", path.display()),
+        )),
+    }
+}
 
 fn reject_linked_descendants(path: &Path) -> Result<(), DocumentSessionError> {
     let entries = match fs::read_dir(path) {
@@ -14143,6 +14139,24 @@ mod tests {
         fs::rename(&staging, &quarantine).unwrap();
         cleanup_orphan_instances(&store.temp_root).unwrap();
         assert!(!quarantine.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_descendant_stops_cleanup_without_retrying() {
+        let root = std::env::temp_dir().join(format!("cleanup-link-{}", Uuid::new_v4()));
+        let outside = std::env::temp_dir().join(format!("cleanup-target-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("d")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("d").join("link")).unwrap();
+        let started = std::time::Instant::now();
+        let error = secure_remove_tree(&root).unwrap_err();
+        assert_eq!(error.code, "TEMP_CLEANUP_REPARSE_POINT");
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(root.exists() && outside.exists());
+        fs::remove_file(root.join("d").join("link")).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
     }
 
     #[test]
