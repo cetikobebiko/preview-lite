@@ -126,6 +126,9 @@ pub enum JobCommand {
     },
     PreparePrint {
         pages: Option<Vec<u32>>,
+        /// Sheets laid out with `print_layout`; `None` prints the pages as they are.
+        #[serde(default)]
+        layout: Option<crate::print_imposition::PrintLayoutRequest>,
         output_name: String,
     },
     InspectPrintResources {
@@ -723,7 +726,39 @@ fn execute_command(
                 paths.into_iter().map(PathBuf::from).collect(),
             ))
         }
-        JobCommand::PreparePrint { pages, output_name } => {
+        JobCommand::PreparePrint {
+            pages,
+            layout: Some(layout),
+            output_name,
+        } => {
+            let output_path = checked_output_path(job_dir, &output_name)?;
+            let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+            let pages = match pages.filter(|pages| !pages.is_empty()) {
+                Some(pages) => pages.into_iter().map(|page| page as usize).collect(),
+                None => {
+                    let document = crate::pdf_engine::open_pdfium_doc(
+                        &pdfium,
+                        &snapshot_path.to_string_lossy(),
+                        credential,
+                    )
+                    .map_err(pdf_open_failed)?;
+                    (0..usize::from(document.pages().len())).collect()
+                }
+            };
+            crate::print_imposition::impose(
+                pdfium.bindings(),
+                snapshot_path,
+                credential,
+                &layout.settings(pages)?,
+                &output_path,
+            )?;
+            Ok(JobResult::File(output_path))
+        }
+        JobCommand::PreparePrint {
+            pages,
+            layout: None,
+            output_name,
+        } => {
             let output_path = checked_output_path(job_dir, &output_name)?;
             prepare_print_pdf(snapshot_path, credential, pages.as_deref(), &output_path)?;
             Ok(JobResult::File(output_path))
@@ -2389,5 +2424,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn prepare_print_lays_out_sheets_when_a_layout_is_given() {
+        use crate::print_imposition::{
+            PrintBookletSides, PrintLayoutRequest, PrintMode, PrintOrientation,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        crate::forms::test_support::standard_fixture(&snapshot);
+        let prepare = |pages: Option<Vec<u32>>, layout: Option<PrintLayoutRequest>| {
+            let command = JobCommand::PreparePrint {
+                pages,
+                layout,
+                output_name: "print-ready.pdf".to_string(),
+            };
+            // The job IPC carries commands as JSON.
+            let command = serde_json::from_str(&serde_json::to_string(&command).unwrap()).unwrap();
+            execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "print-job",
+                "print-session",
+                command,
+            )
+        };
+        let sheets = || {
+            let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+            let document = pdfium
+                .load_pdf_from_file(&directory.path().join("print-ready.pdf"), None)
+                .unwrap();
+            let page = document.pages().get(0).unwrap();
+            (
+                usize::from(document.pages().len()),
+                page.width().value > page.height().value,
+            )
+        };
+        let booklet = PrintLayoutRequest {
+            paper: "A4".into(),
+            orientation: PrintOrientation::Auto,
+            mode: PrintMode::Booklet {
+                sides: PrintBookletSides::Both,
+                right_binding: false,
+            },
+        };
+        assert!(matches!(
+            prepare(None, Some(booklet.clone())).unwrap(),
+            JobResult::File(_)
+        ));
+        // One page pads to four: one sheet, both sides, landscape.
+        assert_eq!(sheets(), (2, true));
+        // Without a layout the selected pages are copied as they are.
+        assert!(matches!(
+            prepare(Some(vec![0]), None).unwrap(),
+            JobResult::File(_)
+        ));
+        assert_eq!(sheets().0, 1);
+        // The old wire shape, without `layout`, still reads.
+        let old: JobCommand = serde_json::from_value(serde_json::json!({
+            "PreparePrint": { "pages": null, "output_name": "print-ready.pdf" }
+        }))
+        .unwrap();
+        assert!(matches!(old, JobCommand::PreparePrint { layout: None, .. }));
+        assert_eq!(
+            prepare(Some(vec![5]), Some(booklet)).unwrap_err().code,
+            "SESSION_JOB_INVALID_PAGE_SELECTION"
+        );
     }
 }

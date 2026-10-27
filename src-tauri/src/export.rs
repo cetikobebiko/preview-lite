@@ -10,8 +10,27 @@ use crate::document_session::{
 use crate::pdf_engine::render_service::{checked_rgba_len, MAX_PIXEL_DIMENSION, MAX_RENDER_BYTES};
 use crate::pdf_engine::{get_pdfium, open_pdfium_doc};
 
+/// CUPS job options for the paper and two-sided printing a laid-out print asks for.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn cups_job_options(spool: Option<crate::print_imposition::SpoolOptions>) -> Vec<String> {
+    let Some(spool) = spool else {
+        return Vec::new();
+    };
+    let mut options = Vec::new();
+    if let Some(media) = spool.media {
+        options.extend(["-o".to_string(), format!("media={media}")]);
+    }
+    if spool.duplex == crate::print_layout::Duplex::ShortEdge {
+        options.extend(["-o".to_string(), "sides=two-sided-short-edge".to_string()]);
+    }
+    options
+}
+
+/// `spool` (paper, duplex) goes to CUPS on macOS and Linux; Windows prints with the
+/// application's defaults.
 pub(crate) fn submit_print_file(
     print_path: &Path,
+    spool: Option<crate::print_imposition::SpoolOptions>,
     cancellation: &SessionJobCancellationCheckpoint,
     child_processes: &SessionJobChildProcessOwner,
 ) -> Result<(), SessionJobOperationError> {
@@ -19,15 +38,17 @@ pub(crate) fn submit_print_file(
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = Command::new("lpr");
-        command.arg(print_path);
+        command.args(cups_job_options(spool)).arg(print_path);
         command
     };
     #[cfg(target_os = "linux")]
     let mut command = {
         let mut command = Command::new("lp");
-        command.arg(print_path);
+        command.args(cups_job_options(spool)).arg(print_path);
         command
     };
+    #[cfg(target_os = "windows")]
+    let _ = spool;
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = Command::new("powershell");
@@ -367,6 +388,26 @@ pub(crate) fn export_pages_as_images_with_password(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn laid_out_prints_tell_cups_the_paper_and_short_edge_duplex() {
+        use crate::print_imposition::SpoolOptions;
+        use crate::print_layout::Duplex;
+        assert!(cups_job_options(None).is_empty());
+        let booklet = SpoolOptions {
+            media: Some("A4"),
+            duplex: Duplex::ShortEdge,
+        };
+        assert_eq!(
+            cups_job_options(Some(booklet)),
+            ["-o", "media=A4", "-o", "sides=two-sided-short-edge"]
+        );
+        let plain = SpoolOptions {
+            media: None,
+            duplex: Duplex::Off,
+        };
+        assert!(cups_job_options(Some(plain)).is_empty());
+    }
 
     fn failure_code(error: SessionJobOperationError) -> String {
         match error {
