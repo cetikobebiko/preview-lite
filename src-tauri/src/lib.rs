@@ -31,6 +31,8 @@ pub(crate) mod output_names;
 pub mod pdf_engine;
 pub mod plugins;
 pub mod prepress;
+pub mod print_imposition;
+pub mod print_layout;
 pub mod redaction;
 pub mod sanitization;
 pub mod sanitization_inspection;

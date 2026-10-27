@@ -46,6 +46,40 @@
   };
   let docFormat = $state("docx");
   
+  // Print layout (print_layout in Rust): "as_is" sends the pages unchanged.
+  const PRINT_PAPERS = ["A4", "A3", "A5", "US Letter", "US Legal"];
+  const PRINT_MODES = {
+    as_is: "Olduğu gibi",
+    fit: "Kağıda sığdır",
+    actual: "Gerçek boyut",
+    shrink: "Büyük sayfaları küçült",
+    multiple: "Tabakaya birden çok sayfa",
+    booklet: "Kitapçık",
+    poster: "Poster",
+  };
+  let printMode = $state("as_is");
+  let printPaper = $state("A4");
+  let printOrientation = $state("auto");
+  let perSheet = $state(2);
+  let sheetOrder = $state("horizontal");
+  let sheetBorder = $state(false);
+  let bookletSides = $state("both");
+  let bookletRightBinding = $state(false);
+  let posterPercent = $state(200);
+  let posterOverlapMm = $state(10);
+  let posterCutMarks = $state(true);
+
+  function printLayout() {
+    if (printMode === "as_is") return null;
+    const mode = { kind: printMode };
+    if (printMode === "multiple") Object.assign(mode, { perSheet: Number(perSheet), order: sheetOrder, border: sheetBorder });
+    if (printMode === "booklet") Object.assign(mode, { sides: bookletSides, rightBinding: bookletRightBinding });
+    if (printMode === "poster") {
+      Object.assign(mode, { percent: Number(posterPercent), overlapPoints: (Number(posterOverlapMm) * 72) / 25.4, cutMarks: posterCutMarks });
+    }
+    return { paper: printPaper, orientation: printMode === "booklet" ? "auto" : printOrientation, mode };
+  }
+
   let isExporting = $state(false);
   let errorMsg = $state("");
 
@@ -146,7 +180,7 @@
               }
           } else if (exportType === "print") {
               const ranges = pageRange.trim() ? selectedPages : null;
-              await printSessionPdf(sessionId, contentGeneration, ranges);
+              await printSessionPdf(sessionId, contentGeneration, ranges, printLayout());
               onsuccess?.("Yazdırma işlemi başlatıldı!");
               onclose?.();
           }
@@ -214,7 +248,89 @@
         <small class="text-xs text-muted-foreground">Metin, başlıklar, tablolar ve görseller düzenlenebilir olarak aktarılır; sayfa düzeni birebir korunmaz. Taranmış sayfalar yalnız görsel olarak çıkar.</small>
       </div>
     {:else}
-      <p class="text-center text-xs text-muted-foreground">Belge doğrudan işletim sisteminin varsayılan yazdırma kuyruğuna gönderilecektir.</p>
+      <div class="grid gap-3">
+        <div class="grid gap-1.5">
+          <Label for="print-mode" class="text-xs text-muted-foreground">Sayfa Düzeni</Label>
+          <select id="print-mode" bind:value={printMode} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            {#each Object.entries(PRINT_MODES) as [value, label] (value)}
+              <option {value}>{label}</option>
+            {/each}
+          </select>
+        </div>
+        {#if printMode !== "as_is"}
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1.5">
+              <Label for="print-paper" class="text-xs text-muted-foreground">Kağıt</Label>
+              <select id="print-paper" bind:value={printPaper} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                {#each PRINT_PAPERS as paper (paper)}<option value={paper}>{paper}</option>{/each}
+              </select>
+            </div>
+            {#if printMode !== "booklet"}
+              <div class="grid gap-1.5">
+                <Label for="print-orientation" class="text-xs text-muted-foreground">Yön</Label>
+                <select id="print-orientation" bind:value={printOrientation} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                  <option value="auto">Otomatik</option>
+                  <option value="portrait">Dikey</option>
+                  <option value="landscape">Yatay</option>
+                </select>
+              </div>
+            {/if}
+          </div>
+        {/if}
+        {#if printMode === "multiple"}
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1.5">
+              <Label for="print-per-sheet" class="text-xs text-muted-foreground">Tabaka başına sayfa</Label>
+              <select id="print-per-sheet" bind:value={perSheet} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                {#each [2, 4, 6, 9, 16] as count (count)}<option value={count}>{count}</option>{/each}
+              </select>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="print-order" class="text-xs text-muted-foreground">Sayfa sırası</Label>
+              <select id="print-order" bind:value={sheetOrder} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                <option value="horizontal">Yatay</option>
+                <option value="horizontal_reversed">Yatay (ters)</option>
+                <option value="vertical">Dikey</option>
+                <option value="vertical_reversed">Dikey (ters)</option>
+                <option value="cut_stack">Kes ve diz</option>
+              </select>
+            </div>
+          </div>
+          <label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={sheetBorder} /> Sayfa kenarlığı çiz</label>
+        {:else if printMode === "booklet"}
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1.5">
+              <Label for="print-booklet-sides" class="text-xs text-muted-foreground">Yüzler</Label>
+              <select id="print-booklet-sides" bind:value={bookletSides} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                <option value="both">İki yüz</option>
+                <option value="front">Yalnız ön yüz</option>
+                <option value="back">Yalnız arka yüz</option>
+              </select>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="print-booklet-binding" class="text-xs text-muted-foreground">Ciltleme</Label>
+              <select id="print-booklet-binding" bind:value={bookletRightBinding} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                <option value={false}>Sol</option>
+                <option value={true}>Sağ</option>
+              </select>
+            </div>
+          </div>
+          <small class="text-xs text-muted-foreground">İki yüz seçiliyken macOS ve Linux'ta kısa kenardan çift taraflı yazdırma istenir.</small>
+        {:else if printMode === "poster"}
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1.5">
+              <Label for="print-poster-percent" class="text-xs text-muted-foreground">Ölçek (%)</Label>
+              <Input id="print-poster-percent" type="number" min="10" max="1000" bind:value={posterPercent} />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="print-poster-overlap" class="text-xs text-muted-foreground">Bindirme (mm)</Label>
+              <Input id="print-poster-overlap" type="number" min="0" max="50" bind:value={posterOverlapMm} />
+            </div>
+          </div>
+          <label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={posterCutMarks} /> Kesim işaretleri</label>
+        {/if}
+        <p class="text-center text-xs text-muted-foreground">Belge doğrudan işletim sisteminin varsayılan yazdırma kuyruğuna gönderilecektir.</p>
+      </div>
     {/if}
   </div>
 

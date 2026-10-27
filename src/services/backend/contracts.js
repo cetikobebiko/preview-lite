@@ -131,6 +131,26 @@ const redactionArea = objectOf({
   height: numberType,
 });
 
+// print_imposition::PrintLayoutRequest: paper by print_layout::PAPERS name, mode tagged by kind.
+const enumOf = (...values) => Object.freeze({ type: "string", enum: Object.freeze(values) });
+const printLayoutWire = objectOf({
+  paper: stringType,
+  orientation: enumOf("auto", "portrait", "landscape"),
+  mode: objectOf(
+    { kind: enumOf("fit", "actual", "shrink", "scale", "multiple", "booklet", "poster") },
+    {
+      percent: numberType,
+      perSheet: u32Type,
+      order: enumOf("horizontal", "horizontal_reversed", "vertical", "vertical_reversed", "cut_stack"),
+      border: booleanType,
+      sides: enumOf("both", "front", "back"),
+      rightBinding: booleanType,
+      overlapPoints: numberType,
+      cutMarks: booleanType,
+    },
+  ),
+});
+
 const sanitizationAcknowledgementsWire = objectOf({
   acknowledgeSignatureInvalidation: booleanType,
 });
@@ -394,6 +414,7 @@ export const CONTRACTS = Object.freeze({
     },
     {
       pageRange: nullable(arrayOf(u32Type)),
+      layout: nullable(printLayoutWire),
     },
   ),
   inspectSessionPrintResources: command("inspect_session_print_resources", {

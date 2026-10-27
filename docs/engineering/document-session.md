@@ -269,7 +269,7 @@ has a bounded timeout and kills/reaps a timed-out child.
 | `export_session_text_content` | `cooperative` | between pages; each text extraction remains a boundary |
 | `export_session_text_to_file` | `cooperative` | same extraction boundaries; checked again before the atomic write, which is not interrupted once started |
 | `export_session_document` | `child-process-killable` | the job-worker child reads and writes the whole file; publication of the finished file is not interrupted |
-| `print_session_pdf` | `child-process-killable` | page preparation plus tracked spooler child |
+| `print_session_pdf` | `child-process-killable` | page preparation or sheet imposition in the job worker, plus tracked spooler child |
 | `inspect_session_print_resources` | `cooperative` | bounded resource traversal and private worker cancellation marker |
 | `generate_session_rgb_derived_coverage_preview` | `cooperative` | PDFium render boundaries, bounded scanline groups, PNG encode and serialization checkpoints |
 | `generate_session_rgb_derived_process_preview` | `cooperative` | PDFium render boundaries, bounded scanline groups, between-PNG and serialization checkpoints |

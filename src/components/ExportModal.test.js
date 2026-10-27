@@ -235,3 +235,76 @@ describe("ExportModal document export", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Belgenin metni dışa aktarma sınırını aşıyor"));
   });
 });
+
+describe("ExportModal print layout", () => {
+  const originalAnimate = Element.prototype.animate;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
+    backendMocks.printSessionPdf.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    Element.prototype.animate = originalAnimate;
+  });
+
+  async function openPrint() {
+    const onsuccess = vi.fn();
+    render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 6, onsuccess } });
+    await fireEvent.click(screen.getByText("Yazdır", { selector: "[role=group] button" }));
+    return { onsuccess };
+  }
+
+  async function print() {
+    await fireEvent.click(screen.getByText("Yazdır", { selector: "button:not([aria-pressed])" }));
+  }
+
+  it("prints the pages as they are by default", async () => {
+    const { onsuccess } = await openPrint();
+    expect(screen.queryByLabelText("Kağıt")).toBeNull();
+    await print();
+    await waitFor(() => expect(onsuccess).toHaveBeenCalledWith("Yazdırma işlemi başlatıldı!"));
+    expect(backendMocks.printSessionPdf).toHaveBeenCalledWith("session-1", 7, null, null);
+  });
+
+  it("sends a booklet without an orientation choice", async () => {
+    await openPrint();
+    await fireEvent.change(screen.getByLabelText("Sayfa Düzeni"), { target: { value: "booklet" } });
+    expect(screen.queryByLabelText("Yön")).toBeNull();
+    await fireEvent.change(screen.getByLabelText("Kağıt"), { target: { value: "A3" } });
+    await fireEvent.change(screen.getByLabelText("Yüzler"), { target: { value: "front" } });
+    await print();
+    await waitFor(() => expect(backendMocks.printSessionPdf).toHaveBeenCalled());
+    expect(backendMocks.printSessionPdf).toHaveBeenCalledWith("session-1", 7, null, {
+      paper: "A3",
+      orientation: "auto",
+      mode: { kind: "booklet", sides: "front", rightBinding: false },
+    });
+  });
+
+  it("sends pages per sheet and posters with their options", async () => {
+    await openPrint();
+    await fireEvent.change(screen.getByLabelText("Sayfa Düzeni"), { target: { value: "multiple" } });
+    await fireEvent.change(screen.getByLabelText("Tabaka başına sayfa"), { target: { value: "4" } });
+    await fireEvent.change(screen.getByLabelText("Yön"), { target: { value: "landscape" } });
+    await fireEvent.input(screen.getByLabelText(/Sayfa Aralığı/), { target: { value: "2-3" } });
+    await print();
+    await waitFor(() => expect(backendMocks.printSessionPdf).toHaveBeenCalledTimes(1));
+    expect(backendMocks.printSessionPdf).toHaveBeenLastCalledWith("session-1", 7, [1, 2], {
+      paper: "A4",
+      orientation: "landscape",
+      mode: { kind: "multiple", perSheet: 4, order: "horizontal", border: false },
+    });
+  });
+
+  it("converts the poster overlap from millimetres to points", async () => {
+    await openPrint();
+    await fireEvent.change(screen.getByLabelText("Sayfa Düzeni"), { target: { value: "poster" } });
+    await fireEvent.input(screen.getByLabelText("Bindirme (mm)"), { target: { value: "25.4" } });
+    await print();
+    await waitFor(() => expect(backendMocks.printSessionPdf).toHaveBeenCalled());
+    const layout = backendMocks.printSessionPdf.mock.calls[0][3];
+    expect(layout.mode).toEqual({ kind: "poster", percent: 200, overlapPoints: 72, cutMarks: true });
+  });
+});

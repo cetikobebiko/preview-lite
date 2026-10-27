@@ -121,10 +121,12 @@ export const exportSessionDocument = (
     }),
   ).promise;
 
+// `layout` (paper, orientation, mode) lays the pages out on sheets; null prints them as they are.
 export const printSessionPdf = (
   sessionId,
   expectedContentGeneration,
   pageRange = null,
+  layout = null,
 ) =>
   runSessionJob(sessionId, (jobId) =>
     callBackend("printSessionPdf", {
@@ -132,6 +134,7 @@ export const printSessionPdf = (
       sessionId,
       expectedContentGeneration,
       pageRange,
+      layout,
     }),
   ).promise;
 

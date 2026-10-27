@@ -8921,8 +8921,10 @@ pub async fn print_session_pdf(
     session_id: String,
     expected_content_generation: u64,
     page_range: Option<Vec<u32>>,
+    layout: Option<crate::print_imposition::PrintLayoutRequest>,
     store: State<'_, DocumentSessionStore>,
 ) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    let spool = layout.as_ref().map(|layout| layout.spool_options());
     store
         .run_snapshot_job(
             &job_id,
@@ -8934,6 +8936,7 @@ pub async fn print_session_pdf(
                     &context,
                     crate::job_worker::JobCommand::PreparePrint {
                         pages: page_range,
+                        layout,
                         output_name: "print-ready.pdf".to_string(),
                     },
                     Duration::from_secs(180),
@@ -8947,6 +8950,7 @@ pub async fn print_session_pdf(
                 let print_path = crate::job_worker::validate_output_file(&context, &print_path)?;
                 crate::export::submit_print_file(
                     &print_path,
+                    spool,
                     &context.cancellation,
                     &context.child_processes,
                 )
