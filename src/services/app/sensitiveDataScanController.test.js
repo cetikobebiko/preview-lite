@@ -29,6 +29,22 @@ describe("sensitiveDataScanController", () => {
     expect(startScanMock).not.toHaveBeenCalled();
   });
 
+  it("sends regex and built-in patterns as typed specs in panel order", () => {
+    controller.start();
+    getContextMock.mockReturnValue({ panelOpen: true, isPdf: true, sessionId: "s1", contentGeneration: 2 });
+    startScanMock.mockReturnValue({ jobId: "job-1", promise: new Promise(() => {}), cancel: vi.fn() });
+    controller.scan([
+      { label: "TC", regex: "\\d{11}", active: true },
+      { label: "Kart", builtin: "credit-card", active: true },
+      { label: "Tarih", builtin: "date", active: false },
+    ]);
+    expect(startScanMock).toHaveBeenCalledWith("s1", 2, [
+      { kind: "regex", value: "\\d{11}" },
+      { kind: "builtin", value: "credit-card" },
+    ]);
+    expect(state.capturedPatternLabels).toEqual(["TC", "Kart"]);
+  });
+
   it("fails scan when zero active patterns are provided and cancels active job", () => {
     controller.start();
     const cancelMock = vi.fn();

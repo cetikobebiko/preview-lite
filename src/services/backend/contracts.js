@@ -69,6 +69,10 @@ const renderTargetWidthType = Object.freeze({
   max: 16_384,
 });
 
+const scanPatternKindType = Object.freeze({
+  type: "string",
+  enum: Object.freeze(["regex", "builtin"]),
+});
 const nullable = (schema) => Object.freeze({ ...schema, nullable: true });
 const arrayOf = (items) => Object.freeze({ type: "array", items });
 const tupleOf = (...items) => Object.freeze({ type: "tuple", items });
@@ -796,11 +800,13 @@ export const CONTRACTS = Object.freeze({
     policy: sanitizationPolicyWire,
     targetPath: stringType,
   }),
+  // A pattern is a regex, or a built-in Rust matcher by id (redaction::patterns: card numbers
+  // with a Luhn check, e-mail, phone, date, US SSN).
   scanSensitiveData: command("scan_sensitive_data", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
-    patterns: arrayOf(stringType),
+    patterns: arrayOf(objectOf({ kind: scanPatternKindType, value: stringType })),
   }),
   planSecureRedaction: command("plan_secure_redaction", {
     jobId: renderIdentifierType,

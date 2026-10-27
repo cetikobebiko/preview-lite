@@ -15242,7 +15242,9 @@ mod tests {
                 move |context| match crate::job_worker::run_job(
                     &context,
                     crate::job_worker::JobCommand::ScanSensitiveData {
-                        patterns: vec!["test".to_string()],
+                        patterns: vec![crate::redaction::ScanPatternSpec::Regex(
+                            "test".to_string(),
+                        )],
                     },
                     Duration::from_secs(30),
                 )? {

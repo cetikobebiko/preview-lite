@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod patterns;
+
 pub use crate::secure_redaction;
 pub use crate::secure_redaction::*;
 
@@ -230,9 +232,55 @@ pub(crate) struct ExtractedPageData {
     pub(crate) char_bounds: Vec<Option<(f32, f32, f32, f32)>>,
 }
 
+/// One pattern of a sensitive-data scan: a regular expression, or one of the built-in
+/// matchers of [`patterns`] by id (`phone`, `email`, `credit-card`, `ssn`, `date`). The
+/// built-in ones check what a regex cannot: card checksums, real dates, phone grouping.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ScanPatternSpec {
+    Regex(String),
+    Builtin(String),
+}
+
+#[derive(Debug)]
+pub(crate) enum ScanMatcher {
+    Regex(Regex),
+    Builtin(patterns::Pattern),
+}
+
+impl ScanMatcher {
+    /// Matches in `run` as ranges of its characters, each with its text.
+    fn find(&self, run: &CanonicalRun) -> Vec<(std::ops::Range<usize>, String)> {
+        match self {
+            ScanMatcher::Regex(regex) => regex
+                .find_iter(&run.text)
+                .map(|matched| {
+                    let start = run.byte_boundaries.binary_search(&matched.start());
+                    let end = run.byte_boundaries.binary_search(&matched.end());
+                    let range = match (start, end) {
+                        (Ok(start), Ok(end)) if start <= end => start..end,
+                        _ => 0..0,
+                    };
+                    (range, matched.as_str().to_string())
+                })
+                .collect(),
+            ScanMatcher::Builtin(pattern) => {
+                let chars: Vec<char> = run.characters.iter().map(|c| c.value).collect();
+                patterns::find(*pattern, &chars)
+                    .into_iter()
+                    .map(|range| {
+                        let text = chars[range.clone()].iter().collect();
+                        (range, text)
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
 pub(crate) fn validate_patterns(
-    patterns: &[String],
-) -> Result<Vec<Regex>, SessionJobOperationError> {
+    patterns: &[ScanPatternSpec],
+) -> Result<Vec<ScanMatcher>, SessionJobOperationError> {
     if patterns.len() > 64 {
         return Err(SessionJobOperationError::failed_with_code(
             "SENSITIVE_SCAN_PATTERN_LIMIT_EXCEEDED",
@@ -242,6 +290,7 @@ pub(crate) fn validate_patterns(
 
     let mut total_bytes = 0usize;
     for pattern in patterns {
+        let (ScanPatternSpec::Regex(pattern) | ScanPatternSpec::Builtin(pattern)) = pattern;
         let len = pattern.len();
         if len > 1024 {
             return Err(SessionJobOperationError::failed_with_code(
@@ -261,15 +310,25 @@ pub(crate) fn validate_patterns(
 
     let mut compiled = Vec::with_capacity(patterns.len());
     for (index, pattern) in patterns.iter().enumerate() {
-        match Regex::new(pattern) {
-            Ok(re) => compiled.push(re),
-            Err(_) => {
-                return Err(SessionJobOperationError::failed_with_code(
-                    "SENSITIVE_SCAN_INVALID_PATTERN",
-                    format!("Pattern index {index} geçersiz regex sözdizimi içeriyor."),
-                ));
+        let matcher = match pattern {
+            ScanPatternSpec::Regex(source) => {
+                Regex::new(source).map(ScanMatcher::Regex).map_err(|_| {
+                    SessionJobOperationError::failed_with_code(
+                        "SENSITIVE_SCAN_INVALID_PATTERN",
+                        format!("Pattern index {index} geçersiz regex sözdizimi içeriyor."),
+                    )
+                })?
             }
-        }
+            ScanPatternSpec::Builtin(id) => patterns::Pattern::from_id(id)
+                .map(ScanMatcher::Builtin)
+                .ok_or_else(|| {
+                    SessionJobOperationError::failed_with_code(
+                        "SENSITIVE_SCAN_INVALID_PATTERN",
+                        format!("Pattern index {index} bilinmeyen yerleşik kalıp: {id}"),
+                    )
+                })?,
+        };
+        compiled.push(matcher);
     }
 
     Ok(compiled)
@@ -537,9 +596,9 @@ pub(crate) fn resolve_item_geometry_and_rects(
 pub(crate) fn scan_sensitive_file(
     snapshot_path: &std::path::Path,
     credential: Option<&str>,
-    patterns: &[String],
+    patterns: &[ScanPatternSpec],
 ) -> Result<SensitiveScanReport, SessionJobOperationError> {
-    let compiled_regexes = validate_patterns(patterns)?;
+    let matchers = validate_patterns(patterns)?;
 
     crate::pdf_engine::with_pdfium(|pdfium| {
         let document = pdfium
@@ -622,16 +681,10 @@ pub(crate) fn scan_sensitive_file(
                 );
             }
 
-            for (pattern_index, regex) in compiled_regexes.iter().enumerate() {
+            for (pattern_index, matcher) in matchers.iter().enumerate() {
                 for run in &extracted_data.runs {
-                    for matched in regex.find_iter(&run.text) {
-                        let start_res = run.byte_boundaries.binary_search(&matched.start());
-                        let end_res = run.byte_boundaries.binary_search(&matched.end());
-
-                        let matched_can_chars = match (start_res, end_res) {
-                            (Ok(s), Ok(e)) if s <= e => &run.characters[s..e],
-                            _ => &[],
-                        };
+                    for (range, matched_text) in matcher.find(run) {
+                        let matched_can_chars = &run.characters[range];
 
                         let (calc_status, rects, total_segment_count) =
                             compute_segments_from_bounds_pure(
@@ -672,7 +725,7 @@ pub(crate) fn scan_sensitive_file(
                                 &mut item_warnings,
                             );
 
-                        let text_preview = matched.as_str().chars().take(256).collect::<String>();
+                        let text_preview = matched_text.chars().take(256).collect::<String>();
                         let push_res = push_sensitive_scan_item(
                             &mut report,
                             SensitiveScanItem {
@@ -756,7 +809,7 @@ pub async fn scan_sensitive_data(
     job_id: String,
     session_id: String,
     expected_content_generation: u64,
-    patterns: Vec<String>,
+    patterns: Vec<ScanPatternSpec>,
     store: tauri::State<'_, crate::document_session::DocumentSessionStore>,
 ) -> Result<SessionJobOutcome<SensitiveScanReport>, crate::document_session::DocumentSessionError> {
     let _compiled = validate_patterns(&patterns).map_err(|err| match err {
@@ -1611,13 +1664,11 @@ mod tests {
 
     #[test]
     fn test_validate_patterns_limits_and_syntax() {
-        let valid = vec![
-            "\\b[0-9]{11}\\b".to_string(),
-            "test@domain\\.com".to_string(),
-        ];
+        let regex = |source: &str| ScanPatternSpec::Regex(source.to_string());
+        let valid = vec![regex("\\b[0-9]{11}\\b"), regex("test@domain\\.com")];
         assert!(validate_patterns(&valid).is_ok());
 
-        let invalid = vec!["valid".to_string(), "[unclosed".to_string()];
+        let invalid = vec![regex("valid"), regex("[unclosed")];
         let err = validate_patterns(&invalid).unwrap_err();
         if let SessionJobOperationError::Failed(f) = err {
             assert_eq!(f.code, "SENSITIVE_SCAN_INVALID_PATTERN");
@@ -1630,7 +1681,7 @@ mod tests {
             panic!("Expected SessionJobOperationError::Failed");
         }
 
-        let too_many = vec!["pattern".to_string(); 65];
+        let too_many = vec![regex("pattern"); 65];
         let err = validate_patterns(&too_many).unwrap_err();
         if let SessionJobOperationError::Failed(f) = err {
             assert_eq!(f.code, "SENSITIVE_SCAN_PATTERN_LIMIT_EXCEEDED");
@@ -1638,7 +1689,7 @@ mod tests {
             panic!("Expected SessionJobOperationError::Failed");
         }
 
-        let huge_pattern = "a".repeat(1025);
+        let huge_pattern = regex(&"a".repeat(1025));
         let err = validate_patterns(&[huge_pattern]).unwrap_err();
         if let SessionJobOperationError::Failed(f) = err {
             assert_eq!(f.code, "SENSITIVE_SCAN_PATTERN_LIMIT_EXCEEDED");
@@ -1647,12 +1698,12 @@ mod tests {
         }
 
         // 64 patterns * 512 bytes = 32 KiB total -> OK
-        let patterns_32k = vec!["a".repeat(512); 64];
+        let patterns_32k = vec![regex(&"a".repeat(512)); 64];
         assert!(validate_patterns(&patterns_32k).is_ok());
 
         // 64 patterns totalling 32 KiB + 1 byte -> EXCEEDED
-        let mut patterns_over_32k = vec!["a".repeat(512); 63];
-        patterns_over_32k.push("a".repeat(513)); // 513 <= 1024 individually, total = 32769 > 32768
+        let mut patterns_over_32k = vec![regex(&"a".repeat(512)); 63];
+        patterns_over_32k.push(regex(&"a".repeat(513))); // 513 <= 1024 individually, total = 32769 > 32768
         let err = validate_patterns(&patterns_over_32k).unwrap_err();
         if let SessionJobOperationError::Failed(f) = err {
             assert_eq!(f.code, "SENSITIVE_SCAN_PATTERN_LIMIT_EXCEEDED");
@@ -2099,12 +2150,22 @@ mod tests {
         let file256 = build_geometry_fixture_pdf((0.0, 0.0, 400.0, 600.0), None, 0, &exact_256);
         let file_over = build_geometry_fixture_pdf((0.0, 0.0, 400.0, 600.0), None, 0, &over_256);
 
-        let report256 = scan_sensitive_file(file256.path(), None, &["A+".to_string()]).unwrap();
+        let report256 = scan_sensitive_file(
+            file256.path(),
+            None,
+            &[ScanPatternSpec::Regex("A+".to_string())],
+        )
+        .unwrap();
         assert_eq!(report256.items.len(), 1);
         assert_eq!(report256.items[0].text_preview.chars().count(), 256);
         assert_eq!(report256.items[0].text_preview, exact_256);
 
-        let report_over = scan_sensitive_file(file_over.path(), None, &["B+".to_string()]).unwrap();
+        let report_over = scan_sensitive_file(
+            file_over.path(),
+            None,
+            &[ScanPatternSpec::Regex("B+".to_string())],
+        )
+        .unwrap();
         assert_eq!(report_over.items.len(), 1);
         assert_eq!(report_over.items[0].text_preview.chars().count(), 256);
         assert_eq!(report_over.items[0].text_preview, "B".repeat(256));
@@ -2207,9 +2268,67 @@ mod tests {
     }
 
     #[test]
+    fn builtin_patterns_find_checked_values_with_their_geometry() {
+        let f = build_geometry_fixture_pdf(
+            (0.0, 0.0, 600.0, 400.0),
+            None,
+            0,
+            "Kart 4111 1111 1111 1111 ve 4111 1111 1111 1112, ayse@ornek.com.tr",
+        );
+        let builtin = |id: &str| ScanPatternSpec::Builtin(id.to_string());
+        let report =
+            scan_sensitive_file(f.path(), None, &[builtin("credit-card"), builtin("email")])
+                .unwrap();
+        let found: Vec<_> = report
+            .items
+            .iter()
+            .map(|item| (item.pattern_index, item.text_preview.as_str()))
+            .collect();
+        // The second card number fails the Luhn check.
+        assert_eq!(
+            found,
+            [(0, "4111 1111 1111 1111"), (1, "ayse@ornek.com.tr")]
+        );
+        for item in &report.items {
+            assert_eq!(item.geometry_status, GeometryStatus::Resolved);
+            assert_eq!(item.source_rects_pdf_points.len(), 1);
+        }
+    }
+
+    #[test]
+    fn builtin_patterns_are_named_by_id_on_the_wire() {
+        let spec: ScanPatternSpec =
+            serde_json::from_value(serde_json::json!({ "kind": "builtin", "value": "phone" }))
+                .unwrap();
+        assert_eq!(spec, ScanPatternSpec::Builtin("phone".to_string()));
+        assert_eq!(
+            serde_json::to_value(ScanPatternSpec::Regex("a+".to_string())).unwrap(),
+            serde_json::json!({ "kind": "regex", "value": "a+" })
+        );
+        for id in ["phone", "email", "credit-card", "ssn", "date"] {
+            assert!(validate_patterns(&[ScanPatternSpec::Builtin(id.to_string())]).is_ok());
+        }
+        let SessionJobOperationError::Failed(failure) =
+            validate_patterns(&[ScanPatternSpec::Builtin("iban".to_string())]).unwrap_err()
+        else {
+            panic!("expected a failure");
+        };
+        assert_eq!(failure.code, "SENSITIVE_SCAN_INVALID_PATTERN");
+        assert_eq!(
+            failure.message,
+            "Pattern index 0 bilinmeyen yerleşik kalıp: iban"
+        );
+    }
+
+    #[test]
     fn test_scan_sensitive_file_full_schema_v2_geometry_matrix() {
         let f = build_geometry_fixture_pdf((0.0, 0.0, 400.0, 600.0), None, 0, "MATCH123");
-        let report = scan_sensitive_file(f.path(), None, &["MATCH\\d+".to_string()]).unwrap();
+        let report = scan_sensitive_file(
+            f.path(),
+            None,
+            &[ScanPatternSpec::Regex("MATCH\\d+".to_string())],
+        )
+        .unwrap();
 
         assert_eq!(report.schema_version, 2);
         assert_eq!(report.items.len(), 1);
@@ -2228,7 +2347,9 @@ mod tests {
         let report = scan_sensitive_file(
             &fixture_path("minimal.pdf"),
             None,
-            &["\\bNONMATCHINGPATTERN12345\\b".to_string()],
+            &[ScanPatternSpec::Regex(
+                "\\bNONMATCHINGPATTERN12345\\b".to_string(),
+            )],
         )
         .expect("Minimal PDF scan should succeed");
 
@@ -2243,7 +2364,7 @@ mod tests {
         let report = scan_sensitive_file(
             &fixture_path("encrypted.pdf"),
             Some("fixture-password"),
-            &["\\b[0-9]+\\b".to_string()],
+            &[ScanPatternSpec::Regex("\\b[0-9]+\\b".to_string())],
         )
         .expect("Encrypted PDF scan with valid credential should succeed");
 
@@ -2255,7 +2376,7 @@ mod tests {
         let res = scan_sensitive_file(
             &fixture_path("encrypted.pdf"),
             None,
-            &["\\b[0-9]+\\b".to_string()],
+            &[ScanPatternSpec::Regex("\\b[0-9]+\\b".to_string())],
         );
 
         assert!(res.is_err());
@@ -2297,8 +2418,12 @@ mod tests {
             0,
             "MATCH123",
         );
-        let report =
-            scan_sensitive_file(f_zero_crop.path(), None, &["MATCH\\d+".to_string()]).unwrap();
+        let report = scan_sensitive_file(
+            f_zero_crop.path(),
+            None,
+            &[ScanPatternSpec::Regex("MATCH\\d+".to_string())],
+        )
+        .unwrap();
         assert_eq!(report.schema_version, 2);
         assert_eq!(report.items.len(), 1);
         let item = &report.items[0];

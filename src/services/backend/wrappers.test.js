@@ -129,7 +129,7 @@ const cases = [
 
 
   ["applyRedactions", () => redaction.applyRedactions("sid", 1, "/b.pdf", redactions), "apply_redactions", { sessionId: "sid", expectedContentGeneration: 1, outputPath: "/b.pdf", redactions }],
-  ["scanSensitiveData", () => redaction.scanSensitiveData("sid", 1, ["secret"]), "scan_sensitive_data", { sessionId: "sid", expectedContentGeneration: 1, patterns: ["secret"] }],
+  ["scanSensitiveData", () => redaction.scanSensitiveData("sid", 1, [{ kind: "regex", value: "secret" }, { kind: "builtin", value: "credit-card" }]), "scan_sensitive_data", { sessionId: "sid", expectedContentGeneration: 1, patterns: [{ kind: "regex", value: "secret" }, { kind: "builtin", value: "credit-card" }] }],
 
   ["speakText", () => platform.speakText("hello", "Yelda"), "speak_text", { text: "hello", voice: "Yelda" }],
   ["stopSpeaking", () => platform.stopSpeaking(), "stop_speaking"],

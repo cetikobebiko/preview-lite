@@ -46,6 +46,25 @@ describe("SensitiveDataScanPanel", () => {
     expect(onScanMock).toHaveBeenCalled();
   });
 
+  it("offers the built-in matchers next to the regex patterns", async () => {
+    const { getByText } = render(SensitiveDataScanPanel, {
+      props: { scanState: state, onScan: onScanMock },
+    });
+
+    await fireEvent.click(getByText("Belgeyi Tara"));
+
+    const patterns = onScanMock.mock.calls[0][0];
+    expect(patterns.map(({ label, builtin, active }) => [label, builtin ?? null, active])).toEqual([
+      ["TC Kimlik Numarası", null, true],
+      ["Kredi Kartı", "credit-card", true],
+      ["E-Posta", "email", true],
+      ["IBAN", null, true],
+      ["Telefon Numarası", "phone", true],
+      ["Tarih", "date", false],
+      ["ABD Sosyal Güvenlik Numarası (SSN)", "ssn", false],
+    ]);
+  });
+
   it("renders resolved and unresolved schema v2 report items and handles navigation", async () => {
     const onNavigate = vi.fn();
     const { findByText, getAllByText, getByText } = render(SensitiveDataScanPanel, {

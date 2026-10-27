@@ -7,11 +7,16 @@
   const featureContext = getRuntimeFeatureContext();
   const scanPresentation = getFeaturePresentation("sensitive_data_scan", featureContext);
 
+  // `builtin` patterns run Rust matchers (redaction::patterns): card numbers must pass the
+  // Luhn check, phone numbers need grouping or a label, dates must be real dates.
   let patterns = $state([
     { label: "TC Kimlik Numarası", regex: "\\b[1-9][0-9]{10}\\b", active: true },
-    { label: "Kredi Kartı", regex: "\\b(?:\\d[ -]*?){13,16}\\b", active: true },
-    { label: "E-Posta", regex: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b", active: true },
+    { label: "Kredi Kartı", builtin: "credit-card", active: true },
+    { label: "E-Posta", builtin: "email", active: true },
     { label: "IBAN", regex: "\\bTR\\d{2}\\s?(?:\\d{4}\\s?){5}\\d{2}\\b", active: true },
+    { label: "Telefon Numarası", builtin: "phone", active: true },
+    { label: "Tarih", builtin: "date", active: false },
+    { label: "ABD Sosyal Güvenlik Numarası (SSN)", builtin: "ssn", active: false },
   ]);
 
   function handleScan() {
