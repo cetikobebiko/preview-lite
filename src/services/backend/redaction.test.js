@@ -202,14 +202,14 @@ describe("startSensitiveDataScan and scanSensitiveData wrapper behavior", () => 
   it("preserves canonical jobId and cancel function without generating a second UUID", async () => {
     const { startSensitiveDataScan, scanSensitiveData } = await import("./redaction.js");
 
-    const handle = startSensitiveDataScan("test-session", 1, ["\\d+"]);
+    const handle = startSensitiveDataScan("test-session", 1, [{ kind: "regex", value: "\\d+" }]);
     expect(typeof handle.jobId).toBe("string");
     expect(handle.jobId.length).toBeGreaterThan(0);
     expect(typeof handle.cancel).toBe("function");
     expect(typeof handle.promise.then).toBe("function");
     await handle.promise.catch(() => {});
 
-    const scanPromise = scanSensitiveData("test-session", 1, ["\\d+"]);
+    const scanPromise = scanSensitiveData("test-session", 1, [{ kind: "regex", value: "\\d+" }]);
     expect(typeof scanPromise.then).toBe("function");
     await scanPromise.catch(() => {});
   });

@@ -40,7 +40,10 @@ export function createSensitiveDataScanController({ state, startScan, getContext
 
     const capturedPatterns = (patterns || [])
       .filter((pattern) => pattern && pattern.active)
-      .map(({ label, regex }) => ({ label, regex }));
+      .map(({ label, regex, builtin }) => ({
+        label,
+        spec: builtin ? { kind: "builtin", value: builtin } : { kind: "regex", value: regex },
+      }));
 
     if (capturedPatterns.length === 0) {
       state.failScan("En az bir aktif kalıp seçilmelidir.");
@@ -58,13 +61,13 @@ export function createSensitiveDataScanController({ state, startScan, getContext
     const currentToken = ++requestToken;
     capturedContext = { sessionId, contentGeneration, isPdf };
 
-    const patternRegexes = capturedPatterns.map((p) => p.regex);
+    const patternSpecs = capturedPatterns.map((p) => p.spec);
     const patternLabels = capturedPatterns.map((p) => p.label);
 
     state.beginScan(patternLabels);
 
     try {
-      const handle = startScan(sessionId, contentGeneration, patternRegexes);
+      const handle = startScan(sessionId, contentGeneration, patternSpecs);
 
       const isValidHandle =
         handle &&

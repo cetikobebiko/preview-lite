@@ -303,7 +303,7 @@ fn ephemeral_job_worker_scans_sensitive_data_with_page_geometry_v2() {
             "credential": null,
             "command": {
                 "ScanSensitiveData": {
-                    "patterns": ["\\w+".to_string()]
+                    "patterns": [{ "kind": "regex", "value": "\\w+" }]
                 }
             }
         }),

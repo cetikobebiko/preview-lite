@@ -152,7 +152,7 @@ pub enum JobCommand {
         scale: f32,
     },
     ScanSensitiveData {
-        patterns: Vec<String>,
+        patterns: Vec<crate::redaction::ScanPatternSpec>,
     },
     PlanSecureRedaction {
         content_generation: u64,
@@ -2083,7 +2083,9 @@ mod tests {
             authoritative_job_id: "job-id".to_string(),
             authoritative_session_id: "session-id".to_string(),
             command: JobCommand::ScanSensitiveData {
-                patterns: vec!["\\b[0-9]{11}\\b".to_string()],
+                patterns: vec![crate::redaction::ScanPatternSpec::Regex(
+                    "\\b[0-9]{11}\\b".to_string(),
+                )],
             },
         };
 
@@ -2091,7 +2093,12 @@ mod tests {
         let deserialized: JobRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.protocol_version, JOB_WORKER_PROTOCOL_VERSION);
         if let JobCommand::ScanSensitiveData { patterns } = deserialized.command {
-            assert_eq!(patterns, vec!["\\b[0-9]{11}\\b"]);
+            assert_eq!(
+                patterns,
+                [crate::redaction::ScanPatternSpec::Regex(
+                    "\\b[0-9]{11}\\b".to_string()
+                )]
+            );
         } else {
             panic!("Expected ScanSensitiveData command");
         }
