@@ -265,6 +265,7 @@ has a bounded timeout and kills/reaps a timed-out child.
 | `export_session_pages_as_images` | `cooperative` | between pages; each page render remains a boundary |
 | `split_session_pdf` | `cooperative` | ranges, pages, staging and publish boundaries |
 | `merge_session_pdfs` | `cooperative` | input document and page-copy loops |
+| `compare_session_pdf` | `child-process-killable` | copy of the chosen file, then the job-worker child (read-only; writes nothing) |
 | `export_session_text_content` | `cooperative` | between pages; each text extraction remains a boundary |
 | `export_session_text_to_file` | `cooperative` | same extraction boundaries; checked again before the atomic write, which is not interrupted once started |
 | `print_session_pdf` | `child-process-killable` | page preparation plus tracked spooler child |

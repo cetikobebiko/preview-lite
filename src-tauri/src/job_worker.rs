@@ -108,6 +108,11 @@ pub enum JobCommand {
         additional_input_names: Vec<String>,
         output_name: String,
     },
+    /// Read-only: compares the snapshot's text with a PDF copied into the job directory.
+    CompareDocuments {
+        other_input_name: String,
+        current_is_old: bool,
+    },
     DetectScannedPages,
     RenderOcrPage {
         page_index: u32,
@@ -246,6 +251,7 @@ pub enum JobResult {
     Files(Vec<PathBuf>),
     Text(String),
     PageTexts(Vec<JobPageText>),
+    Comparison(crate::compare::DocumentComparison),
     PrintResourceInspection(PrintResourceInspectionReport),
     RgbDerivedCoveragePreview(RgbDerivedCoveragePreview),
     RgbDerivedProcessPreview(RgbDerivedProcessPreview),
@@ -627,6 +633,36 @@ fn execute_command(
                 &output_path,
             )?;
             Ok(JobResult::File(output_path))
+        }
+        JobCommand::CompareDocuments {
+            other_input_name,
+            current_is_old,
+        } => {
+            let other_path = checked_existing_output_path(job_dir, &other_input_name)?;
+            let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+            let current = crate::pdf_engine::open_pdfium_doc(
+                &pdfium,
+                &snapshot_path.to_string_lossy(),
+                credential,
+            )
+            .map_err(pdf_open_failed)?;
+            let other = pdfium
+                .load_pdf_from_file(&other_path, None)
+                .map_err(|error| match error {
+                    PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
+                        job_failed(
+                            "SESSION_JOB_COMPARE_INPUT_PASSWORD_REQUIRED",
+                            "Seçilen PDF parola korumalı; parolalı bir belgeyle karşılaştırma yapılamaz",
+                        )
+                    }
+                    error => job_failed(
+                        "SESSION_JOB_COMPARE_INPUT_OPEN_FAILED",
+                        format!("Seçilen PDF açılamadı: {error}"),
+                    ),
+                })?;
+            let comparison =
+                crate::compare::compare_documents(&pdfium, &current, &other, current_is_old)?;
+            Ok(JobResult::Comparison(comparison))
         }
         JobCommand::DetectScannedPages => with_document(snapshot_path, credential, |document| {
             let page_count = usize::from(document.pages().len());
@@ -2389,5 +2425,75 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn compare_job_reads_only_its_own_input_and_names_password_protected_files() {
+        use crate::compare::{text_pdf, ChangeKind, TestPage};
+        let page = |lines| TestPage {
+            lines,
+            crop_box: None,
+            rotate: 0,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        fs::write(&snapshot, text_pdf(&[page(&["version two text"])])).unwrap();
+        fs::write(
+            directory.path().join("compare-input.pdf"),
+            text_pdf(&[page(&["version one text"])]),
+        )
+        .unwrap();
+        let compare = |other_input_name: &str| {
+            let command = JobCommand::CompareDocuments {
+                other_input_name: other_input_name.to_string(),
+                current_is_old: false,
+            };
+            // The job IPC carries commands and results as JSON.
+            let command = serde_json::from_str(&serde_json::to_string(&command).unwrap()).unwrap();
+            execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "compare-job",
+                "compare-session",
+                command,
+            )
+            .map(|result| {
+                serde_json::from_str::<JobResult>(&serde_json::to_string(&result).unwrap()).unwrap()
+            })
+        };
+
+        let JobResult::Comparison(comparison) = compare("compare-input.pdf").unwrap() else {
+            panic!("compare job returned another result");
+        };
+        assert!(!comparison.current_is_old);
+        assert_eq!(comparison.changes.len(), 1);
+        let change = &comparison.changes[0];
+        assert_eq!(change.kind, ChangeKind::Replaced);
+        assert_eq!(
+            (change.old.text.as_str(), change.new.text.as_str()),
+            ("one", "two")
+        );
+
+        assert_eq!(
+            compare("../compare-input.pdf").unwrap_err().code,
+            "SESSION_JOB_WORKER_PATH_REJECTED"
+        );
+        assert_eq!(
+            compare("missing.pdf").unwrap_err().code,
+            "SESSION_JOB_OUTPUT_READ_FAILED"
+        );
+        fs::write(directory.path().join("not-a-pdf.pdf"), b"not a pdf").unwrap();
+        assert_eq!(
+            compare("not-a-pdf.pdf").unwrap_err().code,
+            "SESSION_JOB_COMPARE_INPUT_OPEN_FAILED"
+        );
+        let encrypted =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf/encrypted.pdf");
+        fs::copy(encrypted, directory.path().join("encrypted.pdf")).unwrap();
+        assert_eq!(
+            compare("encrypted.pdf").unwrap_err().code,
+            "SESSION_JOB_COMPARE_INPUT_PASSWORD_REQUIRED"
+        );
     }
 }

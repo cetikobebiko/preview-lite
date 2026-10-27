@@ -8,10 +8,11 @@
     pageFailureRegistry,
   } from "../services/pageFailureRegistry.js";
   import { imageCanvasStyle } from "../services/app/viewerController.js";
+  import { selectCompareHighlights } from "../utils/documentCompare.js";
 
   let {
     isPdf, viewer, annotation, documentSession, searchState, spreads, physicalPageIndex,
-    prepress, featureUi, errorMsg, getActivePrepressPayload, getSensitiveDataHighlights = () => [],
+    prepress, featureUi, errorMsg, getActivePrepressPayload, getSensitiveDataHighlights = () => [], documentCompareState = null, showCompareHighlights = false,
     secureRedactionState, secureRedaction,
     onSelectFile, onReopenDocument = null, onPageIntersect, onSearchHighlightReady,
     onSessionSnapshot, onCanvasMouseDown, onCanvasMouseMove,
@@ -32,6 +33,12 @@
     }
     return byPage;
   });
+  // Compare highlights only while the panel is open and the result is for this document version.
+  const compareHighlightsByPage = $derived(
+    !showCompareHighlights
+      ? null
+      : documentCompareState?.highlightsFor(documentSession.activeSessionId, documentSession.contentGeneration) ?? null,
+  );
   // A prepress payload only ever belongs to the current physical page.
   const coveragePreviewPayload = $derived(getActivePrepressPayload(prepress.coveragePreview, physicalPageIndex, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result"));
   const processPreviewPayload = $derived(getActivePrepressPayload(prepress.processPreview, physicalPageIndex, documentSession.activeSessionId, documentSession.contentGeneration, physicalPageIndex, "result"));
@@ -75,7 +82,7 @@
           {#each spreads as spread (spread.join("-"))}
             <div class="book-spread-row {viewer.isBookMode ? 'book-mode' : ''}">
               {#each spread as pageIdx (pageIdx)}
-                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={singlePageCurrent} isSinglePageMode={viewer.isSinglePageMode} isZooming={viewer.isZooming} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={nonEmpty(searchState.matchesByPage[pageIdx])} sensitiveDataHighlights={nonEmpty(getSensitiveDataHighlights(pageIdx, viewer.rotation))} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={pendingRegionsByPage.get(pageIdx) ?? EMPTY} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} onsearchHighlightReady={(detail) => onSearchHighlightReady({ detail })} activeTool={annotation.activeTool} activeColor={annotation.activeColor} approximateCoveragePreview={pageIdx === physicalPageIndex ? coveragePreviewPayload : null} approximateProcessPreview={pageIdx === physicalPageIndex ? processPreviewPayload : null} approximateProcessChannels={prepress.channels} onsessionSnapshot={onSessionSnapshot} />
+                <PdfPage sessionId={documentSession.activeSessionId ?? ""} pageIndex={pageIdx} currentPage={singlePageCurrent} isSinglePageMode={viewer.isSinglePageMode} isZooming={viewer.isZooming} generationId={viewer.renderGenerationId} documentGenerationId={documentSession.contentGeneration} scale={viewer.scale} rotation={viewer.rotation} colorMode={viewer.isSmartDarkMode ? "dark" : "normal"} searchRequestId={searchState.requestId} searchMatches={nonEmpty(searchState.matchesByPage[pageIdx])} sensitiveDataHighlights={nonEmpty(getSensitiveDataHighlights(pageIdx, viewer.rotation))} compareHighlights={compareHighlightsByPage ? nonEmpty(selectCompareHighlights(compareHighlightsByPage, pageIdx, viewer.rotation)) : EMPTY} secureRedactionEnabled={featureUi("redaction").runnable} secureRedactionSelectionMode={secureRedactionState?.selectionMode} pendingRedactionRegions={pendingRegionsByPage.get(pageIdx) ?? EMPTY} onRedactionRegionSelected={secureRedaction?.addManualRegion} onIntersect={onPageIntersect} onsearchHighlightReady={(detail) => onSearchHighlightReady({ detail })} activeTool={annotation.activeTool} activeColor={annotation.activeColor} approximateCoveragePreview={pageIdx === physicalPageIndex ? coveragePreviewPayload : null} approximateProcessPreview={pageIdx === physicalPageIndex ? processPreviewPayload : null} approximateProcessChannels={prepress.channels} onsessionSnapshot={onSessionSnapshot} />
               {/each}
             </div>
           {/each}

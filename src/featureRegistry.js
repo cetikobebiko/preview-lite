@@ -119,6 +119,15 @@ const RAW_FEATURES = [
     documentation: "docs/engineering/feature-matrix.md#ai--rag",
   },
   {
+    id: "document_compare",
+    label: "Belge karşılaştırma",
+    status: "experimental",
+    enabled: true,
+    warning: "Yalnız metin karşılaştırılır; görsel, biçim ve taranmış sayfalardaki farklar görünmez.",
+    platform: ALL_DESKTOP_PLATFORMS,
+    documentation: "docs/engineering/feature-matrix.md#document-compare",
+  },
+  {
     id: "sensitive_data_scan",
     label: "Hassas veri tespiti",
     status: "experimental",

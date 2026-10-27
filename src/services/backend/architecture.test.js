@@ -485,6 +485,7 @@ describe("backend service boundaries", () => {
       [sources.documentSession, "generate_session_rgb_derived_process_preview"],
       [sources.documentSession, "split_session_pdf"],
       [sources.documentSession, "merge_session_pdfs"],
+      [sources.documentSession, "compare_session_pdf"],
       [sources.documentSession, "extract_session_pages"],
       [sources.ocr, "detect_scanned_pages_for_session"],
       [sources.ocr, "run_ocr_on_page_for_session"],

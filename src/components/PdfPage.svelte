@@ -94,6 +94,8 @@
     approximateProcessPreview = null,
     approximateProcessChannels = { c: true, m: true, y: true, k: true },
     sensitiveDataHighlights = [],
+    // Document compare: { x, y, width, height, kind, marker } in viewport-normalized space.
+    compareHighlights = [],
     secureRedactionEnabled = false,
     secureRedactionSelectionMode = false,
     pendingRedactionRegions = [],
@@ -917,6 +919,23 @@
           </div>
         {/if}
 
+        {#if paintedRenderKey && Array.isArray(compareHighlights) && compareHighlights.length > 0}
+          <div
+            class="compare-highlight-layer"
+            aria-hidden="true"
+            style="position: absolute; inset: 0; pointer-events: none; z-index: 15;"
+          >
+            {#each compareHighlights as highlight, highlightIdx (`${paintedRenderKey}:${highlightIdx}`)}
+              <div
+                class="compare-highlight-rect"
+                data-kind={highlight.kind}
+                data-marker={highlight.marker ? "true" : "false"}
+                style="left: {highlight.x * 100}%; top: {highlight.y * 100}%; width: {highlight.width * 100}%; height: {highlight.height * 100}%;"
+              ></div>
+            {/each}
+          </div>
+        {/if}
+
         {#if paintedRenderKey}
           <div
             class="overlay-plane"
@@ -1114,6 +1133,31 @@
   .page-retry {
     margin-top: 4px;
     pointer-events: auto;
+  }
+
+  .compare-highlight-rect {
+    position: absolute;
+    box-sizing: border-box;
+    border-radius: 2px;
+    background: rgb(37 99 235 / 0.22);
+    border-bottom: 2px solid rgb(37 99 235);
+  }
+  .compare-highlight-rect[data-kind="inserted"] {
+    background: rgb(22 163 74 / 0.22);
+    border-bottom-color: rgb(22 163 74);
+  }
+  .compare-highlight-rect[data-kind="deleted"] {
+    background: rgb(220 38 38 / 0.22);
+    border-bottom-color: rgb(220 38 38);
+  }
+  /* Words that exist only in the other file: marked on their neighbouring word. */
+  .compare-highlight-rect[data-marker="true"] {
+    background: transparent;
+    border: 1px dashed currentColor;
+    color: rgb(220 38 38);
+  }
+  .compare-highlight-rect[data-marker="true"][data-kind="inserted"] {
+    color: rgb(22 163 74);
   }
 
   .search-highlight-layer {

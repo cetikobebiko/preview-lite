@@ -3,13 +3,14 @@
   import Sidebar from "./Sidebar.svelte";
   import Inspector from "./Inspector.svelte";
   import SensitiveDataScanPanel from "./SensitiveDataScanPanel.svelte";
+  import DocumentComparePanel from "./DocumentComparePanel.svelte";
   import SecureRedactionPanel from "./SecureRedactionPanel.svelte";
   import A11yPanel from "./A11yPanel.svelte";
   import PrepressPanel from "./PrepressPanel.svelte";
   import AiSidebar from "./AiSidebar.svelte";
 
   let {
-    isPdf, ui, viewer, documentSession, sensitiveScanState, secureRedactionState, secureRedaction, featureUi, physicalPageIndex, isLoadedPdfDocument,
+    isPdf, ui, viewer, documentSession, sensitiveScanState, documentCompareState, secureRedactionState, secureRedaction, featureUi, physicalPageIndex, isLoadedPdfDocument,
     onJump, onJumpPhysical, onScanSensitiveData, onSessionSnapshot, onProcessPreview, onCoveragePreview, onChannels, children,
   } = $props();
 
@@ -18,6 +19,8 @@
       && { id: "secureRedaction", title: "Güvenli redaksiyon" },
     ui.panels.sensitiveDataScan && isPdf && featureUi("sensitive_data_scan").visible
       && { id: "sensitiveDataScan", title: "Hassas veri tespiti" },
+    ui.panels.documentCompare && isPdf && documentCompareState && featureUi("document_compare").visible
+      && { id: "documentCompare", title: "Belge karşılaştırma" },
     ui.panels.a11y && isPdf && featureUi("basic_accessibility_audit").visible
       && { id: "a11y", title: "Basic accessibility audit" },
     ui.panels.prepress && isPdf && (featureUi("print_resource_inspection").visible || featureUi("rgb_derived_print_preview").visible)
@@ -74,6 +77,16 @@
         if (displayIndex >= 0) {
           onJump(displayIndex, true);
         }
+      }}
+    />
+  {:else if id === "documentCompare"}
+    <DocumentComparePanel
+      compareState={documentCompareState}
+      sessionId={documentSession.activeSessionId ?? ""}
+      contentGeneration={documentSession.contentGeneration}
+      onNavigate={(physicalPageIndex) => {
+        const displayIndex = toDisplayIndex(physicalPageIndex);
+        if (displayIndex >= 0) onJump(displayIndex, true);
       }}
     />
   {:else if id === "a11y"}

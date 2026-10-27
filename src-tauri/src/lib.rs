@@ -10,6 +10,7 @@ pub mod ai;
 pub mod annotations;
 pub mod app_config;
 pub mod batch;
+pub mod compare;
 pub mod document_io;
 pub mod document_session;
 pub mod error;
@@ -1461,6 +1462,7 @@ pub fn run() {
             tts::speak_text,
             tts::stop_speaking,
             document_session::merge_session_pdfs,
+            document_session::compare_session_pdf,
             plugins::inspect_plugin_package,
             plugins::install_plugin_package,
             plugins::grant_plugin_consent,
