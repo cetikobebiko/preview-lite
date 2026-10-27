@@ -7,6 +7,7 @@ const dialogMocks = vi.hoisted(() => ({
   save: vi.fn(),
 }));
 const backendMocks = vi.hoisted(() => ({
+  exportSessionDocument: vi.fn(),
   exportSessionPagesAsImages: vi.fn(),
   exportSessionTextToFile: vi.fn(),
   printSessionPdf: vi.fn(),
@@ -185,5 +186,52 @@ describe("ExportModal text export", () => {
     await waitFor(() => expect(dialogMocks.save).toHaveBeenCalled());
     expect(backendMocks.exportSessionTextToFile).not.toHaveBeenCalled();
     expect(onsuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("ExportModal document export", () => {
+  const originalAnimate = Element.prototype.animate;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
+  });
+
+  afterEach(() => {
+    Element.prototype.animate = originalAnimate;
+  });
+
+  it("asks for a file of the chosen format and exports the selected pages", async () => {
+    dialogMocks.save.mockResolvedValue("/out/rapor.pptx");
+    backendMocks.exportSessionDocument.mockResolvedValue(null);
+    const onsuccess = vi.fn();
+    render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 3, onsuccess } });
+    await fireEvent.click(screen.getByText("Belge"));
+    await fireEvent.change(screen.getByLabelText("Belge Formatı"), { target: { value: "pptx" } });
+    await fireEvent.input(screen.getByLabelText(/Sayfa Aralığı/), { target: { value: "2-3" } });
+    await fireEvent.click(screen.getByText("Dışa Aktar", { selector: "button" }));
+
+    await waitFor(() => expect(onsuccess).toHaveBeenCalledWith("Belge başarıyla dışa aktarıldı!"));
+    expect(dialogMocks.save).toHaveBeenCalledWith(expect.objectContaining({
+      defaultPath: "disa_aktarim.pptx",
+      filters: [{ name: "PowerPoint", extensions: ["pptx"] }],
+    }));
+    expect(backendMocks.exportSessionDocument).toHaveBeenCalledWith("session-1", 7, [1, 2], "pptx", "/out/rapor.pptx");
+  });
+
+  it("does nothing when the save dialog is cancelled and shows backend errors", async () => {
+    dialogMocks.save.mockResolvedValueOnce(null);
+    render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 1 } });
+    await fireEvent.click(screen.getByText("Belge"));
+    await fireEvent.click(screen.getByText("Dışa Aktar", { selector: "button" }));
+    await waitFor(() => expect(dialogMocks.save).toHaveBeenCalled());
+    expect(backendMocks.exportSessionDocument).not.toHaveBeenCalled();
+
+    dialogMocks.save.mockResolvedValueOnce("/out/a.docx");
+    backendMocks.exportSessionDocument.mockRejectedValue(
+      Object.assign(new Error("Belgenin metni dışa aktarma sınırını aşıyor"), { code: "SESSION_JOB_OUTPUT_LIMIT_EXCEEDED" }),
+    );
+    await fireEvent.click(screen.getByText("Dışa Aktar", { selector: "button" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Belgenin metni dışa aktarma sınırını aşıyor"));
   });
 });

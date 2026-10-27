@@ -5,6 +5,7 @@
   import { Label } from "$lib/components/ui/label";
   import { ask, open, save } from "@tauri-apps/plugin-dialog";
   import {
+    exportSessionDocument,
     exportSessionPagesAsImages,
     exportSessionTextToFile,
     printSessionPdf,
@@ -27,7 +28,7 @@
   } = $props();
   
   let pageRange = $state("");
-  let exportType = $state("image"); // "image", "text", "print"
+  let exportType = $state("image"); // "image", "text", "document", "print"
   
   // Image options
   let imgFormat = $state("png");
@@ -35,6 +36,15 @@
   
   // Text options
   let txtFormat = $state("markdown");
+
+  // Document options: Word, PowerPoint, HTML or RTF, written by the job worker.
+  const DOCUMENT_FORMATS = {
+    docx: { label: "Word (.docx)", filter: "Word" },
+    pptx: { label: "PowerPoint (.pptx)", filter: "PowerPoint" },
+    html: { label: "Web sayfası (.html)", filter: "HTML" },
+    rtf: { label: "Zengin metin (.rtf)", filter: "RTF" },
+  };
+  let docFormat = $state("docx");
   
   let isExporting = $state(false);
   let errorMsg = $state("");
@@ -115,6 +125,25 @@
                   onsuccess?.("Metin başarıyla dışa aktarıldı!");
                   onclose?.();
               }
+          } else if (exportType === "document") {
+              const { filter } = DOCUMENT_FORMATS[docFormat];
+              const savePath = await save({
+                  title: "Belge Olarak Kaydet",
+                  defaultPath: `disa_aktarim.${docFormat}`,
+                  filters: [{ name: filter, extensions: [docFormat] }]
+              });
+
+              if (savePath) {
+                  await exportSessionDocument(
+                    sessionId,
+                    contentGeneration,
+                    selectedPages,
+                    docFormat,
+                    savePath,
+                  );
+                  onsuccess?.("Belge başarıyla dışa aktarıldı!");
+                  onclose?.();
+              }
           } else if (exportType === "print") {
               const ranges = pageRange.trim() ? selectedPages : null;
               await printSessionPdf(sessionId, contentGeneration, ranges);
@@ -141,10 +170,11 @@
       <small class="text-xs text-muted-foreground">Toplam Sayfa: {maxPages}</small>
     </div>
 
-    <div class="grid grid-cols-3 gap-0.5 rounded-md bg-black/5 p-0.5 dark:bg-white/10" role="group" aria-label="Dışa aktarma türü">
+    <div class="grid grid-cols-4 gap-0.5 rounded-md bg-black/5 p-0.5 dark:bg-white/10" role="group" aria-label="Dışa aktarma türü">
       <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={exportType === 'print'} onclick={() => exportType = 'print'}>Yazdır</button>
       <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={exportType === 'image'} onclick={() => exportType = 'image'}>Resim (Görsel)</button>
       <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={exportType === 'text'} onclick={() => exportType = 'text'}>Metin (StExt)</button>
+      <button type="button" class="rounded-[5px] py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs" aria-pressed={exportType === 'document'} onclick={() => exportType = 'document'}>Belge</button>
     </div>
 
     {#if exportType === 'image'}
@@ -172,6 +202,16 @@
           <option value="markdown">Markdown (.md)</option>
           <option value="txt">Düz Metin (.txt)</option>
         </select>
+      </div>
+    {:else if exportType === 'document'}
+      <div class="grid gap-1.5">
+        <Label for="export-document-format" class="text-xs text-muted-foreground">Belge Formatı</Label>
+        <select id="export-document-format" bind:value={docFormat} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+          {#each Object.entries(DOCUMENT_FORMATS) as [value, { label }] (value)}
+            <option {value}>{label}</option>
+          {/each}
+        </select>
+        <small class="text-xs text-muted-foreground">Metin, başlıklar, tablolar ve görseller düzenlenebilir olarak aktarılır; sayfa düzeni birebir korunmaz. Taranmış sayfalar yalnız görsel olarak çıkar.</small>
       </div>
     {:else}
       <p class="text-center text-xs text-muted-foreground">Belge doğrudan işletim sisteminin varsayılan yazdırma kuyruğuna gönderilecektir.</p>

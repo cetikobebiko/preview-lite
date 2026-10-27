@@ -8725,6 +8725,49 @@ pub async fn merge_session_pdfs(
         .await
 }
 
+/// Belgeyi Word, PowerPoint, HTML ya da RTF olarak `target_path`'e yazar. Metin ve görüntüler
+/// job worker'da PDFium ile okunur; çıktı iş dizininden atomik olarak yayımlanır.
+#[tauri::command]
+pub async fn export_session_document(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    pages: Vec<u32>,
+    format: crate::document_export::DocumentExportFormat,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    reject_private_target(Path::new(&target_path), &store.temp_root)?;
+    let title = session_output_name_stem(&store, &session_id).await;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let result = crate::job_worker::run_job(
+                    &context,
+                    JobCommand::ExportDocument {
+                        format,
+                        title,
+                        pages,
+                        output_name: format!("document-export.{}", format.extension()),
+                    },
+                    Duration::from_secs(300),
+                )?;
+                let JobResult::File(source) = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Belge dışa aktarma worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                accept_job_output_file(&context, &source, Path::new(&target_path))
+            },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn export_session_text_content(
     job_id: String,
