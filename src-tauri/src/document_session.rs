@@ -12197,7 +12197,7 @@ fn copy_with_digest(source: &Path, target: &Path) -> Result<String, DocumentSess
     })?;
     drop(target_file);
     drop(source_file);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::hex_lower(hasher.finalize()))
 }
 
 fn copy_with_digest_cancellable(
@@ -12261,7 +12261,7 @@ fn copy_with_digest_cancellable(
     }
     drop(target_file);
     drop(source_file);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::hex_lower(hasher.finalize()))
 }
 
 fn validate_basic_pdf_bytes(path: &Path) -> Result<(), DocumentSessionError> {

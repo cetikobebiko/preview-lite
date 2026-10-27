@@ -690,7 +690,7 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::hex_lower(hasher.finalize()))
 }
 
 #[cfg(unix)]

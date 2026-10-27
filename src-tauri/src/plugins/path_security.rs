@@ -252,7 +252,7 @@ pub fn verify_no_symlinks_in_path(root: &Path) -> Result<(), PluginError> {
 pub fn compute_sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    crate::hex_lower(hasher.finalize())
 }
 
 /// Computes domain-separated SHA256 package digest from manifest and main script bytes.
@@ -264,7 +264,7 @@ pub fn compute_package_digest(manifest_bytes: &[u8], script_bytes: &[u8]) -> Str
     hasher.update(manifest_digest.as_bytes());
     hasher.update(b":script=");
     hasher.update(script_digest.as_bytes());
-    format!("{:x}", hasher.finalize())
+    crate::hex_lower(hasher.finalize())
 }
 
 /// Validates Package V1 package directory layout:

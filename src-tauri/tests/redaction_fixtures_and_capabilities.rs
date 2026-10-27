@@ -399,7 +399,7 @@ fn test_fixture_generator_output_matches_repository_manifest() {
             item.filename
         );
 
-        let computed_sha = format!("{:x}", Sha256::digest(&repo_bytes));
+        let computed_sha = preview_alternative_lib::hex_lower(Sha256::digest(&repo_bytes));
         assert_eq!(
             computed_sha, item.sha256,
             "SHA-256 digest mismatch for {}",

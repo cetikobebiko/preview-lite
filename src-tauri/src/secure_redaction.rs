@@ -3519,7 +3519,7 @@ impl CanonicalSerializer {
     pub fn finalize_digest(self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&self.bytes);
-        format!("{:x}", hasher.finalize())
+        crate::hex_lower(hasher.finalize())
     }
 }
 

@@ -81,7 +81,7 @@ fn test_simple_text_fixture_inspection_and_planning() {
 
     let raw_bytes = fs::read(&pdf_path).unwrap();
     use sha2::{Digest, Sha256};
-    let expected_digest = format!("{:x}", Sha256::digest(&raw_bytes));
+    let expected_digest = preview_alternative_lib::hex_lower(Sha256::digest(&raw_bytes));
     assert_eq!(plan.input_digest, expected_digest);
     assert_eq!(plan.facts.total_pages, 1);
     assert_eq!(plan.facts.encryption, InspectionFactState::Absent);

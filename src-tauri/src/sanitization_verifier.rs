@@ -292,7 +292,7 @@ fn observe_document_invariants(
             width_points,
             height_points,
             rotation_degrees,
-            content_sha256: format!("{:x}", Sha256::digest(content)),
+            content_sha256: crate::hex_lower(Sha256::digest(content)),
         });
     }
     let form_field_count = catalog
@@ -552,7 +552,7 @@ fn observed_payload_digests(
                 account_payload_bytes(state.decoded_bytes, value.len() as u64)?;
                 state
                     .observed
-                    .insert(format!("{:x}", Sha256::digest(value)));
+                    .insert(crate::hex_lower(Sha256::digest(value)));
             }
             Object::Array(values) => {
                 for value in values {
@@ -589,7 +589,7 @@ fn observed_payload_digests(
                     account_payload_bytes(state.decoded_bytes, decoded.len() as u64)?;
                     state
                         .observed
-                        .insert(format!("{:x}", Sha256::digest(decoded)));
+                        .insert(crate::hex_lower(Sha256::digest(decoded)));
                 }
                 for (key, value) in stream.dict.iter() {
                     scan(
@@ -1278,7 +1278,7 @@ mod tests {
         assert!(javascript.payload_fingerprints_remaining > 0);
         assert_eq!(
             expected_fingerprint,
-            format!("{:x}", Sha256::digest(b"PRIVATE_SANITIZATION_JS_PAYLOAD"))
+            crate::hex_lower(Sha256::digest(b"PRIVATE_SANITIZATION_JS_PAYLOAD"))
         );
     }
 

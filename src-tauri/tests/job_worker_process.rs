@@ -558,7 +558,7 @@ fn ephemeral_job_worker_executes_plan_secure_redaction() {
 
 fn hex_sha256(path: &std::path::Path) -> String {
     let bytes = fs::read(path).unwrap();
-    format!("{:x}", Sha256::digest(bytes))
+    preview_alternative_lib::hex_lower(Sha256::digest(bytes))
 }
 
 fn secure_redaction_request_parts() -> (Value, Value, Value) {

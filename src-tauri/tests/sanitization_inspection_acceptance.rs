@@ -500,7 +500,9 @@ mod macos_arm64 {
                     ));
                     assert_eq!(metadata.len(), report.output_size_bytes);
                     assert_eq!(
-                        format!("{:x}", Sha256::digest(std::fs::read(&artifact).unwrap())),
+                        preview_alternative_lib::hex_lower(Sha256::digest(
+                            std::fs::read(&artifact).unwrap()
+                        )),
                         report.output_digest
                     );
                     assert_eq!(report.input_digest, expected_input_digest);

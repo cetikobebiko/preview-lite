@@ -40,7 +40,7 @@ mod macos_arm64 {
     fn sha256_file(path: &std::path::Path) -> String {
         let mut hasher = Sha256::new();
         hasher.update(std::fs::read(path).unwrap());
-        format!("{:x}", hasher.finalize())
+        preview_alternative_lib::hex_lower(hasher.finalize())
     }
 
     fn fixture(name: &str) -> String {

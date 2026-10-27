@@ -689,7 +689,7 @@ pub fn validate_manifest(
                                     bytes.len()
                                 ));
                             }
-                            let digest = format!("{:x}", Sha256::digest(&bytes));
+                            let digest = preview_alternative_lib::hex_lower(Sha256::digest(&bytes));
                             if digest != fixture.sha256 {
                                 errors.push(format!(
                                     "Fixture '{}' sha256 mismatch: declared {}, disk has {}",
@@ -1202,7 +1202,7 @@ fn test_disk_validation_sha_and_byte_length() {
     fs::write(&fixture_abs_path, content).unwrap();
 
     let true_len = content.len() as u64;
-    let true_sha = format!("{:x}", Sha256::digest(content));
+    let true_sha = preview_alternative_lib::hex_lower(Sha256::digest(content));
 
     let base_record = PdfFixtureRecord {
         id: "disk-test-fixture".to_string(),
@@ -2510,7 +2510,7 @@ fn test_release_smoke_and_large_dimensions_fixtures_integrity() {
         fs::read(repo_root.join(&smoke_fixture.path)).expect("Read release-smoke.pdf from disk");
     assert_eq!(smoke_disk_bytes.len() as u64, smoke_fixture.byte_length);
     assert_eq!(
-        format!("{:x}", Sha256::digest(&smoke_disk_bytes)),
+        preview_alternative_lib::hex_lower(Sha256::digest(&smoke_disk_bytes)),
         smoke_fixture.sha256
     );
 
@@ -2547,7 +2547,7 @@ fn test_release_smoke_and_large_dimensions_fixtures_integrity() {
         .expect("Read large-page-dimensions.pdf from disk");
     assert_eq!(large_disk_bytes.len() as u64, large_fixture.byte_length);
     assert_eq!(
-        format!("{:x}", Sha256::digest(&large_disk_bytes)),
+        preview_alternative_lib::hex_lower(Sha256::digest(&large_disk_bytes)),
         large_fixture.sha256
     );
 }

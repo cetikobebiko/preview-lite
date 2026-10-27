@@ -564,7 +564,7 @@ pub fn inspection_digest(
     validate_inspection_report(report)?;
     let bytes = serde_json::to_vec(report)
         .map_err(|_| inspection_failed("Inspection digest serialize edilemedi"))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(crate::hex_lower(Sha256::digest(bytes)))
 }
 
 fn validate_sha256(value: &str, field: &str) -> Result<(), SessionJobOperationError> {

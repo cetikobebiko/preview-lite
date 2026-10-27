@@ -42,6 +42,18 @@ pub mod secure_redaction_verifier;
 pub mod tts;
 pub mod worker;
 
+/// Lowercase hex of a digest. sha2 0.11's output type has no `LowerHex`, so `{:x}` no longer
+/// formats it; every SHA-256 string in the app and its manifests uses this spelling.
+pub fn hex_lower(bytes: impl AsRef<[u8]>) -> String {
+    use std::fmt::Write;
+    let bytes = bytes.as_ref();
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(text, "{byte:02x}");
+    }
+    text
+}
+
 use pdf_engine::render_service::RenderService;
 pub use pdf_engine::{clear_search_cache, get_cached_password, get_pdfium, open_pdfium_doc};
 
@@ -2059,5 +2071,20 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.starts_with("Görsel işlemi tamamlanamadı"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod hex_lower_tests {
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn matches_the_sha256_test_vector_spelling() {
+        // FIPS 180-2 "abc"; the same lowercase, zero-padded form `{:x}` gave with sha2 0.10.
+        assert_eq!(
+            super::hex_lower(Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(super::hex_lower([0x00, 0x0f, 0xa0]), "000fa0");
     }
 }
