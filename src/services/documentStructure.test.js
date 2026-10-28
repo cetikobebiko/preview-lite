@@ -10,6 +10,7 @@ import {
   outlineEditTreeToWire,
   outlineToEditTree,
   pageLabelRangesError,
+  pageLabelsFor,
   removeOutlineNode,
 } from "./documentStructure.js";
 
@@ -33,6 +34,15 @@ describe("page labels", () => {
     expect(pageLabelRangesError([range(0, "decimal"), range(0, "decimal")], 3)).toMatch(/öncekinden büyük/);
     expect(pageLabelRangesError([range(0, "decimal"), range(3, "decimal")], 3)).toMatch(/1 ile 3/);
     expect(pageLabelRangesError([range(0, "decimal", "", 0)], 3)).toMatch(/en az 1/);
+  });
+
+  it("labels every physical page from its range, or none when the ranges are unusable", () => {
+    expect(pageLabelsFor([range(0, "lower_roman"), range(1, "decimal")], 3)).toEqual(["i", "1", "2"]);
+    expect(pageLabelsFor([range(0, "none", "Kapak"), range(1, "upper_alpha", "Ek-", 2)], 3)).toEqual(["Kapak", "Ek-B", "Ek-C"]);
+    expect(pageLabelsFor([range(0, "none")], 2)).toEqual(["", ""]);
+    expect(pageLabelsFor([], 3)).toEqual([]);
+    expect(pageLabelsFor(null, 3)).toEqual([]);
+    expect(pageLabelsFor([range(0, "decimal"), range(5, "decimal")], 3)).toEqual([]);
   });
 });
 

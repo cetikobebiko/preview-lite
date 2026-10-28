@@ -48,8 +48,11 @@
   const changed = $derived(JSON.stringify(rows) !== loadedRows);
   const canSave = $derived(editable && !loading && !saving && changed && !validationError);
 
+  // An invalid next start (out of range, not after this one) previews this range to the last page.
   function rangeEnd(index) {
-    return index + 1 < wire.length ? wire[index + 1].startPage - 1 : pageCount - 1;
+    const next = wire[index + 1]?.startPage;
+    const last = pageCount - 1;
+    return Number.isInteger(next) && next > wire[index].startPage && next <= last ? next - 1 : last;
   }
 
   function preview(index) {

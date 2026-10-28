@@ -1,5 +1,6 @@
 // Meta veri, sayfa etiketi ve yer imi düzenleyicilerinin saf yardımcıları. Yazım ve asıl
-// doğrulama Rust'tadır (document_structure); buradaki biçimlendirme yalnız önizleme içindir.
+// doğrulama Rust'tadır (document_structure); buradaki biçimlendirme Rust'ın döndürdüğü aralıkları
+// önizleme ve sayfa göstergesi için metne çevirir, PDF ayrıştırmaz.
 
 export const PAGE_LABEL_STYLES = Object.freeze([
   Object.freeze({ value: "decimal", label: "1, 2, 3" }),
@@ -43,6 +44,21 @@ export function formatPageLabel(range, page) {
     none: () => "",
   }[range.style]?.() ?? "";
   return `${range.prefix ?? ""}${numeral}`;
+}
+
+/**
+ * Each physical page's label, indexed by 0-based page; empty when the document has no
+ * usable labels. A page whose label is empty (no numbering, no prefix) gets "".
+ */
+export function pageLabelsFor(ranges, pageCount) {
+  if (!Array.isArray(ranges) || ranges.length === 0 || pageLabelRangesError(ranges, pageCount)) return [];
+  const labels = [];
+  let rangeIndex = 0;
+  for (let page = 0; page < pageCount; page += 1) {
+    while (rangeIndex + 1 < ranges.length && ranges[rangeIndex + 1].startPage <= page) rangeIndex += 1;
+    labels.push(formatPageLabel(ranges[rangeIndex], page));
+  }
+  return labels;
 }
 
 /** Problems with `ranges` for a document of `pageCount` pages, or null. */

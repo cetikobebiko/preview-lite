@@ -10,7 +10,7 @@ export function createDocumentOpenController({
   backend, documentSession, documentLifecycleController, viewer, annotation, viewerController,
   renderSession, getCanvas, getIsMounted, tick, applyBackendSessionSnapshot,
   chooseTransition, chooseTransitionSaveRecovery, invalidateSearch, restoreDocumentPosition,
-  addRecentFile, getOutline, getMetadata, setError, chooseFile,
+  addRecentFile, getOutline, getMetadata, getPageLabels = async () => [], setError, chooseFile,
   onWarning = console.warn, onToast = () => {},
 }) {
   let automaticCommitRetryAttemptId = null;
@@ -55,7 +55,11 @@ export function createDocumentOpenController({
       viewer.flipV = false;
       annotation.activeTool = "pointer";
       viewer.outlineList = [];
+      viewer.pageLabels = [];
       viewer.pdfMetadata = { title: "", author: "", subject: "", keywords: "", creator: "" };
+      void getPageLabels(snapshot.id, snapshot.contentGeneration, pageCount)
+        .then((labels) => { if (getIsMounted() && isCurrentDocumentSnapshot(documentSession, snapshot)) viewer.pageLabels = labels; })
+        .catch((error) => onWarning("Sayfa etiketleri yüklenemedi:", error));
       void getOutline(snapshot.id, snapshot.contentGeneration)
         .then((outline) => { if (getIsMounted() && isCurrentDocumentSnapshot(documentSession, snapshot)) viewer.outlineList = Array.isArray(outline) ? outline : []; })
         .catch((error) => onWarning("PDF outline yüklenemedi:", error));

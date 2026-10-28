@@ -7,6 +7,7 @@
     sessionId = "",
     contentGeneration = 0,
     pageOrder = [],
+    pageLabels = [],
     currentPageIndex = 0,
     onJump = () => {},
     onJumpPhysical = () => {},
@@ -95,6 +96,7 @@
             {contentGeneration}
             pageIndex={physicalIndex}
             pageNumber={displayIndex + 1}
+            pageLabel={pageLabels[physicalIndex] ?? ""}
             isActive={currentPageIndex === displayIndex}
             onSelect={() => onJump(displayIndex)}
           />

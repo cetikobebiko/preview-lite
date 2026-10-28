@@ -36,6 +36,13 @@ describe("Sidebar page order", () => {
     expect(onJump).toHaveBeenCalledWith(2);
   });
 
+  it("captions thumbnails with the physical page's PDF label", () => {
+    render(Sidebar, {
+      props: { sessionId: "s", contentGeneration: 1, pageOrder: [2, 0, 1], pageLabels: ["i", "1", "2"] },
+    });
+    expect(Thumbnail.mock.calls.map((call) => call[1].pageLabel)).toEqual(["2", "i", "1"]);
+  });
+
   it("routes outline page_index (physical) through the physical jump", async () => {
     getSessionPdfOutline.mockResolvedValue([{ title: "Bölüm", page_index: 2, children: [] }]);
     const onJump = vi.fn();
