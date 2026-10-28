@@ -99,7 +99,7 @@
 {/snippet}
 
 {#if isPdf && ui.panels.sidebar}
-  <Sidebar sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} pageOrder={viewer.pageOrder} currentPageIndex={viewer.currentPageIndex} onJump={onJump} onJumpPhysical={onJumpPhysical} />
+  <Sidebar sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} pageOrder={viewer.pageOrder} pageLabels={viewer.pageLabels} currentPageIndex={viewer.currentPageIndex} onJump={onJump} onJumpPhysical={onJumpPhysical} onEditOutline={featureUi("page_manipulation").visible ? () => ui.openModal("outline_editor") : null} />
 {/if}
 
 {@render children?.()}

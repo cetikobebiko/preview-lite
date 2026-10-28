@@ -9,9 +9,15 @@ vi.mock("../../configManager.js", () => ({
 vi.mock("../backend/index.js", async (importOriginal) => ({
   ...(await importOriginal()),
   getSessionPageCount: vi.fn(async () => 3),
+  getSessionPdfMetadata: vi.fn(async () => ({ title: "", author: "", subject: "", keywords: "", creator: "" })),
+  getSessionPageLabels: vi.fn(async () => [
+    { startPage: 0, style: "lower_roman", prefix: "", firstNumber: 1 },
+    { startPage: 1, style: "decimal", prefix: "", firstNumber: 1 },
+  ]),
 }));
 
 const { createDocumentRuntime } = await import("./documentRuntime.js");
+const { getSessionPageLabels } = await import("../backend/index.js");
 
 function setup(activeSessionId = "doc-a") {
   const documentSession = {
@@ -62,5 +68,22 @@ describe("documentRuntime.applyMutationSnapshot page remapping", () => {
     documentSession.applySnapshot.mockReturnValue(false);
     await runtime.applyMutationSnapshot({ id: "doc-a", contentGeneration: 2, stateRevision: 5 }, { mapPageIndex: vi.fn() });
     expect(applyPageScopedMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes page labels for the snapshot it applied", async () => {
+    const { runtime, viewer } = setup();
+    await runtime.applyMutationSnapshot({ id: "doc-a", contentGeneration: 2, stateRevision: 5 });
+    await vi.waitFor(() => expect(viewer.pageLabels).toEqual(["i", "1", "2"]));
+  });
+
+  it("drops page labels that arrive after the generation moved on", async () => {
+    const { runtime, viewer, documentSession } = setup();
+    let release;
+    getSessionPageLabels.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
+    await runtime.applyMutationSnapshot({ id: "doc-a", contentGeneration: 2, stateRevision: 5 });
+    documentSession.contentGeneration = 3;
+    release([{ startPage: 0, style: "upper_alpha", prefix: "", firstNumber: 1 }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(viewer.pageLabels).toBeUndefined();
   });
 });

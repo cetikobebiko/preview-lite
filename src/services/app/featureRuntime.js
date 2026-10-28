@@ -298,6 +298,9 @@ export function createFeatureRuntime({
     onUnknown: () => onToast("Bilinmeyen komut çalıştırılmadı."),
     actions: {
       "open-metadata": () => ui.openModal("metadata"),
+      "open-page-labels": () => ui.openModal("page_labels"),
+      "open-outline-editor": () => ui.openModal("outline_editor"),
+      "open-page-marks": () => ui.openModal("page_marks"),
       "export-page-image": documentExportController.exportCurrentPageImage,
       "open-bionic": reading.openBionicReading,
       "toggle-ruler": () => { ui.togglePanel("readingRuler"); onToast(ui.panels.readingRuler ? "Odak Cetveli (Line Focus) Açıldı" : "Odak Cetveli Kapatıldı"); },

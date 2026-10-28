@@ -122,6 +122,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
     flipH: false,
     flipV: false,
     outlineList: [],
+    pageLabels: [],
     pdfMetadata: { title: "", author: "", subject: "", keywords: "", creator: "" },
     isDocumentLoading: false,
     isRendering: false,
@@ -137,6 +138,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
   const chooseTransition = vi.fn(async () => decision);
   const getOutline = vi.fn(async () => []);
   const getMetadata = vi.fn(async () => ({ title: "", author: "", subject: "", keywords: "", creator: "" }));
+  const getPageLabels = vi.fn(async () => []);
   const addRecentFile = vi.fn(async () => {});
   const applyBackendSessionSnapshot = vi.fn((next) => {
     if (next?.id !== documentSession.activeSessionId) return false;
@@ -162,6 +164,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
     addRecentFile,
     getOutline,
     getMetadata,
+    getPageLabels,
     setError,
     chooseFile: vi.fn(),
     onWarning: vi.fn(),
@@ -181,6 +184,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
     chooseTransition,
     getOutline,
     getMetadata,
+    getPageLabels,
     addRecentFile,
     setActive(value) { active = value; },
     getActive() { return active; },
@@ -367,6 +371,26 @@ describe("createDocumentOpenController integration boundary", () => {
     expect(harness.documentSession.active?.displayPath).toBe("/document.pdf");
     expect(harness.viewer.activeImageSourcePath).toBe("");
     expect(harness.viewer.fileExt).toBe("pdf");
+  });
+
+  it("loads page labels for the committed document", async () => {
+    const harness = createHarness();
+    harness.getPageLabels.mockResolvedValueOnce(["i", "1"]);
+    await harness.controller.requestFile("/labels.pdf");
+    await flush();
+    expect(harness.getPageLabels).toHaveBeenCalledWith(harness.documentSession.activeSessionId, harness.documentSession.contentGeneration, expect.any(Number));
+    expect(harness.viewer.pageLabels).toEqual(["i", "1"]);
+  });
+
+  it("drops page labels from a session that is no longer active", async () => {
+    const harness = createHarness();
+    const labelsA = deferred();
+    harness.getPageLabels.mockReturnValueOnce(labelsA.promise);
+    await harness.controller.requestFile("/a.pdf");
+    await harness.controller.requestFile("/b.pdf");
+    labelsA.resolve(["stale"]);
+    await flush();
+    expect(harness.viewer.pageLabels).toEqual([]);
   });
 
   it("guards outline and metadata results by both session ID and content generation", async () => {

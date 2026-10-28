@@ -391,7 +391,7 @@ describe("backend service boundaries", () => {
     expect(externalShare.some((command) => /spawn_blocking/.test(command.body))).toBe(true);
   });
 
-  it("keeps unsupported metadata writes session-native and removes accessibility write bypasses", () => {
+  it("routes document structure writes through isolated session mutations and removes accessibility write bypasses", () => {
     const handlerRegistry = readSource(rustLibPath);
     const sessionSource = readSource(
       resolve(rustSourceRoot, "document_session.rs"),
@@ -401,20 +401,20 @@ describe("backend service boundaries", () => {
     expect(handlerRegistry).not.toMatch(/^\s*set_pdf_metadata\s*,/m);
     expect(handlerRegistry).not.toMatch(/^\s*update_alt_text\s*,/m);
     expect(sessionSource).not.toMatch(/fn update_session_alt_text/);
-    for (const handler of ["update_session_metadata"]) {
+    for (const [handler, recipe] of [
+      ["update_session_metadata", "SetMetadata"],
+      ["set_session_page_labels", "SetPageLabels"],
+      ["set_session_outline", "SetOutline"],
+    ]) {
+      expect(handlerRegistry).toMatch(new RegExp(`document_session::${handler}`));
       const start = sessionSource.indexOf(`fn ${handler}`);
       const body = sessionSource.slice(start, start + 900);
       expect(start).toBeGreaterThanOrEqual(0);
-      expect(body).toMatch(/reject_unsupported_session_write/);
-      expect(body).not.toMatch(/\.mutate\(|dirty\s*=|bump_revision/);
+      expect(body).toMatch(/\.mutate_isolated\(/);
+      expect(body).toMatch(new RegExp(`MutationRecipe::${recipe}`));
+      expect(body).not.toMatch(/dirty\s*=|bump_revision/);
     }
-    const helperStart = sessionSource.indexOf(
-      "fn reject_unsupported_session_write",
-    );
-    const helperBody = sessionSource.slice(helperStart, helperStart + 900);
-    expect(helperStart).toBeGreaterThanOrEqual(0);
-    expect(helperBody).toMatch(/UNSUPPORTED_PDFIUM_CAPABILITY/);
-    expect(helperBody).not.toMatch(/\.mutate\(|dirty\s*=|bump_revision/);
+    expect(sessionSource).not.toMatch(/fn reject_unsupported_session_write/);
   });
 
   it("does not re-export legacy active-PDF path facades from pdfState or the backend barrel", () => {

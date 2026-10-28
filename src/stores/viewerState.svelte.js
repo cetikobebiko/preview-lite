@@ -33,6 +33,8 @@ export function createViewerState() {
     forwardStack: [],
     pdfMetadata: { title: "", author: "", subject: "", keywords: "", creator: "" },
     outlineList: [],
+    // Physical page index → PDF page label ("i", "A-1"…); empty when the document has none.
+    pageLabels: [],
     documentTextContext: "",
     // Physical page whose text documentTextContext holds; -1 when empty.
     documentTextPageIndex: -1,
@@ -81,6 +83,7 @@ export function createViewerState() {
     get forwardStack() { return state.forwardStack; }, set forwardStack(value) { state.forwardStack = value; },
     get pdfMetadata() { return state.pdfMetadata; }, set pdfMetadata(value) { state.pdfMetadata = value; },
     get outlineList() { return state.outlineList; }, set outlineList(value) { state.outlineList = value; },
+    get pageLabels() { return state.pageLabels; }, set pageLabels(value) { state.pageLabels = value; },
     get documentTextContext() { return state.documentTextContext; }, set documentTextContext(value) { state.documentTextContext = value; },
     get documentTextPageIndex() { return state.documentTextPageIndex; }, set documentTextPageIndex(value) { state.documentTextPageIndex = value; },
     get readingTimeSeconds() { return state.readingTimeSeconds; }, set readingTimeSeconds(value) { state.readingTimeSeconds = value; },
@@ -99,6 +102,7 @@ export function createViewerState() {
       state.flipH = false;
       state.flipV = false;
       state.outlineList = [];
+      state.pageLabels = [];
       state.pdfMetadata = { title: "", author: "", subject: "", keywords: "", creator: "" };
     },
   };

@@ -14,6 +14,7 @@ pub mod compare;
 pub mod document_export;
 pub mod document_io;
 pub mod document_session;
+pub mod document_structure;
 pub mod error;
 pub mod export;
 pub mod external_validation;
@@ -28,6 +29,7 @@ mod macos_helper;
 pub mod manipulation;
 pub mod ocr;
 pub(crate) mod output_names;
+pub mod page_marks;
 pub mod pdf_engine;
 pub mod plugins;
 pub mod prepress;
@@ -1443,6 +1445,10 @@ pub fn run() {
             document_session::add_session_annotation,
             document_session::delete_session_annotation,
             document_session::update_session_metadata,
+            document_session::set_session_page_labels,
+            document_session::set_session_outline,
+            document_session::apply_session_page_marks,
+            document_session::get_session_page_labels,
             document_session::save_document_session,
             document_session::save_document_session_as,
             document_session::begin_session_transition,

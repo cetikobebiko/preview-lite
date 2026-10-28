@@ -26,6 +26,12 @@
   const overlayTitleBar = usesOverlayTitleBar();
   const hasDocument = $derived(isPdf || Boolean(viewer.activeImageSourcePath));
   const annotationVisible = $derived(featureUi("annotation").visible);
+  // The current page's PDF label, shown only when it says something the position does not.
+  const currentPageLabel = $derived.by(() => {
+    const physical = viewer.pageOrder[viewer.currentPageIndex] ?? viewer.currentPageIndex;
+    const label = viewer.pageLabels?.[physical] ?? "";
+    return label && label !== String(viewer.currentPageIndex + 1) ? label : "";
+  });
   const menuSections = $derived(buildToolbarMenu({
     isPdf, hasDocument, viewer, ui, featureUi, onFeatureAction,
     actions: {
@@ -68,7 +74,7 @@
             max={viewer.pageOrder.length}
             onchange={onPageInputChange}
           />
-          / {viewer.pageOrder.length}{isDirty ? " — Düzenlendi" : ""}
+          / {viewer.pageOrder.length}{#if currentPageLabel}<span class="truncate" title="Sayfa etiketi">({currentPageLabel})</span>{/if}{isDirty ? " — Düzenlendi" : ""}
         </span>
       {:else if hasDocument && !isPdf}
         <span class="text-[11px] text-muted-foreground" data-tauri-drag-region>{viewer.fileExt?.toUpperCase()} görseli</span>
