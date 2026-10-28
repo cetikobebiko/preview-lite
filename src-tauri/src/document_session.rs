@@ -8773,6 +8773,41 @@ pub async fn compare_session_pdf(
         .await
 }
 
+/// Belgenin sayfa etiketi aralıkları (`/PageLabels`). Yapı job worker'da lopdf ile okunur;
+/// hiçbir şey yazılmaz.
+#[tauri::command]
+pub async fn get_session_page_labels(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<
+    SessionJobOutcome<Vec<crate::document_structure::labels::PageLabelRange>>,
+    DocumentSessionError,
+> {
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                match crate::job_worker::run_job(
+                    &context,
+                    JobCommand::InspectPageLabels,
+                    Duration::from_secs(60),
+                )? {
+                    JobResult::PageLabels(ranges) => Ok(ranges),
+                    _ => Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Sayfa etiketi worker'ı beklenmeyen sonuç döndürdü",
+                    )),
+                }
+            },
+        )
+        .await
+}
+
 /// Belgeyi Word, PowerPoint, HTML ya da RTF olarak `target_path`'e yazar. Metin ve görüntüler
 /// job worker'da PDFium ile okunur; çıktı iş dizininden atomik olarak yayımlanır.
 #[tauri::command]
@@ -10009,6 +10044,7 @@ pub async fn add_session_annotation(
     normalized_rect: NormalizedPageRect,
     color: String,
     contents: Option<String>,
+    ink_strokes: Option<Vec<Vec<crate::annotations::NormalizedPoint>>>,
     store: State<'_, DocumentSessionStore>,
     vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
@@ -10020,6 +10056,7 @@ pub async fn add_session_annotation(
                 page_index,
                 annot_type,
                 normalized_rect,
+                ink_strokes,
                 color,
                 contents,
             },
@@ -10100,34 +10137,95 @@ pub async fn author_session_form_fields(
     Ok(snapshot)
 }
 
+/// Belgenin Title, Author, Subject ve Keywords meta verisini yazar (`/Info`; varsa XMP de).
+/// İstek burada yalnız belgeden bağımsız kurallarla denetlenir.
 #[tauri::command]
 pub async fn update_session_metadata(
     session_id: String,
     expected_content_generation: u64,
-    _metadata: PdfMetadata,
+    metadata: crate::document_structure::metadata::DocumentMetadataEdit,
     store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    reject_unsupported_session_write(
-        &store,
-        &session_id,
-        expected_content_generation,
-        "PDFium metadata yazma desteği sunmamaktadır; işlem desteklenmiyor",
-    )
+    crate::document_structure::metadata::validate_request(&metadata)
+        .map_err(|message| DocumentSessionError::new("SESSION_METADATA_INVALID", message))?;
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::SetMetadata { metadata },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
-fn reject_unsupported_session_write(
-    store: &DocumentSessionStore,
-    session_id: &str,
+/// Sayfa etiketi aralıklarını değiştirir; boş liste etiketleri kaldırır.
+#[tauri::command]
+pub async fn set_session_page_labels(
+    session_id: String,
     expected_content_generation: u64,
-    message: &str,
+    ranges: Vec<crate::document_structure::labels::PageLabelRange>,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
 ) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
-    let entry = store.entry(session_id)?;
-    let state = entry.state.lock();
-    session_read_path(&state, Some(expected_content_generation))?;
-    Err(
-        DocumentSessionError::new("UNSUPPORTED_PDFIUM_CAPABILITY", message)
-            .with_snapshot(snapshot(&state)),
-    )
+    crate::document_structure::labels::validate_request(&ranges)
+        .map_err(|message| DocumentSessionError::new("SESSION_PAGE_LABELS_INVALID", message))?;
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::SetPageLabels { ranges },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
+/// Üstbilgi/altbilgi, filigran ya da arka plan ekler veya kaldırır (`pages` boşsa tüm sayfalar).
+#[tauri::command]
+pub async fn apply_session_page_marks(
+    session_id: String,
+    expected_content_generation: u64,
+    op: crate::page_marks::PageMarkOp,
+    pages: Vec<u32>,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    crate::page_marks::validate_request(&op, &pages)
+        .map_err(|message| DocumentSessionError::new("SESSION_PAGE_MARKS_INVALID", message))?;
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::PageMarks { op, pages },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
+/// Yer imi ağacını `tree` yapar. Var olan yer imleri `get_session_pdf_outline`'ın ağacındaki
+/// yolları ve başlıklarıyla gelir; job worker eşleşmeyi belgeye karşı denetler.
+#[tauri::command]
+pub async fn set_session_outline(
+    session_id: String,
+    expected_content_generation: u64,
+    tree: Vec<crate::document_structure::outline::OutlineEditNode>,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    crate::document_structure::outline::validate_request(&tree)
+        .map_err(|message| DocumentSessionError::new("SESSION_OUTLINE_INVALID", message))?;
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::SetOutline { tree },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -15695,25 +15793,6 @@ mod tests {
         assert!(!shared.exists());
         assert!(!snapshot_path.parent().unwrap().exists());
         assert!(fs::read(&original).is_ok());
-    }
-
-    #[test]
-    fn unsupported_metadata_write_preserves_session_state() {
-        let documents = tempfile::tempdir().unwrap();
-        let original = documents.path().join("snapshot-source.pdf");
-        fs::copy(fixture_path("minimal.pdf"), &original).unwrap();
-        let store = DocumentSessionStore::initialize().unwrap();
-        let session_id = open_test_session(&store, &original);
-        let before = snapshot(&store.entry(&session_id).unwrap().state.lock());
-
-        let error =
-            reject_unsupported_session_write(&store, &session_id, 1, "metadata unsupported")
-                .unwrap_err();
-        assert_eq!(error.code, "UNSUPPORTED_PDFIUM_CAPABILITY");
-        let after = snapshot(&store.entry(&session_id).unwrap().state.lock());
-        assert_eq!(after.dirty, before.dirty);
-        assert_eq!(after.content_generation, before.content_generation);
-        assert_eq!(after.state_revision, before.state_revision);
     }
 
     #[tokio::test]

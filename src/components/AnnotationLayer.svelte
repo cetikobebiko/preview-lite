@@ -1,6 +1,6 @@
 <script>
   import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
-  import { getPageAnnotations, addAnnotation, deleteAnnotation } from "../pdfState.js";
+  import { getPageAnnotations, addAnnotation, addInkAnnotation, deleteAnnotation } from "../pdfState.js";
   import { requireAsyncPromptCoordinator } from "../services/asyncPrompt.svelte.js";
   import { isSignatureLossDeclined } from "../services/signatureLossGuard.js";
   import {
@@ -28,10 +28,23 @@
   } = $props();
 
   const NOTE_SIZE_PT = 24;
-  // Yalnız bu araçlar çizer; diğerleri (seçim, form tasarım araçları) olayları geçirir.
-  const DRAWING_TOOLS = new Set(["highlight", "underline", "text"]);
-  const drawing = $derived(DRAWING_TOOLS.has(activeTool));
+  // Araç → backend açıklama tipi. Yalnız bu araçlar çizer; diğerleri (seçim, form tasarım
+  // araçları) olayları geçirir.
+  const ANNOT_TYPES = {
+    highlight: "Highlight",
+    underline: "Underline",
+    strikeout: "StrikeOut",
+    squiggly: "Squiggly",
+    square: "Square",
+    circle: "Circle",
+    ink: "Ink",
+    text: "Text",
+  };
+  const drawing = $derived(Object.hasOwn(ANNOT_TYPES, activeTool));
   const MIN_DRAG_PX = 5;
+  // Mürekkep: bu kadar normalize mesafeden yakın noktalar atlanır; backend sınırı 4096 nokta.
+  const INK_MIN_STEP = 0.002;
+  const INK_MAX_POINTS = 4096;
 
   const asyncPrompt = requireAsyncPromptCoordinator();
 
@@ -39,6 +52,7 @@
   let isDrawing = $state(false);
   let startPoint = $state(null);
   let currentRect = $state(null);
+  let inkPoints = $state([]);
 
   let layerRef = $state();
 
@@ -85,18 +99,54 @@
     startPoint = point;
     isDrawing = true;
     currentRect = normalizedRectBetween(point, point);
+    inkPoints = activeTool === "ink" ? [point] : [];
+    layerRef.setPointerCapture?.(e.pointerId);
   }
 
   function handlePointerMove(e) {
     if (!isDrawing || !drawing) return;
 
     const point = localPoint(e);
-    if (point) currentRect = normalizedRectBetween(startPoint, point);
+    if (!point) return;
+    if (activeTool === "ink") {
+      const last = inkPoints[inkPoints.length - 1];
+      if (inkPoints.length < INK_MAX_POINTS && Math.hypot(point.x - last.x, point.y - last.y) >= INK_MIN_STEP) {
+        inkPoints = [...inkPoints, point];
+      }
+      const xs = inkPoints.map((p) => p.x);
+      const ys = inkPoints.map((p) => p.y);
+      currentRect = normalizedRectBetween(
+        { x: Math.min(...xs), y: Math.min(...ys) },
+        { x: Math.max(...xs), y: Math.max(...ys) },
+      );
+      return;
+    }
+    currentRect = normalizedRectBetween(startPoint, point);
+  }
+
+  async function finishInk() {
+    const strokes = [inkPoints.map(({ x, y }) => ({ x, y }))];
+    const rect = currentRect;
+    inkPoints = [];
+    currentRect = null;
+    if (strokes[0].length < 2 || !rect) return;
+    try {
+      const sessionSnapshot = await addInkAnnotation(sessionId, contentGeneration, pageIndex, { ...rect }, activeColor, strokes);
+      contentGeneration = sessionSnapshot.contentGeneration;
+      await loadAnnotations();
+      onsessionSnapshot?.(sessionSnapshot);
+    } catch (err) {
+      if (!isSignatureLossDeclined(err)) console.error("Açıklama kaydedilemedi", err);
+    }
   }
 
   async function handlePointerUp() {
     if (!isDrawing) return;
     isDrawing = false;
+    if (activeTool === "ink") {
+      await finishInk();
+      return;
+    }
 
     const isDrag =
       currentRect &&
@@ -104,11 +154,8 @@
       currentRect.height * layerRef.offsetHeight > MIN_DRAG_PX;
     if (isDrag) {
       const normalizedRect = { ...currentRect };
-      const annotType = activeTool === "highlight" ? "Highlight" 
-                      : activeTool === "underline" ? "Underline" 
-                      : activeTool === "text" ? "Text" 
-                      : "Ink";
-                      
+      const annotType = ANNOT_TYPES[activeTool];
+
       let contents = null;
       if (annotType === "Text") {
         contents = await asyncPrompt.request({
@@ -226,7 +273,11 @@
     </button>
   {/each}
 
-  {#if currentRect}
+  {#if activeTool === "ink" && inkPoints.length > 1}
+    <svg class="ink-preview" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points={inkPoints.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke={activeColor} stroke-width="2" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  {:else if currentRect && activeTool !== "ink"}
     <div 
       class="annot-preview {activeTool}"
       style="{percentStyle(currentRect)} --annot-color: {activeColor}"
@@ -301,5 +352,44 @@
     border: none;
     border-bottom: 2px solid var(--annot-color);
     opacity: 1.0;
+  }
+
+  /* PDFium draws these from their saved appearance; the overlay is only a hit target. */
+  .annot-item.strikeout,
+  .annot-item.squiggly,
+  .annot-item.square,
+  .annot-item.circle,
+  .annot-item.ink {
+    background: transparent;
+  }
+
+  .annot-preview.strikeout {
+    background: linear-gradient(transparent calc(50% - 1px), var(--annot-color) calc(50% - 1px), var(--annot-color) calc(50% + 1px), transparent calc(50% + 1px));
+    border: none;
+    opacity: 1.0;
+  }
+  .annot-preview.squiggly {
+    background: transparent;
+    border: none;
+    border-bottom: 2px dotted var(--annot-color);
+    opacity: 1.0;
+  }
+  .annot-preview.square,
+  .annot-preview.circle {
+    background: transparent;
+    border: 2px solid var(--annot-color);
+    opacity: 1.0;
+  }
+  .annot-preview.circle {
+    border-radius: 50%;
+  }
+
+  .ink-preview {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
   }
 </style>

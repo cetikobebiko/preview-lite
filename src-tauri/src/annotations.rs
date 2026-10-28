@@ -26,6 +26,20 @@ pub struct NormalizedPageRect {
     pub height: f32,
 }
 
+/// Görüntü uzayında normalize nokta ([`NormalizedPageRect`] ile aynı uzay); mürekkep
+/// (Ink) çizgileri bu noktaların dizileridir.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct NormalizedPoint {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// Tek mürekkep açıklamasında en fazla çizgi ve çizgi başına en fazla nokta.
+pub const MAX_INK_STROKES: usize = 64;
+pub const MAX_INK_STROKE_POINTS: usize = 4_096;
+/// Kare, daire ve mürekkep açıklamalarının çizgi kalınlığı (pt).
+const SHAPE_BORDER_WIDTH: f32 = 2.0;
+
 /// PDF user space dikdörtgeni (point): x = left, y = bottom. IPC'ye çıkmaz.
 #[derive(Debug, Clone)]
 pub(crate) struct RectData {
@@ -98,6 +112,12 @@ impl PageDisplayTransform {
         Ok(transform)
     }
 
+    /// Görüntü kökeninin user space karşılığı ve normalize görüntü eksenleri:
+    /// `(origin, x_axis, y_axis)`.
+    pub(crate) fn parts(&self) -> ([f64; 2], [f64; 2], [f64; 2]) {
+        (self.origin, self.x_axis, self.y_axis)
+    }
+
     fn determinant(&self) -> f64 {
         self.x_axis[0] * self.y_axis[1] - self.y_axis[0] * self.x_axis[1]
     }
@@ -116,6 +136,12 @@ impl PageDisplayTransform {
             (dx * self.y_axis[1] - dy * self.y_axis[0]) / determinant,
             (self.x_axis[0] * dy - self.x_axis[1] * dx) / determinant,
         ]
+    }
+
+    /// Görüntü uzayı noktasının user space karşılığı.
+    pub(crate) fn normalized_to_user_point(&self, point: &NormalizedPoint) -> [f32; 2] {
+        let [x, y] = self.display_to_user([f64::from(point.x), f64::from(point.y)]);
+        [x as f32, y as f32]
     }
 
     /// Görüntü uzayı dikdörtgeninin user space'teki eksen hizalı karşılığı.
@@ -347,14 +373,23 @@ fn text_markup_quad_points(bounds: &PdfRect) -> PdfQuadPoints {
     )
 }
 
-/// Kaydedilen dosyada açık `/AP /N` görünüm akışı taşıması gereken tipler.
+/// Kaydedilen dosyada açık `/AP /N` görünüm akışı taşıması gereken tipler (pdfium-render
+/// adlarıyla). Hepsinin akışını PDFium'un `CPDF_GenerateAP`'ı üretir.
 fn requires_generated_appearance(annotation_type: &str) -> bool {
-    matches!(annotation_type, "Highlight" | "Underline")
+    matches!(
+        annotation_type,
+        "Highlight" | "Underline" | "Strikeout" | "Squiggly" | "Square" | "Circle" | "Ink"
+    )
 }
 
 const FPDF_ANNOT_TEXT: FPDF_ANNOTATION_SUBTYPE = 1;
+const FPDF_ANNOT_SQUARE: FPDF_ANNOTATION_SUBTYPE = 5;
+const FPDF_ANNOT_CIRCLE: FPDF_ANNOTATION_SUBTYPE = 6;
 const FPDF_ANNOT_HIGHLIGHT: FPDF_ANNOTATION_SUBTYPE = 9;
 const FPDF_ANNOT_UNDERLINE: FPDF_ANNOTATION_SUBTYPE = 10;
+const FPDF_ANNOT_SQUIGGLY: FPDF_ANNOTATION_SUBTYPE = 11;
+const FPDF_ANNOT_STRIKEOUT: FPDF_ANNOTATION_SUBTYPE = 12;
+const FPDF_ANNOT_INK: FPDF_ANNOTATION_SUBTYPE = 15;
 const FPDF_ANNOT_FLAG_HIDDEN: c_int = 1 << 1;
 const COLORTYPE_COLOR: FPDFANNOT_COLORTYPE = 0;
 const COLORTYPE_INTERIOR_COLOR: FPDFANNOT_COLORTYPE = 1;
@@ -441,6 +476,38 @@ impl<'p> RawAnnotation<'p> {
         )
     }
 
+    fn set_border_width(&self, width: f32) -> Result<(), DocumentIoFailure> {
+        self.check(
+            self.bindings
+                .FPDFAnnot_SetBorder(self.handle, 0.0, 0.0, width),
+            "kenarlığı",
+        )
+    }
+
+    fn add_ink_stroke(&self, points: &[FS_POINTF]) -> Result<(), DocumentIoFailure> {
+        let index =
+            self.bindings
+                .FPDFAnnot_AddInkStroke(self.handle, points.as_ptr(), points.len() as _);
+        if index < 0 {
+            return Err(DocumentIoFailure::write("Mürekkep çizgisi eklenemedi"));
+        }
+        Ok(())
+    }
+
+    fn rect(&self) -> Result<[f32; 4], DocumentIoFailure> {
+        let mut rect = FS_RECTF {
+            left: 0.0,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        };
+        self.check(
+            self.bindings.FPDFAnnot_GetRect(self.handle, &mut rect),
+            "bounds okuması",
+        )?;
+        Ok([rect.left, rect.bottom, rect.right, rect.top])
+    }
+
     fn append_quad_points(&self, quad: &PdfQuadPoints) -> Result<(), DocumentIoFailure> {
         let raw = FS_QUADPOINTSF {
             x1: quad.x1.value,
@@ -464,6 +531,25 @@ impl Drop for RawAnnotation<'_> {
     fn drop(&mut self) {
         self.bindings.FPDFPage_CloseAnnot(self.handle);
     }
+}
+
+/// Mürekkep çizgilerinin sınır kutusu, çizgi kalınlığının yarısı kadar genişletilmiş.
+fn ink_bounds(strokes: &[Vec<FS_POINTF>], width: f32) -> PdfRect {
+    let points = strokes.iter().flatten();
+    let (mut left, mut bottom, mut right, mut top) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for point in points {
+        left = left.min(point.x);
+        bottom = bottom.min(point.y);
+        right = right.max(point.x);
+        top = top.max(point.y);
+    }
+    let pad = width / 2.0;
+    PdfRect::new(
+        PdfPoints::new(bottom - pad),
+        PdfPoints::new(left - pad),
+        PdfPoints::new(top + pad),
+        PdfPoints::new(right + pad),
+    )
 }
 
 /// pdfium-render'ın annotation tarihleriyle aynı biçim (UTC): `D:YYYYMMDDHHmmSSZ00'00'`.
@@ -626,10 +712,16 @@ fn annotation_display_color(annotation: &PdfPageAnnotation<'_>) -> PdfColor {
     annotation.fill_color().unwrap_or(FALLBACK)
 }
 
+/// İstekteki tip adının pdfium-render'ın okuduğu adı.
 fn expected_annotation_type(value: &str) -> Result<&'static str, DocumentIoFailure> {
     match value {
         "Highlight" => Ok("Highlight"),
         "Underline" => Ok("Underline"),
+        "StrikeOut" => Ok("Strikeout"),
+        "Squiggly" => Ok("Squiggly"),
+        "Square" => Ok("Square"),
+        "Circle" => Ok("Circle"),
+        "Ink" => Ok("Ink"),
         "Text" => Ok("Text"),
         _ => Err(DocumentIoFailure::preflight(format!(
             "Desteklenmeyen annotation tipi: {value}"
@@ -677,11 +769,83 @@ pub(crate) fn read_page_annotations(
     Ok(result)
 }
 
+/// Mürekkep çizgileri yalnız Ink'te ve orada zorunlu; noktalar [0, 1]² içinde.
+fn validate_ink_strokes(
+    annot_type: &str,
+    ink_strokes: Option<&[Vec<NormalizedPoint>]>,
+) -> Result<(), DocumentIoFailure> {
+    let Some(strokes) = ink_strokes else {
+        return if annot_type == "Ink" {
+            Err(DocumentIoFailure::preflight(
+                "Ink açıklaması çizgi gerektirir",
+            ))
+        } else {
+            Ok(())
+        };
+    };
+    if annot_type != "Ink" {
+        return Err(DocumentIoFailure::preflight(format!(
+            "{annot_type} açıklaması mürekkep çizgisi taşıyamaz"
+        )));
+    }
+    if strokes.is_empty() || strokes.len() > MAX_INK_STROKES {
+        return Err(DocumentIoFailure::preflight(format!(
+            "Ink açıklaması 1–{MAX_INK_STROKES} çizgi taşımalı"
+        )));
+    }
+    let within = |value: f32| {
+        value.is_finite()
+            && (-NORMALIZED_RECT_EPSILON..=1.0 + NORMALIZED_RECT_EPSILON).contains(&value)
+    };
+    for stroke in strokes {
+        if stroke.is_empty() || stroke.len() > MAX_INK_STROKE_POINTS {
+            return Err(DocumentIoFailure::preflight(format!(
+                "Mürekkep çizgisi 1–{MAX_INK_STROKE_POINTS} nokta taşımalı"
+            )));
+        }
+        if !stroke
+            .iter()
+            .all(|point| within(point.x) && within(point.y))
+        {
+            return Err(DocumentIoFailure::preflight(
+                "Mürekkep noktaları normalize görüntü uzayında [0, 1] aralığında olmalı",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn add_annotation_report(
     file_path: String,
     page_index: u32,
     annot_type: String,
     normalized_rect: NormalizedPageRect,
+    color: String,
+    contents: Option<String>,
+    password: Option<String>,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    add_annotation_with_ink_report(
+        file_path,
+        page_index,
+        annot_type,
+        normalized_rect,
+        None,
+        color,
+        contents,
+        password,
+    )
+}
+
+/// `normalized_rect` Ink'te yalnız istemcinin sınır kutusudur; `/Rect` çizgilerden ve kalınlıktan
+/// hesaplanır.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_annotation_with_ink_report(
+    file_path: String,
+    page_index: u32,
+    annot_type: String,
+    normalized_rect: NormalizedPageRect,
+    ink_strokes: Option<Vec<Vec<NormalizedPoint>>>,
     color: String,
     contents: Option<String>,
     password: Option<String>,
@@ -698,14 +862,16 @@ pub(crate) fn add_annotation_report(
             )
         })?
         .to_string();
-    validate_normalized_rect(&normalized_rect).map_err(|error| {
-        DocumentIoError::new(
-            "add_annotation",
-            error.stage,
-            CommitState::Prepared,
-            error.detail,
-        )
-    })?;
+    validate_normalized_rect(&normalized_rect)
+        .and_then(|()| validate_ink_strokes(&annot_type, ink_strokes.as_deref()))
+        .map_err(|error| {
+            DocumentIoError::new(
+                "add_annotation",
+                error.stage,
+                CommitState::Prepared,
+                error.detail,
+            )
+        })?;
 
     atomic_write_pdf(
         "add_annotation",
@@ -715,7 +881,7 @@ pub(crate) fn add_annotation_report(
             // Okumalar (görüntü dönüşümü, önceki parmak izleri) pdfium-render ile aynı dosyanın ayrı
             // bir açılışında yapılır; düzenleme ve artımlı kayıt ham PDFium ile (`RawDocument`),
             // çünkü pdfium-render 0.8.37 `PdfDocument`'in handle'ını açmaz.
-            let (page_count, before, bounds) = {
+            let (page_count, before, bounds, strokes) = {
                 let reader = open_pdfium_doc(
                     pdfium,
                     source.to_string_lossy().as_ref(),
@@ -732,11 +898,29 @@ pub(crate) fn add_annotation_report(
                     PageDisplayTransform::for_page(&page).map_err(DocumentIoFailure::preflight)?;
                 let bounds =
                     pdf_rect_from_rect_data(&display.normalized_to_user_rect(&normalized_rect));
-                (page_count, before, bounds)
+                let strokes: Vec<Vec<FS_POINTF>> = ink_strokes
+                    .iter()
+                    .flatten()
+                    .map(|stroke| {
+                        stroke
+                            .iter()
+                            .map(|point| {
+                                let [x, y] = display.normalized_to_user_point(point);
+                                FS_POINTF { x, y }
+                            })
+                            .collect()
+                    })
+                    .collect();
+                (page_count, before, bounds, strokes)
             };
             let (subtype, color_type) = match annot_type.as_str() {
                 "Highlight" => (FPDF_ANNOT_HIGHLIGHT, COLORTYPE_COLOR),
                 "Underline" => (FPDF_ANNOT_UNDERLINE, COLORTYPE_COLOR),
+                "StrikeOut" => (FPDF_ANNOT_STRIKEOUT, COLORTYPE_COLOR),
+                "Squiggly" => (FPDF_ANNOT_SQUIGGLY, COLORTYPE_COLOR),
+                "Square" => (FPDF_ANNOT_SQUARE, COLORTYPE_COLOR),
+                "Circle" => (FPDF_ANNOT_CIRCLE, COLORTYPE_COLOR),
+                "Ink" => (FPDF_ANNOT_INK, COLORTYPE_COLOR),
                 // pdfium-render'ın `set_fill_color`'ı gibi `/IC`.
                 "Text" => (FPDF_ANNOT_TEXT, COLORTYPE_INTERIOR_COLOR),
                 _ => {
@@ -747,7 +931,7 @@ pub(crate) fn add_annotation_report(
             };
             let bindings = pdfium.bindings();
             let document = RawDocument::open_for_mutation(bindings, &source, password.as_deref())?;
-            {
+            let saved_bounds = {
                 let page = RawPage::load(&document, page_index)?;
                 {
                     let annotation = RawAnnotation::create(&page, subtype, &annot_type)?;
@@ -759,29 +943,43 @@ pub(crate) fn add_annotation_report(
                     // Text markup rengi spec gereği `/C`'dir; `/IC` bu tiplerde tanımsızdır.
                     // FPDFAnnot_SetColor AP varken başarısız olduğundan AP'den önce ayarlanır.
                     annotation.set_color(color_type, hex_to_rgb(&color))?;
-                    annotation.set_rect(&bounds)?;
-                    if subtype != FPDF_ANNOT_TEXT {
-                        annotation.append_quad_points(&text_markup_quad_points(&bounds))?;
+                    match subtype {
+                        FPDF_ANNOT_TEXT => annotation.set_rect(&bounds)?,
+                        FPDF_ANNOT_SQUARE | FPDF_ANNOT_CIRCLE => {
+                            annotation.set_rect(&bounds)?;
+                            annotation.set_border_width(SHAPE_BORDER_WIDTH)?;
+                        }
+                        FPDF_ANNOT_INK => {
+                            annotation.set_rect(&ink_bounds(&strokes, SHAPE_BORDER_WIDTH))?;
+                            annotation.set_border_width(SHAPE_BORDER_WIDTH)?;
+                            for stroke in &strokes {
+                                annotation.add_ink_stroke(stroke)?;
+                            }
+                        }
+                        _ => {
+                            annotation.set_rect(&bounds)?;
+                            annotation.append_quad_points(&text_markup_quad_points(&bounds))?;
+                        }
                     }
                     if let Some(value) = contents.as_deref() {
                         annotation.set_string("Contents", value)?;
                     }
                     annotation.set_string("M", &pdf_date_utc(SystemTime::now()))?;
                 }
-                if requires_generated_appearance(&annot_type) {
+                if requires_generated_appearance(&expected_type) {
                     generate_last_annotation_appearance(&page)?;
                 }
-            }
+                // PDFium's appearance generator may widen `/Rect` (by the border, for shapes and
+                // ink); the saved annotation is checked against what PDFium left.
+                let count = bindings.FPDFPage_GetAnnotCount(page.handle);
+                let rect = RawAnnotation::get(&page, count - 1)?.rect()?;
+                rect
+            };
             let mode = save_mutation(&document, &source, temp)?;
             tracing::info!(operation = "add_annotation", write_mode = ?mode, "Annotation eklendi");
             let expected = AnnotationFingerprint {
                 annotation_type: expected_type.clone(),
-                bounds: [
-                    bounds.left().value,
-                    bounds.bottom().value,
-                    bounds.right().value,
-                    bounds.top().value,
-                ],
+                bounds: saved_bounds,
                 contents: contents.clone().filter(|contents| !contents.is_empty()),
             };
             Ok((page_count, before.len(), expected))
@@ -1792,6 +1990,111 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn markup_shape_and_ink_types_are_saved_with_pdfium_appearances() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("annotations.pdf");
+        fs::copy(fixture(), &path).unwrap();
+        let rect = normalized(0.2, 0.3, 0.3, 0.05);
+        for (annot_type, read_as) in [
+            ("StrikeOut", "Strikeout"),
+            ("Squiggly", "Squiggly"),
+            ("Square", "Square"),
+            ("Circle", "Circle"),
+        ] {
+            // The validation step of `atomic_write_pdf` already requires a non-empty `/AP /N`.
+            add_annotation_report(
+                path.to_string_lossy().to_string(),
+                0,
+                annot_type.to_string(),
+                rect.clone(),
+                "#CC0000".to_string(),
+                None,
+                None,
+            )
+            .unwrap_or_else(|error| panic!("{annot_type}: {error}"));
+            let added = read_annotations(&path).pop().unwrap();
+            assert_eq!(added.annot_type, read_as);
+            assert_eq!(added.color, "#CC0000", "{annot_type}");
+        }
+
+        let stroke = vec![
+            NormalizedPoint { x: 0.1, y: 0.6 },
+            NormalizedPoint { x: 0.2, y: 0.65 },
+            NormalizedPoint { x: 0.3, y: 0.6 },
+        ];
+        add_annotation_with_ink_report(
+            path.to_string_lossy().to_string(),
+            0,
+            "Ink".to_string(),
+            normalized(0.1, 0.6, 0.2, 0.05),
+            Some(vec![
+                stroke.clone(),
+                vec![
+                    NormalizedPoint { x: 0.4, y: 0.7 },
+                    NormalizedPoint { x: 0.5, y: 0.75 },
+                ],
+            ]),
+            "#0033CC".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+        let ink = read_annotations(&path).pop().unwrap();
+        assert_eq!(ink.annot_type, "Ink");
+        // `/Rect` covers both strokes and the line width.
+        let bounds = ink.normalized_rect.unwrap();
+        assert!(
+            bounds.x < 0.1 && bounds.x + bounds.width > 0.5,
+            "{bounds:?}"
+        );
+        assert!(
+            bounds.y < 0.6 && bounds.y + bounds.height > 0.75,
+            "{bounds:?}"
+        );
+    }
+
+    #[test]
+    fn ink_strokes_are_required_for_ink_and_refused_elsewhere() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("annotations.pdf");
+        fs::copy(fixture(), &path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let point = NormalizedPoint { x: 0.5, y: 0.5 };
+        for (annot_type, strokes) in [
+            ("Ink", None),
+            ("Ink", Some(Vec::new())),
+            ("Ink", Some(vec![Vec::new()])),
+            ("Ink", Some(vec![vec![NormalizedPoint { x: 1.5, y: 0.5 }]])),
+            (
+                "Ink",
+                Some(vec![vec![NormalizedPoint {
+                    x: f32::NAN,
+                    y: 0.5,
+                }]]),
+            ),
+            ("Square", Some(vec![vec![point]])),
+        ] {
+            let error = add_annotation_with_ink_report(
+                path.to_string_lossy().to_string(),
+                0,
+                annot_type.to_string(),
+                normalized(0.1, 0.1, 0.2, 0.2),
+                strokes.clone(),
+                "#000000".to_string(),
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.stage,
+                DocumentIoStage::Preflight,
+                "{annot_type} {strokes:?}"
+            );
+        }
+        assert_eq!(fs::read(&path).unwrap(), original);
     }
 
     #[test]

@@ -308,12 +308,11 @@ describe("validated backend client", () => {
           title: "Title",
           author: "Author",
           subject: "Subject",
-          keywords: "keywords",
         },
       }),
     ).rejects.toMatchObject({
       command: "update_session_metadata",
-      message: expect.stringContaining("metadata.creator"),
+      message: expect.stringContaining("metadata.keywords"),
     });
 
     await expect(
@@ -325,7 +324,6 @@ describe("validated backend client", () => {
           author: "Author",
           subject: "Subject",
           keywords: "keywords",
-          creator: "Creator",
           unsupported: true,
         },
       }),

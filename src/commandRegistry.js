@@ -3,6 +3,9 @@ import { getFeature, getFeaturePresentation } from "./featureRegistry.js";
 
 export const COMMANDS = Object.freeze([
   { id: "open-metadata", title: "Belge Meta Verilerini Düzenle (Title, Author, Keywords)", icon: "🏷️", category: "Güvenlik & Meta", featureId: null },
+  { id: "open-page-labels", title: "Sayfa Etiketlerini Düzenle (i, ii, 1, 2…)", icon: "🔢", category: "Düzenleme", featureId: "page_manipulation" },
+  { id: "open-outline-editor", title: "Yer İmlerini Düzenle", icon: "🔖", category: "Düzenleme", featureId: "page_manipulation" },
+  { id: "open-page-marks", title: "Üstbilgi / Altbilgi, Bates, Filigran ve Arka Plan", icon: "🖋️", category: "Düzenleme", featureId: "page_manipulation" },
   { id: "export-page-image", title: "Aktif Sayfayı Yüksek Çözünürlüklü SVG / Görsel Olarak Aktar", icon: "🎨", category: "Dışa Aktar", featureId: null },
   { id: "open-bionic", title: "Biyonik Okuma Katmanı (Bionic Reading)", icon: "🧠", category: "Okuma Modları", featureId: null },
   { id: "toggle-ruler", title: "Odak Cetvelini Aç / Gizle (Line Focus)", icon: "📏", category: "Okuma Modları", featureId: null },

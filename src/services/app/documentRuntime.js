@@ -201,6 +201,13 @@ export function createDocumentRuntime({
       applyPageScopedMutation(snapshot.id, { mapPageIndex });
     }
     if (!applyBackendSessionSnapshot(snapshot, { activateRender: true })) return;
+    // Metadata edits, and undo/redo across them, change what the metadata dialog shows.
+    void getSessionPdfMetadata(snapshot.id, snapshot.contentGeneration)
+      .then((metadata) => {
+        if (documentSession.activeSessionId === snapshot.id
+          && documentSession.contentGeneration === snapshot.contentGeneration) viewer.pdfMetadata = metadata;
+      })
+      .catch((error) => console.warn("PDF metadata yenilenemedi:", error));
     const pageCount = await getSessionPageCount(snapshot.id, snapshot.contentGeneration);
     if (documentSession.activeSessionId !== snapshot.id
       || documentSession.contentGeneration !== snapshot.contentGeneration) return;

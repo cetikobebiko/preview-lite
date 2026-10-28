@@ -10,6 +10,7 @@
     currentPageIndex = 0,
     onJump = () => {},
     onJumpPhysical = () => {},
+    onEditOutline = null,
   } = $props();
 
   let activeTab = $state('thumbnails');
@@ -73,6 +74,9 @@
   <div class="min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-4">
     {#if activeTab === 'outline'}
       <div class="flex flex-col gap-0.5">
+        {#if onEditOutline}
+          <button type="button" class="mb-1 self-end rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" onclick={() => onEditOutline()}>Düzenle</button>
+        {/if}
         {#if loadingOutline}
           <div class="mt-6 text-center text-xs text-muted-foreground">Yükleniyor…</div>
         {:else if outlineNodes.length === 0}
