@@ -420,14 +420,14 @@ impl<'a> TreeReader<'a> {
         if let Ok(nums) = dict.get(b"Nums") {
             if let Ok(nums) = self.resolve(nums)?.as_array() {
                 self.work(nums.len().div_ceil(2))?;
-                for pair in nums.chunks_exact(2) {
-                    let Ok(start) = self.resolve(&pair[0])?.as_i64() else {
+                for [start, spec] in nums.as_chunks::<2>().0 {
+                    let Ok(start) = self.resolve(start)?.as_i64() else {
                         continue;
                     };
                     let Ok(start_page) = u32::try_from(start) else {
                         continue;
                     };
-                    let Ok(spec) = self.resolve(&pair[1])?.as_dict() else {
+                    let Ok(spec) = self.resolve(spec)?.as_dict() else {
                         continue;
                     };
                     entries.push(self.range(start_page, spec)?);
