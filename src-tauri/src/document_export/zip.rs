@@ -131,7 +131,10 @@ mod tests {
         assert_eq!(method, 8);
         assert!(size < text.len() / 10, "{size}");
         let body = &b[30 + name_len..30 + name_len + size];
-        assert_eq!(miniz_oxide::inflate::decompress_to_vec(body).unwrap(), text.as_bytes());
+        assert_eq!(
+            miniz_oxide::inflate::decompress_to_vec(body).unwrap(),
+            text.as_bytes()
+        );
         // The tiny PNG stays stored.
         let second = 30 + name_len + size;
         assert_eq!(u16::from_le_bytes([b[second + 8], b[second + 9]]), 0);

@@ -2299,7 +2299,7 @@ mod tests {
     #[test]
     fn import_pages_recipe_never_carries_the_user_path_to_the_worker() {
         let recipe = MutationRecipe::ImportPages {
-            source_path: Some(PathBuf::from("/Users/someone/secret/source.pdf")),
+            source_path: Some(PathBuf::from("chosen-by-user/secret/source.pdf")),
             input_name: Some("import-input.pdf".to_string()),
             source_pages: vec![0],
             at_index: 1,
