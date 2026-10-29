@@ -485,6 +485,15 @@ export const CONTRACTS = Object.freeze({
     // SESSION_JOB_OUTPUT_CONFLICT and `conflictingNames`; nothing is written.
     overwrite: booleanType,
   }),
+  exportSessionEmbeddedImages: command("export_session_embedded_images", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    // Empty: every page.
+    pages: arrayOf(u32Type),
+    outputDir: stringType,
+    overwrite: booleanType,
+  }),
   exportSessionTextContent: command("export_session_text_content", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
@@ -816,6 +825,15 @@ export const CONTRACTS = Object.freeze({
     rotation: i32Type,
     flipH: booleanType,
     flipV: booleanType,
+  }),
+  createPdfFromImages: command("create_pdf_from_images", {
+    sourcePaths: arrayOf(stringType),
+    targetPath: stringType,
+    // Mirrors `images_to_pdf::ImagesToPdfOptions`.
+    options: objectOf({
+      pageSize: Object.freeze({ type: "string", enum: Object.freeze(["image", "a4", "letter"]) }),
+      margin: Object.freeze({ type: "number", min: 0, max: 144 }),
+    }),
   }),
   mergePdfs: command("merge_pdfs", {
     filePaths: arrayOf(stringType),

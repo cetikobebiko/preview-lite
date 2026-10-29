@@ -16,10 +16,12 @@ pub mod document_io;
 pub mod document_security;
 pub mod document_session;
 pub mod document_structure;
+pub mod embedded_images;
 pub mod error;
 pub mod export;
 pub mod external_validation;
 pub mod forms;
+pub mod images_to_pdf;
 pub(crate) mod incremental_save;
 pub mod job_worker;
 #[doc(hidden)]
@@ -481,10 +483,10 @@ const IMAGE_FRAME_REQUEST_ID: &str = "read_image_file";
 
 /// User images share the PDF render bounds: at most 16384 px per side and
 /// 256 MiB for both the decoder buffer and the RGBA output.
-const MAX_IMAGE_DIMENSION: u32 = pdf_engine::render_service::MAX_PIXEL_DIMENSION;
-const MAX_IMAGE_BYTES: u64 = pdf_engine::render_service::MAX_RENDER_BYTES as u64;
+pub(crate) const MAX_IMAGE_DIMENSION: u32 = pdf_engine::render_service::MAX_PIXEL_DIMENSION;
+pub(crate) const MAX_IMAGE_BYTES: u64 = pdf_engine::render_service::MAX_RENDER_BYTES as u64;
 
-fn image_too_large_error() -> String {
+pub(crate) fn image_too_large_error() -> String {
     format!(
         "Görsel çok büyük: en fazla {0}×{0} piksel ve {1} MiB çözümlenmiş veri desteklenir.",
         MAX_IMAGE_DIMENSION,
@@ -625,6 +627,26 @@ fn write_image_target<E: std::fmt::Display>(
 ) -> Result<(), String> {
     document_io::write_atomically(Path::new(target_path), write)
         .map_err(|error| format!("{}: {}", error_prefix, error))
+}
+
+/// Seçilen görsellerden, her biri bir sayfa olan yeni bir PDF yazar.
+#[tauri::command]
+async fn create_pdf_from_images(
+    source_paths: Vec<String>,
+    target_path: String,
+    options: images_to_pdf::ImagesToPdfOptions,
+    store: tauri::State<'_, document_session::DocumentSessionStore>,
+) -> Result<(), String> {
+    document_session::reject_private_target(Path::new(&target_path), &store.temp_root)
+        .map_err(|error| error.to_string())?;
+    images_to_pdf::validate_request(&source_paths, &options)?;
+    run_image_job(move || {
+        let bytes = images_to_pdf::build_pdf(&source_paths, &options)?;
+        write_image_target(&target_path, "PDF olarak kaydetme hatası", |file| {
+            std::io::Write::write_all(file, &bytes)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1452,6 +1474,7 @@ pub fn run() {
             document_session::get_session_page_labels,
             document_session::save_session_security_copy,
             document_session::import_session_pages,
+            document_session::export_session_embedded_images,
             document_session::save_document_session,
             document_session::save_document_session_as,
             document_session::begin_session_transition,
@@ -1471,6 +1494,7 @@ pub fn run() {
             trigger_continuity_camera_scan,
             read_image_file,
             convert_and_save_image,
+            create_pdf_from_images,
             tts::speak_text,
             tts::stop_speaking,
             document_session::merge_session_pdfs,

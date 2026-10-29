@@ -8662,6 +8662,77 @@ pub async fn export_session_pages_as_images(
         .await
 }
 
+/// Seçili sayfalardaki (boşsa tümü) gömülü görselleri `output_dir`'e PNG olarak yazar.
+/// Adlar görsellerin sayısı bilinmeden planlanamaz; worker'ın ürettiği adlardan türetilir.
+#[tauri::command]
+pub async fn export_session_embedded_images(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    pages: Vec<u32>,
+    output_dir: String,
+    overwrite: bool,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<Vec<String>>, DocumentSessionError> {
+    reject_private_target(Path::new(&output_dir), &store.temp_root)?;
+    let stem = session_output_name_stem(&store, &session_id).await;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let output_dir = PathBuf::from(output_dir);
+                let result = crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::ExtractEmbeddedImages { pages },
+                    Duration::from_secs(300),
+                )?;
+                let crate::job_worker::JobResult::Files(files) = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Görsel çıkarma worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                if files.is_empty() {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_EMBEDDED_IMAGES_NONE",
+                        "Seçilen sayfalarda gömülü görsel bulunamadı",
+                    ));
+                }
+                let sources = files
+                    .iter()
+                    .map(|source| crate::job_worker::validate_output_file(&context, source))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let planned = sources
+                    .iter()
+                    .map(|source| {
+                        let worker_name = source
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        crate::embedded_images::target_file_name(&stem, &worker_name)
+                            .map(|target_name| crate::output_names::PlannedOutput {
+                                worker_name,
+                                target_name,
+                            })
+                            .ok_or_else(|| {
+                                SessionJobOperationError::failed_with_code(
+                                    "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                                    "Görsel çıkarma worker'ı beklenmeyen dosya adı döndürdü",
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                preflight_job_output_set(&output_dir, &planned, overwrite)?;
+                accept_job_output_set(&context, sources, &planned, &output_dir, overwrite)
+            },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn split_session_pdf(
     job_id: String,
@@ -10216,6 +10287,7 @@ pub async fn author_session_form_fields(
 /// varsa o PDF'in sayfalarını ekler. `replace_count` > 0 ise `at_index`'ten başlayan o kadar
 /// sayfa eklenenlerle değiştirilir. `source_pages` 0 tabanlıdır; boşsa kaynağın tümü.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_session_pages(
     session_id: String,
     expected_content_generation: u64,

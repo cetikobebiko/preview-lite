@@ -11,6 +11,7 @@ export * from "./session.js";
 
 export {
   convertAndSaveImage,
+  createPdfFromImages,
   readImageFile,
 } from "./document.js";
 

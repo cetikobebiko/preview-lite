@@ -19,3 +19,7 @@ export const convertAndSaveImage = (
     flipH,
     flipV,
   });
+
+// One page per image; `options` is `{ pageSize: "image" | "a4" | "letter", margin }` (points).
+export const createPdfFromImages = (sourcePaths, targetPath, options) =>
+  callBackend("createPdfFromImages", { sourcePaths, targetPath, options });

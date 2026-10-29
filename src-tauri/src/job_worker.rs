@@ -164,6 +164,10 @@ pub enum JobCommand {
     },
     /// Read-only: the snapshot's page label ranges (`/PageLabels`), read with lopdf.
     InspectPageLabels,
+    /// Writes the distinct images on `pages` (empty: all) as PNG files; see `embedded_images`.
+    ExtractEmbeddedImages {
+        pages: Vec<u32>,
+    },
     /// Writes a password-protected or unprotected copy of the snapshot; see `document_security`.
     SecurityCopy {
         op: crate::document_security::SecurityOp,
@@ -729,6 +733,26 @@ fn execute_command(
                         JobFailure::new("SESSION_PAGE_LABELS_UNREADABLE", message)
                     })?;
             Ok(JobResult::PageLabels(ranges))
+        }
+        JobCommand::ExtractEmbeddedImages { pages } => {
+            if pages.len() > MAX_JOB_PAGES {
+                return Err(job_failed(
+                    "SESSION_JOB_INPUT_LIMIT_EXCEEDED",
+                    "Görsel çıkarma sayfa limiti aşıldı",
+                ));
+            }
+            let output_dir = job_dir.join("worker-output-embedded-images");
+            fs::create_dir(&output_dir).map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_OUTPUT_WRITE_FAILED",
+                    format!("Görsel çıkarma geçici dizini oluşturulamadı: {error}"),
+                )
+            })?;
+            let files = with_document(snapshot_path, credential, |document| {
+                crate::embedded_images::extract_images(document, &pages, &output_dir)
+                    .map_err(|message| job_failed("SESSION_EMBEDDED_IMAGES_FAILED", message))
+            })?;
+            Ok(JobResult::Files(files))
         }
         JobCommand::SecurityCopy { op, output_name } => {
             let output_path = checked_output_path(job_dir, &output_name)?;

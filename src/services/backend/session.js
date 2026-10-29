@@ -68,6 +68,25 @@ export const exportSessionPagesAsImages = (
     }),
   ).promise;
 
+// Writes each distinct embedded image on `pages` (empty: all) as PNG into `outputDir`.
+export const exportSessionEmbeddedImages = (
+  sessionId,
+  expectedContentGeneration,
+  pages,
+  outputDir,
+  overwrite = false,
+) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("exportSessionEmbeddedImages", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      pages,
+      outputDir,
+      overwrite,
+    }),
+  ).promise;
+
 export const exportSessionTextContent = (
   sessionId,
   expectedContentGeneration,
