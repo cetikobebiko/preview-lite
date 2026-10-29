@@ -670,6 +670,17 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     pageIndices: arrayOf(u32Type),
   }),
+  importSessionPages: command(
+    "import_session_pages",
+    {
+      sessionId: renderIdentifierType,
+      expectedContentGeneration: safeIntegerType,
+      sourcePages: arrayOf(u32Type),
+      atIndex: u32Type,
+      replaceCount: u32Type,
+    },
+    { sourcePath: nullable(stringType) },
+  ),
   reorderSessionPages: command("reorder_session_pages", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,

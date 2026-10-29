@@ -249,6 +249,25 @@ export const undoSessionMutation = (sessionId, expectedContentGeneration) =>
 export const redoSessionMutation = (sessionId, expectedContentGeneration) =>
   callBackend("redoSessionMutation", { sessionId, expectedContentGeneration });
 
+// `sourcePath` null duplicates the document's own `sourcePages`; otherwise copies that PDF's
+// pages (`sourcePages` empty = all). `replaceCount` pages from `atIndex` on are replaced.
+export const importSessionPages = (
+  sessionId,
+  expectedContentGeneration,
+  sourcePath,
+  sourcePages,
+  atIndex,
+  replaceCount = 0,
+) =>
+  callBackend("importSessionPages", {
+    sessionId,
+    expectedContentGeneration,
+    sourcePath,
+    sourcePages,
+    atIndex,
+    replaceCount,
+  });
+
 export const deleteSessionPages = (
   sessionId,
   expectedContentGeneration,

@@ -1451,6 +1451,7 @@ pub fn run() {
             document_session::apply_session_page_marks,
             document_session::get_session_page_labels,
             document_session::save_session_security_copy,
+            document_session::import_session_pages,
             document_session::save_document_session,
             document_session::save_document_session_as,
             document_session::begin_session_transition,

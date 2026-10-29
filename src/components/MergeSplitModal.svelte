@@ -14,11 +14,13 @@
   import { exportErrorMessage } from "../services/app/exportErrorMessage.js";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { parsePageRanges, toPhysicalRanges } from "../utils/pageRanges.js";
+  import { bookmarkRangesText, everyNPagesRangesText } from "../services/splitRanges.js";
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
 
   // pageOrder is the display order (viewer.pageOrder); typed numbers are display positions.
-  let { currentFilePath = "", maxPages = 0, pageOrder = null, sessionId = "", contentGeneration = 0, onclose, onsuccess } = $props();
+  // outline: top-level bookmarks (viewer.outlineList) for splitting at bookmarks.
+  let { currentFilePath = "", maxPages = 0, pageOrder = null, outline = [], sessionId = "", contentGeneration = 0, onclose, onsuccess } = $props();
 
   const featureContext = getRuntimeFeatureContext();
   const featurePresentation = getFeaturePresentation("page_manipulation", featureContext);
@@ -31,6 +33,8 @@
   
   // Split state
   let splitRangesText = $state("1-1");
+  let splitEvery = $state(1);
+  const bookmarkRanges = $derived(bookmarkRangesText(outline, maxPages, pageOrder));
 
   let errorMsg = $state("");
 
@@ -184,6 +188,12 @@
       <div class="grid gap-1.5">
         <Label for="split-ranges-input" class="text-xs text-muted-foreground">Bölünecek Aralıklar (Örn: 1-3, 5, 8-10)</Label>
         <Input id="split-ranges-input" type="text" bind:value={splitRangesText} placeholder="1-5, 8, 11-13" />
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <span class="text-muted-foreground">Aralıkları doldur:</span>
+        <Input class="h-8 w-16" type="number" min="1" max={maxPages} aria-label="Parça başına sayfa" bind:value={splitEvery} />
+        <Button variant="outline" size="sm" onclick={() => (splitRangesText = everyNPagesRangesText(maxPages, Number(splitEvery)) || splitRangesText)}>Her N sayfada</Button>
+        <Button variant="outline" size="sm" onclick={() => (splitRangesText = bookmarkRanges)} disabled={!bookmarkRanges} title={bookmarkRanges ? "" : "Belgede sayfaya giden üst düzey yer imi yok"}>Üst düzey yer imlerine göre</Button>
       </div>
       <p class="text-xs text-muted-foreground">Yukarıdaki her bir aralık için seçtiğiniz klasörde belge adı ve sayfa aralığıyla adlandırılan ayrı bir PDF oluşturulacaktır (ör. rapor_sayfa_1-3.pdf).</p>
     {/if}

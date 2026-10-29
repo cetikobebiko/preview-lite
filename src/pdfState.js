@@ -32,6 +32,13 @@ export async function deletePages(sessionId, generation, pageIndices) {
   );
 }
 
+/** Duplicate pages (`sourcePath` null) or insert/replace with another PDF's pages. */
+export async function importPages(sessionId, generation, { sourcePath = null, sourcePages = [], atIndex, replaceCount = 0 }) {
+  const label = replaceCount > 0 ? "Sayfa değiştirme" : sourcePath ? "Dosyadan sayfa ekleme" : "Sayfa çoğaltma";
+  await ensureSignedIncrementalEditAccepted(sessionId, generation, label);
+  return await sessionBackend.importSessionPages(sessionId, generation, sourcePath, sourcePages, atIndex, replaceCount);
+}
+
 export async function reorderPages(sessionId, generation, newOrder) {
   await ensureSignedIncrementalEditAccepted(sessionId, generation, "Sayfa sıralaması");
   return await sessionBackend.reorderSessionPages(

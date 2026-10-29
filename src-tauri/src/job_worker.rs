@@ -76,6 +76,22 @@ pub enum MutationRecipe {
     AuthorFormFields {
         ops: Vec<crate::forms::author::FormAuthorOp>,
     },
+    /// Sayfaları aynı belgeden (çoğaltma) ya da başka bir PDF'ten kopyalar; `replace_count` > 0
+    /// ise eklenenlerin arkasındaki o kadar sayfa silinir. Bkz. `manipulation::import_pages_report`.
+    ImportPages {
+        /// Kaynak PDF'in yolu. Hiçbir zaman worker'a gönderilmez: komut tarafında kullanıcının
+        /// seçtiği dosyadır ve motor onu iş dizinine kopyalayıp `input_name`'i doldurur; worker
+        /// tarafında `input_name`'in iş dizinindeki yoludur. `input_name` yoksa kaynak belgenin
+        /// kendisidir.
+        #[serde(skip)]
+        source_path: Option<PathBuf>,
+        #[serde(default)]
+        input_name: Option<String>,
+        /// Kaynakta 0 tabanlı sayfalar; boşsa tümü.
+        source_pages: Vec<u32>,
+        at_index: u32,
+        replace_count: u32,
+    },
     /// `/Info` (ve varsa XMP) meta verisini yazar; bkz. `document_structure::metadata`.
     SetMetadata {
         metadata: crate::document_structure::metadata::DocumentMetadataEdit,
@@ -108,6 +124,19 @@ impl MutationRecipe {
             Self::DeleteAnnotation { .. } => "delete_annotation",
             Self::FillFormFields { .. } => "fill_form_fields",
             Self::AuthorFormFields { .. } => "author_form_fields",
+            Self::ImportPages {
+                input_name,
+                source_path,
+                replace_count,
+                ..
+            } => match (
+                input_name.is_some() || source_path.is_some(),
+                *replace_count > 0,
+            ) {
+                (_, true) => "replace_pages",
+                (true, false) => "insert_pages",
+                (false, false) => "duplicate_pages",
+            },
             Self::SetMetadata { .. } => "set_document_metadata",
             Self::SetPageLabels { .. } => "set_page_labels",
             Self::SetOutline { .. } => "set_outline",
@@ -637,6 +666,22 @@ fn execute_command(
             output_name,
         } => {
             let output_path = checked_output_path(job_dir, &output_name)?;
+            let recipe = match recipe {
+                MutationRecipe::ImportPages {
+                    input_name: Some(name),
+                    source_pages,
+                    at_index,
+                    replace_count,
+                    ..
+                } => MutationRecipe::ImportPages {
+                    source_path: Some(checked_existing_output_path(job_dir, &name)?),
+                    input_name: Some(name),
+                    source_pages,
+                    at_index,
+                    replace_count,
+                },
+                recipe => recipe,
+            };
             execute_mutation(snapshot_path, credential, &output_path, recipe)?;
             Ok(JobResult::File(output_path))
         }
@@ -1600,6 +1645,23 @@ fn execute_mutation(
             copy_mutation_input(snapshot_path, output_path)?;
             crate::forms::author::author_form_fields_report(output, ops, password)
         }
+        MutationRecipe::ImportPages {
+            source_path,
+            source_pages,
+            at_index,
+            replace_count,
+            ..
+        } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::manipulation::import_pages_report(
+                output,
+                source_path,
+                source_pages,
+                at_index,
+                replace_count,
+                password,
+            )
+        }
         MutationRecipe::SetMetadata { metadata } => {
             copy_mutation_input(snapshot_path, output_path)?;
             crate::document_structure::metadata::set_metadata_report(output, metadata, password)
@@ -2169,6 +2231,30 @@ fn job_failed(code: impl Into<String>, message: impl Into<String>) -> JobFailure
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_pages_recipe_never_carries_the_user_path_to_the_worker() {
+        let recipe = MutationRecipe::ImportPages {
+            source_path: Some(PathBuf::from("/Users/someone/secret/source.pdf")),
+            input_name: Some("import-input.pdf".to_string()),
+            source_pages: vec![0],
+            at_index: 1,
+            replace_count: 0,
+        };
+        let wire = serde_json::to_string(&recipe).unwrap();
+        assert!(!wire.contains("secret"), "{wire}");
+        let MutationRecipe::ImportPages {
+            source_path,
+            input_name,
+            ..
+        } = serde_json::from_str(&wire).unwrap()
+        else {
+            panic!("ImportPages round-trip");
+        };
+        assert_eq!(source_path, None);
+        assert_eq!(input_name.as_deref(), Some("import-input.pdf"));
+        assert_eq!(recipe.operation_name(), "insert_pages");
+    }
 
     #[test]
     fn scanned_page_heuristic_matches_previous_per_page_threshold() {

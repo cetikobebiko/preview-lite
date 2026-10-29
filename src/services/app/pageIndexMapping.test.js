@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pageMappingAfterDelete, pageMappingAfterReorder, remapPageKeyedDrawings } from "./pageIndexMapping.js";
+import { pageMappingAfterDelete, pageMappingAfterImport, pageMappingAfterReorder, remapPageKeyedDrawings } from "./pageIndexMapping.js";
 
 describe("page index mapping", () => {
   it("shifts later pages down and removes deleted ones", () => {
@@ -26,5 +26,13 @@ describe("page index mapping", () => {
       1: [{ page_index: 1, id: "a" }],
       2: [{ page_index: 2, id: "b" }],
     });
+  });
+
+  it("shifts pages after an insert and drops replaced ones", () => {
+    const insert = pageMappingAfterImport(1, 2);
+    expect([0, 1, 2].map(insert)).toEqual([0, 3, 4]);
+    const replace = pageMappingAfterImport(1, 1, 2);
+    expect([0, 1, 2, 3].map(replace)).toEqual([0, -1, -1, 2]);
+    expect(replace(-1)).toBe(-1);
   });
 });

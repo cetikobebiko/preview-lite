@@ -6474,10 +6474,11 @@ impl MutationEngine for ProductionMutationEngine {
         job_ctx: &SessionJobContext,
         recipe: &MutationRecipe,
     ) -> Result<JobResult, DocumentSessionError> {
+        let recipe = stage_mutation_inputs(job_ctx, recipe)?;
         let output = crate::job_worker::run_job(
             job_ctx,
             JobCommand::MutatePdf {
-                recipe: recipe.clone(),
+                recipe,
                 output_name: "mutation-output.pdf".to_string(),
             },
             Duration::from_secs(180),
@@ -6546,6 +6547,39 @@ impl MutationEngine for ProductionMutationEngine {
             validated_digest,
         )
     }
+}
+
+/// Kullanıcının seçtiği kaynak dosyayı (yalnız `ImportPages`) iş dizinine kopyalar ve tarifi
+/// worker'ın açabileceği iş dizini adıyla döndürür; worker kullanıcı yollarını hiç görmez.
+fn stage_mutation_inputs(
+    job_ctx: &SessionJobContext,
+    recipe: &MutationRecipe,
+) -> Result<MutationRecipe, DocumentSessionError> {
+    let MutationRecipe::ImportPages {
+        source_path: Some(source),
+        source_pages,
+        at_index,
+        replace_count,
+        ..
+    } = recipe
+    else {
+        return Ok(recipe.clone());
+    };
+    let job_dir = job_ctx.snapshot_path.parent().ok_or_else(|| {
+        DocumentSessionError::new(
+            "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+            "Sayfa ekleme job dizini çözümlenemedi",
+        )
+    })?;
+    let name = "import-input.pdf".to_string();
+    copy_source_consistent(source, &job_dir.join(&name))?;
+    Ok(MutationRecipe::ImportPages {
+        source_path: None,
+        input_name: Some(name),
+        source_pages: source_pages.clone(),
+        at_index: *at_index,
+        replace_count: *replace_count,
+    })
 }
 
 pub(crate) struct MutationTransactionInput {
@@ -10172,6 +10206,49 @@ pub async fn author_session_form_fields(
             session_id,
             expected_content_generation,
             MutationRecipe::AuthorFormFields { ops },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
+/// Sayfaları `at_index`'e kopyalar: `source_path` yoksa belgenin kendi sayfalarını çoğaltır,
+/// varsa o PDF'in sayfalarını ekler. `replace_count` > 0 ise `at_index`'ten başlayan o kadar
+/// sayfa eklenenlerle değiştirilir. `source_pages` 0 tabanlıdır; boşsa kaynağın tümü.
+#[tauri::command]
+pub async fn import_session_pages(
+    session_id: String,
+    expected_content_generation: u64,
+    source_path: Option<String>,
+    source_pages: Vec<u32>,
+    at_index: u32,
+    replace_count: u32,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    if source_path.is_none() && source_pages.is_empty() {
+        return Err(DocumentSessionError::new(
+            "SESSION_IMPORT_PAGES_INVALID",
+            "Çoğaltılacak sayfaları seçin",
+        ));
+    }
+    if source_path.is_none() && replace_count > 0 {
+        return Err(DocumentSessionError::new(
+            "SESSION_IMPORT_PAGES_INVALID",
+            "Sayfalar yalnız başka bir PDF'in sayfalarıyla değiştirilebilir",
+        ));
+    }
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::ImportPages {
+                source_path: source_path.map(PathBuf::from),
+                input_name: None,
+                source_pages,
+                at_index,
+                replace_count,
+            },
         )
         .await?;
     vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
