@@ -1104,10 +1104,11 @@ pub(crate) fn import_annotations_report(
                             if annotation.coords.is_empty() {
                                 created.append_quad_points(&text_markup_quad_points(&bounds))?;
                             }
-                            for quad in annotation.coords.chunks_exact(8) {
+                            for [x1, y1, x2, y2, x3, y3, x4, y4] in
+                                annotation.coords.as_chunks::<8>().0
+                            {
                                 created.append_quad_points(&PdfQuadPoints::new_from_values(
-                                    quad[0], quad[1], quad[2], quad[3], quad[4], quad[5], quad[6],
-                                    quad[7],
+                                    *x1, *y1, *x2, *y2, *x3, *y3, *x4, *y4,
                                 ))?;
                             }
                         }
