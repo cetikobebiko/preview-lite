@@ -92,6 +92,10 @@ pub enum MutationRecipe {
         at_index: u32,
         replace_count: u32,
     },
+    /// XFDF'teki alan değerlerini doldurur ve açıklamaları ekler; bkz. `xfdf::import_report`.
+    ImportXfdf {
+        xfdf: String,
+    },
     /// `/Info` (ve varsa XMP) meta verisini yazar; bkz. `document_structure::metadata`.
     SetMetadata {
         metadata: crate::document_structure::metadata::DocumentMetadataEdit,
@@ -137,6 +141,7 @@ impl MutationRecipe {
                 (true, false) => "insert_pages",
                 (false, false) => "duplicate_pages",
             },
+            Self::ImportXfdf { .. } => "import_xfdf",
             Self::SetMetadata { .. } => "set_document_metadata",
             Self::SetPageLabels { .. } => "set_page_labels",
             Self::SetOutline { .. } => "set_outline",
@@ -164,6 +169,14 @@ pub enum JobCommand {
     },
     /// Read-only: the snapshot's page label ranges (`/PageLabels`), read with lopdf.
     InspectPageLabels,
+    /// Read-only: the snapshot's comments and/or form values as an XFDF file; see `xfdf`.
+    ExportXfdf {
+        include_comments: bool,
+        include_fields: bool,
+        /// Written as `<f href>`.
+        file_name: String,
+        output_name: String,
+    },
     /// Writes the distinct images on `pages` (empty: all) as PNG files; see `embedded_images`.
     ExtractEmbeddedImages {
         pages: Vec<u32>,
@@ -733,6 +746,29 @@ fn execute_command(
                         JobFailure::new("SESSION_PAGE_LABELS_UNREADABLE", message)
                     })?;
             Ok(JobResult::PageLabels(ranges))
+        }
+        JobCommand::ExportXfdf {
+            include_comments,
+            include_fields,
+            file_name,
+            output_name,
+        } => {
+            let output_path = checked_output_path(job_dir, &output_name)?;
+            let text = crate::xfdf::export_snapshot(
+                snapshot_path,
+                credential,
+                include_comments,
+                include_fields,
+                &file_name,
+            )
+            .map_err(|message| job_failed("SESSION_XFDF_EXPORT_FAILED", message))?;
+            fs::write(&output_path, text).map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_OUTPUT_WRITE_FAILED",
+                    format!("XFDF yazılamadı: {error}"),
+                )
+            })?;
+            Ok(JobResult::File(output_path))
         }
         JobCommand::ExtractEmbeddedImages { pages } => {
             if pages.len() > MAX_JOB_PAGES {
@@ -1685,6 +1721,10 @@ fn execute_mutation(
                 replace_count,
                 password,
             )
+        }
+        MutationRecipe::ImportXfdf { xfdf } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::xfdf::import_report(output, xfdf, password)
         }
         MutationRecipe::SetMetadata { metadata } => {
             copy_mutation_input(snapshot_path, output_path)?;

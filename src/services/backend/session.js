@@ -87,6 +87,28 @@ export const exportSessionEmbeddedImages = (
     }),
   ).promise;
 
+export const exportSessionXfdf = (
+  sessionId,
+  expectedContentGeneration,
+  includeComments,
+  includeFields,
+  targetPath,
+) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("exportSessionXfdf", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      includeComments,
+      includeFields,
+      targetPath,
+    }),
+  ).promise;
+
+// Resolves to `{ snapshot, summary: { fields, annotations, skippedAnnotations } }`.
+export const importSessionXfdf = (sessionId, expectedContentGeneration, sourcePath) =>
+  callBackend("importSessionXfdf", { sessionId, expectedContentGeneration, sourcePath });
+
 export const exportSessionTextContent = (
   sessionId,
   expectedContentGeneration,

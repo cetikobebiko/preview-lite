@@ -4,6 +4,7 @@ import { getFeature, getFeaturePresentation } from "./featureRegistry.js";
 export const COMMANDS = Object.freeze([
   { id: "open-metadata", title: "Belge Meta Verilerini Düzenle (Title, Author, Keywords)", icon: "🏷️", category: "Güvenlik & Meta", featureId: null },
   { id: "open-security", title: "Parola ile Koru / Güvenliği Kaldır (Kopya Kaydet)", icon: "🔒", category: "Güvenlik & Meta", featureId: null },
+  { id: "open-xfdf", title: "Açıklamaları ve Form Verisini Dışa / İçe Aktar (XFDF)", icon: "💬", category: "Dışa Aktar", featureId: null },
   { id: "open-page-labels", title: "Sayfa Etiketlerini Düzenle (i, ii, 1, 2…)", icon: "🔢", category: "Düzenleme", featureId: "page_manipulation" },
   { id: "open-outline-editor", title: "Yer İmlerini Düzenle", icon: "🔖", category: "Düzenleme", featureId: "page_manipulation" },
   { id: "open-page-marks", title: "Üstbilgi / Altbilgi, Bates, Filigran ve Arka Plan", icon: "🖋️", category: "Düzenleme", featureId: "page_manipulation" },

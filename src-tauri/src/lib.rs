@@ -50,6 +50,7 @@ pub mod secure_redaction_raster;
 pub mod secure_redaction_verifier;
 pub mod tts;
 pub mod worker;
+pub mod xfdf;
 
 /// Lowercase hex of a digest. sha2 0.11's output type has no `LowerHex`, so `{:x}` no longer
 /// formats it; every SHA-256 string in the app and its manifests uses this spelling.
@@ -1475,6 +1476,8 @@ pub fn run() {
             document_session::save_session_security_copy,
             document_session::import_session_pages,
             document_session::export_session_embedded_images,
+            document_session::export_session_xfdf,
+            document_session::import_session_xfdf,
             document_session::save_document_session,
             document_session::save_document_session_as,
             document_session::begin_session_transition,

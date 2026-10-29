@@ -494,6 +494,19 @@ export const CONTRACTS = Object.freeze({
     outputDir: stringType,
     overwrite: booleanType,
   }),
+  exportSessionXfdf: command("export_session_xfdf", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    includeComments: booleanType,
+    includeFields: booleanType,
+    targetPath: stringType,
+  }),
+  importSessionXfdf: command("import_session_xfdf", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    sourcePath: stringType,
+  }),
   exportSessionTextContent: command("export_session_text_content", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,

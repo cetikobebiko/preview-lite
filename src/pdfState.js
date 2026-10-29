@@ -327,6 +327,12 @@ export async function applyPageMarks(sessionId, generation, op, pages) {
   return await sessionBackend.applySessionPageMarks(sessionId, generation, op, pages);
 }
 
+/** Fills form values and adds comments from an XFDF file (incremental). */
+export async function importXfdf(sessionId, generation, sourcePath) {
+  await ensureSignedIncrementalEditAccepted(sessionId, generation, "XFDF içe aktarma");
+  return await sessionBackend.importSessionXfdf(sessionId, generation, sourcePath);
+}
+
 export async function searchPdfText(sessionId, generation, query) {
   return await sessionBackend.searchSessionPdfText(sessionId, generation, query);
 }

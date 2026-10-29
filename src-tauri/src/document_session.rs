@@ -10327,6 +10327,100 @@ pub async fn import_session_pages(
     Ok(snapshot)
 }
 
+/// Açıklamaları ve/veya form alanı değerlerini XFDF olarak `target_path`'e yazar.
+#[tauri::command]
+pub async fn export_session_xfdf(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    include_comments: bool,
+    include_fields: bool,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    reject_private_target(Path::new(&target_path), &store.temp_root)?;
+    let file_name = format!(
+        "{}.pdf",
+        session_output_name_stem(&store, &session_id).await
+    );
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let result = crate::job_worker::run_job(
+                    &context,
+                    JobCommand::ExportXfdf {
+                        include_comments,
+                        include_fields,
+                        file_name,
+                        output_name: "export.xfdf".to_string(),
+                    },
+                    Duration::from_secs(180),
+                )?;
+                let JobResult::File(source) = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "XFDF worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                accept_job_output_file(&context, &source, Path::new(&target_path))
+            },
+        )
+        .await
+}
+
+/// XFDF içe aktarmasının sonucu: yeni snapshot ve dosyada bulunanların özeti.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XfdfImportResult {
+    pub snapshot: DocumentSessionSnapshot,
+    pub summary: crate::xfdf::XfdfSummary,
+}
+
+/// `source_path`'teki XFDF'in alan değerlerini doldurur ve açıklamalarını ekler (artımlı).
+/// XFDF XML olarak burada okunup ayrıştırılır; belgeye job worker'da uygulanır.
+#[tauri::command]
+pub async fn import_session_xfdf(
+    session_id: String,
+    expected_content_generation: u64,
+    source_path: String,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<XfdfImportResult, DocumentSessionError> {
+    let invalid = |message: String| DocumentSessionError::new("SESSION_XFDF_INVALID", message);
+    let (xfdf, summary) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let metadata =
+            fs::metadata(&source_path).map_err(|error| format!("XFDF okunamadı: {error}"))?;
+        if metadata.len() > crate::xfdf::MAX_XFDF_BYTES as u64 {
+            return Err("XFDF dosyası 16 MiB sınırını aşıyor".into());
+        }
+        let text =
+            fs::read_to_string(&source_path).map_err(|error| format!("XFDF okunamadı: {error}"))?;
+        let summary = crate::xfdf::parse(&text)?.summary();
+        Ok((text, summary))
+    })
+    .await
+    .map_err(|error| invalid(format!("XFDF okunamadı: {error}")))?
+    .map_err(invalid)?;
+    if summary.fields == 0 && summary.annotations == 0 {
+        return Err(invalid(
+            "XFDF'te içe aktarılabilecek açıklama ya da form alanı yok".to_string(),
+        ));
+    }
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::ImportXfdf { xfdf },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(XfdfImportResult { snapshot, summary })
+}
+
 /// Belgenin Title, Author, Subject ve Keywords meta verisini yazar (`/Info`; varsa XMP de).
 /// İstek burada yalnız belgeden bağımsız kurallarla denetlenir.
 #[tauri::command]
