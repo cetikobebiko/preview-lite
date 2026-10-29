@@ -2,9 +2,10 @@
 // Licensed under the MIT License; see src-tauri/licenses/pdfcraft.txt.
 //
 // Ported from PdfCraft 0.14.0, crates/export/src/zip.rs (MIT OR Apache-2.0, used under MIT).
-// Changes from the original: entries are always stored (method 0) instead of deflated, so the writer needs no flate2 dependency; `add` lost its `compress` flag.
+// Changes from the original: deflate uses miniz_oxide (already a dependency) instead of flate2, and `add` lost its
+// `compress` flag: an entry is deflated when that makes it smaller and stored otherwise.
 
-//! A minimal zip writer (stored entries, no zip64) for Office files.
+//! A minimal zip writer (deflated or stored entries, no zip64) for Office files.
 
 fn crc32(data: &[u8]) -> u32 {
     static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
@@ -39,11 +40,16 @@ pub struct Zip {
 }
 
 impl Zip {
-    /// Add a file, stored as it is: the app has no deflate encoder of its own, and Office reads
-    /// stored parts.
+    /// Add a file, deflated when that makes it smaller (XML parts) and stored otherwise (PNG and
+    /// JPEG images are already compressed).
     pub fn add(&mut self, name: &str, data: &[u8]) {
         let crc = crc32(data);
-        let (method, body) = (0u16, data);
+        let deflated = miniz_oxide::deflate::compress_to_vec(data, 6);
+        let (method, body) = if deflated.len() < data.len() {
+            (8u16, deflated.as_slice())
+        } else {
+            (0u16, data)
+        };
         let offset = self.out.len() as u32;
         let header = |sig: u32, central: bool| {
             let mut h = Vec::new();
@@ -109,5 +115,25 @@ mod tests {
         assert!(b.starts_with(b"PK\x03\x04"));
         assert_eq!(b.windows(4).filter(|w| *w == b"PK\x01\x02").count(), 2);
         assert_eq!(&b[b.len() - 22..b.len() - 18], b"PK\x05\x06");
+    }
+
+    #[test]
+    fn compressible_entries_are_deflated_and_inflate_back() {
+        let text = "<w:p>merhaba dünya</w:p>".repeat(200);
+        let mut z = Zip::default();
+        z.add("word/document.xml", text.as_bytes());
+        z.add("media/image1.png", b"\x89PNG");
+        let b = z.finish();
+        // Local header: method at 8, compressed size at 18, name length at 26.
+        let method = u16::from_le_bytes([b[8], b[9]]);
+        let size = u32::from_le_bytes([b[18], b[19], b[20], b[21]]) as usize;
+        let name_len = u16::from_le_bytes([b[26], b[27]]) as usize;
+        assert_eq!(method, 8);
+        assert!(size < text.len() / 10, "{size}");
+        let body = &b[30 + name_len..30 + name_len + size];
+        assert_eq!(miniz_oxide::inflate::decompress_to_vec(body).unwrap(), text.as_bytes());
+        // The tiny PNG stays stored.
+        let second = 30 + name_len + size;
+        assert_eq!(u16::from_le_bytes([b[second + 8], b[second + 9]]), 0);
     }
 }
