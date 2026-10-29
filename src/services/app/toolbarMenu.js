@@ -84,6 +84,7 @@ export function buildToolbarMenu({ isPdf, hasDocument, viewer, ui, featureUi, on
       item("open", "Aç…", actions.onSelectFile, { shortcut: "⌘O" }),
       feature("page_manipulation", "Sayfaları düzenle…", () => ui.openModal("page_organizer"), { id: "page_organizer" }),
       feature("page_manipulation", "Birleştir / Böl…", () => ui.openModal("merge_split"), { id: "merge_split" }),
+      isPdf ? item("security", "Güvenlik (parola)…", () => ui.openModal("security")) : null,
     ],
   });
   sections.push({

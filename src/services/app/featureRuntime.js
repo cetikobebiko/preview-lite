@@ -298,6 +298,7 @@ export function createFeatureRuntime({
     onUnknown: () => onToast("Bilinmeyen komut çalıştırılmadı."),
     actions: {
       "open-metadata": () => ui.openModal("metadata"),
+      "open-security": () => ui.openModal("security"),
       "open-page-labels": () => ui.openModal("page_labels"),
       "open-outline-editor": () => ui.openModal("outline_editor"),
       "open-page-marks": () => ui.openModal("page_marks"),

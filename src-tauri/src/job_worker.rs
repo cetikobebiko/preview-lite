@@ -135,6 +135,11 @@ pub enum JobCommand {
     },
     /// Read-only: the snapshot's page label ranges (`/PageLabels`), read with lopdf.
     InspectPageLabels,
+    /// Writes a password-protected or unprotected copy of the snapshot; see `document_security`.
+    SecurityCopy {
+        op: crate::document_security::SecurityOp,
+        output_name: String,
+    },
     /// Read-only: compares the snapshot's text with a PDF copied into the job directory.
     CompareDocuments {
         other_input_name: String,
@@ -679,6 +684,19 @@ fn execute_command(
                         JobFailure::new("SESSION_PAGE_LABELS_UNREADABLE", message)
                     })?;
             Ok(JobResult::PageLabels(ranges))
+        }
+        JobCommand::SecurityCopy { op, output_name } => {
+            let output_path = checked_output_path(job_dir, &output_name)?;
+            let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+            crate::document_security::write_security_copy(
+                pdfium.bindings(),
+                snapshot_path,
+                credential,
+                &op,
+                &output_path,
+            )
+            .map_err(|message| job_failed("SESSION_SECURITY_COPY_FAILED", message))?;
+            Ok(JobResult::File(output_path))
         }
         JobCommand::CompareDocuments {
             other_input_name,

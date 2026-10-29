@@ -121,6 +121,18 @@ export const exportSessionDocument = (
     }),
   ).promise;
 
+// `op` is `{ op: "protect", settings }` or `{ op: "remove" }`; the session's file is not changed.
+export const saveSessionSecurityCopy = (sessionId, expectedContentGeneration, op, targetPath) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("saveSessionSecurityCopy", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      op,
+      targetPath,
+    }),
+  ).promise;
+
 // `layout` (paper, orientation, mode) lays the pages out on sheets; null prints them as they are.
 export const printSessionPdf = (
   sessionId,

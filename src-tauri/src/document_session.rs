@@ -8808,6 +8808,47 @@ pub async fn get_session_page_labels(
         .await
 }
 
+/// Belgenin parola ile korunmuş ya da şifresiz bir kopyasını `target_path`'e yazar; oturumdaki
+/// belge değişmez. Şifreleme job worker'da yapılır (`document_security`).
+#[tauri::command]
+pub async fn save_session_security_copy(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    op: crate::document_security::SecurityOp,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    crate::document_security::validate_request(&op)
+        .map_err(|message| DocumentSessionError::new("SESSION_SECURITY_INVALID", message))?;
+    reject_private_target(Path::new(&target_path), &store.temp_root)?;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let result = crate::job_worker::run_job(
+                    &context,
+                    JobCommand::SecurityCopy {
+                        op,
+                        output_name: "security-copy.pdf".to_string(),
+                    },
+                    Duration::from_secs(300),
+                )?;
+                let JobResult::File(source) = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Güvenlik kopyası worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                accept_job_output_file(&context, &source, Path::new(&target_path))
+            },
+        )
+        .await
+}
+
 /// Belgeyi Word, PowerPoint, HTML ya da RTF olarak `target_path`'e yazar. Metin ve görüntüler
 /// job worker'da PDFium ile okunur; çıktı iş dizininden atomik olarak yayımlanır.
 #[tauri::command]

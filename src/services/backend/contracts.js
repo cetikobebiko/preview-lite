@@ -351,6 +351,32 @@ const pageMarkOp = objectOf(
   },
 );
 
+// Mirrors `document_security::SecurityOp` (tagged by `op`).
+const permissionSet = objectOf({
+  print: Object.freeze({ type: "string", enum: Object.freeze(["none", "low_resolution", "high_resolution"]) }),
+  modify: booleanType,
+  copy: booleanType,
+  annotate: booleanType,
+  fillForms: booleanType,
+  assemble: booleanType,
+});
+const securityPasswordType = Object.freeze({ type: "string", maxLength: 127 });
+const securityOp = objectOf(
+  { op: Object.freeze({ type: "string", enum: Object.freeze(["protect", "remove"]) }) },
+  {
+    settings: objectOf({
+      userPassword: securityPasswordType,
+      ownerPassword: securityPasswordType,
+      method: Object.freeze({ type: "string", enum: Object.freeze(["aes256", "aes128", "rc4_128"]) }),
+      permissions: permissionSet,
+      encryptMetadata: booleanType,
+    }),
+  },
+  (op) => ((op.op === "protect") === (op.settings !== undefined)
+    ? null
+    : "protect op must carry settings; remove op must not"),
+);
+
 const formAuthorOp = objectOf(
   {
     op: Object.freeze({ type: "string", enum: Object.freeze(["add", "delete", "move", "set_props"]) }),
@@ -482,6 +508,13 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     pages: arrayOf(u32Type),
     format: Object.freeze({ type: "string", enum: Object.freeze(["docx", "pptx", "html", "rtf"]) }),
+    targetPath: stringType,
+  }),
+  saveSessionSecurityCopy: command("save_session_security_copy", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    op: securityOp,
     targetPath: stringType,
   }),
   printSessionPdf: command(

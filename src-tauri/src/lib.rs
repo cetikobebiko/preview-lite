@@ -13,6 +13,7 @@ pub mod batch;
 pub mod compare;
 pub mod document_export;
 pub mod document_io;
+pub mod document_security;
 pub mod document_session;
 pub mod document_structure;
 pub mod error;
@@ -1449,6 +1450,7 @@ pub fn run() {
             document_session::set_session_outline,
             document_session::apply_session_page_marks,
             document_session::get_session_page_labels,
+            document_session::save_session_security_copy,
             document_session::save_document_session,
             document_session::save_document_session_as,
             document_session::begin_session_transition,
