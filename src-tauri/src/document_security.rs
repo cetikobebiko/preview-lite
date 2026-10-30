@@ -28,6 +28,12 @@ const MAX_AES256_PASSWORD_BYTES: usize = 127;
 /// kaliteli yazdırma. Sahip parolasıyla açılan belgede PDFium hepsini verir.
 const OWNER_EQUIVALENT_PERMISSIONS: u32 = 0xF3C;
 
+/// PDFium izin değeri (`FPDF_DWORD`: Windows'ta `u32`, diğerlerinde `u64`) ya da lopdf bitleri;
+/// izin bitleri alttaki 32 bittedir.
+fn permission_bits(value: impl Into<u64>) -> u32 {
+    (value.into() & 0xFFFF_FFFF) as u32
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EncryptionMethod {
@@ -206,7 +212,7 @@ pub(crate) fn write_security_copy(
     if bindings.FPDF_GetSecurityHandlerRevision(source.handle) != -1 {
         // Kısıtlı izinlerle (sahip parolası olmadan) açılan belgenin korumasını kaldırmak
         // izinleri atlatmak olur.
-        let granted = bindings.FPDF_GetDocPermissions(source.handle) as u32;
+        let granted = permission_bits(bindings.FPDF_GetDocPermissions(source.handle));
         if granted & OWNER_EQUIVALENT_PERMISSIONS != OWNER_EQUIVALENT_PERMISSIONS {
             return Err(
                 "Belgenin güvenlik ayarları yalnız izin (sahip) parolasıyla açıldığında değiştirilebilir".into(),
@@ -364,9 +370,10 @@ fn verify_copy(
     let document = open((!user.is_empty()).then_some(user))
         .ok_or("Korunan kopya açma parolasıyla açılamadı")?;
     check_pages(&document)?;
-    let expected = settings.permissions.to_lopdf().bits() as u32 & OWNER_EQUIVALENT_PERMISSIONS;
-    let actual =
-        bindings.FPDF_GetDocUserPermissions(document.handle) as u32 & OWNER_EQUIVALENT_PERMISSIONS;
+    let expected =
+        permission_bits(settings.permissions.to_lopdf().bits()) & OWNER_EQUIVALENT_PERMISSIONS;
+    let actual = permission_bits(bindings.FPDF_GetDocUserPermissions(document.handle))
+        & OWNER_EQUIVALENT_PERMISSIONS;
     if actual != expected {
         return Err(format!(
             "Kopyanın izinleri istenenle uyuşmuyor ({actual:#x} ≠ {expected:#x})"
@@ -376,7 +383,7 @@ fn verify_copy(
     if !settings.owner_password.is_empty() {
         let owner = open(Some(&settings.owner_password))
             .ok_or("Korunan kopya izin parolasıyla açılamadı")?;
-        let granted = bindings.FPDF_GetDocPermissions(owner.handle) as u32;
+        let granted = permission_bits(bindings.FPDF_GetDocPermissions(owner.handle));
         if granted & OWNER_EQUIVALENT_PERMISSIONS != OWNER_EQUIVALENT_PERMISSIONS {
             return Err("İzin parolası tam yetki vermiyor".into());
         }
@@ -577,7 +584,7 @@ mod tests {
         let bindings = pdfium.bindings();
         let document = RawDocument::open(bindings, output.to_str().unwrap(), None).unwrap();
         assert_eq!(
-            bindings.FPDF_GetDocPermissions(document.handle) as u32 & 0b100,
+            permission_bits(bindings.FPDF_GetDocPermissions(document.handle)) & 0b100,
             0
         );
     }
