@@ -8954,6 +8954,48 @@ pub async fn save_session_security_copy(
         .await
 }
 
+/// Belgenin optimize edilmiş (küçültülmüş) bir kopyasını `target_path`'e yazar; oturumdaki belge
+/// değişmez. Görüntüler ve temizlik job worker'da yapılır (`pdf_optimizer`).
+#[tauri::command]
+pub async fn save_session_optimized_copy(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    settings: crate::pdf_optimizer::OptimizeSettings,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<crate::pdf_optimizer::OptimizeReport>, DocumentSessionError> {
+    crate::pdf_optimizer::validate_request(&settings)
+        .map_err(|message| DocumentSessionError::new("SESSION_OPTIMIZE_INVALID", message))?;
+    reject_private_target(Path::new(&target_path), &store.temp_root)?;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let result = crate::job_worker::run_job(
+                    &context,
+                    JobCommand::OptimizedCopy {
+                        settings,
+                        output_name: "optimized-copy.pdf".to_string(),
+                    },
+                    Duration::from_secs(600),
+                )?;
+                let JobResult::OptimizedCopy { path, report } = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Optimizasyon worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                accept_job_output_file(&context, &path, Path::new(&target_path))?;
+                Ok(report)
+            },
+        )
+        .await
+}
+
 /// Belgeyi Word, PowerPoint, HTML ya da RTF olarak `target_path`'e yazar. Metin ve görüntüler
 /// job worker'da PDFium ile okunur; çıktı iş dizininden atomik olarak yayımlanır.
 #[tauri::command]

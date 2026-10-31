@@ -34,6 +34,7 @@ pub mod ocr;
 pub(crate) mod output_names;
 pub mod page_marks;
 pub mod pdf_engine;
+pub mod pdf_optimizer;
 pub mod plugins;
 pub mod prepress;
 pub mod print_imposition;
@@ -1474,6 +1475,7 @@ pub fn run() {
             document_session::apply_session_page_marks,
             document_session::get_session_page_labels,
             document_session::save_session_security_copy,
+            document_session::save_session_optimized_copy,
             document_session::import_session_pages,
             document_session::export_session_embedded_images,
             document_session::export_session_xfdf,

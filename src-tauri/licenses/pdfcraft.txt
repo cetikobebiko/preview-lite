@@ -1,4 +1,4 @@
-PdfCraft (https://github.com/storytold/pdfcraft), version 0.14.0
+PdfCraft (https://github.com/storytold/pdfcraft), versions 0.14.0 and 0.16.1
 Used for: source files ported from PdfCraft. Each one starts with this copyright notice and
 names the PdfCraft file it was ported from and what was changed. PdfCraft is licensed under
 MIT OR Apache-2.0; this project uses it under the MIT License below. The ArtCraft name and

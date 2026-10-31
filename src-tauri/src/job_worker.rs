@@ -186,6 +186,11 @@ pub enum JobCommand {
         op: crate::document_security::SecurityOp,
         output_name: String,
     },
+    /// Writes an optimized (smaller) copy of the snapshot; see `pdf_optimizer`.
+    OptimizedCopy {
+        settings: crate::pdf_optimizer::OptimizeSettings,
+        output_name: String,
+    },
     /// Read-only: compares the snapshot's text with a PDF copied into the job directory.
     CompareDocuments {
         other_input_name: String,
@@ -351,6 +356,10 @@ pub enum JobResult {
     SanitizationInspection(crate::sanitization::SanitizationInspectionReport),
     SanitizationTransform(crate::sanitization::SanitizationTransformReport),
     SanitizationVerification(crate::sanitization::SanitizationVerificationReport),
+    OptimizedCopy {
+        path: PathBuf,
+        report: crate::pdf_optimizer::OptimizeReport,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -802,6 +811,25 @@ fn execute_command(
             )
             .map_err(|message| job_failed("SESSION_SECURITY_COPY_FAILED", message))?;
             Ok(JobResult::File(output_path))
+        }
+        JobCommand::OptimizedCopy {
+            settings,
+            output_name,
+        } => {
+            let output_path = checked_output_path(job_dir, &output_name)?;
+            let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+            let report = crate::pdf_optimizer::write_optimized_copy(
+                pdfium.bindings(),
+                snapshot_path,
+                credential,
+                &settings,
+                &output_path,
+            )
+            .map_err(|message| job_failed("SESSION_OPTIMIZE_FAILED", message))?;
+            Ok(JobResult::OptimizedCopy {
+                path: output_path,
+                report,
+            })
         }
         JobCommand::CompareDocuments {
             other_input_name,
@@ -2791,6 +2819,56 @@ mod tests {
         assert_eq!(
             compare("encrypted.pdf").unwrap_err().code,
             "SESSION_JOB_COMPARE_INPUT_PASSWORD_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn optimized_copy_job_writes_the_copy_and_its_report_into_the_job_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf/minimal.pdf"),
+            &snapshot,
+        )
+        .unwrap();
+        let images = serde_json::json!({
+            "downsample": true, "targetPpi": 150.0, "abovePpi": 225.0,
+            "compression": { "kind": "jpeg", "quality": 60 },
+        });
+        let optimize = |output_name: &str| {
+            // The job IPC carries commands as JSON.
+            let command = serde_json::from_value(serde_json::json!({
+                "OptimizedCopy": {
+                    "settings": {
+                        "color": images, "gray": images,
+                        "removeUnusedXobjects": true, "discardThumbnails": true,
+                        "discardAlternateImages": true, "flateUnencoded": true,
+                        "objectStreams": true,
+                    },
+                    "output_name": output_name,
+                }
+            }))
+            .unwrap();
+            execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "optimize-job",
+                "optimize-session",
+                command,
+            )
+        };
+        let result = optimize("optimized-copy.pdf").unwrap();
+        let output = directory.path().join("optimized-copy.pdf");
+        let JobResult::OptimizedCopy { path, report } = result else {
+            panic!("expected an optimized copy");
+        };
+        assert_eq!(path, output);
+        assert_eq!(report.output_bytes, fs::metadata(&output).unwrap().len());
+        assert!(fs::read(&output).unwrap().starts_with(b"%PDF-"));
+        assert_eq!(
+            optimize("../outside.pdf").unwrap_err().code,
+            "SESSION_JOB_WORKER_PATH_REJECTED"
         );
     }
 
