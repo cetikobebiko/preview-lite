@@ -250,6 +250,37 @@ describe("validated backend client", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("validates optimizer settings before invoking the backend", async () => {
+    const images = { downsample: true, targetPpi: 150, abovePpi: 225, compression: { kind: "jpeg", quality: 60 } };
+    const settings = {
+      color: images,
+      gray: { ...images, compression: { kind: "flate" } },
+      removeUnusedXobjects: true,
+      discardThumbnails: true,
+      discardAlternateImages: true,
+      flateUnencoded: true,
+      objectStreams: true,
+    };
+    const base = { jobId: JOB_ID, sessionId: "document", expectedContentGeneration: 2, targetPath: "/tmp/out.pdf" };
+    invokeMock.mockResolvedValue({ status: "completed", value: {} });
+    await callBackend("saveSessionOptimizedCopy", { ...base, settings });
+    expect(invokeMock).toHaveBeenCalledWith("save_session_optimized_copy", { ...base, settings });
+    invokeMock.mockReset();
+
+    for (const [bad, message] of [
+      [{ ...settings, color: { ...images, targetPpi: 5 } }, "targetPpi"],
+      [{ ...settings, color: { ...images, compression: { kind: "jpeg" } } }, "quality"],
+      [{ ...settings, gray: { ...images, compression: { kind: "flate", quality: 60 } } }, "quality"],
+      [{ ...settings, color: { ...images, compression: { kind: "jpeg", quality: 60.5 } } }, "quality"],
+      [{ ...settings, lzwToFlate: true }, "lzwToFlate"],
+    ]) {
+      await expect(
+        callBackend("saveSessionOptimizedCopy", { ...base, settings: bad }),
+      ).rejects.toMatchObject({ message: expect.stringContaining(message) });
+    }
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("validates form fill edits by kind before invoking the backend", async () => {
     const base = { sessionId: "document", expectedContentGeneration: 4 };
     const edits = [
