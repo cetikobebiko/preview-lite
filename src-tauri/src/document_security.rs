@@ -307,7 +307,52 @@ fn encrypt_document(
         .map_err(|error| format!("Şifreleme hazırlanamadı: {error}"))?;
     document
         .encrypt(&state)
-        .map_err(|error| format!("Belge şifrelenemedi: {error}"))
+        .map_err(|error| format!("Belge şifrelenemedi: {error}"))?;
+    complete_encryption_dictionary(document, settings.method)
+}
+
+/// lopdf AES sözlüğüne anahtar uzunluğunu yazmaz. PDFium bunu tolere eder, ancak
+/// CoreGraphics (macOS Önizleme) "unsupported crypt filter key length" der ve akışları
+/// çözemez. Acrobat ve qpdf'in yazdığı gibi: kripto filtresinde bayt, sözlükte bit.
+/// AESV2 PDF 1.6, AESV3 PDF 1.7 (Adobe uzantı düzeyi 8) gerektirir; başlık yükseltilir.
+fn complete_encryption_dictionary(
+    document: &mut lopdf::Document,
+    method: EncryptionMethod,
+) -> Result<(), String> {
+    let (key_bytes, minimum_version) = match method {
+        EncryptionMethod::Aes256 => (32, "1.7"),
+        EncryptionMethod::Aes128 => (16, "1.6"),
+        EncryptionMethod::Rc4_128 => return Ok(()),
+    };
+    let encrypt_id = document
+        .trailer
+        .get(b"Encrypt")
+        .and_then(Object::as_reference)
+        .map_err(|error| format!("Şifreleme sözlüğü bulunamadı: {error}"))?;
+    let encrypt = document
+        .get_object_mut(encrypt_id)
+        .and_then(Object::as_dict_mut)
+        .map_err(|error| format!("Şifreleme sözlüğü okunamadı: {error}"))?;
+    encrypt.set("Length", Object::Integer(key_bytes * 8));
+    let filters = encrypt
+        .get_mut(b"CF")
+        .and_then(Object::as_dict_mut)
+        .map_err(|error| format!("Kripto filtreleri okunamadı: {error}"))?;
+    for (_, filter) in filters.iter_mut() {
+        let filter = filter
+            .as_dict_mut()
+            .map_err(|error| format!("Kripto filtresi okunamadı: {error}"))?;
+        filter.set("Length", Object::Integer(key_bytes));
+        filter.set("AuthEvent", Object::Name(b"DocOpen".to_vec()));
+    }
+    if version_number(&document.version) < version_number(minimum_version) {
+        document.version = minimum_version.to_string();
+    }
+    Ok(())
+}
+
+fn version_number(version: &str) -> f32 {
+    version.trim().parse().unwrap_or(0.0)
 }
 
 /// RC4 ve AES-128 anahtarı dosya kimliğinden türetilir; kimliği olmayan belgeye bir tane verilir.
@@ -587,6 +632,41 @@ mod tests {
             permission_bits(bindings.FPDF_GetDocPermissions(document.handle)) & 0b100,
             0
         );
+    }
+
+    /// macOS CoreGraphics refuses AES crypt filters without `/Length` ("unsupported crypt
+    /// filter key length") and then shows pages without their text.
+    #[test]
+    fn aes_copies_declare_key_lengths_and_a_matching_pdf_version() {
+        let directory = tempfile::tempdir().unwrap();
+        for (method, header, filter, length) in [
+            (
+                EncryptionMethod::Aes256,
+                "%PDF-1.7",
+                "/CFM/AESV3/Length 32/AuthEvent/DocOpen",
+                "/Length 256",
+            ),
+            (
+                EncryptionMethod::Aes128,
+                "%PDF-1.6",
+                "/CFM/AESV2/Length 16/AuthEvent/DocOpen",
+                "/Length 128",
+            ),
+        ] {
+            let output = directory.path().join(format!("{method:?}.pdf"));
+            run(
+                &fixture("minimal.pdf"),
+                None,
+                &protect("acma", "sahip", method, all_permissions()),
+                &output,
+            )
+            .unwrap();
+            let bytes = std::fs::read(&output).unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(text.starts_with(header), "{method:?}: {}", &text[..9]);
+            assert!(text.contains(filter), "{method:?}: no {filter}");
+            assert!(text.contains(length), "{method:?}: no {length}");
+        }
     }
 
     #[test]
