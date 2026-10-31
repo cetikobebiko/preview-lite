@@ -578,6 +578,68 @@ mod macos_arm64 {
         broker.shutdown().await.unwrap();
     }
 
+    /// pdfium-render 0.8.37 has no name for security handler revision 6, so AES-256 files
+    /// (what "save protected copy" writes by default) must still open as protected.
+    #[tokio::test]
+    async fn aes256_document_opens_as_protected_with_its_password() {
+        use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
+        use lopdf::{EncryptionState, EncryptionVersion, Permissions};
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("aes256.pdf");
+        let mut document = Document::load(fixture("minimal.pdf")).unwrap();
+        document.trailer.set(
+            "ID",
+            Object::Array(vec![
+                Object::string_literal("aes256-id"),
+                Object::string_literal("aes256-id"),
+            ]),
+        );
+        let filter: Arc<dyn CryptFilter> = Arc::new(Aes256CryptFilter);
+        let state = EncryptionState::try_from(EncryptionVersion::V5 {
+            encrypt_metadata: true,
+            crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), filter)]),
+            file_encryption_key: &[7u8; 32],
+            stream_filter: b"StdCF".to_vec(),
+            string_filter: b"StdCF".to_vec(),
+            owner_password: "sahip-Ğüç",
+            user_password: "açık-Şifre",
+            permissions: Permissions::all(),
+        })
+        .unwrap();
+        document.encrypt(&state).unwrap();
+        document.save(&path).unwrap();
+        let path = path.to_string_lossy().to_string();
+
+        let broker = broker();
+        let key = key("aes256-worker");
+        let admission = broker.admit_read(&key, None).await.unwrap();
+        let required = broker
+            .ensure_document(&admission, key.clone(), path.clone(), None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(required.code, "DOCUMENT_SESSION_PASSWORD_REQUIRED");
+        let (_document, page_count, protected) = broker
+            .ensure_document(
+                &admission,
+                key.clone(),
+                path,
+                Some("açık-Şifre".to_string()),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(page_count, 1);
+        assert!(protected);
+        drop(admission);
+        let exclusive = broker.admit_exclusive(&key.session_id).await.unwrap();
+        broker.invalidate_document(&exclusive, &key).await.unwrap();
+        drop(exclusive);
+        broker.shutdown().await.unwrap();
+    }
+
     #[tokio::test]
     async fn malformed_structure_is_a_successful_bounded_audit_and_close_cleans_mapping() {
         let directory = tempfile::tempdir().unwrap();
