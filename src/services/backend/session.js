@@ -68,6 +68,47 @@ export const exportSessionPagesAsImages = (
     }),
   ).promise;
 
+// Writes each distinct embedded image on `pages` (empty: all) as PNG into `outputDir`.
+export const exportSessionEmbeddedImages = (
+  sessionId,
+  expectedContentGeneration,
+  pages,
+  outputDir,
+  overwrite = false,
+) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("exportSessionEmbeddedImages", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      pages,
+      outputDir,
+      overwrite,
+    }),
+  ).promise;
+
+export const exportSessionXfdf = (
+  sessionId,
+  expectedContentGeneration,
+  includeComments,
+  includeFields,
+  targetPath,
+) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("exportSessionXfdf", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      includeComments,
+      includeFields,
+      targetPath,
+    }),
+  ).promise;
+
+// Resolves to `{ snapshot, summary: { fields, annotations, skippedAnnotations } }`.
+export const importSessionXfdf = (sessionId, expectedContentGeneration, sourcePath) =>
+  callBackend("importSessionXfdf", { sessionId, expectedContentGeneration, sourcePath });
+
 export const exportSessionTextContent = (
   sessionId,
   expectedContentGeneration,
@@ -117,6 +158,18 @@ export const exportSessionDocument = (
       expectedContentGeneration,
       pages,
       format,
+      targetPath,
+    }),
+  ).promise;
+
+// `op` is `{ op: "protect", settings }` or `{ op: "remove" }`; the session's file is not changed.
+export const saveSessionSecurityCopy = (sessionId, expectedContentGeneration, op, targetPath) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("saveSessionSecurityCopy", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      op,
       targetPath,
     }),
   ).promise;
@@ -236,6 +289,25 @@ export const undoSessionMutation = (sessionId, expectedContentGeneration) =>
 
 export const redoSessionMutation = (sessionId, expectedContentGeneration) =>
   callBackend("redoSessionMutation", { sessionId, expectedContentGeneration });
+
+// `sourcePath` null duplicates the document's own `sourcePages`; otherwise copies that PDF's
+// pages (`sourcePages` empty = all). `replaceCount` pages from `atIndex` on are replaced.
+export const importSessionPages = (
+  sessionId,
+  expectedContentGeneration,
+  sourcePath,
+  sourcePages,
+  atIndex,
+  replaceCount = 0,
+) =>
+  callBackend("importSessionPages", {
+    sessionId,
+    expectedContentGeneration,
+    sourcePath,
+    sourcePages,
+    atIndex,
+    replaceCount,
+  });
 
 export const deleteSessionPages = (
   sessionId,

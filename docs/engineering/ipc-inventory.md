@@ -27,7 +27,14 @@ output targets. Active PDF sharing remains
 independent image OCR is unsupported. The public session snapshot omits source
 and working-copy paths. Metadata reads use PDFium; metadata, page-label and outline writes are isolated
 session mutations (`SetMetadata`, `SetPageLabels`, `SetOutline`) written incrementally
-with lopdf in the job worker; alt-text writes are not exposed.
+with lopdf in the job worker; alt-text writes are not exposed. Page copies
+(`import_session_pages`) and XFDF imports (`import_session_xfdf`) are isolated
+session mutations (`ImportPages`, `ImportXfdf`); a source PDF chosen by the user
+is copied into the job directory by the mutation engine, never passed to the
+worker as a path. Password-protected copies (`save_session_security_copy`), XFDF
+exports and embedded-image exports are snapshot jobs that publish files outside
+the session; `create_pdf_from_images` writes a new PDF from images without
+opening any PDF.
 
 Bu envanter `src-tauri/src/**/*.rs` altındaki bütün `#[tauri::command]`
 tanımlarını, `src-tauri/src/lib.rs:970-1037` içindeki
