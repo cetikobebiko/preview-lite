@@ -58,6 +58,9 @@ pub enum MutationRecipe {
         annot_type: String,
         /// Sayfa görüntü uzayında normalize dikdörtgen; bkz. [`NormalizedPageRect`].
         normalized_rect: NormalizedPageRect,
+        /// Yalnız Ink: görüntü uzayında normalize çizgiler.
+        #[serde(default)]
+        ink_strokes: Option<Vec<Vec<crate::annotations::NormalizedPoint>>>,
         color: String,
         contents: Option<String>,
     },
@@ -73,6 +76,24 @@ pub enum MutationRecipe {
     AuthorFormFields {
         ops: Vec<crate::forms::author::FormAuthorOp>,
     },
+    /// `/Info` (ve varsa XMP) meta verisini yazar; bkz. `document_structure::metadata`.
+    SetMetadata {
+        metadata: crate::document_structure::metadata::DocumentMetadataEdit,
+    },
+    /// Sayfa etiketi aralıklarını değiştirir; bkz. `document_structure::labels`.
+    SetPageLabels {
+        ranges: Vec<crate::document_structure::labels::PageLabelRange>,
+    },
+    /// Yer imi ağacını istenen hale getirir; bkz. `document_structure::outline`.
+    SetOutline {
+        tree: Vec<crate::document_structure::outline::OutlineEditNode>,
+    },
+    /// Üstbilgi/altbilgi, filigran ya da arka plan ekler veya kaldırır; bkz. `page_marks`.
+    PageMarks {
+        op: crate::page_marks::PageMarkOp,
+        /// Boş: bütün sayfalar.
+        pages: Vec<u32>,
+    },
 }
 
 impl MutationRecipe {
@@ -87,6 +108,10 @@ impl MutationRecipe {
             Self::DeleteAnnotation { .. } => "delete_annotation",
             Self::FillFormFields { .. } => "fill_form_fields",
             Self::AuthorFormFields { .. } => "author_form_fields",
+            Self::SetMetadata { .. } => "set_document_metadata",
+            Self::SetPageLabels { .. } => "set_page_labels",
+            Self::SetOutline { .. } => "set_outline",
+            Self::PageMarks { .. } => "add_page_marks",
         }
     }
 }
@@ -108,6 +133,8 @@ pub enum JobCommand {
         additional_input_names: Vec<String>,
         output_name: String,
     },
+    /// Read-only: the snapshot's page label ranges (`/PageLabels`), read with lopdf.
+    InspectPageLabels,
     /// Read-only: compares the snapshot's text with a PDF copied into the job directory.
     CompareDocuments {
         other_input_name: String,
@@ -262,6 +289,7 @@ pub enum JobResult {
     Text(String),
     PageTexts(Vec<JobPageText>),
     Comparison(crate::compare::DocumentComparison),
+    PageLabels(Vec<crate::document_structure::labels::PageLabelRange>),
     PrintResourceInspection(PrintResourceInspectionReport),
     RgbDerivedCoveragePreview(RgbDerivedCoveragePreview),
     RgbDerivedProcessPreview(RgbDerivedProcessPreview),
@@ -643,6 +671,14 @@ fn execute_command(
                 &output_path,
             )?;
             Ok(JobResult::File(output_path))
+        }
+        JobCommand::InspectPageLabels => {
+            let ranges =
+                crate::document_structure::labels::inspect_snapshot(snapshot_path, credential)
+                    .map_err(|message| {
+                        JobFailure::new("SESSION_PAGE_LABELS_UNREADABLE", message)
+                    })?;
+            Ok(JobResult::PageLabels(ranges))
         }
         JobCommand::CompareDocuments {
             other_input_name,
@@ -1515,15 +1551,17 @@ fn execute_mutation(
             page_index,
             annot_type,
             normalized_rect,
+            ink_strokes,
             color,
             contents,
         } => {
             copy_mutation_input(snapshot_path, output_path)?;
-            crate::annotations::add_annotation_report(
+            crate::annotations::add_annotation_with_ink_report(
                 output,
                 page_index,
                 annot_type,
                 normalized_rect,
+                ink_strokes,
                 color,
                 contents,
                 password,
@@ -1543,6 +1581,22 @@ fn execute_mutation(
         MutationRecipe::AuthorFormFields { ops } => {
             copy_mutation_input(snapshot_path, output_path)?;
             crate::forms::author::author_form_fields_report(output, ops, password)
+        }
+        MutationRecipe::SetMetadata { metadata } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::document_structure::metadata::set_metadata_report(output, metadata, password)
+        }
+        MutationRecipe::SetPageLabels { ranges } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::document_structure::labels::set_page_labels_report(output, ranges, password)
+        }
+        MutationRecipe::SetOutline { tree } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::document_structure::outline::set_outline_report(output, tree, password)
+        }
+        MutationRecipe::PageMarks { op, pages } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::page_marks::add_page_marks_report(output, op, pages, password)
         }
     };
     report.map(|_| ()).map_err(|error| {
@@ -2467,6 +2521,7 @@ mod tests {
                         page_index: 0,
                         annot_type: annot_type.to_string(),
                         normalized_rect: rect.clone(),
+                        ink_strokes: None,
                         color: "#FFCC00".to_string(),
                         contents: Some(format!("{annot_type} worker round-trip")),
                     },

@@ -47,6 +47,20 @@ describe("AppToolbar", () => {
     expect(view.queryByRole("button", { name: "Sola döndür" })).toBeNull();
   });
 
+  it("shows the current page's PDF label next to its position", () => {
+    const p = props();
+    p.viewer.pageLabels = ["i", "1", "2"];
+    const view = render(AppToolbar, { props: p });
+    expect(view.getByTitle("Sayfa etiketi").textContent).toBe("(1)");
+  });
+
+  it("omits the label when the document has none or it matches the position", () => {
+    const p = props();
+    p.viewer.pageLabels = ["1", "2", "3"];
+    const view = render(AppToolbar, { props: p });
+    expect(view.queryByTitle("Sayfa etiketi")).toBeNull();
+  });
+
   it("routes search through the feature guard", async () => {
     const p = props({ featureUi: feature(["search"]) });
     const view = render(AppToolbar, { props: p });

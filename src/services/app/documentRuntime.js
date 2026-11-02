@@ -16,6 +16,7 @@ import {
   getActiveDocumentSessionSnapshot,
   getDocumentSessionSnapshot,
   getSessionPageCount,
+  getSessionPageLabels,
   getSessionPdfMetadata,
   getSessionPdfOutline,
   openDocumentSession,
@@ -30,6 +31,7 @@ import { createDocumentOpenController } from "./documentOpenController.js";
 import { createDocumentPositionMemory } from "./documentPositionMemory.js";
 import { createMutationHistoryController } from "./mutationHistoryController.js";
 import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
+import { pageLabelsFor } from "../documentStructure.js";
 
 const transitionApi = Object.freeze({
   beginSessionTransition,
@@ -184,6 +186,7 @@ export function createDocumentRuntime({
     addRecentFile,
     getOutline: getSessionPdfOutline,
     getMetadata: getSessionPdfMetadata,
+    getPageLabels: loadPageLabels,
     chooseFile: () => open({
       multiple: false,
       filters: [{
@@ -195,17 +198,35 @@ export function createDocumentRuntime({
     onToast,
   });
 
+  async function loadPageLabels(sessionId, contentGeneration, pageCount) {
+    return pageLabelsFor(await getSessionPageLabels(sessionId, contentGeneration), pageCount);
+  }
+
   async function applyMutationSnapshot(snapshot, { mapPageIndex = null } = {}) {
     // The backend already renumbered the pages; apply even if a newer snapshot won the race.
     if (mapPageIndex && snapshot?.id && snapshot.id === documentSession.activeSessionId) {
       applyPageScopedMutation(snapshot.id, { mapPageIndex });
     }
     if (!applyBackendSessionSnapshot(snapshot, { activateRender: true })) return;
+    // Metadata edits, and undo/redo across them, change what the metadata dialog shows.
+    void getSessionPdfMetadata(snapshot.id, snapshot.contentGeneration)
+      .then((metadata) => {
+        if (documentSession.activeSessionId === snapshot.id
+          && documentSession.contentGeneration === snapshot.contentGeneration) viewer.pdfMetadata = metadata;
+      })
+      .catch((error) => console.warn("PDF metadata yenilenemedi:", error));
     const pageCount = await getSessionPageCount(snapshot.id, snapshot.contentGeneration);
     if (documentSession.activeSessionId !== snapshot.id
       || documentSession.contentGeneration !== snapshot.contentGeneration) return;
     viewer.pageOrder = Array.from({ length: pageCount }, (_, index) => index);
     viewer.currentPageIndex = Math.min(viewer.currentPageIndex, Math.max(0, pageCount - 1));
+    // Label edits, page moves and undo/redo across them all change which page carries which label.
+    void loadPageLabels(snapshot.id, snapshot.contentGeneration, pageCount)
+      .then((labels) => {
+        if (documentSession.activeSessionId === snapshot.id
+          && documentSession.contentGeneration === snapshot.contentGeneration) viewer.pageLabels = labels;
+      })
+      .catch((error) => console.warn("Sayfa etiketleri yenilenemedi:", error));
     // Physical indices were renumbered by the backend; history entries no longer name the same pages.
     viewer.historyStack = [];
     viewer.forwardStack = [];

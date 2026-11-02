@@ -241,6 +241,35 @@ export async function addAnnotation(
   );
 }
 
+/** Freehand (Ink) annotation: `strokes` are arrays of display-space normalized points. */
+export async function addInkAnnotation(
+  sessionId,
+  generation,
+  pageIndex,
+  normalizedRect,
+  color,
+  strokes,
+  context = getRuntimeFeatureContext(),
+) {
+  return await guardFeatureAction(
+    "annotation",
+    context,
+    async () => {
+      await ensureSignedIncrementalEditAccepted(sessionId, generation, "Açıklama ekleme");
+      return await sessionBackend.addSessionAnnotation(
+        sessionId,
+        generation,
+        pageIndex,
+        "Ink",
+        normalizedRect,
+        color,
+        null,
+        strokes,
+      );
+    },
+  );
+}
+
 export async function deleteAnnotation(
   sessionId,
   generation,
@@ -266,6 +295,29 @@ export async function deleteAnnotation(
       }
     },
   );
+}
+
+// Meta veri, sayfa etiketi ve yer imi düzenlemeleri de artımlı yazılır (document_structure).
+
+export async function updateDocumentMetadata(sessionId, generation, metadata) {
+  await ensureSignedIncrementalEditAccepted(sessionId, generation, "Meta veri düzenleme");
+  return await sessionBackend.updateSessionMetadata(sessionId, generation, metadata);
+}
+
+export async function setPageLabels(sessionId, generation, ranges) {
+  await ensureSignedIncrementalEditAccepted(sessionId, generation, "Sayfa etiketi düzenleme");
+  return await sessionBackend.setSessionPageLabels(sessionId, generation, ranges);
+}
+
+export async function setOutline(sessionId, generation, tree) {
+  await ensureSignedIncrementalEditAccepted(sessionId, generation, "Yer imi düzenleme");
+  return await sessionBackend.setSessionOutline(sessionId, generation, tree);
+}
+
+/** Header/footer, watermark or background (`op`, see `page_marks::PageMarkOp`); `pages` empty = all. */
+export async function applyPageMarks(sessionId, generation, op, pages) {
+  await ensureSignedIncrementalEditAccepted(sessionId, generation, "Sayfa işaretleri");
+  return await sessionBackend.applySessionPageMarks(sessionId, generation, op, pages);
 }
 
 export async function searchPdfText(sessionId, generation, query) {

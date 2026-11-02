@@ -26,6 +26,7 @@
     contentGeneration = 0,
     pageIndex = 0,
     pageNumber = undefined,
+    pageLabel = "",
     isActive = false,
     onSelect = () => {},
   } = $props();
@@ -35,6 +36,8 @@
   const RESIZE_DEBOUNCE_MS = 150;
 
   const displayedPageNumber = $derived(pageNumber ?? pageIndex + 1);
+  // The PDF's own label ("i", "A-1") when it has one; the position stays in the tooltip.
+  const caption = $derived(pageLabel || String(displayedPageNumber));
   const renderSession = getContext(RENDER_SESSION_CONTEXT);
   const coordinator = createRenderRequestCoordinator({
     scope: "sidebar_thumbnail",
@@ -232,11 +235,11 @@
         class:failed={Boolean(failureCode)}
         title={failureCode ? pageFailureMessage(failureCode, pageIndex) : undefined}
       >
-        <span>{failureCode ? "!" : displayedPageNumber}</span>
+        <span>{failureCode ? "!" : caption}</span>
       </div>
     {/if}
   </div>
-  <div class="page-label">{displayedPageNumber}</div>
+  <div class="page-label" title={pageLabel ? `Sayfa ${displayedPageNumber}` : undefined}>{caption}</div>
 </div>
 
 <style>

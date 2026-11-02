@@ -85,14 +85,6 @@ const objectOf = (required = {}, optional = {}, validate = null) =>
     validate,
   });
 
-const pdfMetadata = objectOf({
-  title: stringType,
-  author: stringType,
-  subject: stringType,
-  keywords: stringType,
-  creator: stringType,
-});
-
 const chatMessage = objectOf({
   role: stringType,
   content: stringType,
@@ -272,6 +264,93 @@ const formFieldPropsPatch = objectOf(
     options: formOptionsType,
   },
 );
+// Mirrors `document_structure::metadata::DocumentMetadataEdit`; Creator stays read-only.
+const documentMetadataEdit = objectOf({
+  title: stringType,
+  author: stringType,
+  subject: stringType,
+  keywords: stringType,
+});
+// Mirrors `document_structure::labels::PageLabelRange`.
+const pageLabelRange = objectOf({
+  startPage: u32Type,
+  style: Object.freeze({
+    type: "string",
+    enum: Object.freeze(["decimal", "upper_roman", "lower_roman", "upper_alpha", "lower_alpha", "none"]),
+  }),
+  prefix: Object.freeze({ type: "string", maxLength: 1024 }),
+  firstNumber: Object.freeze({ type: "number", integer: true, min: 1, max: 4_294_967_295 }),
+});
+// Mirrors `document_structure::outline::OutlineEditNode`; `children` refers back to the node schema.
+const outlineEditNode = {
+  type: "object",
+  required: {
+    title: Object.freeze({ type: "string", minLength: 1, maxLength: 1024 }),
+  },
+  optional: Object.freeze({
+    source: nullable(objectOf({ path: arrayOf(u32Type), title: stringType })),
+    pageIndex: nullable(u32Type),
+  }),
+  unknownKeys: "reject",
+  validate: null,
+};
+outlineEditNode.required.children = arrayOf(outlineEditNode);
+Object.freeze(outlineEditNode.required);
+Object.freeze(outlineEditNode);
+
+// Mirrors `page_marks::PageMarkOp` (tagged by `op`). `spec` takes the union of the spec fields;
+// the op's validator requires exactly the fields of its own spec.
+const markColorType = Object.freeze({ type: "string", minLength: 7, maxLength: 7 });
+const markTextType = Object.freeze({ type: "string", maxLength: 1024 });
+const opacityType = Object.freeze({ type: "number", min: 0.01, max: 1 });
+const pageMarkKindType = Object.freeze({
+  type: "string",
+  enum: Object.freeze(["header_footer", "watermark", "background"]),
+});
+const PAGE_MARK_SPEC_FIELDS = Object.freeze({
+  header_footer: Object.freeze(["texts", "fontSize", "color", "margins", "startNumber", "date"]),
+  watermark: Object.freeze(["text", "fontSize", "color", "opacity", "rotation", "offset", "behind"]),
+  background: Object.freeze(["color", "opacity"]),
+});
+const pageMarkSpec = objectOf({}, {
+  texts: arrayOf(markTextType),
+  text: markTextType,
+  fontSize: Object.freeze({ type: "number", min: 0, max: 500 }),
+  color: markColorType,
+  margins: tupleOf(numberType, numberType, numberType, numberType),
+  startNumber: u32Type,
+  date: objectOf({ year: i32Type, month: u32Type, day: u32Type }),
+  opacity: opacityType,
+  rotation: numberType,
+  offset: tupleOf(numberType, numberType),
+  behind: booleanType,
+});
+const pageMarkOp = objectOf(
+  {
+    op: Object.freeze({ type: "string", enum: Object.freeze(["header_footer", "watermark", "background", "remove"]) }),
+  },
+  {
+    spec: pageMarkSpec,
+    replace: booleanType,
+    kinds: arrayOf(pageMarkKindType),
+  },
+  (op) => {
+    if (op.op === "remove") {
+      return op.kinds !== undefined && op.spec === undefined && op.replace === undefined
+        ? null
+        : "remove op must carry exactly: kinds";
+    }
+    if (op.spec === undefined || op.replace === undefined || op.kinds !== undefined) {
+      return `${op.op} op must carry exactly: spec, replace`;
+    }
+    const fields = PAGE_MARK_SPEC_FIELDS[op.op];
+    const keys = Object.keys(op.spec);
+    return fields.every((key) => keys.includes(key)) && keys.every((key) => fields.includes(key))
+      ? null
+      : `${op.op} spec must carry exactly: ${fields.join(", ")}`;
+  },
+);
+
 const formAuthorOp = objectOf(
   {
     op: Object.freeze({ type: "string", enum: Object.freeze(["add", "delete", "move", "set_props"]) }),
@@ -606,6 +685,8 @@ export const CONTRACTS = Object.freeze({
     },
     {
       contents: nullable(stringType),
+      // Ink only: strokes of display-space points, as `annotations::NormalizedPoint`.
+      inkStrokes: nullable(arrayOf(arrayOf(objectOf({ x: numberType, y: numberType })))),
     },
   ),
   deleteSessionAnnotation: command("delete_session_annotation", {
@@ -617,7 +698,28 @@ export const CONTRACTS = Object.freeze({
   updateSessionMetadata: command("update_session_metadata", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
-    metadata: pdfMetadata,
+    metadata: documentMetadataEdit,
+  }),
+  setSessionPageLabels: command("set_session_page_labels", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    ranges: arrayOf(pageLabelRange),
+  }),
+  applySessionPageMarks: command("apply_session_page_marks", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    op: pageMarkOp,
+    pages: arrayOf(u32Type),
+  }),
+  setSessionOutline: command("set_session_outline", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    tree: arrayOf(outlineEditNode),
+  }),
+  getSessionPageLabels: command("get_session_page_labels", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
   }),
   saveDocumentSession: command("save_document_session", {
     sessionId: renderIdentifierType,

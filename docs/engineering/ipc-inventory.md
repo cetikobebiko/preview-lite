@@ -25,8 +25,9 @@ output targets. Active PDF sharing remains
 `share_external_file_macos(path)`. PDF page OCR remains
 `perform_ocr_on_page(sessionId, expectedContentGeneration, pageIndex)`;
 independent image OCR is unsupported. The public session snapshot omits source
-and working-copy paths. Metadata reads use PDFium; metadata and alt-text writes
-return `UNSUPPORTED_PDFIUM_CAPABILITY` without mutation.
+and working-copy paths. Metadata reads use PDFium; metadata, page-label and outline writes are isolated
+session mutations (`SetMetadata`, `SetPageLabels`, `SetOutline`) written incrementally
+with lopdf in the job worker; alt-text writes are not exposed.
 
 Bu envanter `src-tauri/src/**/*.rs` altındaki bütün `#[tauri::command]`
 tanımlarını, `src-tauri/src/lib.rs:970-1037` içindeki

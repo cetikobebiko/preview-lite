@@ -3,6 +3,11 @@
   import HighlighterIcon from "@lucide/svelte/icons/highlighter";
   import UnderlineIcon from "@lucide/svelte/icons/underline";
   import TypeIcon from "@lucide/svelte/icons/type";
+  import StrikethroughIcon from "@lucide/svelte/icons/strikethrough";
+  import SplineIcon from "@lucide/svelte/icons/spline";
+  import SquareIcon from "@lucide/svelte/icons/square";
+  import CircleIcon from "@lucide/svelte/icons/circle";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
   import SquareMousePointerIcon from "@lucide/svelte/icons/square-mouse-pointer";
   import TextCursorInputIcon from "@lucide/svelte/icons/text-cursor-input";
   import SquareCheckIcon from "@lucide/svelte/icons/square-check";
@@ -36,6 +41,11 @@
     { value: "pointer", label: "Seçim", icon: MousePointerIcon, gated: false },
     { value: "highlight", label: "Vurgula", icon: HighlighterIcon, gated: true },
     { value: "underline", label: "Altını çiz", icon: UnderlineIcon, gated: true },
+    { value: "strikeout", label: "Üstünü çiz", icon: StrikethroughIcon, gated: true },
+    { value: "squiggly", label: "Dalgalı altı çizili", icon: SplineIcon, gated: true },
+    { value: "square", label: "Dikdörtgen", icon: SquareIcon, gated: true },
+    { value: "circle", label: "Elips", icon: CircleIcon, gated: true },
+    { value: "ink", label: "Serbest çizim", icon: PencilIcon, gated: true },
     { value: "text", label: "Metin notu", icon: TypeIcon, gated: true },
   ];
 </script>

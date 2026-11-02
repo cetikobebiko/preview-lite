@@ -259,3 +259,24 @@ describe("sidebar thumbnail retention", () => {
     expect(renderThumbnail).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("sidebar thumbnail caption", () => {
+  it("shows the PDF page label and keeps the position in the tooltip", () => {
+    const view = render(Thumbnail, {
+      props: { sessionId: "document-1", contentGeneration: 4, pageIndex: 0, pageNumber: 1, pageLabel: "i" },
+    });
+    const caption = view.container.querySelector(".page-label");
+    expect(caption.textContent).toBe("i");
+    expect(caption.getAttribute("title")).toBe("Sayfa 1");
+    expect(view.container.querySelector("canvas").getAttribute("aria-label")).toBe("Page 1");
+  });
+
+  it("falls back to the position without a label", () => {
+    const view = render(Thumbnail, {
+      props: { sessionId: "document-1", contentGeneration: 4, pageIndex: 2, pageNumber: 3 },
+    });
+    const caption = view.container.querySelector(".page-label");
+    expect(caption.textContent).toBe("3");
+    expect(caption.hasAttribute("title")).toBe(false);
+  });
+});

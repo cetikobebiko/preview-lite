@@ -324,6 +324,7 @@ export const addSessionAnnotation = (
   normalizedRect,
   color,
   contents,
+  inkStrokes = undefined,
 ) =>
   callBackend("addSessionAnnotation", {
     sessionId,
@@ -333,6 +334,7 @@ export const addSessionAnnotation = (
     normalizedRect,
     color,
     contents,
+    inkStrokes,
   });
 
 export const deleteSessionAnnotation = (
@@ -358,6 +360,37 @@ export const updateSessionMetadata = (
     expectedContentGeneration,
     metadata,
   });
+
+export const setSessionPageLabels = (sessionId, expectedContentGeneration, ranges) =>
+  callBackend("setSessionPageLabels", {
+    sessionId,
+    expectedContentGeneration,
+    ranges,
+  });
+
+export const setSessionOutline = (sessionId, expectedContentGeneration, tree) =>
+  callBackend("setSessionOutline", {
+    sessionId,
+    expectedContentGeneration,
+    tree,
+  });
+
+export const applySessionPageMarks = (sessionId, expectedContentGeneration, op, pages) =>
+  callBackend("applySessionPageMarks", {
+    sessionId,
+    expectedContentGeneration,
+    op,
+    pages,
+  });
+
+export const getSessionPageLabels = (sessionId, expectedContentGeneration) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("getSessionPageLabels", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+    }),
+  ).promise;
 
 export const saveDocumentSession = async (sessionId, expectedStateRevision) => {
   if (sessionSaveInProgress.get(sessionId)) {
