@@ -1018,6 +1018,138 @@ pub(crate) fn add_annotation_with_ink_report(
     )
 }
 
+/// XFDF içe aktarmasının açıklamalarını (PDF user space geometrisiyle) tek bir artımlı yazımda
+/// ekler. Metin işaretlemeleri `coords` yoksa dikdörtgenden tek dörtgen alır; görünümleri
+/// [`add_annotation_with_ink_report`]'taki gibi PDFium üretir.
+pub(crate) fn import_annotations_report(
+    file_path: String,
+    annotations: Vec<crate::xfdf::XfdfAnnotation>,
+    password: Option<String>,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    use crate::xfdf::AnnotKind;
+    let path = PathBuf::from(&file_path);
+    let source = path.clone();
+    atomic_write_pdf(
+        "import_annotations",
+        std::slice::from_ref(&path),
+        &path,
+        move |pdfium, temp| {
+            let bindings = pdfium.bindings();
+            let document = RawDocument::open_for_mutation(bindings, &source, password.as_deref())?;
+            let page_count = u32::from(document.page_count()?);
+            let mut added: std::collections::BTreeMap<u32, (usize, usize)> = Default::default();
+            for annotation in &annotations {
+                if annotation.page >= page_count {
+                    return Err(DocumentIoFailure::preflight(format!(
+                        "Açıklamanın sayfası belgede yok: {}",
+                        annotation.page + 1
+                    )));
+                }
+                let page = RawPage::load(&document, annotation.page)?;
+                let before = bindings.FPDFPage_GetAnnotCount(page.handle);
+                let entry = added
+                    .entry(annotation.page)
+                    .or_insert((before.max(0) as usize, 0));
+                entry.1 += 1;
+                let kind = annotation.kind;
+                let [left, bottom, right, top] = annotation.rect;
+                let bounds = PdfRect::new_from_values(bottom, left, top, right);
+                {
+                    let created =
+                        RawAnnotation::create(&page, kind.pdfium_subtype(), kind.subtype())?;
+                    let now = pdf_date_utc(SystemTime::now());
+                    created.set_string("CreationDate", &now)?;
+                    let color = annotation
+                        .color
+                        .map(|[r, g, b]| (r, g, b))
+                        .unwrap_or((255, 204, 0));
+                    let color_type = if kind == AnnotKind::Text {
+                        COLORTYPE_INTERIOR_COLOR
+                    } else {
+                        COLORTYPE_COLOR
+                    };
+                    created.set_color(color_type, color)?;
+                    let width = annotation.width.unwrap_or(SHAPE_BORDER_WIDTH);
+                    match kind {
+                        AnnotKind::Text => {
+                            created.set_rect(&bounds)?;
+                            created.set_string("Contents", "")?;
+                        }
+                        AnnotKind::Square | AnnotKind::Circle => {
+                            created.set_rect(&bounds)?;
+                            created.set_border_width(width)?;
+                        }
+                        AnnotKind::Ink => {
+                            let strokes: Vec<Vec<FS_POINTF>> = annotation
+                                .ink
+                                .iter()
+                                .map(|stroke| {
+                                    stroke
+                                        .iter()
+                                        .map(|[x, y]| FS_POINTF { x: *x, y: *y })
+                                        .collect()
+                                })
+                                .collect();
+                            created.set_rect(&ink_bounds(&strokes, width))?;
+                            created.set_border_width(width)?;
+                            for stroke in &strokes {
+                                created.add_ink_stroke(stroke)?;
+                            }
+                        }
+                        AnnotKind::Highlight
+                        | AnnotKind::Underline
+                        | AnnotKind::StrikeOut
+                        | AnnotKind::Squiggly => {
+                            created.set_rect(&bounds)?;
+                            if annotation.coords.is_empty() {
+                                created.append_quad_points(&text_markup_quad_points(&bounds))?;
+                            }
+                            for [x1, y1, x2, y2, x3, y3, x4, y4] in
+                                annotation.coords.as_chunks::<8>().0
+                            {
+                                created.append_quad_points(&PdfQuadPoints::new_from_values(
+                                    *x1, *y1, *x2, *y2, *x3, *y3, *x4, *y4,
+                                ))?;
+                            }
+                        }
+                    }
+                    if let Some(contents) = annotation.contents.as_deref() {
+                        created.set_string("Contents", contents)?;
+                    }
+                    if let Some(title) = annotation.title.as_deref() {
+                        created.set_string("T", title)?;
+                    }
+                    if let Some(name) = annotation.name.as_deref() {
+                        created.set_string("NM", name)?;
+                    }
+                    created.set_string("M", annotation.date.as_deref().unwrap_or(&now))?;
+                }
+                if kind != AnnotKind::Text {
+                    generate_last_annotation_appearance(&page)?;
+                }
+            }
+            let mode = save_mutation(&document, &source, temp)?;
+            tracing::info!(operation = "import_annotations", write_mode = ?mode, count = annotations.len(), "Açıklamalar içe aktarıldı");
+            Ok(added)
+        },
+        move |document, added| {
+            for (page_index, (before, count)) in added {
+                let page = document.pages().get(*page_index as u16).map_err(|error| {
+                    DocumentIoFailure::invariant(format!("Sayfa okunamadı: {error}"))
+                })?;
+                let now = page.annotations().len();
+                if now != before + count {
+                    return Err(DocumentIoFailure::invariant(format!(
+                        "Sayfa {} açıklama sayısı {before} + {count} olmadı: {now}",
+                        page_index + 1
+                    )));
+                }
+            }
+            Ok(())
+        },
+    )
+}
+
 pub(crate) fn delete_annotation_report(
     file_path: String,
     page_index: u32,

@@ -1492,8 +1492,13 @@ pub(super) mod tests {
             let (size, name_len) = (at(i + 18, 4), at(i + 26, 2));
             let data = i + 30 + name_len;
             if &zip[i + 30..data] == name.as_bytes() {
-                assert_eq!(at(i + 8, 2), 0, "{name}: entries are stored");
-                return String::from_utf8(zip[data..data + size].to_vec()).unwrap();
+                let body = &zip[data..data + size];
+                let bytes = match at(i + 8, 2) {
+                    0 => body.to_vec(),
+                    8 => miniz_oxide::inflate::decompress_to_vec(body).unwrap(),
+                    method => panic!("{name}: unexpected zip method {method}"),
+                };
+                return String::from_utf8(bytes).unwrap();
             }
             i = data + size;
         }

@@ -10,6 +10,19 @@ export function pageMappingAfterDelete(deletedIndices) {
   };
 }
 
+/**
+ * After `insertedCount` pages went in at `atIndex` and the `replacedCount` pages that were there
+ * were removed: old pages before `atIndex` keep their index, replaced ones map to -1.
+ */
+export function pageMappingAfterImport(atIndex, insertedCount, replacedCount = 0) {
+  return (oldIndex) => {
+    if (!Number.isInteger(oldIndex) || oldIndex < 0) return -1;
+    if (oldIndex < atIndex) return oldIndex;
+    if (oldIndex < atIndex + replacedCount) return -1;
+    return oldIndex + insertedCount - replacedCount;
+  };
+}
+
 /** Re-keys a page-keyed drawing map ({ [pageIndex]: [{ page_index, ... }] }); removed pages are dropped. */
 export function remapPageKeyedDrawings(annotationsMap, mapPageIndex) {
   const remapped = {};

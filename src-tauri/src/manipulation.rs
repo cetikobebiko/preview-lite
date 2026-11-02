@@ -748,6 +748,143 @@ pub(crate) fn insert_blank_page_report(
     )
 }
 
+/// Bir içe aktarmada en fazla kopyalanan sayfa.
+const MAX_IMPORTED_PAGES: usize = 10_000;
+
+/// Sayfaları `at_index`'e kopyalar: `source` yoksa aynı belgeden (çoğaltma), varsa job
+/// dizinindeki başka bir PDF'ten. `source_pages` boşsa kaynağın tüm sayfaları alınır.
+/// `replace_count` > 0 ise eklenen sayfalardan hemen sonra gelen o kadar eski sayfa silinir;
+/// böylece `at_index`'ten başlayan sayfalar kaynaktakilerle değiştirilmiş olur.
+///
+/// PDFium (`FPDF_ImportPagesByIndex`) sayfa içeriğini ve açıklamaları kopyalar; form alanları
+/// belgenin AcroForm'una, bağlantı hedefleri ise yeni sayfalara bağlanmaz.
+pub(crate) fn import_pages_report(
+    file_path: String,
+    source: Option<PathBuf>,
+    source_pages: Vec<u32>,
+    at_index: u32,
+    replace_count: u32,
+    password: Option<String>,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    if source_pages.len() > MAX_IMPORTED_PAGES {
+        return Err(DocumentIoError::new(
+            "import_pages",
+            DocumentIoStage::Preflight,
+            CommitState::Prepared,
+            format!("Bir seferde en fazla {MAX_IMPORTED_PAGES} sayfa eklenebilir"),
+        ));
+    }
+    let path = PathBuf::from(&file_path);
+    let target = path.clone();
+    let mut inputs = vec![path.clone()];
+    inputs.extend(source.iter().cloned());
+    atomic_write_pdf(
+        "import_pages",
+        &inputs,
+        &path,
+        move |pdfium, temp| {
+            let bindings = pdfium.bindings();
+            let document = RawDocument::open_for_mutation(bindings, &target, password.as_deref())?;
+            let page_count = u32::from(document.page_count()?);
+            // Çoğaltmada kaynak, düzenlenen belgenin ayrı açılmış bir kopyasıdır: PDFium aynı
+            // handle'ı hem kaynak hem hedef olarak kullanmaz.
+            let (source_path, source_password) = match &source {
+                Some(path) => (path.as_path(), None),
+                None => (target.as_path(), password.as_deref()),
+            };
+            let source_str = source_path
+                .to_str()
+                .ok_or_else(|| DocumentIoFailure::preflight("Kaynak PDF yolu UTF-8 değil"))?;
+            let source_document = RawDocument::open(bindings, source_str, source_password)
+                .ok_or_else(|| {
+                    DocumentIoFailure::preflight(format!(
+                        "Kaynak PDF açılamadı (PDFium hata kodu {}); parolalı PDF'lerden sayfa eklenemez",
+                        bindings.FPDF_GetLastError()
+                    ))
+                })?;
+            let source_count = u32::from(source_document.page_count()?);
+            let indices: Vec<u32> = if source_pages.is_empty() {
+                (0..source_count).collect()
+            } else {
+                source_pages.clone()
+            };
+            if indices.is_empty() || indices.len() > MAX_IMPORTED_PAGES {
+                return Err(DocumentIoFailure::preflight(
+                    "Eklenecek sayfa yok ya da sayfa sayısı sınırı aşıldı",
+                ));
+            }
+            if let Some(bad) = indices.iter().find(|index| **index >= source_count) {
+                return Err(DocumentIoFailure::preflight(format!(
+                    "Kaynak sayfa aralık dışında: {} > {source_count}",
+                    bad + 1
+                )));
+            }
+            if at_index > page_count || replace_count > page_count - at_index {
+                return Err(DocumentIoFailure::preflight(format!(
+                    "Ekleme konumu aralık dışında: {at_index} (+{replace_count}) > {page_count}"
+                )));
+            }
+            let mut sizes = Vec::with_capacity(indices.len());
+            for index in &indices {
+                let mut size = FS_SIZEF {
+                    width: 0.0,
+                    height: 0.0,
+                };
+                if !bindings.is_true(bindings.FPDF_GetPageSizeByIndexF(
+                    source_document.handle,
+                    *index as c_int,
+                    &mut size,
+                )) {
+                    return Err(DocumentIoFailure::preflight(
+                        "Kaynak sayfa boyutu okunamadı",
+                    ));
+                }
+                sizes.push((size.width, size.height));
+            }
+            let c_indices: Vec<c_int> = indices.iter().map(|index| *index as c_int).collect();
+            if !bindings.is_true(bindings.FPDF_ImportPagesByIndex_vec(
+                document.handle,
+                source_document.handle,
+                c_indices,
+                at_index as c_int,
+            )) {
+                return Err(DocumentIoFailure::write("Sayfalar kopyalanamadı"));
+            }
+            drop(source_document);
+            let inserted = indices.len() as u32;
+            // Değiştirilen sayfalar eklenenlerin hemen arkasındadır; sondan başa silinir.
+            for offset in (0..replace_count).rev() {
+                bindings.FPDFPage_Delete(document.handle, (at_index + inserted + offset) as c_int);
+            }
+            save_logged("import_pages", &document, &target, temp)?;
+            Ok((page_count + inserted - replace_count, at_index, sizes))
+        },
+        move |document, (expected_count, at_index, sizes)| {
+            let count = u32::from(document.pages().len());
+            if count != *expected_count {
+                return Err(DocumentIoFailure::invariant(format!(
+                    "Sayfa ekleme sayı invariant'ı bozuldu: beklenen {expected_count}, bulunan {count}"
+                )));
+            }
+            for (offset, (width, height)) in sizes.iter().enumerate() {
+                let index = (*at_index as usize + offset) as u16;
+                let size = document.pages().page_size(index).map_err(|error| {
+                    DocumentIoFailure::invariant(format!("Eklenen sayfa boyutu okunamadı: {error}"))
+                })?;
+                if (size.width().value - width).abs() > 0.01
+                    || (size.height().value - height).abs() > 0.01
+                {
+                    return Err(DocumentIoFailure::invariant(format!(
+                        "Eklenen {}. sayfanın boyutu kaynaktakiyle uyuşmuyor",
+                        offset + 1
+                    )));
+                }
+            }
+            Ok(())
+        },
+    )
+}
+
 pub fn merge_pdfs(file_paths: Vec<String>, output_path: String) -> Result<(), String> {
     if file_paths.is_empty() {
         return Err(
@@ -1426,6 +1563,101 @@ mod tests {
         insert_blank_page_with_password(path.to_string_lossy().to_string(), 1, 200.0, 300.0, None)
             .unwrap();
         assert_page_sizes(&path, &[(612.0, 792.0), (200.0, 300.0)]);
+    }
+
+    fn import_pages(
+        path: &Path,
+        source: Option<&Path>,
+        source_pages: Vec<u32>,
+        at_index: u32,
+        replace_count: u32,
+    ) -> Result<(), String> {
+        import_pages_report(
+            path.to_string_lossy().to_string(),
+            source.map(Path::to_path_buf),
+            source_pages,
+            at_index,
+            replace_count,
+            None,
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    }
+
+    /// `output`'un sayfaları sırasıyla `expected`'daki (belge, sayfa) sayfalarıyla aynı mı.
+    fn assert_page_sequence(output: &Path, expected: &[(&Path, usize)]) {
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+            let mut wanted = Vec::new();
+            for (path, index) in expected {
+                let document = pdfium
+                    .load_pdf_from_file(*path, None)
+                    .map_err(|error| error.to_string())?;
+                wanted
+                    .push(page_snapshots(&document).map_err(|error| error.detail)?[*index].clone());
+            }
+            let output_document = pdfium
+                .load_pdf_from_file(output, None)
+                .map_err(|error| error.to_string())?;
+            validate_page_snapshots(&output_document, &wanted).map_err(|error| error.detail)
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn import_pages_duplicates_pages_of_the_same_document() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = copied_fixture("three-distinct-pages.pdf", directory.path());
+        let original = directory.path().join("original.pdf");
+        fs::copy(&path, &original).unwrap();
+        import_pages(&path, None, vec![0, 2], 1, 0).unwrap();
+        let o = original.as_path();
+        assert_page_sequence(&path, &[(o, 0), (o, 0), (o, 2), (o, 1), (o, 2)]);
+        // Appended incrementally: the original bytes are still the file's prefix.
+        assert!(fs::read(&path)
+            .unwrap()
+            .starts_with(&fs::read(&original).unwrap()));
+    }
+
+    #[test]
+    fn import_pages_inserts_all_pages_of_another_pdf() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = copied_fixture("minimal.pdf", directory.path());
+        let original = directory.path().join("original.pdf");
+        fs::copy(&path, &original).unwrap();
+        let other = fixture("three-distinct-pages.pdf");
+        import_pages(&path, Some(&other), vec![], 0, 0).unwrap();
+        let (o, t) = (original.as_path(), other.as_path());
+        assert_page_sequence(&path, &[(t, 0), (t, 1), (t, 2), (o, 0)]);
+    }
+
+    #[test]
+    fn import_pages_replaces_a_run_of_pages() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = copied_fixture("three-distinct-pages.pdf", directory.path());
+        let original = directory.path().join("original.pdf");
+        fs::copy(&path, &original).unwrap();
+        let other = fixture("minimal.pdf");
+        // Pages 2–3 become the single page of minimal.pdf.
+        import_pages(&path, Some(&other), vec![0], 1, 2).unwrap();
+        assert_page_sequence(&path, &[(original.as_path(), 0), (other.as_path(), 0)]);
+    }
+
+    #[test]
+    fn import_pages_rejects_out_of_range_requests_without_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = copied_fixture("minimal.pdf", directory.path());
+        let before = fs::read(&path).unwrap();
+        let other = fixture("three-distinct-pages.pdf");
+        for (pages, at, replace) in [(vec![3], 0, 0), (vec![0], 2, 0), (vec![0], 0, 2)] {
+            let error = import_pages(&path, Some(&other), pages, at, replace).unwrap_err();
+            assert!(error.contains("aralık dışında"), "{error}");
+        }
+        assert!(
+            import_pages(&path, Some(&fixture("encrypted.pdf")), vec![], 0, 0)
+                .unwrap_err()
+                .contains("Kaynak PDF açılamadı")
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 
     fn copied_from(relative: &str, directory: &Path) -> PathBuf {

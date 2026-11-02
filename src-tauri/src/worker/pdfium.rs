@@ -173,6 +173,9 @@ fn handle_command<'a>(
             let protected = match document.permissions().security_handler_revision() {
                 Ok(PdfSecurityHandlerRevision::Unprotected) => false,
                 Ok(_) => true,
+                // pdfium-render 0.8.37 names revisions 2–4 only and reports AES-256 (R5/R6)
+                // as unknown; PDFium's -1 (unprotected) is always known, so this one is encrypted.
+                Err(PdfiumError::UnknownPdfSecurityHandlerRevision) => true,
                 Err(_) => {
                     return Err(WorkerFailure::new(
                         WorkerFailureKind::UnsupportedSecurity,

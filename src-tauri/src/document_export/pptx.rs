@@ -553,6 +553,7 @@ mod tests {
             let body = &zip[data..data + size];
             let bytes = match method {
                 0 => body.to_vec(),
+                8 => miniz_oxide::inflate::decompress_to_vec(body).expect("valid deflate"),
                 m => panic!("{name}: unexpected method {m}"),
             };
             assert_eq!(bytes.len(), raw, "{name}: uncompressed size");

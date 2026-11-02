@@ -39,7 +39,7 @@ use crate::document_io::{
 use crate::incremental_save::{self, RawDocument};
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::os::raw::{c_int, c_ulong};
 use std::path::{Path, PathBuf};
 
@@ -194,6 +194,67 @@ pub(crate) fn fill_form_fields_report(
         },
         |document, expected| verify_saved(document, expected),
     )
+}
+
+/// Checkbox ve radyo widget'larının dışa aktarma (açık durum) değerleri, `(sayfa, annotation
+/// indeksi)` anahtarıyla. XFDF içe aktarması bir radyo grubunun hangi düğmesinin seçileceğini
+/// bundan bulur. Yalnız okur; belge kaydedilmez.
+pub(crate) fn widget_export_values(
+    bindings: &dyn PdfiumLibraryBindings,
+    source: &Path,
+    password: Option<&str>,
+) -> Result<HashMap<(u32, u32), String>, DocumentIoFailure> {
+    const FPDF_ANNOT_WIDGET: FPDF_ANNOTATION_SUBTYPE = 20;
+    const FPDF_FORMFIELD_CHECKBOX: c_int = 2;
+    const FPDF_FORMFIELD_RADIOBUTTON: c_int = 3;
+    let path = source
+        .to_str()
+        .ok_or_else(|| DocumentIoFailure::preflight("PDF yolu UTF-8 değil"))?;
+    let document = RawDocument::open(bindings, path, password)
+        .ok_or_else(|| DocumentIoFailure::preflight("PDF form değerleri için açılamadı"))?;
+    let form = FormEnvironment::init(bindings, &document)?;
+    let mut values = HashMap::new();
+    for page_index in 0..u32::from(document.page_count()?) {
+        let page = RawPage::load(bindings, &document, &form, page_index)?;
+        for index in 0..bindings.FPDFPage_GetAnnotCount(page.handle) {
+            let Ok(annotation) = RawAnnotation::get(bindings, &page, index) else {
+                continue;
+            };
+            if bindings.FPDFAnnot_GetSubtype(annotation.handle) != FPDF_ANNOT_WIDGET
+                || !matches!(
+                    bindings.FPDFAnnot_GetFormFieldType(form.handle, annotation.handle),
+                    FPDF_FORMFIELD_CHECKBOX | FPDF_FORMFIELD_RADIOBUTTON
+                )
+            {
+                continue;
+            }
+            let length = bindings.FPDFAnnot_GetFormFieldExportValue(
+                form.handle,
+                annotation.handle,
+                std::ptr::null_mut(),
+                0,
+            );
+            if length <= 2 || length > 4096 {
+                continue;
+            }
+            let mut buffer = vec![0u16; (length / 2) as usize];
+            if bindings.FPDFAnnot_GetFormFieldExportValue(
+                form.handle,
+                annotation.handle,
+                buffer.as_mut_ptr(),
+                length,
+            ) != length
+            {
+                continue;
+            }
+            buffer.pop();
+            values.insert(
+                (page_index, index as u32),
+                String::from_utf16_lossy(&buffer),
+            );
+        }
+    }
+    Ok(values)
 }
 
 /// Yazılan bir widget'ın kayıttan sonra okunması beklenen durumu.

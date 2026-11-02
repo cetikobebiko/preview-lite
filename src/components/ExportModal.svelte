@@ -6,6 +6,7 @@
   import { ask, open, save } from "@tauri-apps/plugin-dialog";
   import {
     exportSessionDocument,
+    exportSessionEmbeddedImages,
     exportSessionPagesAsImages,
     exportSessionTextToFile,
     printSessionPdf,
@@ -30,7 +31,8 @@
   let pageRange = $state("");
   let exportType = $state("image"); // "image", "text", "document", "print"
   
-  // Image options
+  // Image options: render whole pages, or save the images embedded in them as they are.
+  let imgSource = $state("pages"); // "pages" | "embedded"
   let imgFormat = $state("png");
   let imgDpi = $state(300);
   
@@ -117,15 +119,17 @@
               if (outputDir) {
                   const result = await publishWithOverwriteConfirmation(
                     (overwrite) =>
-                      exportSessionPagesAsImages(
-                        sessionId,
-                        contentGeneration,
-                        selectedPages,
-                        outputDir,
-                        imgFormat,
-                        imgDpi,
-                        overwrite,
-                      ),
+                      imgSource === "embedded"
+                        ? exportSessionEmbeddedImages(sessionId, contentGeneration, selectedPages, outputDir, overwrite)
+                        : exportSessionPagesAsImages(
+                            sessionId,
+                            contentGeneration,
+                            selectedPages,
+                            outputDir,
+                            imgFormat,
+                            imgDpi,
+                            overwrite,
+                          ),
                     (names) =>
                       ask(outputConflictMessage(names), {
                         title: "Dosyalar Zaten Var",
@@ -212,6 +216,14 @@
     </div>
 
     {#if exportType === 'image'}
+      <div class="grid gap-1.5">
+        <Label for="export-image-source" class="text-xs text-muted-foreground">Ne aktarılsın?</Label>
+        <select id="export-image-source" bind:value={imgSource} class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+          <option value="pages">Sayfaların görüntüsü</option>
+          <option value="embedded">Sayfalardaki gömülü görseller (PNG, özgün çözünürlük)</option>
+        </select>
+      </div>
+      {#if imgSource === 'pages'}
       <div class="grid grid-cols-2 gap-3">
         <div class="grid gap-1.5">
           <Label for="export-image-format" class="text-xs text-muted-foreground">Format</Label>
@@ -229,6 +241,9 @@
           </select>
         </div>
       </div>
+      {:else}
+      <p class="text-xs text-muted-foreground">Her görsel belgede saklandığı çözünürlükte bir kez kaydedilir; maske ve kırpma uygulanmaz.</p>
+      {/if}
     {:else if exportType === 'text'}
       <div class="grid gap-1.5">
         <Label for="export-text-format" class="text-xs text-muted-foreground">Metin Formatı</Label>

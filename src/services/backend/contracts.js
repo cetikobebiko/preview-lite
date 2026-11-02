@@ -351,6 +351,32 @@ const pageMarkOp = objectOf(
   },
 );
 
+// Mirrors `document_security::SecurityOp` (tagged by `op`).
+const permissionSet = objectOf({
+  print: Object.freeze({ type: "string", enum: Object.freeze(["none", "low_resolution", "high_resolution"]) }),
+  modify: booleanType,
+  copy: booleanType,
+  annotate: booleanType,
+  fillForms: booleanType,
+  assemble: booleanType,
+});
+const securityPasswordType = Object.freeze({ type: "string", maxLength: 127 });
+const securityOp = objectOf(
+  { op: Object.freeze({ type: "string", enum: Object.freeze(["protect", "remove"]) }) },
+  {
+    settings: objectOf({
+      userPassword: securityPasswordType,
+      ownerPassword: securityPasswordType,
+      method: Object.freeze({ type: "string", enum: Object.freeze(["aes256", "aes128", "rc4_128"]) }),
+      permissions: permissionSet,
+      encryptMetadata: booleanType,
+    }),
+  },
+  (op) => ((op.op === "protect") === (op.settings !== undefined)
+    ? null
+    : "protect op must carry settings; remove op must not"),
+);
+
 const formAuthorOp = objectOf(
   {
     op: Object.freeze({ type: "string", enum: Object.freeze(["add", "delete", "move", "set_props"]) }),
@@ -459,6 +485,28 @@ export const CONTRACTS = Object.freeze({
     // SESSION_JOB_OUTPUT_CONFLICT and `conflictingNames`; nothing is written.
     overwrite: booleanType,
   }),
+  exportSessionEmbeddedImages: command("export_session_embedded_images", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    // Empty: every page.
+    pages: arrayOf(u32Type),
+    outputDir: stringType,
+    overwrite: booleanType,
+  }),
+  exportSessionXfdf: command("export_session_xfdf", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    includeComments: booleanType,
+    includeFields: booleanType,
+    targetPath: stringType,
+  }),
+  importSessionXfdf: command("import_session_xfdf", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    sourcePath: stringType,
+  }),
   exportSessionTextContent: command("export_session_text_content", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
@@ -482,6 +530,13 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     pages: arrayOf(u32Type),
     format: Object.freeze({ type: "string", enum: Object.freeze(["docx", "pptx", "html", "rtf"]) }),
+    targetPath: stringType,
+  }),
+  saveSessionSecurityCopy: command("save_session_security_copy", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    op: securityOp,
     targetPath: stringType,
   }),
   printSessionPdf: command(
@@ -637,6 +692,17 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     pageIndices: arrayOf(u32Type),
   }),
+  importSessionPages: command(
+    "import_session_pages",
+    {
+      sessionId: renderIdentifierType,
+      expectedContentGeneration: safeIntegerType,
+      sourcePages: arrayOf(u32Type),
+      atIndex: u32Type,
+      replaceCount: u32Type,
+    },
+    { sourcePath: nullable(stringType) },
+  ),
   reorderSessionPages: command("reorder_session_pages", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
@@ -772,6 +838,15 @@ export const CONTRACTS = Object.freeze({
     rotation: i32Type,
     flipH: booleanType,
     flipV: booleanType,
+  }),
+  createPdfFromImages: command("create_pdf_from_images", {
+    sourcePaths: arrayOf(stringType),
+    targetPath: stringType,
+    // Mirrors `images_to_pdf::ImagesToPdfOptions`.
+    options: objectOf({
+      pageSize: Object.freeze({ type: "string", enum: Object.freeze(["image", "a4", "letter"]) }),
+      margin: Object.freeze({ type: "number", min: 0, max: 144 }),
+    }),
   }),
   mergePdfs: command("merge_pdfs", {
     filePaths: arrayOf(stringType),

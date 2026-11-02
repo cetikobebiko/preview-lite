@@ -16,18 +16,22 @@
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
   import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
   import AppDialog from "./AppDialog.svelte";
   import { Button } from "$lib/components/ui/button";
   import { SvelteMap } from "svelte/reactivity";
-  import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
-  import { rotatePage, deletePages, reorderPages } from "../pdfState.js";
+  import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { Input } from "$lib/components/ui/input";
+  import { rotatePage, deletePages, reorderPages, importPages } from "../pdfState.js";
+  import { getSessionPageCount } from "../services/backend/session.js";
+  import { parsePageRanges } from "../utils/pageRanges.js";
   import { isSignatureLossDeclined } from "../services/signatureLossGuard.js";
   import { paintBufferToCanvas } from "../utils/canvasUtils.js";
   import {
     pageFailureMessage,
     pageFailureRegistry,
   } from "../services/pageFailureRegistry.js";
-  import { pageMappingAfterDelete, pageMappingAfterReorder } from "../services/app/pageIndexMapping.js";
+  import { pageMappingAfterDelete, pageMappingAfterImport, pageMappingAfterReorder } from "../services/app/pageIndexMapping.js";
   import FeatureNotice from "./FeatureNotice.svelte";
 
   let {
@@ -40,6 +44,16 @@
   } = $props();
 
   let pages = $state([]); // { id, index, canvas, rotation, status, error }
+  // Copying pages works on physical positions, so it waits until a drag reorder is saved.
+  const orderDirty = $derived(pages.some((page, position) => page.index !== position));
+  // Insert or replace with another PDF's pages: chosen file, its pages, and where they go.
+  const IMPORT_SOURCE_PAGE_LIMIT = 10_000;
+  let importFile = $state(null);
+  let importPagesText = $state("");
+  let importMode = $state("end"); // "start", "end", "after", "replace"
+  let importAfter = $state(1);
+  let replaceText = $state("");
+  let importError = $state("");
   let draggedIndex = $state(null);
   let isSaving = $state(false);
   let isMounted = $state(false);
@@ -413,6 +427,101 @@
     isSaving = false;
   }
 
+  // Applies a page copy, then reloads the grid for the new page count.
+  async function applyImport(request) {
+    isSaving = true;
+    try {
+      const oldCount = pageCount;
+      const sessionSnapshot = await importPages(sessionId, contentGeneration, request);
+      const newCount = await getSessionPageCount(sessionSnapshot.id, sessionSnapshot.contentGeneration);
+      const inserted = newCount - oldCount + request.replaceCount;
+      pageCount = newCount;
+      contentGeneration = sessionSnapshot.contentGeneration;
+      onpageMutated?.({
+        snapshot: sessionSnapshot,
+        mapPageIndex: pageMappingAfterImport(request.atIndex, inserted, request.replaceCount),
+      });
+      return true;
+    } catch (e) {
+      if (!isSignatureLossDeclined(e)) importError = e?.message ?? String(e);
+      return false;
+    } finally {
+      isSaving = false;
+    }
+  }
+
+  async function handleDuplicate(index) {
+    const page = pages[index];
+    if (!page || orderDirty) return;
+    importError = "";
+    await applyImport({ sourcePages: [page.index], atIndex: page.index + 1, replaceCount: 0 });
+  }
+
+  async function chooseImportFile() {
+    const selected = await openDialog({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    const path = Array.isArray(selected) ? selected[0] : selected;
+    if (!path) return;
+    importFile = path;
+    importError = "";
+  }
+
+  // Source pages in typed order (repeats allowed); empty text means every page.
+  function importSourcePages() {
+    if (!importPagesText.trim()) return { ok: true, pages: [] };
+    const parsed = parsePageRanges(importPagesText, IMPORT_SOURCE_PAGE_LIMIT, { mode: "ranges" });
+    if (!parsed.ok) return parsed;
+    const list = [];
+    for (const [start, end] of parsed.ranges) for (let page = start; page <= end; page += 1) list.push(page);
+    return list.length > IMPORT_SOURCE_PAGE_LIMIT
+      ? { ok: false, error: `En fazla ${IMPORT_SOURCE_PAGE_LIMIT} sayfa eklenebilir.` }
+      : { ok: true, pages: list };
+  }
+
+  function importTarget() {
+    if (importMode === "start") return { ok: true, atIndex: 0, replaceCount: 0 };
+    if (importMode === "end") return { ok: true, atIndex: pageCount, replaceCount: 0 };
+    if (importMode === "after") {
+      const after = Number(importAfter);
+      return Number.isInteger(after) && after >= 1 && after <= pageCount
+        ? { ok: true, atIndex: after, replaceCount: 0 }
+        : { ok: false, error: `Sayfa numarası 1-${pageCount} arasında olmalı.` };
+    }
+    const parsed = parsePageRanges(replaceText, pageCount, { mode: "ranges" });
+    if (!parsed.ok) return parsed;
+    if (parsed.ranges.length !== 1) return { ok: false, error: "Değiştirilecek sayfaları tek bir aralık olarak yazın (ör. 2-4)." };
+    const [[start, end]] = parsed.ranges;
+    return { ok: true, atIndex: start, replaceCount: end - start + 1 };
+  }
+
+  async function runImport() {
+    importError = "";
+    const source = importSourcePages();
+    const target = importTarget();
+    const failure = [source, target].find((result) => !result.ok);
+    if (failure) {
+      importError = failure.error;
+      return;
+    }
+    if (target.replaceCount > 0) {
+      const confirmed = await confirmDialog(
+        `${target.atIndex + 1}-${target.atIndex + target.replaceCount}. sayfalar seçilen PDF'in sayfalarıyla değiştirilecek.`,
+        { title: "Sayfaları Değiştir", kind: "warning" },
+      );
+      if (!confirmed) return;
+    }
+    const done = await applyImport({
+      sourcePath: importFile,
+      sourcePages: source.pages,
+      atIndex: target.atIndex,
+      replaceCount: target.replaceCount,
+    });
+    if (done) {
+      importFile = null;
+      importPagesText = "";
+      replaceText = "";
+    }
+  }
+
   async function handleSaveOrder() {
     isSaving = true;
     try {
@@ -443,6 +552,41 @@
   onclose={() => onclose?.()}
 >
   <FeatureNotice featureId="page_manipulation" compact />
+
+  <div class="mb-2 grid gap-2 text-xs">
+    <div class="flex flex-wrap items-center gap-2">
+      <Button variant="outline" size="sm" onclick={chooseImportFile} disabled={isSaving || orderDirty}>Dosyadan sayfa ekle / değiştir…</Button>
+      {#if orderDirty}<span class="text-muted-foreground">Sayfa eklemek ve çoğaltmak için önce sıralamayı kaydedin.</span>{/if}
+    </div>
+    {#if importFile}
+      <div class="flex flex-wrap items-end gap-2 rounded-md border bg-card p-2">
+        <span class="max-w-[16rem] truncate self-center font-medium" title={importFile}>{importFile.split(/[\\/]/).pop()}</span>
+        <label class="grid gap-1">
+          <span class="text-[11px] text-muted-foreground">Kaynak sayfalar</span>
+          <Input class="h-8 w-32" type="text" placeholder="Tümü" bind:value={importPagesText} disabled={isSaving} />
+        </label>
+        <label class="grid gap-1">
+          <span class="text-[11px] text-muted-foreground">Konum</span>
+          <select class="h-8 rounded-md border border-input bg-background px-2 text-xs" bind:value={importMode} disabled={isSaving}>
+            <option value="start">Başa ekle</option>
+            <option value="end">Sona ekle</option>
+            <option value="after">Şu sayfadan sonra ekle</option>
+            <option value="replace">Şu sayfaları değiştir</option>
+          </select>
+        </label>
+        {#if importMode === "after"}
+          <Input class="h-8 w-20" type="number" min="1" max={pageCount} aria-label="Eklenecek konumdaki sayfa" bind:value={importAfter} disabled={isSaving} />
+        {:else if importMode === "replace"}
+          <Input class="h-8 w-24" type="text" placeholder="ör. 2-4" aria-label="Değiştirilecek sayfalar" bind:value={replaceText} disabled={isSaving} />
+        {/if}
+        <Button size="sm" onclick={runImport} disabled={isSaving}>Uygula</Button>
+        <Button variant="ghost" size="sm" onclick={() => { importFile = null; importError = ""; }} disabled={isSaving}>Vazgeç</Button>
+      </div>
+    {/if}
+    {#if importError}
+      <p class="rounded-md bg-destructive/10 px-3 py-2 text-destructive" role="alert">{importError}</p>
+    {/if}
+  </div>
 
   <div class="grid-container" role="list">
     {#each pages as page, i (page.id)}
@@ -475,6 +619,7 @@
           <div class="card-actions">
             <button type="button" class="icon-btn" onclick={() => handleRotate(i, -90)} title="Sola Döndür" aria-label="Sola Döndür"><RotateCcwIcon class="size-3.5" /></button>
             <button type="button" class="icon-btn" onclick={() => handleRotate(i, 90)} title="Sağa Döndür" aria-label="Sağa Döndür"><RotateCwIcon class="size-3.5" /></button>
+            <button type="button" class="icon-btn" onclick={() => handleDuplicate(i)} disabled={isSaving || orderDirty} title="Sayfayı Çoğalt" aria-label="Sayfayı Çoğalt"><CopyPlusIcon class="size-3.5" /></button>
             <button type="button" class="icon-btn delete-btn" onclick={() => handleDelete(i)} title="Sayfayı Sil" aria-label="Sayfayı Sil"><Trash2Icon class="size-3.5" /></button>
           </div>
         </div>

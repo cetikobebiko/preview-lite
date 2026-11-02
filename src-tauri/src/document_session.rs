@@ -6474,10 +6474,11 @@ impl MutationEngine for ProductionMutationEngine {
         job_ctx: &SessionJobContext,
         recipe: &MutationRecipe,
     ) -> Result<JobResult, DocumentSessionError> {
+        let recipe = stage_mutation_inputs(job_ctx, recipe)?;
         let output = crate::job_worker::run_job(
             job_ctx,
             JobCommand::MutatePdf {
-                recipe: recipe.clone(),
+                recipe,
                 output_name: "mutation-output.pdf".to_string(),
             },
             Duration::from_secs(180),
@@ -6546,6 +6547,39 @@ impl MutationEngine for ProductionMutationEngine {
             validated_digest,
         )
     }
+}
+
+/// Kullanıcının seçtiği kaynak dosyayı (yalnız `ImportPages`) iş dizinine kopyalar ve tarifi
+/// worker'ın açabileceği iş dizini adıyla döndürür; worker kullanıcı yollarını hiç görmez.
+fn stage_mutation_inputs(
+    job_ctx: &SessionJobContext,
+    recipe: &MutationRecipe,
+) -> Result<MutationRecipe, DocumentSessionError> {
+    let MutationRecipe::ImportPages {
+        source_path: Some(source),
+        source_pages,
+        at_index,
+        replace_count,
+        ..
+    } = recipe
+    else {
+        return Ok(recipe.clone());
+    };
+    let job_dir = job_ctx.snapshot_path.parent().ok_or_else(|| {
+        DocumentSessionError::new(
+            "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+            "Sayfa ekleme job dizini çözümlenemedi",
+        )
+    })?;
+    let name = "import-input.pdf".to_string();
+    copy_source_consistent(source, &job_dir.join(&name))?;
+    Ok(MutationRecipe::ImportPages {
+        source_path: None,
+        input_name: Some(name),
+        source_pages: source_pages.clone(),
+        at_index: *at_index,
+        replace_count: *replace_count,
+    })
 }
 
 pub(crate) struct MutationTransactionInput {
@@ -8628,6 +8662,77 @@ pub async fn export_session_pages_as_images(
         .await
 }
 
+/// Seçili sayfalardaki (boşsa tümü) gömülü görselleri `output_dir`'e PNG olarak yazar.
+/// Adlar görsellerin sayısı bilinmeden planlanamaz; worker'ın ürettiği adlardan türetilir.
+#[tauri::command]
+pub async fn export_session_embedded_images(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    pages: Vec<u32>,
+    output_dir: String,
+    overwrite: bool,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<Vec<String>>, DocumentSessionError> {
+    reject_private_target(Path::new(&output_dir), &store.temp_root)?;
+    let stem = session_output_name_stem(&store, &session_id).await;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let output_dir = PathBuf::from(output_dir);
+                let result = crate::job_worker::run_job(
+                    &context,
+                    crate::job_worker::JobCommand::ExtractEmbeddedImages { pages },
+                    Duration::from_secs(300),
+                )?;
+                let crate::job_worker::JobResult::Files(files) = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Görsel çıkarma worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                if files.is_empty() {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_EMBEDDED_IMAGES_NONE",
+                        "Seçilen sayfalarda gömülü görsel bulunamadı",
+                    ));
+                }
+                let sources = files
+                    .iter()
+                    .map(|source| crate::job_worker::validate_output_file(&context, source))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let planned = sources
+                    .iter()
+                    .map(|source| {
+                        let worker_name = source
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        crate::embedded_images::target_file_name(&stem, &worker_name)
+                            .map(|target_name| crate::output_names::PlannedOutput {
+                                worker_name,
+                                target_name,
+                            })
+                            .ok_or_else(|| {
+                                SessionJobOperationError::failed_with_code(
+                                    "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                                    "Görsel çıkarma worker'ı beklenmeyen dosya adı döndürdü",
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                preflight_job_output_set(&output_dir, &planned, overwrite)?;
+                accept_job_output_set(&context, sources, &planned, &output_dir, overwrite)
+            },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn split_session_pdf(
     job_id: String,
@@ -8803,6 +8908,47 @@ pub async fn get_session_page_labels(
                         "Sayfa etiketi worker'ı beklenmeyen sonuç döndürdü",
                     )),
                 }
+            },
+        )
+        .await
+}
+
+/// Belgenin parola ile korunmuş ya da şifresiz bir kopyasını `target_path`'e yazar; oturumdaki
+/// belge değişmez. Şifreleme job worker'da yapılır (`document_security`).
+#[tauri::command]
+pub async fn save_session_security_copy(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    op: crate::document_security::SecurityOp,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    crate::document_security::validate_request(&op)
+        .map_err(|message| DocumentSessionError::new("SESSION_SECURITY_INVALID", message))?;
+    reject_private_target(Path::new(&target_path), &store.temp_root)?;
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let result = crate::job_worker::run_job(
+                    &context,
+                    JobCommand::SecurityCopy {
+                        op,
+                        output_name: "security-copy.pdf".to_string(),
+                    },
+                    Duration::from_secs(300),
+                )?;
+                let JobResult::File(source) = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "Güvenlik kopyası worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                accept_job_output_file(&context, &source, Path::new(&target_path))
             },
         )
         .await
@@ -10135,6 +10281,144 @@ pub async fn author_session_form_fields(
         .await?;
     vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
     Ok(snapshot)
+}
+
+/// Sayfaları `at_index`'e kopyalar: `source_path` yoksa belgenin kendi sayfalarını çoğaltır,
+/// varsa o PDF'in sayfalarını ekler. `replace_count` > 0 ise `at_index`'ten başlayan o kadar
+/// sayfa eklenenlerle değiştirilir. `source_pages` 0 tabanlıdır; boşsa kaynağın tümü.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn import_session_pages(
+    session_id: String,
+    expected_content_generation: u64,
+    source_path: Option<String>,
+    source_pages: Vec<u32>,
+    at_index: u32,
+    replace_count: u32,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    if source_path.is_none() && source_pages.is_empty() {
+        return Err(DocumentSessionError::new(
+            "SESSION_IMPORT_PAGES_INVALID",
+            "Çoğaltılacak sayfaları seçin",
+        ));
+    }
+    if source_path.is_none() && replace_count > 0 {
+        return Err(DocumentSessionError::new(
+            "SESSION_IMPORT_PAGES_INVALID",
+            "Sayfalar yalnız başka bir PDF'in sayfalarıyla değiştirilebilir",
+        ));
+    }
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::ImportPages {
+                source_path: source_path.map(PathBuf::from),
+                input_name: None,
+                source_pages,
+                at_index,
+                replace_count,
+            },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
+/// Açıklamaları ve/veya form alanı değerlerini XFDF olarak `target_path`'e yazar.
+#[tauri::command]
+pub async fn export_session_xfdf(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    include_comments: bool,
+    include_fields: bool,
+    target_path: String,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    reject_private_target(Path::new(&target_path), &store.temp_root)?;
+    let file_name = format!(
+        "{}.pdf",
+        session_output_name_stem(&store, &session_id).await
+    );
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| {
+                context.cancellation.check_cancelled()?;
+                let result = crate::job_worker::run_job(
+                    &context,
+                    JobCommand::ExportXfdf {
+                        include_comments,
+                        include_fields,
+                        file_name,
+                        output_name: "export.xfdf".to_string(),
+                    },
+                    Duration::from_secs(180),
+                )?;
+                let JobResult::File(source) = result else {
+                    return Err(SessionJobOperationError::failed_with_code(
+                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                        "XFDF worker'ı beklenmeyen sonuç döndürdü",
+                    ));
+                };
+                accept_job_output_file(&context, &source, Path::new(&target_path))
+            },
+        )
+        .await
+}
+
+/// XFDF içe aktarmasının sonucu: yeni snapshot ve dosyada bulunanların özeti.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XfdfImportResult {
+    pub snapshot: DocumentSessionSnapshot,
+    pub summary: crate::xfdf::XfdfSummary,
+}
+
+/// `source_path`'teki XFDF'in alan değerlerini doldurur ve açıklamalarını ekler (artımlı).
+/// XFDF XML olarak burada okunup ayrıştırılır; belgeye job worker'da uygulanır.
+#[tauri::command]
+pub async fn import_session_xfdf(
+    session_id: String,
+    expected_content_generation: u64,
+    source_path: String,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<XfdfImportResult, DocumentSessionError> {
+    let invalid = |message: String| DocumentSessionError::new("SESSION_XFDF_INVALID", message);
+    let (xfdf, summary) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let metadata =
+            fs::metadata(&source_path).map_err(|error| format!("XFDF okunamadı: {error}"))?;
+        if metadata.len() > crate::xfdf::MAX_XFDF_BYTES as u64 {
+            return Err("XFDF dosyası 16 MiB sınırını aşıyor".into());
+        }
+        let text =
+            fs::read_to_string(&source_path).map_err(|error| format!("XFDF okunamadı: {error}"))?;
+        let summary = crate::xfdf::parse(&text)?.summary();
+        Ok((text, summary))
+    })
+    .await
+    .map_err(|error| invalid(format!("XFDF okunamadı: {error}")))?
+    .map_err(invalid)?;
+    if summary.fields == 0 && summary.annotations == 0 {
+        return Err(invalid(
+            "XFDF'te içe aktarılabilecek açıklama ya da form alanı yok".to_string(),
+        ));
+    }
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::ImportXfdf { xfdf },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(XfdfImportResult { snapshot, summary })
 }
 
 /// Belgenin Title, Author, Subject ve Keywords meta verisini yazar (`/Info`; varsa XMP de).
