@@ -31,7 +31,8 @@ with lopdf in the job worker; alt-text writes are not exposed. Page copies
 (`import_session_pages`) and XFDF imports (`import_session_xfdf`) are isolated
 session mutations (`ImportPages`, `ImportXfdf`); a source PDF chosen by the user
 is copied into the job directory by the mutation engine, never passed to the
-worker as a path. Password-protected copies (`save_session_security_copy`), XFDF
+worker as a path. Password-protected copies (`save_session_security_copy`), optimized
+copies (`save_session_optimized_copy`), XFDF
 exports and embedded-image exports are snapshot jobs that publish files outside
 the session; `create_pdf_from_images` writes a new PDF from images without
 opening any PDF.

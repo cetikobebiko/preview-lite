@@ -58,6 +58,8 @@ describe("toolbar overflow menu", () => {
     expect(image.find("sensitive_data_scan")).toBeUndefined();
     expect(image.find("security")).toBeUndefined();
     expect(menu().find("security")).toBeDefined();
+    expect(image.find("optimize")).toBeUndefined();
+    expect(menu().find("optimize")).toBeDefined();
     expect(image.find("smart-dark")).toBeDefined();
 
     const idle = menu({ isPdf: false, hasDocument: false, featureUi: gates({ command_palette: on() }) });

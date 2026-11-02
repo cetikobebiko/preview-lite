@@ -162,6 +162,19 @@ export const exportSessionDocument = (
     }),
   ).promise;
 
+// Writes a smaller copy (see `pdf_optimizer`); resolves to the backend's report. The session's
+// file is not changed.
+export const saveSessionOptimizedCopy = (sessionId, expectedContentGeneration, settings, targetPath) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("saveSessionOptimizedCopy", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      settings,
+      targetPath,
+    }),
+  ).promise;
+
 // `op` is `{ op: "protect", settings }` or `{ op: "remove" }`; the session's file is not changed.
 export const saveSessionSecurityCopy = (sessionId, expectedContentGeneration, op, targetPath) =>
   runSessionJob(sessionId, (jobId) =>

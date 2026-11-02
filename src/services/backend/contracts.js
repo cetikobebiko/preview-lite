@@ -377,6 +377,31 @@ const securityOp = objectOf(
     : "protect op must carry settings; remove op must not"),
 );
 
+// Mirrors `pdf_optimizer::OptimizeSettings`; the backend also checks the ranges.
+const optimizePpiType = Object.freeze({ type: "number", min: 9, max: 2400 });
+const optimizeImageCompression = objectOf(
+  { kind: Object.freeze({ type: "string", enum: Object.freeze(["jpeg", "flate", "retain"]) }) },
+  { quality: Object.freeze({ type: "number", integer: true, min: 1, max: 100 }) },
+  (compression) => ((compression.kind === "jpeg") === (compression.quality !== undefined)
+    ? null
+    : "jpeg compression must carry quality; flate and retain must not"),
+);
+const optimizeImageSettings = objectOf({
+  downsample: booleanType,
+  targetPpi: optimizePpiType,
+  abovePpi: optimizePpiType,
+  compression: optimizeImageCompression,
+});
+const optimizeSettings = objectOf({
+  color: optimizeImageSettings,
+  gray: optimizeImageSettings,
+  removeUnusedXobjects: booleanType,
+  discardThumbnails: booleanType,
+  discardAlternateImages: booleanType,
+  flateUnencoded: booleanType,
+  objectStreams: booleanType,
+});
+
 const formAuthorOp = objectOf(
   {
     op: Object.freeze({ type: "string", enum: Object.freeze(["add", "delete", "move", "set_props"]) }),
@@ -537,6 +562,13 @@ export const CONTRACTS = Object.freeze({
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     op: securityOp,
+    targetPath: stringType,
+  }),
+  saveSessionOptimizedCopy: command("save_session_optimized_copy", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    settings: optimizeSettings,
     targetPath: stringType,
   }),
   printSessionPdf: command(
