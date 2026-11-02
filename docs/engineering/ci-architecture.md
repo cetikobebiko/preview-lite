@@ -20,13 +20,13 @@ CI does not invent new, conflicting test classifications.
 | Job class | Execution class | Runner | Status |
 |---|---|---|---|
 | `FAST_LOCAL` | FAST_LOCAL | `ubuntu-22.04` (single, platform-independent) | implemented (F2) |
-| `MACOS_NATIVE` | NATIVE_PLATFORM | `macos-14` (arm64) | runtime committed; needs rewrite |
+| `MACOS_NATIVE` | NATIVE_PLATFORM | `macos-15` (arm64) | runtime committed; needs rewrite |
 | `LINUX_NATIVE` | NATIVE_PLATFORM | `ubuntu-22.04` (x64) | BLOCKED — runtime absent |
 | `WINDOWS_NATIVE` | NATIVE_PLATFORM | `windows-latest` (x64) | BLOCKED — runtime absent |
-| `MACOS_ARTIFACT_BUILD` | EXACT_ARTIFACT | `macos-14` | F3+ |
+| `MACOS_ARTIFACT_BUILD` | EXACT_ARTIFACT | `macos-15` | F3+ |
 | `LINUX_ARTIFACT_BUILD` | EXACT_ARTIFACT | `ubuntu-22.04` | F3+ |
 | `WINDOWS_ARTIFACT_BUILD` | EXACT_ARTIFACT | `windows-latest` | F3+ |
-| `MACOS_ARTIFACT_SMOKE` | EXACT_ARTIFACT | `macos-14` | F3+ |
+| `MACOS_ARTIFACT_SMOKE` | EXACT_ARTIFACT | `macos-15` | F3+ |
 | `LINUX_ARTIFACT_SMOKE` | EXACT_ARTIFACT | `ubuntu-22.04` | F3+ |
 | `WINDOWS_ARTIFACT_SMOKE` | EXACT_ARTIFACT | `windows-latest` | F3+ |
 | `EXTERNAL_VALIDATION` | optional diagnostic | — | not required (disabled) |
