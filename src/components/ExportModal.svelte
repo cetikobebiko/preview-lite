@@ -39,12 +39,15 @@
   // Text options
   let txtFormat = $state("markdown");
 
-  // Document options: Word, PowerPoint, HTML or RTF, written by the job worker.
+  // Document options: Word, PowerPoint, HTML, RTF or Markdown, written by the job worker. Each
+  // key is also the file extension. Unlike the Text tab's Markdown (page text as it is), this one
+  // keeps headings, bold/italic and tables.
   const DOCUMENT_FORMATS = {
     docx: { label: "Word (.docx)", filter: "Word" },
     pptx: { label: "PowerPoint (.pptx)", filter: "PowerPoint" },
     html: { label: "Web sayfası (.html)", filter: "HTML" },
     rtf: { label: "Zengin metin (.rtf)", filter: "RTF" },
+    md: { label: "Markdown, başlık ve tablolarla (.md)", filter: "Markdown" },
   };
   let docFormat = $state("docx");
   
@@ -260,7 +263,7 @@
             <option {value}>{label}</option>
           {/each}
         </select>
-        <small class="text-xs text-muted-foreground">Metin, başlıklar, tablolar ve görseller düzenlenebilir olarak aktarılır; sayfa düzeni birebir korunmaz. Taranmış sayfalar yalnız görsel olarak çıkar.</small>
+        <small class="text-xs text-muted-foreground">Metin, başlıklar, tablolar ve görseller düzenlenebilir olarak aktarılır; sayfa düzeni birebir korunmaz. Taranmış sayfalar yalnız görsel olarak çıkar.{docFormat === "md" ? " Markdown görselleri içermez." : ""}</small>
       </div>
     {:else}
       <div class="grid gap-3">

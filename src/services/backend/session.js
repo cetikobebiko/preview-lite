@@ -143,7 +143,7 @@ export const exportSessionTextToFile = (
     }),
   ).promise;
 
-// Word, PowerPoint, HTML or RTF of the given physical pages; Rust writes targetPath atomically.
+// Word, PowerPoint, HTML, RTF or Markdown of the given physical pages; Rust writes targetPath atomically.
 export const exportSessionDocument = (
   sessionId,
   expectedContentGeneration,

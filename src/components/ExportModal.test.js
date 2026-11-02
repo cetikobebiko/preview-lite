@@ -219,6 +219,22 @@ describe("ExportModal document export", () => {
     expect(backendMocks.exportSessionDocument).toHaveBeenCalledWith("session-1", 7, [1, 2], "pptx", "/out/rapor.pptx");
   });
 
+  it("offers Markdown with headings and tables, named after its extension", async () => {
+    dialogMocks.save.mockResolvedValue("/out/rapor.md");
+    backendMocks.exportSessionDocument.mockResolvedValue(null);
+    render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 1 } });
+    await fireEvent.click(screen.getByText("Belge"));
+    await fireEvent.change(screen.getByLabelText("Belge Formatı"), { target: { value: "md" } });
+    expect(screen.getByText(/Markdown görselleri içermez/)).toBeTruthy();
+    await fireEvent.click(screen.getByText("Dışa Aktar", { selector: "button" }));
+
+    await waitFor(() => expect(backendMocks.exportSessionDocument).toHaveBeenCalledWith("session-1", 7, [0], "md", "/out/rapor.md"));
+    expect(dialogMocks.save).toHaveBeenCalledWith(expect.objectContaining({
+      defaultPath: "disa_aktarim.md",
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    }));
+  });
+
   it("does nothing when the save dialog is cancelled and shows backend errors", async () => {
     dialogMocks.save.mockResolvedValueOnce(null);
     render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 1 } });

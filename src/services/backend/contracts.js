@@ -554,7 +554,7 @@ export const CONTRACTS = Object.freeze({
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
     pages: arrayOf(u32Type),
-    format: Object.freeze({ type: "string", enum: Object.freeze(["docx", "pptx", "html", "rtf"]) }),
+    format: Object.freeze({ type: "string", enum: Object.freeze(["docx", "pptx", "html", "rtf", "md"]) }),
     targetPath: stringType,
   }),
   saveSessionSecurityCopy: command("save_session_security_copy", {
