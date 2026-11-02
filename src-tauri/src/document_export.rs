@@ -1,15 +1,16 @@
-//! Belgeyi Word (.docx), PowerPoint (.pptx), HTML ya da RTF olarak dışa aktarma.
+//! Belgeyi Word (.docx), PowerPoint (.pptx), HTML, RTF ya da Markdown olarak dışa aktarma.
 //!
 //! Job worker'da çalışır. PDFium her sayfayı PdfCraft yazıcılarının modeline indirir
 //! ([`writers::Page`]): biçimi (punto, kalın, italik, renk, açı) aynı kalan metin parçaları
 //! paragraflara birleştirilir; sayfadaki görüntüler PNG olarak alınır. Yazıcılar
-//! ([`writers`], [`pptx`]) PdfCraft 0.14.0'dan taşınmıştır: başlıkları punto farkından, tabloları
-//! hizalanmış kısa bloklardan bulurlar.
+//! ([`writers`], [`pptx`], [`markdown`]) PdfCraft 0.16.1'den taşınmıştır: başlıkları punto
+//! farkından, tabloları hizalanmış kısa bloklardan bulurlar; aynı satırda biçimi değişen metin
+//! (italik bir kelime, bir bağlantı) kendi biçiminde bir parça olarak paragrafında kalır.
 //!
 //! Sınırlar: form XObject içindeki görüntüler ve sayfa arka plan rengi alınmaz; metin
-//! katmanı olmayan (taranmış) sayfalar yalnız görüntüleriyle çıkar. Office paketleri
-//! sıkıştırılmadan (stored) yazılır.
+//! katmanı olmayan (taranmış) sayfalar yalnız görüntüleriyle çıkar. Markdown görselleri almaz.
 
+mod markdown;
 mod pptx;
 mod writers;
 mod zip;
@@ -34,6 +35,9 @@ pub enum DocumentExportFormat {
     Pptx,
     Html,
     Rtf,
+    /// Uzantısıyla aynı adı taşır (`"md"`), arayüz biçim adını uzantı olarak kullanır.
+    #[serde(rename = "md")]
+    Markdown,
 }
 
 impl DocumentExportFormat {
@@ -43,6 +47,7 @@ impl DocumentExportFormat {
             Self::Pptx => "pptx",
             Self::Html => "html",
             Self::Rtf => "rtf",
+            Self::Markdown => "md",
         }
     }
 }
@@ -66,6 +71,7 @@ fn write(pages: &[Page], format: DocumentExportFormat, title: &str) -> Vec<u8> {
         DocumentExportFormat::Pptx => pptx::pptx(pages, title),
         DocumentExportFormat::Html => writers::html(pages, title).into_bytes(),
         DocumentExportFormat::Rtf => writers::rtf(pages).into_bytes(),
+        DocumentExportFormat::Markdown => markdown::markdown(pages).into_bytes(),
     }
 }
 
@@ -195,6 +201,10 @@ struct Segment {
     style: Style,
     starts_line: bool,
     ends_line: bool,
+    /// The source had a word space (or a word-sized gap) just before / just after `text`,
+    /// which `text` leaves out because the style changed there.
+    space_before: bool,
+    space_after: bool,
 }
 
 fn char_style(character: &PdfPageTextChar<'_>, page_rotation: u16) -> Style {
@@ -308,6 +318,7 @@ fn page_segments(
         } else {
             if let Some(mut done) = current.take() {
                 done.ends_line = line_break;
+                done.space_after = space;
                 segments.push(done);
             }
             current = Some(Segment {
@@ -316,6 +327,8 @@ fn page_segments(
                 style,
                 starts_line: line_break,
                 ends_line: true,
+                space_before: space,
+                space_after: false,
             });
         }
         line_break = false;
@@ -376,6 +389,7 @@ fn paragraphs(segments: Vec<Segment>) -> Vec<Block> {
                 }
                 block.text.push_str(&segment.text);
                 block.rect = union(block.rect, segment.rect);
+                block.space_around[1] = segment.space_after;
             }
             continue;
         }
@@ -388,6 +402,7 @@ fn paragraphs(segments: Vec<Segment>) -> Vec<Block> {
             italic: segment.style.italic,
             color: segment.style.color,
             rotation: segment.style.rotation,
+            space_around: [segment.space_before, segment.space_after],
         });
     }
     blocks
@@ -570,6 +585,8 @@ mod tests {
             style,
             starts_line: true,
             ends_line: true,
+            space_before: false,
+            space_after: false,
         }
     }
 
@@ -729,5 +746,112 @@ mod tests {
         };
         let blocks = paragraphs(vec![line("one", 700.0, turned), line("two", 686.0, turned)]);
         assert_eq!(blocks.len(), 2);
+    }
+
+    /// One line set as "Before ", an oblique "Chevron" and " after.": PDFium reads three
+    /// styles, so three blocks, and the spaces between them sit outside every block's text.
+    fn italic_sentence_pdf() -> Vec<u8> {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Document, Object, Stream, StringFormat};
+
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let font = |name: &str| dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => name.to_string() };
+        let regular = document.add_object(font("Helvetica"));
+        let oblique = document.add_object(font("Helvetica-Oblique"));
+        let show = |font: &str, value: &str| {
+            [
+                Operation::new(
+                    "Tf",
+                    vec![Object::Name(font.as_bytes().to_vec()), 11.into()],
+                ),
+                Operation::new(
+                    "Tj",
+                    vec![Object::String(
+                        value.as_bytes().to_vec(),
+                        StringFormat::Literal,
+                    )],
+                ),
+            ]
+        };
+        let mut operations = vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Td", vec![72.into(), 700.into()]),
+        ];
+        operations.extend(show("F1", "Before "));
+        operations.extend(show("F2", "Chevron"));
+        operations.extend(show("F1", " after."));
+        operations.push(Operation::new("ET", vec![]));
+        let content = document.add_object(Stream::new(
+            dictionary! {},
+            Content { operations }.encode().unwrap(),
+        ));
+        let page = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => regular, "F2" => oblique } },
+            "Contents" => content,
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(
+                dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 },
+            ),
+        );
+        let catalog = document.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// PdfCraft #4158 through real PDFium: the italic word stays in its sentence as a run of
+    /// its own, and the spaces the source had around it survive into every format.
+    #[test]
+    fn an_italic_word_keeps_its_sentence_and_spaces() {
+        let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+        let bytes = italic_sentence_pdf();
+        let document = pdfium.load_pdf_from_byte_slice(&bytes, None).unwrap();
+        let pages = read_pages(&pdfium, &document, &[0]).unwrap();
+        let blocks: Vec<_> = pages[0]
+            .blocks
+            .iter()
+            .map(|b| (b.text.as_str(), b.italic, b.space_around))
+            .collect();
+        assert_eq!(
+            blocks,
+            [
+                ("Before", false, [false, true]),
+                ("Chevron", true, [true, true]),
+                ("after.", false, [true, false]),
+            ]
+        );
+        let html = String::from_utf8(write(&pages, DocumentExportFormat::Html, "T")).unwrap();
+        assert!(
+            html.contains("<p>Before <em>Chevron </em>after.</p>"),
+            "{html}"
+        );
+        let md = String::from_utf8(write(&pages, DocumentExportFormat::Markdown, "T")).unwrap();
+        assert_eq!(md, "Before *Chevron* after.\n");
+        let rtf = String::from_utf8(write(&pages, DocumentExportFormat::Rtf, "T")).unwrap();
+        assert!(rtf.contains(" Before {"), "{rtf}");
+        assert!(rtf.contains(" Chevron }"), "{rtf}");
+        let docx = write(&pages, DocumentExportFormat::Docx, "T");
+        let xml = writers::tests::part(&docx, "word/document.xml");
+        assert_eq!(xml.matches("<w:p>").count(), 1, "one paragraph: {xml}");
+        assert!(
+            xml.contains(">Before </w:t>") && xml.contains(">Chevron </w:t>"),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn markdown_is_named_after_its_extension() {
+        assert_eq!(
+            serde_json::to_value(DocumentExportFormat::Markdown).unwrap(),
+            serde_json::json!("md")
+        );
+        assert_eq!(DocumentExportFormat::Markdown.extension(), "md");
     }
 }

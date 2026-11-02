@@ -1,16 +1,19 @@
 // Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.
 // Licensed under the MIT License; see src-tauri/licenses/pdfcraft.txt.
 //
-// Ported from PdfCraft 0.14.0, crates/export/src/lib.rs (MIT OR Apache-2.0, used under MIT).
-// Changes from the original: the crate-level lint attribute dropped and the pptx and zip modules made siblings (this is a module); the zip parts are stored instead of deflated (no flate2 dependency), so the test helper reads them as they are.
+// Ported from PdfCraft 0.16.1, crates/export/src/{layout,as_html,as_docx,as_rtf,tests}.rs (MIT OR Apache-2.0, used under MIT).
+// Changes from the original: the four writer modules and their tests joined into this one module beside pptx, markdown and zip;
+// `Zip::add` has no `compress` flag (see zip.rs), so the test helper inflates with miniz_oxide instead of flate2; the let-chain
+// in `paragraphs` is nested for edition 2021.
 
 //! Word, HTML and RTF writers for a PDF reduced to paragraphs, tables and images.
 //!
 //! The engine reduces each page to [`Page`]: paragraphs (text, box, size, bold/italic) and
 //! images (encoded bytes and box), in reading order. The writers turn that into a flowing
-//! document: headings are the paragraphs set larger than the body text. Word keeps pages with
-//! rotated text, or text overlapped by artwork or watermark-sized text, as positioned, editable
-//! shapes to avoid reflowing overlays; other pages flow with images inline.
+//! document: headings are the paragraphs set larger than the body text, and a block that
+//! continues another on its line (an italic word, a link) is a run of that block's paragraph.
+//! Word keeps pages with rotated text, or text overlapped by artwork or watermark-sized text,
+//! as positioned, editable shapes to avoid reflowing overlays; other pages flow with images inline.
 
 use std::collections::HashMap;
 
@@ -30,6 +33,10 @@ pub struct Block {
     pub color: [f64; 3],
     /// Counterclockwise baseline angle in user space (degrees).
     pub rotation: f64,
+    /// Whether the source had a word space just before (`[0]`) and just after (`[1]`) `text`,
+    /// which `text` leaves out. A block that continues this one on its line is a run of the same
+    /// paragraph, and these say whether a space separates them (#4158).
+    pub space_around: [bool; 2],
 }
 
 /// An image of a page.
@@ -80,8 +87,9 @@ pub struct Table {
 }
 
 /// What goes into the output, in order.
-enum Item<'a> {
-    Para(&'a Block, u8),
+pub(crate) enum Item<'a> {
+    /// A paragraph's runs (at least one) and its heading level.
+    Para(Vec<Run<'a>>, u8),
     /// Owned: tables are detected per page inside [`items`], so they cannot borrow.
     Table(Table),
     Img(&'a Image),
@@ -91,18 +99,18 @@ enum Item<'a> {
 #[cfg(test)]
 thread_local! {
     /// Entries read to find a font size's or a colour's slot, for the tests that keep it constant.
-    static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Counts `n` entries read by a lookup (tests only).
 #[inline]
-fn count_lookup_steps(_n: usize) {
+pub(crate) fn count_lookup_steps(_n: usize) {
     #[cfg(test)]
     LOOKUP_STEPS.with(|c| c.set(c.get().saturating_add(_n)));
 }
 
 /// The body text size: the size most of the document's characters are set in.
-fn body_size(pages: &[Page]) -> f64 {
+pub(crate) fn body_size(pages: &[Page]) -> f64 {
     // Sizes in first-seen order (which breaks ties), and where each one is in it.
     let mut by: Vec<(i64, usize)> = Vec::new();
     let mut slot: HashMap<i64, usize> = HashMap::new();
@@ -139,21 +147,34 @@ fn level(b: &Block, body: f64) -> u8 {
 
 /// How far two cell left edges may drift (points) and still be the same grid column.
 const COL_TOL: f64 = 4.0;
+
 /// More grid columns than this isn't a table. It is Word's limit: a .docx whose table has 64 or
 /// more columns doesn't open. It also bounds a table's size: every row is materialized to all
 /// its columns, so a hostile page laid out as a staircase of blocks would otherwise make
 /// (blocks / 2)² cells.
-const MAX_COLS: usize = 63;
+pub(crate) const MAX_COLS: usize = 63;
+
 /// Two blocks in a row this close (as a fraction of their font size) are one line of running
 /// text that changed font or colour, such as a link inside a sentence, not two table cells.
 const INLINE_GAP: f64 = 0.5;
+
 /// How many blocks ending near a block's start are looked at to find the one it continues; a
 /// page laid out so that many end at the same place stays quick.
 const CONTINUATION_PROBE: usize = 64;
+
 /// Per block, whether it continues another on the same line: it starts where that one ends (up to
 /// [`INLINE_GAP`] later, or a point earlier for rounding), so it is the same line of text running
 /// on (a link inside a sentence, a superscript), not a cell of its own.
 fn continuations(blocks: &[Block]) -> Vec<bool> {
+    continued_from(blocks)
+        .into_iter()
+        .map(|from| from.is_some())
+        .collect()
+}
+
+/// Per block, the block it continues on the same line (see [`continuations`]): of those it could
+/// continue, the one that ends nearest to where it starts.
+fn continued_from(blocks: &[Block]) -> Vec<Option<usize>> {
     let mut by_end: Vec<(f64, usize)> = blocks
         .iter()
         .enumerate()
@@ -171,14 +192,115 @@ fn continuations(blocks: &[Block]) -> Vec<bool> {
                 .iter()
                 .take_while(|(end, _)| *end <= b.rect[0] + 1.0)
                 .take(CONTINUATION_PROBE)
-                .filter_map(|(_, ai)| blocks.get(*ai).filter(|_| *ai != bi))
-                .any(|a| {
+                .filter_map(|(_, ai)| blocks.get(*ai).filter(|_| *ai != bi).map(|a| (*ai, a)))
+                .filter(|(_, a)| {
                     a.rect[3].min(b.rect[3]) - a.rect[1].max(b.rect[1])
                         > 0.5 * (a.rect[3] - a.rect[1]).min(b.rect[3] - b.rect[1])
                 })
+                .min_by(|(_, a), (_, c)| {
+                    (a.rect[2] - b.rect[0])
+                        .abs()
+                        .total_cmp(&(c.rect[2] - b.rect[0]).abs())
+                })
+                .map(|(ai, _)| ai)
         })
         .collect()
 }
+
+/// A gap between two runs wider than this (as a fraction of the font size) is a word space the
+/// text left out. It is the gap the reading-block grouping uses for the same purpose.
+const WORD_GAP: f64 = 0.12;
+
+/// One run of a paragraph: a block, and the text it contributes (its own, plus the word space
+/// before the next run when the source had one there or the page shows a gap, but the text has
+/// none).
+pub(crate) struct Run<'a> {
+    pub(crate) block: &'a Block,
+    pub(crate) text: String,
+}
+
+/// A page's paragraphs, each a list of runs from left to right along its line. A block that
+/// continues another on the same line ([`continued_from`]: an italic case name, a link, a
+/// superscript) is a run in its own style inside that block's paragraph, not a paragraph of its
+/// own (#4158). Blocks marked in `skip` (table cells, a slide title) are left out and join
+/// nothing. Paragraphs come in the order of their first runs in `blocks`.
+pub(crate) fn paragraphs<'a>(blocks: &'a [Block], skip: &[bool]) -> Vec<Vec<Run<'a>>> {
+    let skipped = |i: usize| skip.get(i).copied().unwrap_or(false);
+    let from = continued_from(blocks);
+    // Left to right. A block joins only one that starts strictly further left (in `total_cmp`'s
+    // order, NaN included), so that one is visited first and has its paragraph already, and the
+    // links cannot form a cycle.
+    let mut order: Vec<(f64, usize)> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !skipped(*i))
+        .map(|(i, b)| (b.rect[0], i))
+        .collect();
+    order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    // Each block's paragraph, named by its first block, and each paragraph's blocks in order.
+    let mut head: Vec<usize> = (0..blocks.len()).collect();
+    let mut members: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
+    for &(x0, bi) in &order {
+        let Some(b) = blocks.get(bi) else { continue };
+        let joined = from
+            .get(bi)
+            .copied()
+            .flatten()
+            .filter(|ai| !skipped(*ai))
+            .filter(|ai| {
+                blocks.get(*ai).is_some_and(|a| {
+                    a.rect[0].total_cmp(&x0).is_lt() && (a.rotation - b.rotation).abs() <= 0.1
+                })
+            })
+            .and_then(|ai| head.get(ai).copied());
+        let h = joined.unwrap_or(bi);
+        if let Some(slot) = head.get_mut(bi) {
+            *slot = h;
+        }
+        if let Some(m) = members.get_mut(h) {
+            m.push(bi);
+        }
+    }
+    members
+        .into_iter()
+        .filter(|m| !m.is_empty())
+        .map(|m| {
+            let mut runs: Vec<Run<'a>> = Vec::with_capacity(m.len());
+            for b in m.into_iter().filter_map(|bi| blocks.get(bi)) {
+                if let Some(prev) = runs.last_mut() {
+                    if !prev.text.ends_with(char::is_whitespace)
+                        && !b.text.starts_with(char::is_whitespace)
+                        && (prev.block.space_around[1]
+                            || b.space_around[0]
+                            || b.rect[0] - prev.block.rect[2] > b.size * WORD_GAP)
+                    {
+                        prev.text.push(' ');
+                    }
+                }
+                runs.push(Run {
+                    block: b,
+                    text: b.text.clone(),
+                });
+            }
+            runs
+        })
+        .collect()
+}
+
+/// A paragraph's heading level: the lowest of its runs', so body text that runs on after a bold
+/// lead-in on the same line keeps the paragraph body text. A marker set smaller than the first run
+/// (a footnote number, "st" in "1st") does not count, so a heading keeps its footnote marker.
+fn para_level(runs: &[Run], body: f64) -> u8 {
+    let Some(first) = runs.first() else { return 0 };
+    let marker =
+        |r: &Run| r.block.size < first.block.size * 0.9 && r.block.text.trim().chars().count() <= 3;
+    runs.iter()
+        .filter(|r| !marker(r))
+        .map(|r| level(r.block, body))
+        .min()
+        .unwrap_or(0)
+}
+
 /// A cell is short: taller blocks are body text (or a multi-column layout), not table cells.
 fn is_cell_like(b: &Block) -> bool {
     (b.rect[3] - b.rect[1]) <= b.size * 5.0 && !b.text.trim().is_empty()
@@ -453,7 +575,7 @@ pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
     (out, consumed)
 }
 
-fn items(pages: &[Page]) -> Vec<Item<'_>> {
+pub(crate) fn items(pages: &[Page]) -> Vec<Item<'_>> {
     let body = body_size(pages);
     let mut out = Vec::new();
     for (i, p) in pages.iter().enumerate() {
@@ -462,12 +584,14 @@ fn items(pages: &[Page]) -> Vec<Item<'_>> {
         }
         let (tables, consumed) = tables(&p.blocks);
         // Blocks and images by their top edge, top to bottom.
-        let mut parts: Vec<(f64, f64, Item)> = p
-            .blocks
-            .iter()
-            .enumerate()
-            .filter(|(bi, _)| !consumed.get(*bi).copied().unwrap_or(false))
-            .map(|(_, b)| (b.rect[3], b.rect[0], Item::Para(b, level(b, body))))
+        // A paragraph sits where its first run does: its other runs follow along the same line.
+        let mut parts: Vec<(f64, f64, Item)> = paragraphs(&p.blocks, &consumed)
+            .into_iter()
+            .filter_map(|runs| {
+                let first = runs.first()?.block;
+                let lvl = para_level(&runs, body);
+                Some((first.rect[3], first.rect[0], Item::Para(runs, lvl)))
+            })
             .collect();
         parts.extend(
             tables
@@ -488,7 +612,7 @@ fn items(pages: &[Page]) -> Vec<Item<'_>> {
 /// Whether a character may appear in the output. XML 1.0 forbids the C0 controls other than tab,
 /// line feed and carriage return, and U+FFFE/U+FFFF. Text extracted from PDFs often holds them
 /// (fonts without a usable `/ToUnicode`), and Word refuses a whole document over one (#72).
-fn allowed(c: char) -> bool {
+pub(crate) fn allowed(c: char) -> bool {
     matches!(c, '\t' | '\n' | '\r') || !(c.is_ascii_control() || c == '\u{FFFE}' || c == '\u{FFFF}')
 }
 
@@ -506,7 +630,7 @@ pub(crate) fn esc(s: &str) -> String {
     o
 }
 
-fn base64(data: &[u8]) -> String {
+pub(crate) fn base64(data: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut s = String::with_capacity(data.len().div_ceil(3) * 4);
     for c in data.chunks(3) {
@@ -540,16 +664,31 @@ table{{border-collapse:collapse;margin:1em 0}}td,th{{border:1px solid #999;paddi
     );
     for it in items(pages) {
         match it {
-            Item::Para(b, lvl) => {
-                let mut t = esc(&b.text);
-                if b.italic {
-                    t = format!("<em>{t}</em>");
-                }
-                if b.bold && lvl == 0 {
-                    t = format!("<strong>{t}</strong>");
+            Item::Para(runs, lvl) => {
+                let Some(first) = runs.first().map(|r| r.block) else {
+                    continue;
+                };
+                let mut t = String::new();
+                for r in &runs {
+                    let mut run = esc(&r.text);
+                    if r.block.italic {
+                        run = format!("<em>{run}</em>");
+                    }
+                    if r.block.bold && lvl == 0 {
+                        run = format!("<strong>{run}</strong>");
+                    }
+                    // The paragraph has its first run's colour; a run in another colour says so.
+                    let colour = rgb8(r.block.color);
+                    if colour != rgb8(first.color) {
+                        let [red, green, blue] = colour;
+                        run = format!(
+                            "<span style=\"color:#{red:02X}{green:02X}{blue:02X}\">{run}</span>"
+                        );
+                    }
+                    t.push_str(&run);
                 }
                 let style =
-                    hex(b.color).map_or(String::new(), |h| format!(" style=\"color:#{h}\""));
+                    hex(first.color).map_or(String::new(), |h| format!(" style=\"color:#{h}\""));
                 match lvl {
                     0 => s.push_str(&format!("<p{style}>{t}</p>\n")),
                     l => s.push_str(&format!("<h{l}{style}>{t}</h{l}>\n")),
@@ -642,7 +781,7 @@ fn run_xml(text: &str, size: f64, bold: bool, italic: bool, color: [f64; 3]) -> 
 
 /// One Word table: explicit absent borders (alignment alone cannot prove PDF rules), a grid sized
 /// from the detected column edges, `gridSpan` for spanning cells, empty cells for holes.
-fn docx_table(t: &Table) -> String {
+pub(crate) fn docx_table(t: &Table) -> String {
     let mut edges = t.cols.clone();
     edges.push(t.rect[2]);
     let widths: Vec<i64> = edges
@@ -740,7 +879,8 @@ fn layout_number(n: f64) -> f64 {
 
 /// Most images a Word export embeds, and most image bytes (the zip writer has 32-bit sizes and
 /// a 16-bit entry count; a hostile PDF must not be able to overflow them).
-const MAX_MEDIA: usize = 1000;
+pub(crate) const MAX_MEDIA: usize = 1000;
+
 const MAX_MEDIA_BYTES: usize = 512 << 20;
 
 /// Whether `im` can still be embedded: it has data, and the package stays within its limits.
@@ -897,7 +1037,6 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
     let mut media: Vec<(String, &Image)> = Vec::new();
     // Word needs a paragraph between adjacent tables and after the last one in the body.
     let mut after_table = false;
-    let run = |b: &Block| run_xml(&b.text, b.size, b.bold, b.italic, b.color);
     let mut shape_id = 0usize;
     for (page_index, page) in pages.iter().enumerate() {
         let (pw, _) = word_page_size(page);
@@ -908,13 +1047,24 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
         } else {
             for it in items(std::slice::from_ref(page)) {
                 match &it {
-                    Item::Para(b, lvl) => {
+                    Item::Para(runs, lvl) => {
                         let style = match lvl {
                             1 => "<w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>",
                             2 => "<w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr>",
                             _ => "",
                         };
-                        body.push_str(&format!("<w:p>{style}{}</w:p>", run(b)));
+                        body.push_str("<w:p>");
+                        body.push_str(style);
+                        for r in runs {
+                            body.push_str(&run_xml(
+                                &r.text,
+                                r.block.size,
+                                r.block.bold,
+                                r.block.italic,
+                                r.block.color,
+                            ));
+                        }
+                        body.push_str("</w:p>");
                     }
                     Item::Table(t) => {
                         if after_table {
@@ -1067,7 +1217,7 @@ pub fn rtf(pages: &[Page]) -> String {
     };
     for it in &items {
         match it {
-            Item::Para(b, _) => note(b.color),
+            Item::Para(runs, _) => runs.iter().for_each(|r| note(r.block.color)),
             Item::Table(t) => t.rows.iter().flatten().for_each(|c| note(c.color)),
             Item::Img(_) | Item::PageBreak => {}
         }
@@ -1089,16 +1239,40 @@ pub fn rtf(pages: &[Page]) -> String {
     }
     for it in items {
         match it {
-            Item::Para(b, _) => {
-                let mut fmt = format!("\\fs{}", (b.size * 2.0).round() as i64);
-                if b.bold {
-                    fmt.push_str("\\b");
+            Item::Para(runs, _) => {
+                // The first run's formatting is the paragraph's; each later run is a group that
+                // turns on or off what differs from it.
+                let fmt = |b: &Block, later: bool| {
+                    let mut fmt = format!("\\fs{}", (b.size * 2.0).round() as i64);
+                    if b.bold {
+                        fmt.push_str("\\b");
+                    } else if later {
+                        fmt.push_str("\\b0");
+                    }
+                    if b.italic {
+                        fmt.push_str("\\i");
+                    } else if later {
+                        fmt.push_str("\\i0");
+                    }
+                    let colour = cf(b.color);
+                    fmt.push_str(if colour.is_empty() && later {
+                        "\\cf0"
+                    } else {
+                        &colour
+                    });
+                    fmt
+                };
+                let mut runs = runs.iter();
+                let Some(first) = runs.next() else { continue };
+                s.push_str(&format!(
+                    "{{\\pard{} {}",
+                    fmt(first.block, false),
+                    rtf_text(&first.text)
+                ));
+                for r in runs {
+                    s.push_str(&format!("{{{} {}}}", fmt(r.block, true), rtf_text(&r.text)));
                 }
-                if b.italic {
-                    fmt.push_str("\\i");
-                }
-                fmt.push_str(&cf(b.color));
-                s.push_str(&format!("{{\\pard{fmt} {}\\par}}\n", rtf_text(&b.text)));
+                s.push_str("\\par}\n");
             }
             Item::Table(t) => {
                 let mut edges = t.cols.clone();
@@ -1143,6 +1317,7 @@ pub fn rtf(pages: &[Page]) -> String {
 
 #[cfg(test)]
 pub(super) mod tests {
+    use super::super::markdown::{emphasis, markdown, paragraph};
     use super::super::pptx::pptx;
     use super::*;
 
@@ -1161,6 +1336,7 @@ pub(super) mod tests {
                     0.5,
                 ],
                 rotation: 0.0,
+                space_around: [false; 2],
             })
             .collect();
         Page {
@@ -1208,6 +1384,7 @@ pub(super) mod tests {
             italic: false,
             color: [0.0; 3],
             rotation: 0.0,
+            space_around: [false; 2],
         };
         Page {
             width: 612.0,
@@ -1373,6 +1550,7 @@ pub(super) mod tests {
             italic: false,
             color: [0.8; 3],
             rotation: 0.0,
+            space_around: [false; 2],
         });
         p.images = page().images;
         let xml = part(&docx(&[p], "Invoice"), "word/document.xml");
@@ -1479,7 +1657,7 @@ pub(super) mod tests {
         }
     }
 
-    /// One part of a package written by [`Zip`].
+    /// One part of a package written by [`Zip`], inflated.
     pub(crate) fn part(zip: &[u8], name: &str) -> String {
         let at = |i: usize, n: usize| {
             zip[i..i + n]
@@ -1519,6 +1697,7 @@ pub(super) mod tests {
             italic: false,
             color: [0.0; 3],
             rotation: 0.0,
+            space_around: [false; 2],
         });
         let xml = part(&docx(&[p.clone()], "Receipt\u{1}"), "word/document.xml");
         assert!(xml.contains(">Total 4.50\tGBP</w:t>"), "{xml}");
@@ -1597,6 +1776,7 @@ pub(super) mod tests {
             italic: true,
             color: [0.0; 3],
             rotation: 0.0,
+            space_around: [false; 2],
         });
         let r = rtf(&[p]);
         assert!(r.starts_with("{\\rtf1") && r.ends_with('}'));
@@ -1614,6 +1794,7 @@ pub(super) mod tests {
             italic: false,
             color: [0.0; 3],
             rotation: 0.0,
+            space_around: [false; 2],
         };
         Page {
             width: 612.0,
@@ -1637,6 +1818,7 @@ pub(super) mod tests {
                     italic: false,
                     color: [0.0; 3],
                     rotation: 0.0,
+                    space_around: [false; 2],
                 },
             ],
             images: Vec::new(),
@@ -1716,6 +1898,7 @@ pub(super) mod tests {
                     italic: false,
                     color: [0.0; 3],
                     rotation: 0.0,
+                    space_around: [false; 2],
                 }
             })
             .collect();
@@ -1751,6 +1934,7 @@ pub(super) mod tests {
                             italic: false,
                             color: [0.0; 3],
                             rotation: 0.0,
+                            space_around: [false; 2],
                         }
                     })
                 })
@@ -1777,6 +1961,7 @@ pub(super) mod tests {
             italic: false,
             color: [0.0; 3],
             rotation: 0.0,
+            space_around: [false; 2],
         }
     }
 
@@ -1846,6 +2031,11 @@ pub(super) mod tests {
         };
         let h = html(std::slice::from_ref(&p), "Regulations");
         assert!(!h.contains("<table>"), "running text became a table: {h}");
+        // The link is a run of its sentence, in its own colour (#4158).
+        assert!(
+            h.contains("<p>6.3. 2. All content shown at <span style=\"color:#0563C1\">http</span>"),
+            "{h}"
+        );
         for b in &p.blocks {
             assert!(h.contains(&b.text), "{} was lost: {h}", b.text);
         }
@@ -2016,6 +2206,7 @@ pub(super) mod tests {
             italic: false,
             color: [0.0; 3],
             rotation: 0.0,
+            space_around: [false; 2],
         };
         let p = Page {
             width: 612.0,
@@ -2104,5 +2295,481 @@ pub(super) mod tests {
         let zip = docx(&[p], "T");
         let rels = part(&zip, "word/_rels/document.xml.rels");
         assert_eq!(rels.matches("relationships/image\"").count(), MAX_MEDIA);
+    }
+
+    /// The flowing paragraphs of a Word document (table cells left out), each as its runs' text
+    /// and whether the run is italic.
+    fn word_paragraphs(xml: &str) -> Vec<Vec<(String, bool)>> {
+        let body = xml
+            .split("<w:tbl>")
+            .map(|s| s.split_once("</w:tbl>").map_or(s, |(_, after)| after))
+            .collect::<String>();
+        body.split("<w:p>")
+            .skip(1)
+            .map(|p| {
+                let p = p.split_once("</w:p>").map_or(p, |(inside, _)| inside);
+                p.split("<w:r>")
+                    .skip(1)
+                    .filter_map(|r| {
+                        let text = r
+                            .split_once("<w:t xml:space=\"preserve\">")?
+                            .1
+                            .split_once("</w:t>")?
+                            .0;
+                        Some((text.to_string(), r.contains("<w:i/>")))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|runs| !runs.is_empty())
+            .collect()
+    }
+
+    fn runs(r: &[(&str, bool)]) -> Vec<(String, bool)> {
+        r.iter().map(|(t, i)| (t.to_string(), *i)).collect()
+    }
+
+    /// "Before *Chevron* after." on one line: the roman text, the italic case name and the roman
+    /// text after it, the way reading blocks split a sentence at its style changes (#4158). The
+    /// italic face stands a little taller than the roman one around it.
+    fn italic_sentence() -> Vec<Block> {
+        vec![
+            block("Before", 72.0, 700.0, 110.0, 712.0),
+            Block {
+                italic: true,
+                ..block("Chevron", 113.0, 700.0, 158.0, 712.6)
+            },
+            block("after.", 161.0, 700.0, 190.0, 712.0),
+        ]
+    }
+
+    /// #4158: a run in another style inside a sentence stays in that sentence's paragraph, as a
+    /// run in its own style, in every Office format.
+    #[test]
+    fn an_italic_word_stays_in_its_sentence() {
+        let mut blocks = italic_sentence();
+        blocks.push(block(
+            "The next line is a paragraph of its own.",
+            72.0,
+            684.0,
+            300.0,
+            696.0,
+        ));
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks,
+            images: Vec::new(),
+            background: None,
+        };
+        let xml = part(
+            &docx(std::slice::from_ref(&p), "Opinion"),
+            "word/document.xml",
+        );
+        assert_eq!(
+            word_paragraphs(&xml),
+            vec![
+                runs(&[("Before ", false), ("Chevron ", true), ("after.", false)]),
+                runs(&[("The next line is a paragraph of its own.", false)])
+            ],
+            "{xml}"
+        );
+        let h = html(std::slice::from_ref(&p), "Opinion");
+        assert!(h.contains("<p>Before <em>Chevron </em>after.</p>"), "{h}");
+        let r = rtf(std::slice::from_ref(&p));
+        assert!(r.contains("{\\pard\\fs24 Before {\\fs24\\b0\\i\\cf0 Chevron }{\\fs24\\b0\\i0\\cf0 after.}\\par}"), "{r}");
+        // The longest line is the slide's title; the sentence is one paragraph of the body.
+        let pxml = part(
+            &pptx(std::slice::from_ref(&p), "Opinion"),
+            "ppt/slides/slide1.xml",
+        );
+        assert!(
+            pxml.contains("<a:p><a:r><a:rPr sz=\"1200\"></a:rPr><a:t>Before </a:t></a:r><a:r><a:rPr sz=\"1200\" i=\"1\"></a:rPr><a:t>Chevron </a:t></a:r><a:r><a:rPr sz=\"1200\"></a:rPr><a:t>after.</a:t></a:r></a:p>"),
+            "{pxml}"
+        );
+    }
+
+    /// #4158: the runs keep their order along the line whatever order the blocks come in, and the
+    /// paragraph keeps its place on the page, though the italic run stands taller than the first.
+    #[test]
+    fn a_sentence_keeps_its_reading_order() {
+        let mut blocks = vec![block("Then the next line.", 72.0, 684.0, 200.0, 696.0)];
+        blocks.extend(italic_sentence().into_iter().rev());
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks,
+            images: Vec::new(),
+            background: None,
+        };
+        let xml = part(
+            &docx(std::slice::from_ref(&p), "Opinion"),
+            "word/document.xml",
+        );
+        assert_eq!(
+            word_paragraphs(&xml),
+            vec![
+                runs(&[("Before ", false), ("Chevron ", true), ("after.", false)]),
+                runs(&[("Then the next line.", false)])
+            ],
+            "{xml}"
+        );
+    }
+
+    /// The text of a block leaves out the spaces at its ends, and the box of a run often takes in
+    /// its trailing space, so runs can touch. The source's own space still separates them; runs
+    /// that touch with no space between them (a superscript) stay joined.
+    #[test]
+    fn runs_keep_the_spaces_the_source_had_between_them() {
+        let blocks = vec![
+            Block {
+                space_around: [false, true],
+                ..block("Before", 72.0, 700.0, 113.0, 712.0)
+            },
+            Block {
+                italic: true,
+                ..block("Chevron", 113.0, 700.0, 158.0, 712.0)
+            },
+            Block {
+                space_around: [true, false],
+                ..block("after.", 158.0, 700.0, 190.0, 712.0)
+            },
+            block("E = mc", 72.0, 660.0, 110.0, 672.0),
+            Block {
+                size: 8.0,
+                ..block("2", 110.0, 665.0, 115.0, 673.0)
+            },
+        ];
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks,
+            images: Vec::new(),
+            background: None,
+        };
+        let xml = part(
+            &docx(std::slice::from_ref(&p), "Spaces"),
+            "word/document.xml",
+        );
+        assert_eq!(
+            word_paragraphs(&xml),
+            vec![
+                runs(&[("Before ", false), ("Chevron ", true), ("after.", false)]),
+                runs(&[("E = mc", false), ("2", false)])
+            ],
+            "{xml}"
+        );
+    }
+    /// Text turned another way (a label up the margin) is not a run of the line it touches.
+    #[test]
+    fn turned_text_is_not_a_run_of_the_line_beside_it() {
+        let blocks = vec![
+            block("Before", 72.0, 700.0, 110.0, 712.0),
+            Block {
+                rotation: 90.0,
+                ..block("SIDE", 111.0, 690.0, 123.0, 720.0)
+            },
+        ];
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks,
+            images: Vec::new(),
+            background: None,
+        };
+        let h = html(std::slice::from_ref(&p), "Turned");
+        assert!(
+            h.contains("<p>Before</p>") && h.contains("<p>SIDE</p>"),
+            "{h}"
+        );
+    }
+    /// A block that starts where the line above ends is the next line, not a run of it.
+    #[test]
+    fn a_block_on_the_next_line_starts_a_paragraph() {
+        let blocks = vec![
+            block("The first line ends here", 72.0, 700.0, 190.0, 712.0),
+            Block {
+                italic: true,
+                ..block("and the next starts there.", 190.5, 690.0, 320.0, 702.0)
+            },
+        ];
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks,
+            images: Vec::new(),
+            background: None,
+        };
+        let xml = part(
+            &docx(std::slice::from_ref(&p), "Lines"),
+            "word/document.xml",
+        );
+        assert_eq!(
+            word_paragraphs(&xml),
+            vec![
+                runs(&[("The first line ends here", false)]),
+                runs(&[("and the next starts there.", true)])
+            ],
+            "{xml}"
+        );
+    }
+
+    /// A superscript beside a table cell stays in the table: table detection consumes it before
+    /// paragraphs are formed, and a sentence after the table still keeps its italic run.
+    #[test]
+    fn table_cells_are_not_runs_of_a_paragraph() {
+        let mut blocks = vec![
+            block("PLACE", 100.0, 700.0, 140.0, 712.0),
+            block("PRIZE (euros)", 300.0, 700.0, 380.0, 712.0),
+        ];
+        for (n, (row, sup)) in [("1", "st"), ("2", "nd"), ("3", "rd")].iter().enumerate() {
+            let y = 680.0 - 20.0 * n as f64;
+            blocks.push(block(row, 100.0, y, 106.0, y + 12.0));
+            blocks.push(Block {
+                size: 8.0,
+                ..block(sup, 106.0, y + 5.0, 113.0, y + 13.0)
+            });
+            blocks.push(block(
+                &format!("{},000", 30 - 5 * n),
+                300.0,
+                y,
+                340.0,
+                y + 12.0,
+            ));
+        }
+        blocks.extend(italic_sentence().into_iter().map(|b| Block {
+            rect: [b.rect[0], b.rect[1] - 200.0, b.rect[2], b.rect[3] - 200.0],
+            ..b
+        }));
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks,
+            images: Vec::new(),
+            background: None,
+        };
+        let xml = part(
+            &docx(std::slice::from_ref(&p), "Prizes"),
+            "word/document.xml",
+        );
+        assert_eq!(xml.matches("<w:tbl>").count(), 1, "{xml}");
+        for cell in ["st", "nd", "rd", "30,000"] {
+            assert_eq!(
+                xml.matches(&format!("preserve\">{cell}</w:t>")).count(),
+                1,
+                "{cell}: {xml}"
+            );
+        }
+        // The cells are all in the table: the only flowing paragraph is the sentence.
+        assert_eq!(
+            word_paragraphs(&xml),
+            vec![runs(&[
+                ("Before ", false),
+                ("Chevron ", true),
+                ("after.", false)
+            ])],
+            "{xml}"
+        );
+    }
+
+    /// A bold lead-in followed by body text on its line is body text, not a heading; a heading
+    /// with a smaller footnote marker after it stays a heading.
+    #[test]
+    fn a_paragraph_is_a_heading_only_when_its_text_is() {
+        let blocks = vec![
+            Block {
+                size: 24.0,
+                ..block("Annual Report", 72.0, 740.0, 250.0, 764.0)
+            },
+            Block {
+                size: 14.0,
+                ..block("1", 251.0, 752.0, 258.0, 766.0)
+            },
+            Block {
+                bold: true,
+                ..block("Summary", 72.0, 700.0, 125.0, 712.0)
+            },
+            block(
+                "the year closed with more members than it opened with, and fewer debts.",
+                128.0,
+                700.0,
+                540.0,
+                712.0,
+            ),
+        ];
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks,
+            images: Vec::new(),
+            background: None,
+        };
+        let xml = part(
+            &docx(std::slice::from_ref(&p), "Report"),
+            "word/document.xml",
+        );
+        assert_eq!(
+            xml.matches("<w:pStyle w:val=\"Heading1\"/>").count(),
+            1,
+            "{xml}"
+        );
+        assert!(
+            !xml.contains("Heading2"),
+            "the lead-in made its paragraph a heading: {xml}"
+        );
+        assert_eq!(word_paragraphs(&xml).len(), 2, "{xml}");
+    }
+
+    /// #1595: Markdown gets the headings, paragraphs and a rule between pages, in reading order;
+    /// images are left out.
+    #[test]
+    fn markdown_has_headings_paragraphs_and_page_rules_in_order() {
+        let md = markdown(&[page(), page()]);
+        let order: Vec<usize> = [
+            "# Annual Report\n\n",
+            "## Overview\n\n",
+            "Some \\<body\\> text \\& more",
+            "Body text after the picture",
+            "\n\n---\n\n",
+        ]
+        .iter()
+        .map(|x| {
+            md.find(x)
+                .unwrap_or_else(|| panic!("{x:?} missing in {md}"))
+        })
+        .collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{md}");
+        assert_eq!(
+            md.matches("\n---\n").count(),
+            1,
+            "one rule between two pages: {md}"
+        );
+        assert_eq!(md.matches("# Annual Report").count(), 2, "{md}");
+        assert!(
+            !md.contains("PNG") && !md.contains("!["),
+            "images are left out: {md}"
+        );
+        assert!(md.ends_with(".\n") && !md.ends_with("\n\n"), "{md:?}");
+    }
+
+    /// #1595: text Markdown would read as markup stays text, emphasis wraps a run without its outer
+    /// spaces, and a detected table becomes a pipe table with its first row as the header.
+    #[test]
+    fn markdown_escapes_markup_and_keeps_emphasis_and_tables() {
+        let b = |t: &str, y: f64, bold: bool, italic: bool| Block {
+            text: t.into(),
+            rect: [72.0, y, 500.0, y + 11.0],
+            size: 11.0,
+            bold,
+            italic,
+            color: [0.0; 3],
+            rotation: 0.0,
+            space_around: [false; 2],
+        };
+        let p = Page {
+            width: 612.0,
+            height: 792.0,
+            blocks: vec![
+                b(
+                    "- not a list item, and long enough to make eleven points the body size here",
+                    700.0,
+                    false,
+                    false,
+                ),
+                b("1. not a numbered item either", 650.0, false, false),
+                b(
+                    "*stars* _under_ `tick` [link](x) a|b # #tag\u{1}\nnext",
+                    600.0,
+                    false,
+                    false,
+                ),
+                b(
+                    "Strong words in a sentence of their own.",
+                    550.0,
+                    true,
+                    false,
+                ),
+                b("slanted", 500.0, false, true),
+            ],
+            images: Vec::new(),
+            background: None,
+        };
+        let md = markdown(&[p]);
+        assert!(md.contains("\\- not a list item"), "{md}");
+        assert!(md.contains("1\\. not a numbered item"), "{md}");
+        assert!(
+            md.contains("\\*stars\\* \\_under\\_ \\`tick\\` \\[link\\](x) a\\|b \\# \\#tag next"),
+            "{md}"
+        );
+        assert!(
+            md.contains("**Strong words in a sentence of their own.**"),
+            "{md}"
+        );
+        // Markdown reads no emphasis where a marker sits next to a space: the outer spaces go outside.
+        assert_eq!(
+            emphasis(" two words ", true, false, false, false),
+            " **two words** "
+        );
+        assert_eq!(emphasis("both", true, true, true, true), "***both***");
+        assert_eq!(
+            emphasis("  ", true, true, true, true),
+            "  ",
+            "nothing to mark"
+        );
+        // Runs in one style are one: two bold runs side by side don't meet as `****`.
+        assert_eq!(
+            paragraph(&[("hello", true, false), ("world", true, false)]),
+            "**helloworld**"
+        );
+        // Markers inside a word would stay literal in CommonMark, so a run there gets HTML tags.
+        assert_eq!(
+            paragraph(&[
+                ("foo", false, false),
+                (".", true, false),
+                ("bar", false, false)
+            ]),
+            "foo<strong>.</strong>bar"
+        );
+        assert_eq!(
+            paragraph(&[("x", true, false), ("y", false, true)]),
+            "<strong>x</strong>*y*",
+            "two styles side by side"
+        );
+        // `*` may sit inside a word, and before punctuation that follows a letter.
+        assert_eq!(
+            paragraph(&[
+                ("foo", false, false),
+                ("bar", true, false),
+                ("baz", false, false)
+            ]),
+            "foo**bar**baz"
+        );
+        assert_eq!(
+            paragraph(&[
+                ("a ", false, false),
+                ("b", true, false),
+                (" c", false, false)
+            ]),
+            "a **b** c"
+        );
+        assert_eq!(
+            paragraph(&[
+                ("say ", false, false),
+                ("this", false, true),
+                (", then", false, false)
+            ]),
+            "say *this*, then"
+        );
+        assert!(md.contains("*slanted*"), "{md}");
+        assert!(!md.chars().any(|c| !allowed(c)), "{md:?}");
+
+        let md = markdown(&[table_page()]);
+        let rows: Vec<&str> = md.lines().filter(|l| l.starts_with('|')).collect();
+        assert_eq!(rows.first(), Some(&"| Meter | Unit | Reading |"), "{md}");
+        assert_eq!(rows.get(1), Some(&"| --- | --- | --- |"), "{md}");
+        assert!(rows.contains(&"| A1 | kWh | 37414.00 |"), "{md}");
+        assert!(
+            rows.iter().all(|r| r.matches(" | ").count() == 2),
+            "every row has the header's three cells: {md}"
+        );
     }
 }
