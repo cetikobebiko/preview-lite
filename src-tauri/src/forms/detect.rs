@@ -5,6 +5,9 @@
 // Changes from the original: the shapes and words are read with PDFium page objects and PDFium
 // text instead of PdfCraft's content-stream parser and renderer (`page_shapes`, `page_words`);
 // rewritten for Rust edition 2021 (no let chains); `detect` takes the taken names as a set;
+// boxes are also built from separate horizontal and vertical lines (word-processor tables) and
+// their edges stop being rules; comb cells may differ in width by up to 1 pt (was 0.5); a
+// blank's field stops at the bottom of a box right above it;
 // point comparisons use a 1e-3 pt tolerance because PDFium hands back f32 coordinates; the
 // number of objects read and shapes kept is bounded; the raster (scanned page) path is not
 // ported.
@@ -79,12 +82,50 @@ const MAX_FORM_DEPTH: usize = 16;
 const MAX_SHAPES: usize = 4_000;
 /// Okunan en fazla kelime.
 const MAX_WORDS: usize = 100_000;
+/// Ayrı çizgilerden hücre kurarken iki çizginin buluştuğu sayıldığı uzaklık (pt): kelime
+/// işlemcilerin tablo kenarlıkları köşelerde kenar kalınlığı kadar taşar ya da eksik kalır.
+const JOINT: f64 = 1.5;
+/// Hücre kurmak için okunan en fazla yatay ve dikey çizgi (her biri için).
+const MAX_LINES: usize = 20_000;
+/// Hücre kurmanın en fazla adımı; çok büyük ızgaralarda iş burada kesilir.
+const MAX_CELL_STEPS: usize = 4_000_000;
+
+/// Okuma sırasında toplananlar. Kelime işlemciler (Word, LibreOffice) tablo kenarlıklarını
+/// dikdörtgen olarak değil, ayrı çizgiler olarak çizer; hücreler bu çizgilerden kurulur.
+#[derive(Default)]
+struct Reading {
+    shapes: Shapes,
+    /// Dikey çizgiler `[x, y0, x, y1]`.
+    columns: Vec<[f64; 4]>,
+    /// Dikdörtgenlerin yatay kenarları `[x0, y, x1, y]` (kural sayılmazlar).
+    edges: Vec<[f64; 4]>,
+}
+
+impl Reading {
+    fn column(&mut self, x: f64, y0: f64, y1: f64) {
+        if self.columns.len() < MAX_LINES {
+            self.columns.push([x, y0.min(y1), x, y0.max(y1)]);
+        }
+    }
+
+    /// Dikdörtgenin kenarları da çizgidir: içinden dikey çizgilerle bölünen satır kutuları.
+    fn rectangle_edges(&mut self, r: [f64; 4]) {
+        if self.edges.len() + 2 <= MAX_LINES {
+            self.edges.push([r[0], r[1], r[2], r[1]]);
+            self.edges.push([r[0], r[3], r[2], r[3]]);
+        }
+        self.column(r[0], r[1], r[3]);
+        self.column(r[2], r[1], r[3]);
+    }
+}
 
 /// Algılama için bir alt yol.
 #[derive(Default)]
 struct DetectionPath {
     points: Vec<[f64; 2]>,
     rules: Vec<[f64; 4]>,
+    /// Dikey doğru parçaları `[x, y0, x, y1]`.
+    columns: Vec<[f64; 4]>,
     complex: bool,
     closed: bool,
 }
@@ -92,7 +133,10 @@ struct DetectionPath {
 impl DetectionPath {
     fn finish(&mut self, paths: &mut Vec<Self>) {
         let path = std::mem::take(self);
-        if !path.rules.is_empty() || (!path.complex && path.points.len() >= 4) {
+        if !path.rules.is_empty()
+            || !path.columns.is_empty()
+            || (!path.complex && path.points.len() >= 4)
+        {
             paths.push(path);
         }
     }
@@ -246,9 +290,10 @@ fn page_words(page: &PdfPage<'_>) -> Result<Vec<Word>, String> {
     Ok(words)
 }
 
-/// Sayfanın çizdiği (kontur ya da dolgu) dikdörtgenler ve yatay doğru parçaları, user space'te.
+/// Sayfanın çizdiği (kontur ya da dolgu) dikdörtgenler ve yatay doğru parçaları, user space'te;
+/// ayrı çizgilerle çizilmiş tablo hücreleri de kutudur ve kenarları kural sayılmaz.
 fn page_shapes(page: &PdfPage<'_>) -> Shapes {
-    let mut out = Shapes::default();
+    let mut out = Reading::default();
     let mut budget = MAX_OBJECTS;
     let objects = page.objects();
     for index in 0..objects.len() {
@@ -265,9 +310,22 @@ fn page_shapes(page: &PdfPage<'_>) -> Shapes {
             );
         }
     }
-    out.boxes.truncate(MAX_SHAPES);
-    out.rules.truncate(MAX_SHAPES);
-    out
+    let Reading {
+        mut shapes,
+        columns,
+        mut edges,
+    } = out;
+    shapes.rules.truncate(MAX_LINES);
+    edges.extend(shapes.rules.iter().copied());
+    let cells: Vec<[f64; 4]> = cells_from_lines(&edges, &columns)
+        .into_iter()
+        .filter(|cell| !shapes.boxes.iter().any(|b| same_box(*b, *cell)))
+        .collect();
+    shapes.rules = trim_edges(&shapes.rules, &cells);
+    shapes.boxes.extend(cells);
+    shapes.boxes.truncate(MAX_SHAPES);
+    shapes.rules.truncate(MAX_SHAPES);
+    shapes
 }
 
 fn read_object(
@@ -275,7 +333,7 @@ fn read_object(
     outer: Matrix,
     depth: usize,
     budget: &mut usize,
-    out: &mut Shapes,
+    out: &mut Reading,
 ) {
     *budget = budget.saturating_sub(1);
     if let Some(path) = object.as_path_object() {
@@ -302,7 +360,7 @@ fn read_object(
 /// Bir path nesnesinin alt yolları; PdfCraft'ın içerik akışı okuyucusunun (`m`, `l`, `c`,
 /// `h` ve boyama operatörleri) PDFium segmentleri üzerindeki karşılığı. PDFium `re`'yi dört
 /// kenarlı kapalı bir alt yol olarak verir.
-fn read_path(path: &PdfPagePathObject<'_>, ctm: Matrix, out: &mut Shapes) {
+fn read_path(path: &PdfPagePathObject<'_>, ctm: Matrix, out: &mut Reading) {
     let filled = !matches!(path.fill_mode(), Ok(PdfPathFillMode::None) | Err(_));
     let stroked = path.is_stroked().unwrap_or(false);
     if !filled && !stroked {
@@ -350,6 +408,14 @@ fn read_path(path: &PdfPagePathObject<'_>, ctm: Matrix, out: &mut Shapes) {
                             start[0].max(point[0]),
                             start[1],
                         ]);
+                    } else if (start[0] - point[0]).abs() < 0.5 && (start[1] - point[1]).abs() > 1.0
+                    {
+                        current.columns.push([
+                            start[0],
+                            start[1].min(point[1]),
+                            start[0],
+                            start[1].max(point[1]),
+                        ]);
                     }
                 }
                 cursor = Some(point);
@@ -372,13 +438,160 @@ fn read_path(path: &PdfPagePathObject<'_>, ctm: Matrix, out: &mut Shapes) {
             // Çok yassı dikdörtgen bir çizgidir.
             Some(r) if r[3] - r[1] < 1.5 && r[2] - r[0] > 1.0 => {
                 let y = (r[1] + r[3]) / 2.0;
-                out.rules.push([r[0], y, r[2], y]);
+                out.shapes.rules.push([r[0], y, r[2], y]);
             }
-            Some(r) => out.boxes.push(r),
-            None => rules.extend(subpath.rules),
+            // Çok dar dikdörtgen dikey bir çizgidir (kelime işlemcilerin tablo kenarlıkları).
+            Some(r) if r[2] - r[0] < 1.5 && r[3] - r[1] > 1.0 => {
+                out.column((r[0] + r[2]) / 2.0, r[1], r[3]);
+            }
+            Some(r) => {
+                out.shapes.boxes.push(r);
+                out.rectangle_edges(r);
+            }
+            None => {
+                rules.extend(subpath.rules);
+                for c in subpath.columns {
+                    out.column(c[0], c[1], c[3]);
+                }
+            }
         }
     }
-    out.rules.append(&mut rules);
+    out.shapes.rules.append(&mut rules);
+}
+
+/// İki kutu aynı yerde mi (köşeleri [`JOINT`] içinde).
+fn same_box(a: [f64; 4], b: [f64; 4]) -> bool {
+    a.iter().zip(b).all(|(x, y)| (x - y).abs() <= JOINT)
+}
+
+/// Aynı doğru üzerinde birbirine değen ya da örtüşen parçalar tek çizgidir. `lines` yatayken
+/// `[x0, y, x1, y]`, dikeyken `[x, y0, x, y1]` (`vertical`); sonuç `(konum, baş, son)`
+/// üçlüleri, konuma göre sıralı.
+fn merge_lines(lines: &[[f64; 4]], vertical: bool) -> Vec<[f64; 3]> {
+    let mut parts: Vec<[f64; 3]> = lines
+        .iter()
+        .filter(|l| l.iter().all(|v| v.is_finite()))
+        .map(|l| {
+            if vertical {
+                [l[0], l[1].min(l[3]), l[1].max(l[3])]
+            } else {
+                [l[1], l[0].min(l[2]), l[0].max(l[2])]
+            }
+        })
+        .collect();
+    parts.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    let mut merged: Vec<[f64; 3]> = Vec::with_capacity(parts.len());
+    // Aynı konumdaki (yarım nokta içinde) çizgiler başlangıçlarına göre sıralı gelsin diye,
+    // konumu yakın olan grup ayrıca başa göre sıralanır.
+    let mut start = 0;
+    while start < parts.len() {
+        let mut end = start + 1;
+        while end < parts.len() && parts[end][0] - parts[start][0] <= 0.5 {
+            end += 1;
+        }
+        let group = &mut parts[start..end];
+        group.sort_by(|a, b| a[1].total_cmp(&b[1]));
+        let first = merged.len();
+        for part in group.iter() {
+            match merged[first..].last_mut() {
+                Some(last) if part[1] <= last[2] + JOINT => last[2] = last[2].max(part[2]),
+                _ => merged.push(*part),
+            }
+        }
+        start = end;
+    }
+    merged.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    merged
+}
+
+/// Ayrı yatay (`horizontal`, `[x0, y, x1, y]`) ve dikey (`vertical`, `[x, y0, x, y1]`)
+/// çizgilerin kapattığı en küçük hücreler. Her hücre sol üst köşesinden bulunur: bir dikey
+/// çizginin değdiği her yatay çizgi bir üst kenardır; alt kenar o dikey çizginin ulaştığı en
+/// yakın alttaki yatay çizgi, sağ kenar ise iki kenarın da ulaştığı ve aradaki yüksekliğin
+/// tamamını kapatan en yakın dikey çizgidir.
+fn cells_from_lines(horizontal: &[[f64; 4]], vertical: &[[f64; 4]]) -> Vec<[f64; 4]> {
+    let rows = merge_lines(horizontal, false);
+    let columns = merge_lines(vertical, true);
+    let covers = |line: &[f64; 3], at: f64| line[1] - JOINT <= at && at <= line[2] + JOINT;
+    let mut steps = 0usize;
+    let mut cells: Vec<[f64; 4]> = Vec::new();
+    'columns: for left in &columns {
+        let x = left[0];
+        // Üst kenarlar yukarıdan aşağı.
+        for (top_index, top) in rows.iter().enumerate().rev() {
+            steps += 1;
+            if steps > MAX_CELL_STEPS || cells.len() >= MAX_SHAPES {
+                break 'columns;
+            }
+            if top[0] > left[2] + JOINT {
+                continue;
+            }
+            if top[0] < left[1] - JOINT {
+                break;
+            }
+            if !covers(top, x) {
+                continue;
+            }
+            let mut bottom = None;
+            for candidate in rows[..top_index].iter().rev() {
+                steps += 1;
+                if candidate[0] < left[1] - JOINT {
+                    break;
+                }
+                if top[0] - candidate[0] > 2.0 && covers(candidate, x) {
+                    bottom = Some(candidate);
+                    break;
+                }
+            }
+            let Some(bottom) = bottom else { continue };
+            let reach = top[2].min(bottom[2]) + JOINT;
+            let right = columns
+                .iter()
+                .skip_while(|right| right[0] <= x + 2.0)
+                .take_while(|right| {
+                    steps += 1;
+                    right[0] <= reach
+                })
+                .find(|right| right[1] <= bottom[0] + JOINT && right[2] >= top[0] - JOINT);
+            if let Some(right) = right {
+                let cell = [x, bottom[0], right[0], top[0]];
+                if !cells.iter().any(|c| same_box(*c, cell)) {
+                    cells.push(cell);
+                }
+            }
+        }
+    }
+    cells
+}
+
+/// `rules`'tan hücre kenarı olan kısımlar çıkarılır: tablo kenarlığı, üzerinde yazılacak bir
+/// çizgi değildir. Kalan parçalar kural olarak kalır.
+fn trim_edges(rules: &[[f64; 4]], cells: &[[f64; 4]]) -> Vec<[f64; 4]> {
+    let mut out = Vec::with_capacity(rules.len());
+    for rule in rules {
+        let y = rule[1];
+        let mut covered: Vec<[f64; 2]> = cells
+            .iter()
+            .filter(|c| (c[1] - y).abs() <= JOINT || (c[3] - y).abs() <= JOINT)
+            .filter(|c| c[0] < rule[2] && c[2] > rule[0])
+            .map(|c| [c[0] - JOINT, c[2] + JOINT])
+            .collect();
+        covered.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        let mut x = rule[0];
+        for [from, to] in covered {
+            if from > x + 1.0 {
+                out.push([x, y, from.min(rule[2]), y]);
+            }
+            x = x.max(to);
+            if x >= rule[2] {
+                break;
+            }
+        }
+        if rule[2] - x > 1.0 {
+            out.push([x, y, rule[2], y]);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -491,11 +704,13 @@ fn combs(boxes: &[[f64; 4]]) -> Vec<([f64; 4], usize)> {
         })
         .collect();
     // `b` bir sırada `a`'dan hemen sonra gelir: aynı boy, sol kenarı a'nın sağ kenarında.
+    // Genişlik farkı 1 pt'ye kadar olabilir: kelime işlemci tablolarında baştaki ve sondaki
+    // hücre dış kenarlığın kalınlığı kadar geniştir.
     let follows = |a: &[f64; 4], b: &[f64; 4]| {
         (b[0] - a[2]).abs() <= 1.0
             && (b[1] - a[1]).abs() <= 0.5
             && (b[3] - a[3]).abs() <= 0.5
-            && ((b[2] - b[0]) - (a[2] - a[0])).abs() <= 0.5
+            && ((b[2] - b[0]) - (a[2] - a[0])).abs() <= 1.0
     };
     let mut out = Vec::new();
     for first in &cells {
@@ -551,12 +766,15 @@ pub fn detect(
     let labels: Vec<Word> = labels.into_iter().cloned().collect();
     for b in blanks {
         let h = (b.rect[3] - b.rect[1]).max(10.0);
-        let rect = [
-            b.rect[0],
-            b.rect[1],
-            b.rect[2],
-            b.rect[1] + (h * 1.4).clamp(12.0, 22.0),
-        ];
+        let mut top = b.rect[1] + (h * 1.4).clamp(12.0, 22.0);
+        // Alan hemen üstündeki kutuya taşmaz: kelime işlemci formlarında satır aralığı dardır
+        // ve taşan alan kutunun alanını engellerdi.
+        for r in &shapes.boxes {
+            if r[0] < b.rect[2] && r[2] > b.rect[0] && r[1] >= b.rect[3] - 1.0 && r[1] < top {
+                top = r[1].max(b.rect[3]);
+            }
+        }
+        let rect = [b.rect[0], b.rect[1], b.rect[2], top];
         let l = label_for(&labels, rect, false);
         push(Kind::Text, rect, l, &mut out);
     }
@@ -783,6 +1001,87 @@ mod tests {
         }
     }
 
+    #[test]
+    fn separate_lines_close_into_cells_and_their_edges_stop_being_rules() {
+        // 3 × 2 ızgara: çizgiler köşelerde yarım nokta taşar ya da eksik kalır, üst kenar iki
+        // parça, alt kenar ızgaranın sağına 60 pt uzar.
+        let horizontal = [
+            [49.6, 140.0, 110.0, 140.0],
+            [110.0, 140.0, 170.4, 140.0],
+            [50.0, 120.0, 170.0, 120.0],
+            [49.6, 100.0, 230.0, 100.0],
+        ];
+        let vertical = [
+            [50.0, 99.6, 50.0, 140.4],
+            [90.0, 100.0, 90.0, 140.0],
+            [130.0, 100.4, 130.0, 139.6],
+            [170.0, 99.6, 170.0, 140.4],
+        ];
+        let cells = cells_from_lines(&horizontal, &vertical);
+        let mut rounded: Vec<[f64; 4]> = cells.iter().map(|c| c.map(|v| v.round())).collect();
+        rounded.sort_by(|a, b| a[1].total_cmp(&b[1]).then(a[0].total_cmp(&b[0])));
+        assert_eq!(
+            rounded,
+            [
+                [50.0, 100.0, 90.0, 120.0],
+                [90.0, 100.0, 130.0, 120.0],
+                [130.0, 100.0, 170.0, 120.0],
+                [50.0, 120.0, 90.0, 140.0],
+                [90.0, 120.0, 130.0, 140.0],
+                [130.0, 120.0, 170.0, 140.0],
+            ]
+        );
+        // Kenarlar kural olmaktan çıkar; alt kenarın ızgara dışındaki parçası kalır.
+        let rules = trim_edges(&horizontal, &cells);
+        assert_eq!(rules.len(), 1, "{rules:?}");
+        assert!(
+            (rules[0][0] - 171.5).abs() < 0.01 && rules[0][2] == 230.0,
+            "{rules:?}"
+        );
+        // Dikey çizgi alt kenara ulaşmıyorsa hücre yoktur.
+        let open = [[50.0, 130.0, 50.0, 140.0], [90.0, 100.0, 90.0, 140.0]];
+        assert!(cells_from_lines(&horizontal[..3], &open)
+            .iter()
+            .all(|c| c[0] > 50.5));
+    }
+
+    /// LibreOffice Writer çıktısındaki konumlar: "Bölüm" satırı adres kutusunun hemen altında.
+    /// Alt çizgi alanı kutuya taşıp onun yerini almaz.
+    #[test]
+    fn a_blank_right_under_a_box_leaves_the_box_its_field() {
+        let words = vec![
+            Word {
+                text: "Adres".into(),
+                rect: [56.8, 699.0, 88.1, 712.4],
+            },
+            Word {
+                text: "Bölüm:".into(),
+                rect: [56.8, 633.6, 94.1, 647.0],
+            },
+            Word {
+                text: "______________________".into(),
+                rect: [97.2, 633.6, 244.2, 647.0],
+            },
+        ];
+        let shapes = Shapes {
+            boxes: vec![[56.7, 647.289, 361.0, 689.089]],
+            rules: Vec::new(),
+        };
+        let found = detect(&words, &shapes, &[], &HashSet::new());
+        let got: Vec<(&str, [f64; 4])> = found
+            .iter()
+            .map(|c| (c.name.as_str(), c.rect.map(|v| (v * 10.0).round() / 10.0)))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Adres", [57.7, 648.3, 360.0, 688.1]),
+                ("Bölüm", [97.2, 633.6, 244.2, 647.3]),
+            ],
+            "{found:?}"
+        );
+    }
+
     // --- PDFium girdisi ------------------------------------------------------------------
 
     fn read(bytes: &[u8]) -> PageInput {
@@ -860,12 +1159,29 @@ mod tests {
                 "{content}"
             );
         }
-        for content in [
-            "100 100 m 130 100 l 111.1 100 l 111.1 114.7 l 100 114.7 l h S",
-            "100 100 m 111.1 100 l 115 107 l 111.1 114.7 l 100 114.7 l 100 107.35 l h S",
-        ] {
-            assert!(shapes(content).boxes.is_empty(), "{content}");
-        }
+        // Kenarın dışına taşıp geri dönen nokta yolu dikdörtgen yapmaz; ama çizgileri yine de
+        // görünen kutuyu kapatır, o kutu çizgilerden kurulur (PdfCraft burada kutu bulmaz).
+        let spike = "100 100 m 130 100 l 111.1 100 l 111.1 114.7 l 100 114.7 l h S";
+        let path = DetectionPath {
+            points: vec![
+                [100.0, 100.0],
+                [130.0, 100.0],
+                [111.1, 100.0],
+                [111.1, 114.7],
+                [100.0, 114.7],
+            ],
+            closed: true,
+            ..DetectionPath::default()
+        };
+        assert_eq!(path.rectangle(false), None);
+        assert_eq!(
+            round(shapes(spike)).boxes,
+            [[100.0, 100.0, 111.1, 114.7]],
+            "{spike}"
+        );
+        // Kenarların dışında altıncı bir nokta: çapraz kenarlar, kutu yok.
+        let off_side = "100 100 m 111.1 100 l 115 107 l 111.1 114.7 l 100 114.7 l 100 107.35 l h S";
+        assert!(shapes(off_side).boxes.is_empty(), "{off_side}");
     }
 
     #[test]
@@ -934,6 +1250,81 @@ mod tests {
             [[50.0, 100.0, 170.0, 140.0], [200.0, 100.0, 320.0, 140.0]]
         );
         assert!(filled.rules.is_empty());
+    }
+
+    /// LibreOffice Writer'ın bir HTML tablosundan ürettiği çizgiler (koordinatlar gerçek
+    /// çıktıdan): her kenarlık ayrı bir path, dikeyler köşelerde taşar, ilk ve son hücre
+    /// ötekilerden 0,8 pt geniş.
+    #[test]
+    fn a_word_processor_table_form_reads_into_comb_and_box_fields() {
+        let mut content = String::from(
+            "BT /F1 10 Tf 56.8 766 Td (Ad Soyad: ______________________________) Tj ET \
+             BT /F1 10 Tf 56.8 739 Td (TC Kimlik No) Tj ET \
+             BT /F1 10 Tf 56.8 693 Td (Adres) Tj ET \
+             BT /F1 10 Tf 56.8 620 Td (Bolum: ______________________) Tj ET ",
+        );
+        let line = |x0: f64, y0: f64, x1: f64, y1: f64| format!("{x0} {y0} m {x1} {y1} l S ");
+        content += &line(56.35, 730.689, 190.6, 730.689);
+        content += &line(56.35, 712.689, 190.6, 712.689);
+        for x in [
+            56.7, 69.5, 81.5, 93.5, 105.5, 117.5, 129.5, 141.5, 153.5, 165.5, 177.5, 190.2,
+        ] {
+            content += &line(x, 731.089, x, 712.339);
+        }
+        content += &line(56.35, 689.089, 361.4, 689.089);
+        content += &line(56.35, 647.289, 361.4, 647.289);
+        content += &line(56.7, 689.489, 56.7, 646.939);
+        content += &line(361.0, 689.489, 361.0, 646.939);
+        let input = read(&pdf(&content, None));
+        let found = detect(
+            &input.words,
+            &input.shapes,
+            &input.existing,
+            &HashSet::new(),
+        );
+        let got: Vec<(&str, Kind)> = found.iter().map(|c| (c.name.as_str(), c.kind)).collect();
+        assert_eq!(
+            got,
+            [
+                ("Ad Soyad", Kind::Text),
+                ("TC Kimlik No", Kind::Comb { cells: 11 }),
+                ("Adres", Kind::Text),
+                ("Bolum", Kind::Text),
+            ],
+            "{found:?}"
+        );
+        let address = found[2].rect.map(|v| v.round());
+        assert_eq!(address, [58.0, 648.0, 360.0, 688.0]);
+    }
+
+    #[test]
+    fn a_row_box_split_by_vertical_lines_becomes_cells() {
+        // Tek bir satır dikdörtgeni ve hücre ayraçları ayrı dikey çizgiler.
+        let mut content =
+            String::from("BT /F1 10 Tf 40 505 Td (Postcode) Tj ET 120 500 90 22 re S ");
+        for x in [138, 156, 174, 192] {
+            content += &format!("{x} 500 m {x} 522 l S ");
+        }
+        let input = read(&pdf(&content, None));
+        let found = detect(
+            &input.words,
+            &input.shapes,
+            &input.existing,
+            &HashSet::new(),
+        );
+        let got: Vec<(&str, Kind, [f64; 4])> = found
+            .iter()
+            .map(|c| (c.name.as_str(), c.kind, c.rect.map(|v| v.round())))
+            .collect();
+        assert_eq!(
+            got,
+            [(
+                "Postcode",
+                Kind::Comb { cells: 5 },
+                [120.0, 500.0, 210.0, 522.0]
+            )],
+            "{found:?}"
+        );
     }
 
     #[test]
