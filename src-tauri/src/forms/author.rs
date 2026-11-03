@@ -645,6 +645,7 @@ fn detect_and_save(
         pages.to_vec()
     };
     let mut inputs = Vec::with_capacity(list.len());
+    let mut scans = super::detect::MAX_SCANNED_PAGES;
     for page_index in list {
         if page_index >= page_count {
             return Err(DocumentIoFailure::preflight(format!(
@@ -657,7 +658,8 @@ fn detect_and_save(
             .map_err(|error| DocumentIoFailure::preflight(format!("Sayfa açılamadı: {error}")))?;
         let transform =
             PageDisplayTransform::for_page(&page).map_err(DocumentIoFailure::preflight)?;
-        let input = super::detect::read_page(&page).map_err(DocumentIoFailure::preflight)?;
+        let input = super::detect::read_page(&page, &transform, &mut scans)
+            .map_err(DocumentIoFailure::preflight)?;
         drop(page);
         let widgets = super::read_page_form_fields(&geometry, page_index)
             .map_err(|error| DocumentIoFailure::preflight(format!("Form okunamadı: {error:?}")))?
@@ -676,7 +678,7 @@ fn detect_and_save(
         let page_id = *page_ids.get(&(page_index + 1)).ok_or_else(|| {
             DocumentIoFailure::preflight(format!("Sayfa {page_index} yapıda bulunamadı"))
         })?;
-        let found = super::detect::detect(&input.words, &input.shapes, &input.existing, &names);
+        let found = input.candidates(&names);
         let room = MAX_FORM_WIDGETS_PER_PAGE
             .saturating_sub(widgets)
             .min(MAX_DETECTED_FIELDS - checks.len());
@@ -1956,6 +1958,64 @@ mod tests {
             named(&filled, "Postcode")[0].value.as_deref(),
             Some("34000")
         );
+    }
+
+    #[test]
+    fn a_scanned_form_gets_fields_where_its_picture_has_blanks() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scan.pdf");
+        let (grey, size) = scanned_form();
+        // OCR katmanı gibi görünmez metin, etiketler için.
+        let text = [
+            (60.0, 702.0, "Name"),
+            (76.0, 502.0, "Yes"),
+            (60.0, 625.0, "Comments"),
+        ];
+        std::fs::write(&path, scan_pdf(&grey, size, [612.0, 792.0], 0, &text)).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        detect(&path).unwrap();
+        assert!(std::fs::read(&path).unwrap().starts_with(&original));
+        let widgets = read(&path);
+        let found: Vec<(&str, FormFieldKind, bool)> = widgets
+            .iter()
+            .map(|w| (w.field_name.as_str(), w.kind, w.multiline))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("Name", FormFieldKind::Text, false),
+                ("Comments", FormFieldKind::Text, true),
+                ("Yes", FormFieldKind::Checkbox, false),
+            ]
+        );
+        let index = |name: &str| named(&widgets, name)[0].annot_index;
+        fill_form_fields_report(
+            path.to_string_lossy().to_string(),
+            vec![
+                FormFieldEdit {
+                    page_index: 0,
+                    annot_index: index("Name"),
+                    field_name: "Name".into(),
+                    value: FormFieldValue::Text {
+                        text: "Çağrı Öztürk".into(),
+                    },
+                },
+                FormFieldEdit {
+                    page_index: 0,
+                    annot_index: index("Yes"),
+                    field_name: "Yes".into(),
+                    value: FormFieldValue::Checkbox { checked: true },
+                },
+            ],
+            None,
+        )
+        .unwrap();
+        let filled = read(&path);
+        assert_eq!(
+            named(&filled, "Name")[0].value.as_deref(),
+            Some("Çağrı Öztürk")
+        );
+        assert_eq!(named(&filled, "Yes")[0].checked, Some(true));
     }
 
     #[test]

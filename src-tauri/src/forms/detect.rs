@@ -9,8 +9,9 @@
 // their edges stop being rules; comb cells may differ in width by up to 1 pt (was 0.5); a
 // blank's field stops at the bottom of a box right above it;
 // point comparisons use a 1e-3 pt tolerance because PDFium hands back f32 coordinates; the
-// number of objects read and shapes kept is bounded; the raster (scanned page) path is not
-// ported.
+// number of objects read and shapes kept is bounded. Scanned pages (PdfCraft's
+// engine/src/scan_fields.rs) are rendered with PDFium in the job worker; their labels come from
+// the page's text only (no text recognition is run).
 
 //! Form tasarımı ▸ otomatik alan algılama: basılı bir formun yanıt beklediği yerleri bulur
 //! (alt çizgi dizileri, yatay çizgiler, boş kutular, tek karakterlik hücre sıraları ve küçük
@@ -19,10 +20,14 @@
 //!
 //! [`detect`] sayfanın kelimeleri ve çizilmiş şekilleri üzerinde saf bir fonksiyondur. Girdiyi
 //! [`read_page`] PDFium ile okur: kelimeler PDFium metninden, şekiller PDFium path nesnelerinden
-//! (form XObject'lerinin içi dahil). Yazım `forms::author`'ın işidir.
+//! (form XObject'lerinin içi dahil); taranmış sayfada PDFium'un çizdiği resmin piksellerinden
+//! ([`raster`]). Yazım `forms::author`'ın işidir.
 
+use crate::annotations::PageDisplayTransform;
 use pdfium_render::prelude::*;
 use std::collections::HashSet;
+
+pub mod raster;
 
 /// Sayfadaki bir metin parçası, PDF user space'te.
 #[derive(Clone, Debug, PartialEq)]
@@ -67,6 +72,95 @@ pub struct PageInput {
     pub shapes: Shapes,
     /// Sayfadaki mevcut widget'ların dikdörtgenleri; aday bunlarla örtüşemez.
     pub existing: Vec<[f64; 4]>,
+    /// Taranmış sayfa: girdi görünen sayfa düzlemindedir ([`Frame`]); yoksa user space.
+    pub frame: Option<Frame>,
+}
+
+impl PageInput {
+    /// Sayfanın adayları, user space'te; adlar `taken`'a karşı tekildir.
+    pub fn candidates(&self, taken: &HashSet<String>) -> Vec<Candidate> {
+        let found = detect(&self.words, &self.shapes, &self.existing, taken);
+        match &self.frame {
+            None => found,
+            Some(frame) => found
+                .into_iter()
+                .map(|c| Candidate {
+                    rect: frame.rect_to_user(c.rect),
+                    ..c
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Sayfanın görüntülendiği düzlem (`/Rotate` ve CropBox uygulanmış), point, y yukarı, köken
+/// sol alt köşe. Taranmış sayfanın resmi bu düzlemde çizilir; algılama da yazı yönü düz olsun
+/// diye bu düzlemde yapılır.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frame {
+    /// Düzlemin sol üst köşesinin user space karşılığı.
+    origin: [f64; 2],
+    /// Düzlemin tam genişliği ve tam yüksekliği boyunca (aşağı doğru) user space vektörleri.
+    across: [f64; 2],
+    down: [f64; 2],
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Frame {
+    pub(crate) fn of(transform: &PageDisplayTransform) -> Option<Self> {
+        let (origin, across, down) = transform.parts();
+        let width = across[0].hypot(across[1]);
+        let height = down[0].hypot(down[1]);
+        let determinant = across[0] * down[1] - down[0] * across[1];
+        (width > 0.0 && height > 0.0 && determinant.abs() > f64::EPSILON).then_some(Self {
+            origin,
+            across,
+            down,
+            width,
+            height,
+        })
+    }
+
+    fn point_to_user(&self, [x, y]: [f64; 2]) -> [f64; 2] {
+        let (u, v) = (x / self.width, 1.0 - y / self.height);
+        [
+            self.origin[0] + u * self.across[0] + v * self.down[0],
+            self.origin[1] + u * self.across[1] + v * self.down[1],
+        ]
+    }
+
+    fn point_to_frame(&self, [x, y]: [f64; 2]) -> [f64; 2] {
+        let (dx, dy) = (x - self.origin[0], y - self.origin[1]);
+        let determinant = self.across[0] * self.down[1] - self.down[0] * self.across[1];
+        let u = (dx * self.down[1] - dy * self.down[0]) / determinant;
+        let v = (self.across[0] * dy - self.across[1] * dx) / determinant;
+        [u * self.width, (1.0 - v) * self.height]
+    }
+
+    fn bounds(r: [f64; 4], map: impl Fn([f64; 2]) -> [f64; 2]) -> [f64; 4] {
+        let corners = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]].map(map);
+        [
+            corners.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min),
+            corners.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min),
+            corners
+                .iter()
+                .map(|p| p[0])
+                .fold(f64::NEG_INFINITY, f64::max),
+            corners
+                .iter()
+                .map(|p| p[1])
+                .fold(f64::NEG_INFINITY, f64::max),
+        ]
+    }
+
+    pub fn rect_to_user(&self, r: [f64; 4]) -> [f64; 4] {
+        Self::bounds(r, |p| self.point_to_user(p))
+    }
+
+    pub fn rect_to_frame(&self, r: [f64; 4]) -> [f64; 4] {
+        Self::bounds(r, |p| self.point_to_frame(p))
+    }
 }
 
 /// Bir alt yolun dikdörtgen sayılabilmesi için en fazla nokta sayısı: dört köşe ve kenarları
@@ -82,6 +176,15 @@ const MAX_FORM_DEPTH: usize = 16;
 const MAX_SHAPES: usize = 4_000;
 /// Okunan en fazla kelime.
 const MAX_WORDS: usize = 100_000;
+/// Taranmış sayfanın çizildiği çözünürlük: point başına piksel (144 dpi).
+const SCAN_SCALE: f64 = 2.0;
+/// O çizimin en uzun kenarı (piksel).
+const SCAN_MAX_SIDE: f64 = 3000.0;
+/// Resimler sayfanın en az bu kadarını kaplıyorsa sayfa taranmıştır.
+const SCAN_COVERED: f64 = 0.5;
+/// Bir istekte çizilip piksellerinden okunan en fazla taranmış sayfa. Sayfa başına yaklaşık
+/// yarım saniye (debug); mutasyon worker'ının zaman sınırının içinde kalır.
+pub const MAX_SCANNED_PAGES: usize = 60;
 /// Ayrı çizgilerden hücre kurarken iki çizginin buluştuğu sayıldığı uzaklık (pt): kelime
 /// işlemcilerin tablo kenarlıkları köşelerde kenar kalınlığı kadar taşar ya da eksik kalır.
 const JOINT: f64 = 1.5;
@@ -248,9 +351,16 @@ fn apply(m: Matrix, [x, y]: [f64; 2]) -> [f64; 2] {
     [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]
 }
 
-/// Sayfanın algılama girdisi: kelimeler, şekiller ve mevcut widget'lar.
-pub(crate) fn read_page(page: &PdfPage<'_>) -> Result<PageInput, String> {
-    Ok(PageInput {
+/// Sayfanın algılama girdisi: kelimeler, şekiller ve mevcut widget'lar. Çizilmiş şekli olmayan
+/// ve büyük kısmı resim olan sayfa (tarama) PDFium ile çizilir ve şekiller piksellerden okunur
+/// ([`raster::shapes`]); o zaman bütün girdi görünen sayfa düzlemindedir. `scans` bu istekte daha
+/// kaç taranmış sayfanın okunabileceğidir; biterse hata döner.
+pub(crate) fn read_page(
+    page: &PdfPage<'_>,
+    transform: &PageDisplayTransform,
+    scans: &mut usize,
+) -> Result<PageInput, String> {
+    let mut input = PageInput {
         words: page_words(page)?,
         shapes: page_shapes(page),
         existing: page
@@ -263,7 +373,81 @@ pub(crate) fn read_page(page: &PdfPage<'_>) -> Result<PageInput, String> {
                     .map(|value| f64::from(value.value))
             })
             .collect(),
-    })
+        frame: None,
+    };
+    if input.shapes.boxes.is_empty() && input.shapes.rules.is_empty() {
+        if let Some(frame) = Frame::of(transform) {
+            if is_scan(page, &frame) {
+                if *scans == 0 {
+                    return Err(format!(
+                        "Algılama bir seferde en fazla {MAX_SCANNED_PAGES} taranmış sayfada çalışır"
+                    ));
+                }
+                *scans -= 1;
+                input.shapes = scan_shapes(page, &frame)?;
+                for word in &mut input.words {
+                    word.rect = frame.rect_to_frame(word.rect);
+                }
+                for rect in &mut input.existing {
+                    *rect = frame.rect_to_frame(*rect);
+                }
+                input.frame = Some(frame);
+            }
+        }
+    }
+    Ok(input)
+}
+
+/// Sayfa bir resim mi: sayfa düzeyindeki resim nesneleri sayfanın çoğunu kaplıyor.
+fn is_scan(page: &PdfPage<'_>, frame: &Frame) -> bool {
+    let page_area = frame.width * frame.height;
+    let objects = page.objects();
+    let mut covered = 0.0;
+    for index in 0..objects.len().min(MAX_OBJECTS) {
+        let Ok(object) = objects.get(index) else {
+            continue;
+        };
+        if object.as_image_object().is_none() {
+            continue;
+        }
+        let Ok(bounds) = object.bounds() else {
+            continue;
+        };
+        let r = bounds.to_rect();
+        let user = [r.left(), r.bottom(), r.right(), r.top()].map(|v| f64::from(v.value));
+        let [x0, y0, x1, y1] = frame.rect_to_frame(user);
+        let w = (x1.min(frame.width) - x0.max(0.0)).max(0.0);
+        let h = (y1.min(frame.height) - y0.max(0.0)).max(0.0);
+        if (w * h).is_finite() {
+            covered += w * h;
+        }
+    }
+    page_area > 0.0 && covered >= SCAN_COVERED * page_area
+}
+
+/// Taranmış sayfanın çizgileri ve kutuları: sayfa görüntülendiği gibi çizilir ve piksellerden
+/// okunur; sonuç görünen sayfa düzlemindedir.
+fn scan_shapes(page: &PdfPage<'_>, frame: &Frame) -> Result<Shapes, String> {
+    let fit = (raster::MAX_PIXELS as f64 / (frame.width * frame.height)).sqrt();
+    let scale = SCAN_SCALE
+        .min(SCAN_MAX_SIDE / frame.width.max(frame.height))
+        .min(fit);
+    let (width, height) = (
+        (frame.width * scale).round().max(1.0),
+        (frame.height * scale).round().max(1.0),
+    );
+    let config = PdfRenderConfig::new()
+        .set_target_size(width as i32, height as i32)
+        .clear_before_rendering(true)
+        .set_clear_color(PdfColor::WHITE)
+        .render_annotations(false)
+        .render_form_data(false);
+    let bitmap = page
+        .render_with_config(&config)
+        .map_err(|error| format!("Taranmış sayfa çizilemedi: {error}"))?;
+    let (w, h) = (bitmap.width() as u32, bitmap.height() as u32);
+    let px_per_pt = f64::from(w) / frame.width;
+    Ok(raster::shapes(&bitmap.as_rgba_bytes(), w, h, px_per_pt))
 }
 
 /// Sayfanın kelimeleri, user space'te; alt çizgi dizileri çevrelerindeki metinden ayrı
@@ -1088,7 +1272,8 @@ mod tests {
         let pdfium = crate::pdf_engine::get_pdfium().unwrap();
         let document = pdfium.load_pdf_from_byte_slice(bytes, None).unwrap();
         let page = document.pages().get(0).unwrap();
-        read_page(&page).unwrap()
+        let transform = PageDisplayTransform::for_page(&page).unwrap();
+        read_page(&page, &transform, &mut 1).unwrap()
     }
 
     fn shapes(content: &str) -> Shapes {
@@ -1325,6 +1510,181 @@ mod tests {
             )],
             "{found:?}"
         );
+    }
+
+    fn kinds_and_rects(found: &[Candidate]) -> Vec<(String, Kind, [f64; 4])> {
+        found
+            .iter()
+            .map(|c| (c.name.clone(), c.kind, c.rect.map(|v| v.round())))
+            .collect()
+    }
+
+    #[test]
+    fn a_scanned_page_is_read_from_its_pixels() {
+        let (grey, size) = super::super::test_support::scanned_form();
+        // OCR katmanı gibi görünmez metin: etiketler.
+        let text = [
+            (60.0, 702.0, "Name"),
+            (76.0, 502.0, "Yes"),
+            (60.0, 625.0, "Comments"),
+        ];
+        let input = read(&super::super::test_support::scan_pdf(
+            &grey,
+            size,
+            [612.0, 792.0],
+            0,
+            &text,
+        ));
+        assert!(input.frame.is_some(), "a picture page is a scan");
+        let found = input.candidates(&HashSet::new());
+        let got = kinds_and_rects(&found);
+        let names: Vec<(&str, Kind)> = got.iter().map(|(n, k, _)| (n.as_str(), *k)).collect();
+        assert_eq!(
+            names,
+            [
+                ("Name", Kind::Text),
+                ("Comments", Kind::Text),
+                ("Yes", Kind::CheckBox)
+            ],
+            "{found:?}"
+        );
+        let rect = |name: &str| got.iter().find(|(n, _, _)| n == name).unwrap().2;
+        let [x0, y0, x1, _] = rect("Name");
+        assert!(
+            (x0 - 120.0).abs() <= 2.0 && (x1 - 400.0).abs() <= 2.0 && (y0 - 701.0).abs() <= 2.0,
+            "{found:?}"
+        );
+        let [x0, y0, x1, y1] = rect("Comments");
+        assert!(
+            (59.0..=62.0).contains(&x0)
+                && (398.0..=401.0).contains(&x1)
+                && y0 <= 562.0
+                && y1 >= 618.0,
+            "{found:?}"
+        );
+        let [x0, y0, x1, y1] = rect("Yes");
+        assert!(
+            (x1 - x0 - 12.0).abs() <= 2.0
+                && (y1 - y0 - 12.0).abs() <= 2.0
+                && (x0 - 60.0).abs() <= 1.5,
+            "{found:?}"
+        );
+
+        // Metin katmanı yoksa alanlar yine bulunur ve varsayılan adları alır.
+        let bare = read(&super::super::test_support::scan_pdf(
+            &grey,
+            size,
+            [612.0, 792.0],
+            0,
+            &[],
+        ));
+        let names: Vec<String> = bare
+            .candidates(&HashSet::new())
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, ["Text1", "Text2", "Check Box1"]);
+    }
+
+    #[test]
+    fn a_scan_turned_upright_by_rotate_reads_like_an_upright_one() {
+        // Aynı form, yana yatık saklanmış (resim 792 × 612 pt) ve /Rotate 90 ile düzeltilmiş.
+        let (grey, [w, h]) = super::super::test_support::scanned_form();
+        let (w, h) = (w as usize, h as usize);
+        // Görüntülenen resim saat yönünde 90° dönünce düz form olmalı: saklanan resim düzün
+        // saat yönünün tersine döndürülmüşü.
+        let mut turned = vec![0u8; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                // düz (x, y) → saklanan (y, w - 1 - x); saklanan genişlik h, yükseklik w.
+                turned[(w - 1 - x) * h + y] = grey[y * w + x];
+            }
+        }
+        let upright = read(&super::super::test_support::scan_pdf(
+            &grey,
+            [w as u32, h as u32],
+            [612.0, 792.0],
+            0,
+            &[],
+        ));
+        let sideways = read(&super::super::test_support::scan_pdf(
+            &turned,
+            [h as u32, w as u32],
+            [792.0, 612.0],
+            90,
+            &[],
+        ));
+        let frame = sideways.frame.expect("scan");
+        assert_eq!((frame.width.round(), frame.height.round()), (612.0, 792.0));
+        let a = kinds_and_rects(&upright.candidates(&HashSet::new()));
+        // Döndürülmüş sayfanın adayları user space'te; görünen düzleme geri çevrilince düz
+        // sayfanınkilerle aynı yerde olmalı.
+        let b: Vec<(String, Kind, [f64; 4])> = sideways
+            .candidates(&HashSet::new())
+            .into_iter()
+            .map(|c| {
+                (
+                    c.name.clone(),
+                    c.kind,
+                    frame.rect_to_frame(c.rect).map(|v| v.round()),
+                )
+            })
+            .collect();
+        assert_eq!(a.len(), b.len(), "{a:?} vs {b:?}");
+        for ((na, ka, ra), (nb, kb, rb)) in a.iter().zip(&b) {
+            assert_eq!((na, ka), (nb, kb));
+            assert!(
+                ra.iter().zip(rb).all(|(p, q)| (p - q).abs() <= 2.0),
+                "{ra:?} vs {rb:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scanned_pages_beyond_the_budget_are_refused() {
+        let (grey, size) = super::super::test_support::scanned_form();
+        let scan = super::super::test_support::scan_pdf(&grey, size, [612.0, 792.0], 0, &[]);
+        let drawn = pdf("90 648 m 300 648 l S", None);
+        let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+        let read_with = |bytes: &[u8], budget: &mut usize| {
+            let document = pdfium.load_pdf_from_byte_slice(bytes, None).unwrap();
+            let page = document.pages().get(0).unwrap();
+            let transform = PageDisplayTransform::for_page(&page).unwrap();
+            read_page(&page, &transform, budget).map(|input| input.frame.is_some())
+        };
+        let mut budget = 1;
+        assert_eq!(read_with(&scan, &mut budget), Ok(true));
+        assert_eq!(budget, 0);
+        // Çizilmiş sayfa bütçe istemez; taranmış sayfa bütçe bitince reddedilir.
+        assert_eq!(read_with(&drawn, &mut budget), Ok(false));
+        let error = read_with(&scan, &mut budget).unwrap_err();
+        assert!(error.contains("en fazla 60 taranmış sayfa"), "{error}");
+    }
+
+    #[test]
+    fn a_page_with_drawn_shapes_or_little_picture_is_not_a_scan() {
+        // Çizilmiş form: vektör yolu kullanılır.
+        let input = read(&pdf(
+            "BT /F1 10 Tf 50 650 Td (City) Tj ET 90 648 m 300 648 l S",
+            None,
+        ));
+        assert!(input.frame.is_none());
+        // Sayfanın bir köşesindeki resim (logo) taramayı göstermez; sayfanın yarısından
+        // fazlasını kaplayan resim gösterir.
+        let (grey, size) = super::super::test_support::scanned_form();
+        let picture = |at: [f64; 4]| {
+            read(&super::super::test_support::picture_pdf(
+                &grey,
+                size,
+                [612.0, 792.0],
+                0,
+                &[],
+                at,
+            ))
+        };
+        assert!(picture([20.0, 600.0, 150.0, 150.0]).frame.is_none());
+        assert!(picture([0.0, 0.0, 612.0, 300.0]).frame.is_none());
+        assert!(picture([0.0, 0.0, 612.0, 500.0]).frame.is_some());
     }
 
     #[test]
