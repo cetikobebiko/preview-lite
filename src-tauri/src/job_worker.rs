@@ -76,6 +76,11 @@ pub enum MutationRecipe {
     AuthorFormFields {
         ops: Vec<crate::forms::author::FormAuthorOp>,
     },
+    /// Form alanlarını algılar ve ekler; bkz. `forms::author::detect_form_fields_report`.
+    DetectFormFields {
+        /// 0 tabanlı; boş: bütün sayfalar.
+        pages: Vec<u32>,
+    },
     /// Sayfaları aynı belgeden (çoğaltma) ya da başka bir PDF'ten kopyalar; `replace_count` > 0
     /// ise eklenenlerin arkasındaki o kadar sayfa silinir. Bkz. `manipulation::import_pages_report`.
     ImportPages {
@@ -128,6 +133,7 @@ impl MutationRecipe {
             Self::DeleteAnnotation { .. } => "delete_annotation",
             Self::FillFormFields { .. } => "fill_form_fields",
             Self::AuthorFormFields { .. } => "author_form_fields",
+            Self::DetectFormFields { .. } => "detect_form_fields",
             Self::ImportPages {
                 input_name,
                 source_path,
@@ -1733,6 +1739,10 @@ fn execute_mutation(
             copy_mutation_input(snapshot_path, output_path)?;
             crate::forms::author::author_form_fields_report(output, ops, password)
         }
+        MutationRecipe::DetectFormFields { pages } => {
+            copy_mutation_input(snapshot_path, output_path)?;
+            crate::forms::author::detect_form_fields_report(output, pages, password)
+        }
         MutationRecipe::ImportPages {
             source_path,
             source_pages,
@@ -2684,6 +2694,63 @@ mod tests {
         .unwrap_err();
         assert_eq!(failure.code, "SESSION_MUTATION_WORKER_FAILED");
         assert!(failure.message.contains("'name'"), "{}", failure.message);
+    }
+
+    #[test]
+    fn detect_form_fields_mutation_round_trips_through_job_worker_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        std::fs::write(
+            &snapshot,
+            crate::forms::test_support::page_pdf(
+                "BT /F1 10 Tf 50 700 Td (Email ______________________) Tj ET",
+                None,
+            ),
+        )
+        .unwrap();
+        let command = |pages: Vec<u32>, output_name: &str| {
+            let command = JobCommand::MutatePdf {
+                recipe: MutationRecipe::DetectFormFields { pages },
+                output_name: output_name.to_string(),
+            };
+            serde_json::from_str::<JobCommand>(&serde_json::to_string(&command).unwrap()).unwrap()
+        };
+        let run = |pages: Vec<u32>, output_name: &str| {
+            execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "form-detect-job",
+                "form-detect-session",
+                command(pages, output_name),
+            )
+        };
+
+        let result = run(vec![0], "detected.pdf").unwrap();
+        let output = directory.path().join("detected.pdf");
+        assert!(matches!(result, JobResult::File(ref path) if path == &output));
+        let widgets = crate::pdf_engine::with_pdfium(|pdfium| -> Result<_, String> {
+            let document = pdfium
+                .load_pdf_from_file(&output, None)
+                .map_err(|error| error.to_string())?;
+            crate::forms::read_page_form_fields(&document, 0).map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert_eq!(
+            widgets
+                .iter()
+                .map(|widget| widget.field_name.as_str())
+                .collect::<Vec<_>>(),
+            ["Email"]
+        );
+
+        let failure = run(vec![1], "rejected.pdf").unwrap_err();
+        assert_eq!(failure.code, "SESSION_MUTATION_WORKER_FAILED");
+        assert!(
+            failure.message.contains("Sayfa 1 yok"),
+            "{}",
+            failure.message
+        );
     }
 
     #[test]

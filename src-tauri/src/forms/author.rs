@@ -13,8 +13,10 @@
 //! akışları yalnız sabit kenar/zemin ve checkbox/radio işaretleridir; kullanıcı metni görünüm
 //! akışına yazılmaz.
 
-use super::{FormFieldKind, FormWidgetData, MAX_FORM_OPTIONS_PER_FIELD};
-use crate::annotations::{validate_normalized_rect, NormalizedPageRect, PageDisplayTransform};
+use super::{FormFieldKind, FormWidgetData, MAX_FORM_OPTIONS_PER_FIELD, MAX_FORM_WIDGETS_PER_PAGE};
+use crate::annotations::{
+    validate_normalized_rect, NormalizedPageRect, PageDisplayTransform, RectData,
+};
 use crate::document_io::{
     atomic_write_pdf, AtomicWriteReport, CommitState, DocumentIoError, DocumentIoFailure,
     DocumentIoStage,
@@ -48,10 +50,24 @@ const FF_RADIO: i64 = 1 << 15;
 const FF_COMBO: i64 = 1 << 17;
 const FF_EDIT: i64 = 1 << 18;
 const FF_MULTI_SELECT: i64 = 1 << 21;
+const FF_COMB: i64 = 1 << 24;
 /// Annotation flag Print.
 const ANNOT_PRINT: i64 = 4;
 
 const BORDER_GRAY: f32 = 0.5;
+
+/// Algılanan alanlar için üst sınır: bir istekte en fazla bu kadar alan eklenir.
+pub const MAX_DETECTED_FIELDS: usize = 2_000;
+
+/// Yeni widget'ın görünüşü.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct FieldStyle {
+    /// Sayfa çizgiyi ya da kutuyu zaten çiziyor: alanın kendi kenarı ve zemini yok. Opak bir
+    /// zemin basılı formu (ör. comb hücrelerinin ayraçlarını) örterdi.
+    bare: bool,
+    /// Metin alanı: comb bayrağı ve bu kadar karakter.
+    comb: Option<u32>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case", rename_all_fields = "camelCase")]
@@ -328,26 +344,10 @@ fn author_and_save(
     ops: &[FormAuthorOp],
     temp: &Path,
 ) -> Result<Expected, DocumentIoFailure> {
-    let bytes = std::fs::read(source)
-        .map_err(|error| DocumentIoFailure::preflight(format!("PDF okunamadı: {error}")))?;
-    if bytes.len() > MAX_AUTHOR_INPUT_BYTES {
-        return Err(DocumentIoFailure::preflight(
-            "PDF form tasarımı için çok büyük (256 MiB sınırı)",
-        ));
-    }
+    let bytes = read_input(source)?;
 
     // PDFium: geometri ve mevcut widget sayıları.
-    let geometry = pdfium
-        .load_pdf_from_file(source, None)
-        .map_err(|error| DocumentIoFailure::preflight(format!("PDF açılamadı: {error}")))?;
-    if !matches!(
-        geometry.permissions().security_handler_revision(),
-        Ok(PdfSecurityHandlerRevision::Unprotected)
-    ) {
-        return Err(DocumentIoFailure::preflight(
-            "Şifreli PDF'lerde form tasarımı desteklenmiyor",
-        ));
-    }
+    let geometry = open_geometry(pdfium, source)?;
     let page_count = u32::from(geometry.pages().len());
     let mut widget_counts = BTreeMap::new();
     let mut transforms = BTreeMap::new();
@@ -374,20 +374,7 @@ fn author_and_save(
     drop(geometry);
 
     // lopdf: yapı.
-    let previous = lopdf::Document::load_mem(&bytes).map_err(|error| {
-        DocumentIoFailure::preflight(format!("PDF yapısı ayrıştırılamadı: {error}"))
-    })?;
-    // lopdf 0.45 decrypts empty-user-password files on load; the bytes on disk are still
-    // encrypted, so plain incremental objects would corrupt them.
-    if crate::lopdf_compat::was_encrypted(&previous) {
-        return Err(DocumentIoFailure::preflight(
-            "Şifreli PDF'lerde form tasarımı desteklenmiyor",
-        ));
-    }
-    // The writer owns the only copy of the input; the output goes straight to `temp` and its
-    // prefix is checked from disk, so the document is not held three times.
-    let input = crate::incremental_save::InputFingerprint::of(&bytes);
-    let mut writer = Writer::new(IncrementalDocument::create_from(bytes, previous));
+    let (mut writer, input) = open_writer(bytes)?;
     let pages = writer.page_ids();
 
     // Hedefler istekteki tüm işlemlerden önce, orijinal annotation sırasına göre çözülür.
@@ -430,8 +417,14 @@ fn author_and_save(
                 ..
             } => {
                 let rect = user_rect(transform, normalized_rect);
-                let full_name =
-                    writer.add_field(page_id, rect, field, name.as_deref(), &mut names)?;
+                let full_name = writer.add_field(
+                    page_id,
+                    rect,
+                    field,
+                    name.as_deref(),
+                    &mut names,
+                    FieldStyle::default(),
+                )?;
                 *widget_counts.entry(page_index).or_default() += 1;
                 checks.push(ExpectedWidget {
                     page_index,
@@ -496,6 +489,70 @@ fn author_and_save(
         }
     }
 
+    save_incremental(writer, temp, &input)?;
+    Ok(Expected {
+        widget_counts,
+        checks,
+    })
+}
+
+fn read_input(source: &Path) -> Result<Vec<u8>, DocumentIoFailure> {
+    let bytes = std::fs::read(source)
+        .map_err(|error| DocumentIoFailure::preflight(format!("PDF okunamadı: {error}")))?;
+    if bytes.len() > MAX_AUTHOR_INPUT_BYTES {
+        return Err(DocumentIoFailure::preflight(
+            "PDF form tasarımı için çok büyük (256 MiB sınırı)",
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Geometri ve okuma için PDFium belgesi; şifreli belgeler reddedilir.
+fn open_geometry<'a>(
+    pdfium: &'a Pdfium,
+    source: &Path,
+) -> Result<PdfDocument<'a>, DocumentIoFailure> {
+    let geometry = pdfium
+        .load_pdf_from_file(source, None)
+        .map_err(|error| DocumentIoFailure::preflight(format!("PDF açılamadı: {error}")))?;
+    if !matches!(
+        geometry.permissions().security_handler_revision(),
+        Ok(PdfSecurityHandlerRevision::Unprotected)
+    ) {
+        return Err(DocumentIoFailure::preflight(
+            "Şifreli PDF'lerde form tasarımı desteklenmiyor",
+        ));
+    }
+    Ok(geometry)
+}
+
+fn open_writer(
+    bytes: Vec<u8>,
+) -> Result<(Writer, crate::incremental_save::InputFingerprint), DocumentIoFailure> {
+    let previous = lopdf::Document::load_mem(&bytes).map_err(|error| {
+        DocumentIoFailure::preflight(format!("PDF yapısı ayrıştırılamadı: {error}"))
+    })?;
+    // lopdf 0.45 decrypts empty-user-password files on load; the bytes on disk are still
+    // encrypted, so plain incremental objects would corrupt them.
+    if crate::lopdf_compat::was_encrypted(&previous) {
+        return Err(DocumentIoFailure::preflight(
+            "Şifreli PDF'lerde form tasarımı desteklenmiyor",
+        ));
+    }
+    // The writer owns the only copy of the input; the output goes straight to `temp` and its
+    // prefix is checked from disk, so the document is not held three times.
+    let input = crate::incremental_save::InputFingerprint::of(&bytes);
+    Ok((
+        Writer::new(IncrementalDocument::create_from(bytes, previous)),
+        input,
+    ))
+}
+
+fn save_incremental(
+    mut writer: Writer,
+    temp: &Path,
+    input: &crate::incremental_save::InputFingerprint,
+) -> Result<(), DocumentIoFailure> {
     let file = std::fs::File::create(temp)
         .map_err(|error| DocumentIoFailure::write(format!("Temp PDF açılamadı: {error}")))?;
     let mut output = std::io::BufWriter::new(file);
@@ -508,13 +565,178 @@ fn author_and_save(
         .and_then(|file| file.sync_all())
         .map_err(|error| DocumentIoFailure::write(format!("Temp PDF yazılamadı: {error}")))?;
     drop(writer);
-    let prefixed = crate::incremental_save::read_appended_section(temp, &input)
+    let prefixed = crate::incremental_save::read_appended_section(temp, input)
         .map_err(|error| DocumentIoFailure::write(format!("Temp PDF okunamadı: {error}")))?;
     if prefixed.is_err() {
         return Err(DocumentIoFailure::invariant(
             "Artımlı güncelleme orijinal baytları korumadı",
         ));
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Otomatik alan algılama
+// ---------------------------------------------------------------------------
+
+/// Bu yüksekliğin (pt) üstündeki algılanan metin alanları çok satırlıdır.
+const MULTILINE_HEIGHT: f64 = 30.0;
+
+/// `file_path`'teki PDF'in `pages` sayfalarında (0 tabanlı; boşsa tümü) form alanlarını
+/// algılar (`forms::detect`) ve hepsini tek bir artımlı yazımla ekler. Hiç alan bulunmazsa
+/// belge değişmez ve preflight hatası döner.
+pub(crate) fn detect_form_fields_report(
+    file_path: String,
+    pages: Vec<u32>,
+    password: Option<String>,
+) -> Result<AtomicWriteReport, DocumentIoError> {
+    let preflight = |detail: String| {
+        DocumentIoError::new(
+            DETECT_OPERATION,
+            DocumentIoStage::Preflight,
+            CommitState::Prepared,
+            detail,
+        )
+    };
+    validate_detect_pages(&pages).map_err(preflight)?;
+    if password.is_some() {
+        return Err(preflight(
+            "Şifreli PDF'lerde form tasarımı desteklenmiyor".to_string(),
+        ));
+    }
+    let path = PathBuf::from(&file_path);
+    let source = path.clone();
+    atomic_write_pdf(
+        DETECT_OPERATION,
+        std::slice::from_ref(&path),
+        &path,
+        move |pdfium, temp| detect_and_save(pdfium, &source, &pages, temp),
+        verify_saved,
+    )
+}
+
+const DETECT_OPERATION: &str = "detect_form_fields";
+
+pub fn validate_detect_pages(pages: &[u32]) -> Result<(), String> {
+    if pages.len() > crate::job_worker::MAX_JOB_PAGES {
+        return Err("Algılama isteğinde çok fazla sayfa var".to_string());
+    }
+    let mut seen = HashSet::new();
+    if pages.iter().any(|page| !seen.insert(*page)) {
+        return Err("Algılama isteğinde bir sayfa birden fazla kez var".to_string());
+    }
+    Ok(())
+}
+
+fn detect_and_save(
+    pdfium: &Pdfium,
+    source: &Path,
+    pages: &[u32],
+    temp: &Path,
+) -> Result<Expected, DocumentIoFailure> {
+    let bytes = read_input(source)?;
+
+    // PDFium: her sayfanın kelimeleri, şekilleri, widget'ları ve geometrisi.
+    let geometry = open_geometry(pdfium, source)?;
+    let page_count = u32::from(geometry.pages().len());
+    let list: Vec<u32> = if pages.is_empty() {
+        (0..page_count).collect()
+    } else {
+        pages.to_vec()
+    };
+    let mut inputs = Vec::with_capacity(list.len());
+    for page_index in list {
+        if page_index >= page_count {
+            return Err(DocumentIoFailure::preflight(format!(
+                "Sayfa {page_index} yok (sayfa sayısı {page_count})"
+            )));
+        }
+        let page = geometry
+            .pages()
+            .get(page_index as u16)
+            .map_err(|error| DocumentIoFailure::preflight(format!("Sayfa açılamadı: {error}")))?;
+        let transform =
+            PageDisplayTransform::for_page(&page).map_err(DocumentIoFailure::preflight)?;
+        let input = super::detect::read_page(&page).map_err(DocumentIoFailure::preflight)?;
+        drop(page);
+        let widgets = super::read_page_form_fields(&geometry, page_index)
+            .map_err(|error| DocumentIoFailure::preflight(format!("Form okunamadı: {error:?}")))?
+            .len();
+        inputs.push((page_index, transform, input, widgets));
+    }
+    drop(geometry);
+
+    // lopdf: adlar yapıdaki alanlara karşı tekil olur.
+    let (mut writer, input) = open_writer(bytes)?;
+    let page_ids = writer.page_ids();
+    let mut names = writer.field_names()?;
+    let mut widget_counts = BTreeMap::new();
+    let mut checks = Vec::new();
+    for (page_index, transform, input, widgets) in inputs {
+        let page_id = *page_ids.get(&(page_index + 1)).ok_or_else(|| {
+            DocumentIoFailure::preflight(format!("Sayfa {page_index} yapıda bulunamadı"))
+        })?;
+        let found = super::detect::detect(&input.words, &input.shapes, &input.existing, &names);
+        let room = MAX_FORM_WIDGETS_PER_PAGE
+            .saturating_sub(widgets)
+            .min(MAX_DETECTED_FIELDS - checks.len());
+        let mut count = widgets;
+        for candidate in found.into_iter().take(room) {
+            let [x0, y0, x1, y1] = candidate.rect;
+            let rect = [x0 as f32, y0 as f32, x1 as f32, y1 as f32];
+            let (field, comb) = match candidate.kind {
+                super::detect::Kind::Text => (
+                    NewField::Text {
+                        multiline: y1 - y0 > MULTILINE_HEIGHT,
+                    },
+                    None,
+                ),
+                super::detect::Kind::CheckBox => (NewField::Checkbox, None),
+                super::detect::Kind::Comb { cells } => (
+                    NewField::Text { multiline: false },
+                    Some(u32::try_from(cells).unwrap_or(u32::MAX)),
+                ),
+            };
+            let style = FieldStyle { bare: true, comb };
+            let full_name = writer.add_field(
+                page_id,
+                rect,
+                &field,
+                Some(&candidate.name),
+                &mut names,
+                style,
+            )?;
+            count += 1;
+            checks.push(ExpectedWidget {
+                page_index,
+                field_name: full_name,
+                kind: new_field_kind(&field),
+                normalized_rect: Some(transform.user_to_normalized_rect(&RectData {
+                    x: rect[0],
+                    y: rect[1],
+                    width: rect[2] - rect[0],
+                    height: rect[3] - rect[1],
+                })),
+                required: None,
+                read_only: None,
+                multiline: match field {
+                    NewField::Text { multiline } => Some(multiline),
+                    _ => None,
+                },
+                options: None,
+            });
+        }
+        widget_counts.insert(page_index, count);
+        if checks.len() >= MAX_DETECTED_FIELDS {
+            break;
+        }
+    }
+    if checks.is_empty() {
+        return Err(DocumentIoFailure::preflight(
+            "Seçilen sayfalarda eklenecek form alanı bulunamadı",
+        ));
+    }
+    save_incremental(writer, temp, &input)?;
     Ok(Expected {
         widget_counts,
         checks,
@@ -1050,19 +1272,26 @@ impl Writer {
         field: &NewField,
         name: Option<&str>,
         names: &mut HashSet<String>,
+        style: FieldStyle,
     ) -> Result<String, DocumentIoFailure> {
         self.ensure_acroform()?;
         let catalog = self.catalog_id()?;
         let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
         let mut widget = dictionary! {
             "Type" => "Annot", "Subtype" => "Widget", "Rect" => rect_object(rect),
-            "F" => ANNOT_PRINT, "P" => page,
-            "MK" => dictionary! {
-                "BC" => vec![Object::Real(BORDER_GRAY), Object::Real(BORDER_GRAY), Object::Real(BORDER_GRAY)],
-                "BG" => vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
-            },
-            "BS" => dictionary! { "W" => 1, "S" => "S" },
+            "F" => ANNOT_PRINT, "P" => page, "MK" => Dictionary::new(),
         };
+        if !style.bare {
+            widget.set(
+                "MK",
+                dictionary! {
+                    "BC" => vec![Object::Real(BORDER_GRAY), Object::Real(BORDER_GRAY), Object::Real(BORDER_GRAY)],
+                    "BG" => vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+                },
+            );
+            widget.set("BS", dictionary! { "W" => 1, "S" => "S" });
+        }
+        let boxed = !style.bare;
 
         if let NewField::Radio { group, export } = field {
             let on = self.appearance(width, height, radio_on(width, height))?;
@@ -1127,12 +1356,26 @@ impl Writer {
                 if *multiline {
                     widget.set("Ff", FF_MULTILINE);
                 }
-                let ap = self.appearance(width, height, box_appearance(width, height, true))?;
+                if let Some(cells) = style.comb {
+                    widget.set("Ff", FF_COMB);
+                    widget.set("MaxLen", i64::from(cells));
+                }
+                let content = if boxed {
+                    box_appearance(width, height, true)
+                } else {
+                    "/Tx BMC EMC".to_string()
+                };
+                let ap = self.appearance(width, height, content)?;
                 widget.set("AP", dictionary! { "N" => ap });
             }
             NewField::Checkbox => {
-                let on = self.appearance(width, height, checkbox_on(width, height))?;
-                let off = self.appearance(width, height, box_appearance(width, height, false))?;
+                let on = self.appearance(width, height, checkbox_on(width, height, boxed))?;
+                let off_content = if boxed {
+                    box_appearance(width, height, false)
+                } else {
+                    String::new()
+                };
+                let off = self.appearance(width, height, off_content)?;
                 widget.set("FT", "Btn");
                 widget.set("V", "Off");
                 widget.set("AS", "Off");
@@ -1427,11 +1670,15 @@ fn box_appearance(width: f32, height: f32, text_block: bool) -> String {
     content
 }
 
-/// Kutu ve onay işareti (yollarla; font gerekmez).
-fn checkbox_on(width: f32, height: f32) -> String {
+/// Kutu (`boxed` ise) ve onay işareti (yollarla; font gerekmez).
+fn checkbox_on(width: f32, height: f32, boxed: bool) -> String {
+    let frame = if boxed {
+        box_appearance(width, height, false) + " "
+    } else {
+        String::new()
+    };
     format!(
-        "{} 0 g {line} w 1 J 1 j {x1} {y1} m {x2} {y2} l {x3} {y3} l S",
-        box_appearance(width, height, false),
+        "{frame}0 g {line} w 1 J 1 j {x1} {y1} m {x2} {y2} l {x3} {y3} l S",
         line = fmt((width.min(height) / 10.0).max(1.0)),
         x1 = fmt(width * 0.22),
         y1 = fmt(height * 0.52),
@@ -1579,6 +1826,182 @@ mod tests {
             .iter()
             .filter(|widget| widget.field_name == name)
             .collect()
+    }
+
+    fn detect(path: &Path) -> Result<AtomicWriteReport, DocumentIoError> {
+        detect_form_fields_report(path.to_string_lossy().to_string(), Vec::new(), None)
+    }
+
+    /// Basılı bir form: alt çizgili ad, çizgili şehir, onay kutusu ve beş hücreli posta kodu.
+    fn printed_form(directory: &tempfile::TempDir) -> PathBuf {
+        let path = directory.path().join("printed.pdf");
+        std::fs::write(
+            &path,
+            page_pdf(
+                "BT /F1 10 Tf 50 700 Td (Name: ______________________) Tj ET \
+                 BT /F1 10 Tf 50 650 Td (City) Tj ET 90 648 m 300 648 l S \
+                 56 600 10 10 re S BT /F1 10 Tf 72 601 Td (I agree) Tj ET \
+                 BT /F1 10 Tf 40 505 Td (Postcode) Tj ET \
+                 120 500 18 22 re 138 500 18 22 re 156 500 18 22 re 174 500 18 22 re 192 500 18 22 re S",
+                None,
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn detected_fields_are_added_bare_in_one_incremental_write_and_fill() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = printed_form(&directory);
+        let original = std::fs::read(&path).unwrap();
+        detect(&path).unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        assert!(
+            saved.starts_with(&original),
+            "detection rewrote the original bytes"
+        );
+
+        let widgets = read(&path);
+        let found: Vec<(&str, FormFieldKind)> = widgets
+            .iter()
+            .map(|widget| (widget.field_name.as_str(), widget.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("Name", FormFieldKind::Text),
+                ("City", FormFieldKind::Text),
+                ("I agree", FormFieldKind::Checkbox),
+                ("Postcode", FormFieldKind::Text),
+            ]
+        );
+
+        // Basılı form görünür kalır: kenar ve zemin yok; posta kodu beş hücreli bir comb.
+        let document = lopdf::Document::load_mem(&saved).unwrap();
+        let widget = |name: &str| {
+            document
+                .objects
+                .values()
+                .filter_map(|object| object.as_dict().ok())
+                .find(|dict| {
+                    dict.get(b"T")
+                        .ok()
+                        .and_then(|t| t.as_str().ok())
+                        .is_some_and(|t| t == name.as_bytes())
+                })
+                .unwrap()
+                .clone()
+        };
+        for name in ["Name", "City", "I agree", "Postcode"] {
+            let mk = widget(name).get(b"MK").unwrap().as_dict().unwrap().clone();
+            assert!(
+                mk.get(b"BC").is_err() && mk.get(b"BG").is_err(),
+                "{name}: {mk:?}"
+            );
+        }
+        let postcode = widget("Postcode");
+        assert_eq!(
+            postcode.get(b"Ff").unwrap().as_i64().unwrap() & FF_COMB,
+            FF_COMB
+        );
+        assert_eq!(postcode.get(b"MaxLen").unwrap().as_i64().unwrap(), 5);
+        let rect: Vec<f32> = postcode
+            .get(b"Rect")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_float().unwrap())
+            .collect();
+        assert_eq!(rect, [120.0, 500.0, 210.0, 522.0]);
+
+        let index = |name: &str| named(&widgets, name)[0].annot_index;
+        fill_form_fields_report(
+            path.to_string_lossy().to_string(),
+            vec![
+                FormFieldEdit {
+                    page_index: 0,
+                    annot_index: index("Name"),
+                    field_name: "Name".into(),
+                    value: FormFieldValue::Text {
+                        text: "Ayşe Yılmaz".into(),
+                    },
+                },
+                FormFieldEdit {
+                    page_index: 0,
+                    annot_index: index("I agree"),
+                    field_name: "I agree".into(),
+                    value: FormFieldValue::Checkbox { checked: true },
+                },
+                FormFieldEdit {
+                    page_index: 0,
+                    annot_index: index("Postcode"),
+                    field_name: "Postcode".into(),
+                    value: FormFieldValue::Text {
+                        text: "34000".into(),
+                    },
+                },
+            ],
+            None,
+        )
+        .unwrap();
+        let filled = read(&path);
+        assert_eq!(
+            named(&filled, "Name")[0].value.as_deref(),
+            Some("Ayşe Yılmaz")
+        );
+        assert_eq!(named(&filled, "I agree")[0].checked, Some(true));
+        assert_eq!(
+            named(&filled, "Postcode")[0].value.as_deref(),
+            Some("34000")
+        );
+    }
+
+    #[test]
+    fn detecting_again_finds_nothing_new_and_leaves_the_file_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = printed_form(&directory);
+        detect(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let error = detect(&path).unwrap_err();
+        assert!(format!("{error:?}").contains("bulunamadı"), "{error:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        // Boş sayfa: aynı hata, belge değişmez.
+        let blank = directory.path().join("blank.pdf");
+        std::fs::write(
+            &blank,
+            page_pdf("BT /F1 10 Tf 50 700 Td (Hello) Tj ET", None),
+        )
+        .unwrap();
+        let before = std::fs::read(&blank).unwrap();
+        assert!(detect(&blank).is_err());
+        assert_eq!(std::fs::read(&blank).unwrap(), before);
+    }
+
+    #[test]
+    fn detected_names_skip_the_form_s_existing_names() {
+        // standard_fixture'ın "name" alanı var; algılanan "Name" ondan farklı (büyük/küçük
+        // harf), ama ikinci bir basılı "name" etiketi numaralanır.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("printed.pdf");
+        std::fs::write(
+            &path,
+            page_pdf(
+                "BT /F1 10 Tf 50 300 Td (name ______________________) Tj ET \
+                 BT /F1 10 Tf 50 250 Td (name ______________________) Tj ET",
+                None,
+            ),
+        )
+        .unwrap();
+        detect(&path).unwrap();
+        let names: Vec<String> = read(&path).into_iter().map(|w| w.field_name).collect();
+        assert_eq!(names, ["name", "name2"]);
+        assert!(validate_detect_pages(&[0, 0]).is_err());
+        let error = detect_form_fields_report(path.to_string_lossy().to_string(), vec![3], None)
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("Sayfa 3 yok"), "{error:?}");
     }
 
     #[test]
