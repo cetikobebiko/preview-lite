@@ -229,6 +229,33 @@ Bilinen sınırlar: yerel Tauri penceresinde gerçek PDF ile uçtan uca denenmed
 alanı boyutlandırılınca görünüm bir sonraki doldurmaya kadar gerilmiş görünebilir (Faz A);
 geri alma yok; çoklu seçim ve klavyeyle taşıma yok.
 
+### Otomatik alan algılama (2026-11-03)
+
+PdfCraft 0.16.1 `crates/forms/src/detect.rs` (MIT OR Apache-2.0) `src-tauri/src/forms/detect.rs`
+olarak taşındı. Algılama saf bir fonksiyondur: sayfanın kelimeleri ve çizilmiş şekilleri
+üzerinde alt çizgi dizilerini, 40 pt'den uzun yatay çizgileri, içine yazılacak boş kutuları,
+birbirine değen eşit hücre sıralarını (comb) ve küçük kareleri (onay kutusu) bulur, mevcut
+widget'larla örtüşenleri atar ve her alanı solundaki (onay kutusunda sağındaki, yoksa
+üstündeki) etiketle adlandırır. PdfCraft'ın içerik akışı ayrıştırıcısının yerine girdi PDFium'dan
+okunur: kelimeler `worker::pdfium::for_each_word_breaking` ile (alt çizgi dizileri ayrı kelime),
+şekiller path nesnelerinin segmentlerinden, nesne matrisi ve form XObject matrisleriyle user
+space'e çevrilerek. Okunan nesne, kelime ve şekil sayısı sınırlıdır.
+
+`detect_session_form_fields` → `MutationRecipe::DetectFormFields { pages }` →
+`forms::author::detect_form_fields_report`: PDFium sayfaları okur, `lopdf` yapıdaki alan
+adlarına karşı tekil adlarla bütün alanları tek artımlı yazımda ekler, çıktı PDFium ile
+doğrulanır (beklenen widget sayısı, ad, tür ve dikdörtgen). Algılanan alanların kendi kenarı ve
+zemini yoktur (`/MK` boş, `/BS` yok, görünüm yalnız `/Tx BMC EMC` ya da onay işareti): basılı
+form görünür kalır. Hücre sıraları comb bayrağı ve hücre sayısı kadar `/MaxLen` alır; 30 pt'den
+yüksek metin alanları çok satırlıdır. Hiç alan bulunmazsa belge değişmez ve preflight hatası
+döner. Bir istekte en fazla 2000 alan eklenir; sayfa başına widget sınırı aşılmaz.
+
+Arayüz: form araçlarının yanındaki "Alanları otomatik algıla" düğmesi bütün sayfalarda çalışır;
+işlem tek geri alınabilir adımdır ("Form alanı algılama").
+
+Taşınmayanlar: taranmış sayfalar için raster şekil okuma (`detect/raster.rs`), döndürülmüş
+sayfada alanın `/MK /R` ile döndürülmesi, algılanan alanları eklemeden önce gösterme.
+
 ### Faz C — Sonraki adımlar (ayrı karar)
 
 - Alanı başka sayfalara çoğaltma, sekme sırası (`/Tabs`), hizalama/dağıtma araçları.
