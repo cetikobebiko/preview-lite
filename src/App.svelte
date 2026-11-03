@@ -121,6 +121,18 @@
   });
 
   const colorPalette = ["#ff3b30", "#ffcc00", "#30d158", "#0071e3", "#ffffff", "#000000"];
+  // Basılı formdaki boşluklara alan ekler: bütün sayfalar, tek geri alınabilir adım.
+  async function detectFormFields() {
+    const sessionId = documentSession.activeSessionId;
+    if (!sessionId) return;
+    const snapshot = await formDesign.detect({
+      sessionId,
+      contentGeneration: documentSession.contentGeneration,
+      onsessionSnapshot: (next) => void documentRuntime.applyMutationSnapshot(next),
+    });
+    if (snapshot) presentation.showToast("Form alanları algılandı ve eklendi");
+    else if (formDesign.error) presentation.showToast(formDesign.error);
+  }
   const getPrepressContext = () => ({
     isLoadedPdfDocument: documentRuntime.isLoadedPdfDocument,
     sessionId: documentSession.activeSessionId,
@@ -218,7 +230,7 @@
   />
 
   {#if ui.panels.markup && (documentRuntime.isPdf || viewer.activeImageSourcePath) && featureRuntime.featureUi("annotation").visible}
-    <MarkupToolbar {annotation} {ui} featureUi={featureRuntime.featureUi} {colorPalette} {formDesign} />
+    <MarkupToolbar {annotation} {ui} featureUi={featureRuntime.featureUi} {colorPalette} {formDesign} onDetectFormFields={detectFormFields} />
   {/if}
 
   <div class="workspace-body">

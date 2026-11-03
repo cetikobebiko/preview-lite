@@ -8,6 +8,7 @@
 
 pub mod af;
 pub mod author;
+pub mod detect;
 pub mod fill;
 #[cfg(test)]
 pub(crate) mod test_support;

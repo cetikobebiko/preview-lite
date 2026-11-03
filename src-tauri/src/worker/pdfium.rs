@@ -644,9 +644,20 @@ fn extract_text_layout(
 /// an empty word.
 pub(crate) fn for_each_word<E>(
     text_page: &PdfPageText<'_>,
+    visit: impl FnMut(&str, [f32; 4]) -> Result<(), E>,
+) -> Result<(), E> {
+    for_each_word_breaking(text_page, |_, _| false, visit)
+}
+
+/// [`for_each_word`], also ending a word between two touching characters for which
+/// `breaks(previous, next)` is true.
+pub(crate) fn for_each_word_breaking<E>(
+    text_page: &PdfPageText<'_>,
+    breaks: impl Fn(char, char) -> bool,
     mut visit: impl FnMut(&str, [f32; 4]) -> Result<(), E>,
 ) -> Result<(), E> {
     let mut current_word_text = String::with_capacity(50);
+    let mut prev_char = ' ';
     let mut min_x = f32::MAX;
     let mut min_y = f32::MAX;
     let mut max_x = f32::MIN;
@@ -686,7 +697,8 @@ pub(crate) fn for_each_word<E>(
             let gap_y = (ch_min_y - prev_char_min_y).abs();
             starts_new_word = character_value.is_whitespace()
                 || gap_x > ch_height * 0.35
-                || gap_y > ch_height * 0.5;
+                || gap_y > ch_height * 0.5
+                || breaks(prev_char, character_value);
         }
         if starts_new_word {
             visit(&current_word_text, [min_x, min_y, max_x, max_y])?;
@@ -705,6 +717,7 @@ pub(crate) fn for_each_word<E>(
         }
         prev_char_max_x = ch_max_x;
         prev_char_min_y = ch_min_y;
+        prev_char = character_value;
     }
     visit(&current_word_text, [min_x, min_y, max_x, max_y])
 }

@@ -1,4 +1,4 @@
-import { authorFormFields } from "../pdfState.js";
+import { authorFormFields, detectFormFields } from "../pdfState.js";
 import {
   ensureSignedFormAuthoringAccepted,
   isSignatureLossDeclined,
@@ -26,8 +26,18 @@ export function isFormTool(tool) {
   return FORM_TOOLS.includes(tool);
 }
 
+// Job worker'ın preflight hataları kullanıcıya yazılmış metinlerdir ("'Email' adında bir alan
+// zaten var"); önlerindeki worker ve DOCUMENT_IO_ERROR ekleri gösterilmez. Diğer hatalar olduğu
+// gibi kalır.
+export function formDesignErrorMessage(error) {
+  const message = error?.userMessage ?? error?.message ?? String(error || "");
+  const preflight = /DOCUMENT_IO_ERROR operation=\S+ stage=preflight state=\S+: (.+?)(?:; (?:recovery_path|cleanup_failed)=.*)?$/s.exec(message);
+  return preflight?.[1]?.trim() || message || "Form alanı değiştirilemedi.";
+}
+
 const defaultDependencies = Object.freeze({
   author: authorFormFields,
+  detect: detectFormFields,
   ensureSigned: ensureSignedFormAuthoringAccepted,
 });
 
@@ -37,19 +47,23 @@ export function createFormDesignState(dependencies = defaultDependencies) {
   const state = $state({ selection: null, pendingSelect: null, busy: false, error: "" });
 
   async function run(context, ops, pendingSelect = null) {
+    return mutate(context, () => dependencies.author(context.sessionId, context.contentGeneration, ops), pendingSelect);
+  }
+
+  async function mutate(context, write, pendingSelect = null) {
     if (state.busy) return null;
     state.busy = true;
     state.error = "";
     try {
       await dependencies.ensureSigned(context.sessionId, context.contentGeneration, "Form alanı değişikliği");
-      const snapshot = await dependencies.author(context.sessionId, context.contentGeneration, ops);
+      const snapshot = await write();
       state.selection = null;
       state.pendingSelect = pendingSelect ? { sessionId: context.sessionId, ...pendingSelect } : null;
       context.onsessionSnapshot?.(snapshot);
       return snapshot;
     } catch (error) {
       if (!isSignatureLossDeclined(error)) {
-        state.error = error?.message || String(error || "Form alanı değiştirilemedi.");
+        state.error = formDesignErrorMessage(error);
         console.error("Form alanı değiştirilemedi", error);
       }
       return null;
@@ -100,6 +114,11 @@ export function createFormDesignState(dependencies = defaultDependencies) {
 
     add(context, op) {
       return run(context, [op], { pageIndex: op.pageIndex, newest: true });
+    },
+
+    // Basılı formdaki boşluklara alan ekler (tek geri alınabilir adım); `pages` boşsa tümü.
+    detect(context, pages = []) {
+      return mutate(context, () => dependencies.detect(context.sessionId, context.contentGeneration, pages));
     },
 
     moveSelected(normalizedRect) {

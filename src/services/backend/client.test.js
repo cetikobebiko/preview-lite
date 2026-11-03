@@ -250,6 +250,18 @@ describe("validated backend client", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("sends form field detection pages as u32 indices", async () => {
+    const base = { sessionId: "document", expectedContentGeneration: 2 };
+    invokeMock.mockResolvedValue({});
+    await callBackend("detectSessionFormFields", { ...base, pages: [] });
+    expect(invokeMock).toHaveBeenCalledWith("detect_session_form_fields", { ...base, pages: [] });
+    invokeMock.mockReset();
+    for (const pages of [[-1], [1.5], ["0"], null]) {
+      await expect(callBackend("detectSessionFormFields", { ...base, pages })).rejects.toThrow();
+    }
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("validates optimizer settings before invoking the backend", async () => {
     const images = { downsample: true, targetPpi: 150, abovePpi: 225, compression: { kind: "jpeg", quality: 60 } };
     const settings = {

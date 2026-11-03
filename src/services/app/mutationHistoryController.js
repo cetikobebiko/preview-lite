@@ -11,6 +11,7 @@ const OPERATION_LABELS = Object.freeze({
   delete_annotation: "Açıklama silme",
   fill_form_fields: "Form doldurma",
   author_form_fields: "Form alanı düzenleme",
+  detect_form_fields: "Form alanı algılama",
 });
 
 export function historyOperationLabel(operation) {

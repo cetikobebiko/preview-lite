@@ -394,6 +394,13 @@ export const authorSessionFormFields = (sessionId, expectedContentGeneration, op
     ops,
   });
 
+export const detectSessionFormFields = (sessionId, expectedContentGeneration, pages) =>
+  callBackend("detectSessionFormFields", {
+    sessionId,
+    expectedContentGeneration,
+    pages,
+  });
+
 export const fillSessionFormFields = (sessionId, expectedContentGeneration, edits) =>
   callBackend("fillSessionFormFields", {
     sessionId,

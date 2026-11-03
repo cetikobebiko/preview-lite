@@ -10325,6 +10325,30 @@ pub async fn author_session_form_fields(
     Ok(snapshot)
 }
 
+/// Basılı formun yanıt beklediği yerlerde (alt çizgiler, çizgiler, boş kutular, hücre sıraları,
+/// küçük kareler) form alanı algılar ve hepsini tek adımda ekler; `pages` 0 tabanlıdır, boşsa
+/// bütün sayfalar. Algılama ve yazım job worker'da yapılır (`forms::detect`, `forms::author`).
+#[tauri::command]
+pub async fn detect_session_form_fields(
+    session_id: String,
+    expected_content_generation: u64,
+    pages: Vec<u32>,
+    store: State<'_, DocumentSessionStore>,
+    vector_store: State<'_, crate::ai::VectorStore>,
+) -> Result<DocumentSessionSnapshot, DocumentSessionError> {
+    crate::forms::author::validate_detect_pages(&pages)
+        .map_err(|message| DocumentSessionError::new("SESSION_FORM_AUTHOR_INVALID", message))?;
+    let snapshot = store
+        .mutate_isolated(
+            session_id,
+            expected_content_generation,
+            MutationRecipe::DetectFormFields { pages },
+        )
+        .await?;
+    vector_store.prune_generation(&snapshot.id, snapshot.content_generation);
+    Ok(snapshot)
+}
+
 /// Sayfaları `at_index`'e kopyalar: `source_path` yoksa belgenin kendi sayfalarını çoğaltır,
 /// varsa o PDF'in sayfalarını ekler. `replace_count` > 0 ise `at_index`'ten başlayan o kadar
 /// sayfa eklenenlerle değiştirilir. `source_pages` 0 tabanlıdır; boşsa kaynağın tümü.

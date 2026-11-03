@@ -276,3 +276,47 @@ pub(crate) fn standard_fixture(path: &Path) {
     );
     f.save(path, true);
 }
+
+/// 612 × 792 tek sayfalık PDF; `content` sayfanın içerik akışı, `/F1` Helvetica ve `/Fm`
+/// içeriği `form` olan bir form XObject'tir.
+pub(crate) fn page_pdf(content: &str, form: Option<(&str, [f64; 6])>) -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let mut xobjects = Dictionary::new();
+    if let Some((form, m)) = form {
+        let id = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Matrix" => m.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
+            },
+            form.as_bytes().to_vec(),
+        ));
+        xobjects.set("Fm", id);
+    }
+    let contents = doc.add_object(Stream::new(dictionary! {}, content.as_bytes().to_vec()));
+    let pages = doc.new_object_id();
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => contents,
+        "Resources" => dictionary! {
+            "Font" => dictionary! { "F1" => font },
+            "XObject" => xobjects,
+        },
+    });
+    doc.objects.insert(
+        pages,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+        }),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    bytes
+}

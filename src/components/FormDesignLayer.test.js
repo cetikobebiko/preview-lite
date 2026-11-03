@@ -4,7 +4,7 @@ import { getPageFormFields } from "../pdfState.js";
 import { createFormDesignState, FORM_DESIGN_CONTEXT } from "../stores/formDesignState.svelte.js";
 import FormDesignLayer from "./FormDesignLayer.svelte";
 
-vi.mock("../pdfState.js", () => ({ getPageFormFields: vi.fn(), authorFormFields: vi.fn() }));
+vi.mock("../pdfState.js", () => ({ getPageFormFields: vi.fn(), authorFormFields: vi.fn(), detectFormFields: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: vi.fn() }));
 vi.mock("../services/backend/session.js", () => ({ getSessionFormInfo: vi.fn() }));
 

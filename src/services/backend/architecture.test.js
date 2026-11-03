@@ -558,6 +558,7 @@ describe("backend service boundaries", () => {
       "delete_session_annotation",
       "fill_session_form_fields",
       "author_session_form_fields",
+      "detect_session_form_fields",
     ];
 
     for (const functionName of handlers) {
