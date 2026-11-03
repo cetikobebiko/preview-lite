@@ -241,6 +241,16 @@ okunur: kelimeler `worker::pdfium::for_each_word_breaking` ile (alt çizgi dizil
 şekiller path nesnelerinin segmentlerinden, nesne matrisi ve form XObject matrisleriyle user
 space'e çevrilerek. Okunan nesne, kelime ve şekil sayısı sınırlıdır.
 
+PdfCraft yalnız tek parça dikdörtgen yolları kutu sayar; Word ve LibreOffice ise tablo
+kenarlıklarını ayrı çizgiler olarak çizer (her kenarlık ayrı bir path, köşelerde kenar kalınlığı
+kadar taşar). Bu yüzden ek olarak yatay ve dikey çizgiler (dar dolgulu dikdörtgenler ve
+dikdörtgen kenarları dahil) birleştirilip en küçük kapalı hücreler kurulur (`cells_from_lines`,
+1,5 pt köşe toleransı, adım sınırlı); bu hücrelerin kenarları artık çizgi alanı üretmez
+(`trim_edges`). Comb hücrelerinin genişliği 1 pt'ye kadar farklı olabilir (Writer'da ilk ve son
+hücre dış kenarlık kadar geniştir) ve alt çizgi alanı hemen üstündeki kutuya taşmaz. Form
+olmayan belgelerde tablo kenarlıkları artık alan üretmediği için yanlış alarmlar da azaldı
+(yönetmelik 18 → 0, ders programı 66 → 57).
+
 `detect_session_form_fields` → `MutationRecipe::DetectFormFields { pages }` →
 `forms::author::detect_form_fields_report`: PDFium sayfaları okur, `lopdf` yapıdaki alan
 adlarına karşı tekil adlarla bütün alanları tek artımlı yazımda ekler, çıktı PDFium ile
@@ -253,8 +263,14 @@ döner. Bir istekte en fazla 2000 alan eklenir; sayfa başına widget sınırı 
 Arayüz: form araçlarının yanındaki "Alanları otomatik algıla" düğmesi bütün sayfalarda çalışır;
 işlem tek geri alınabilir adımdır ("Form alanı algılama").
 
-Taşınmayanlar: taranmış sayfalar için raster şekil okuma (`detect/raster.rs`), döndürülmüş
-sayfada alanın `/MK /R` ile döndürülmesi, algılanan alanları eklemeden önce gösterme.
+Uygulama içinde denendi (2026-11-03): çizimli bir formda 10 alan (alt çizgi, çizgi, üç tarih
+hücresi grubu, onay kutuları, posta kodu comb'u), LibreOffice Writer tablosuyla yapılmış Türkçe
+formda 6 alan (11 hücreli T.C. Kimlik No comb'u ve çok satırlı adres dahil); form katmanından
+doldurma, ikinci algılamanın "bulunamadı" demesi ve ⌘Z ile geri alma çalıştı.
+
+Taşınmayanlar ve sınırlar: taranmış sayfalar için raster şekil okuma (`detect/raster.rs`),
+döndürülmüş sayfada alanın `/MK /R` ile döndürülmesi, algılanan alanları eklemeden önce
+gösterme. 60 pt'den yüksek kutular (PdfCraft sınırı) çerçeve sayılır ve alan almaz.
 
 ### Faz C — Sonraki adımlar (ayrı karar)
 
