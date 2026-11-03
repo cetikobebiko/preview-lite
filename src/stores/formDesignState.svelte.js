@@ -26,6 +26,15 @@ export function isFormTool(tool) {
   return FORM_TOOLS.includes(tool);
 }
 
+// Job worker'ın preflight hataları kullanıcıya yazılmış metinlerdir ("'Email' adında bir alan
+// zaten var"); önlerindeki worker ve DOCUMENT_IO_ERROR ekleri gösterilmez. Diğer hatalar olduğu
+// gibi kalır.
+export function formDesignErrorMessage(error) {
+  const message = error?.userMessage ?? error?.message ?? String(error || "");
+  const preflight = /DOCUMENT_IO_ERROR operation=\S+ stage=preflight state=\S+: (.+?)(?:; (?:recovery_path|cleanup_failed)=.*)?$/s.exec(message);
+  return preflight?.[1]?.trim() || message || "Form alanı değiştirilemedi.";
+}
+
 const defaultDependencies = Object.freeze({
   author: authorFormFields,
   detect: detectFormFields,
@@ -54,7 +63,7 @@ export function createFormDesignState(dependencies = defaultDependencies) {
       return snapshot;
     } catch (error) {
       if (!isSignatureLossDeclined(error)) {
-        state.error = error?.message || String(error || "Form alanı değiştirilemedi.");
+        state.error = formDesignErrorMessage(error);
         console.error("Form alanı değiştirilemedi", error);
       }
       return null;

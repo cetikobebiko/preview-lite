@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFormDesignState, isFormTool } from "./formDesignState.svelte.js";
+import { createFormDesignState, formDesignErrorMessage, isFormTool } from "./formDesignState.svelte.js";
 import { SignatureLossDeclinedError } from "../services/signatureLossGuard.js";
 
 vi.mock("../pdfState.js", () => ({ authorFormFields: vi.fn(), detectFormFields: vi.fn() }));
@@ -53,6 +53,18 @@ describe("form design state", () => {
     expect(design.error).toContain("bulunamadı");
     expect(design.busy).toBe(false);
     errorSpy.mockRestore();
+  });
+
+  it("shows a worker preflight error as its own message", () => {
+    const wrapped = "Mutation worker hatası: Mutation worker işlemi başarısız: DOCUMENT_IO_ERROR "
+      + "operation=detect_form_fields stage=preflight state=original_preserved: "
+      + "Seçilen sayfalarda eklenecek form alanı bulunamadı";
+    expect(formDesignErrorMessage(new Error(wrapped))).toBe("Seçilen sayfalarda eklenecek form alanı bulunamadı");
+    const commit = "Mutation worker hatası: DOCUMENT_IO_ERROR operation=author_form_fields stage=commit "
+      + "state=original_preserved: rename failed";
+    expect(formDesignErrorMessage(new Error(commit))).toBe(commit);
+    expect(formDesignErrorMessage(new Error("'Email' adında bir alan zaten var"))).toBe("'Email' adında bir alan zaten var");
+    expect(formDesignErrorMessage(null)).toBe("Form alanı değiştirilemedi.");
   });
 
   it("builds move, set_props and delete ops for the selected widget", async () => {
