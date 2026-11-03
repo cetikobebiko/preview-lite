@@ -268,9 +268,23 @@ hücresi grubu, onay kutuları, posta kodu comb'u), LibreOffice Writer tablosuyl
 formda 6 alan (11 hücreli T.C. Kimlik No comb'u ve çok satırlı adres dahil); form katmanından
 doldurma, ikinci algılamanın "bulunamadı" demesi ve ⌘Z ile geri alma çalıştı.
 
-Taşınmayanlar ve sınırlar: taranmış sayfalar için raster şekil okuma (`detect/raster.rs`),
-döndürülmüş sayfada alanın `/MK /R` ile döndürülmesi, algılanan alanları eklemeden önce
-gösterme. 60 pt'den yüksek kutular (PdfCraft sınırı) çerçeve sayılır ve alan almaz.
+Taranmış sayfalar (2026-11-04): PdfCraft 0.16.1 `forms/src/detect/raster.rs` ve
+`engine/src/scan_fields.rs` taşındı (`src-tauri/src/forms/detect/raster.rs`). Çizilmiş şekli
+olmayan ve resimleri sayfanın en az yarısını kaplayan sayfa taranmış sayılır; PDFium sayfayı job
+worker'da görüntülendiği gibi (`/Rotate` ve CropBox uygulanmış) 2 px/pt'de çizer (en uzun kenar
+3000 px, en çok 12 milyon piksel). Mürekkep yerel ortalamaya göre ayrılır, düz çizgiler ve
+çizgilerin kapattığı kâğıt alanları (içinde küçük etiket olan kutularda boş bant) okunur.
+Algılama, yazı yönü düz olsun diye görünen sayfa düzleminde yapılır ve alanlar user space'e
+geri çevrilir; yana yatık saklanıp `/Rotate` ile düzeltilmiş tarama da doğru yere alan alır.
+Etiketler sayfanın metninden (önceden OCR yapılmışsa onun katmanından) gelir; metin yoksa
+alanlar varsayılan adları alır (Text1, Check Box1, …). PdfCraft'ın aksine metin tanıma
+çalıştırılmaz. Bir istekte en çok 60 taranmış sayfa çizilir (debug'da sayfa başına yaklaşık
+0,45 sn); fazlasında belge değişmez ve hata gösterilir.
+
+Taşınmayanlar ve sınırlar: döndürülmüş sayfada alanın `/MK /R` ile döndürülmesi (alan doğru
+yerde, ama yazı sayfayla birlikte dönmez), etiket için metin tanıma, algılanan alanları
+eklemeden önce gösterme. 60 pt'den yüksek kutular (PdfCraft sınırı) çerçeve sayılır ve alan
+almaz.
 
 ### Faz C — Sonraki adımlar (ayrı karar)
 
