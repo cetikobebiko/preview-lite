@@ -202,6 +202,18 @@ export async function authorFormFields(
   );
 }
 
+// Basılı formun yanıt beklediği yerlerde form alanı algılar ve ekler; `pages` boşsa tümü.
+export async function detectFormFields(
+  sessionId,
+  generation,
+  pages = [],
+  context = getRuntimeFeatureContext(),
+) {
+  return await guardFeatureAction("form_authoring", context, async () =>
+    sessionBackend.detectSessionFormFields(sessionId, generation, pages),
+  );
+}
+
 // Form taslaklarını yazar (Faz 3). Hatalar çağırana iletilir: taslaklar korunmalıdır.
 export async function fillFormFields(
   sessionId,

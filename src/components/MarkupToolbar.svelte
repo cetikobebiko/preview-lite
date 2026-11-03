@@ -14,6 +14,7 @@
   import CircleDotIcon from "@lucide/svelte/icons/circle-dot";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import ListIcon from "@lucide/svelte/icons/list";
+  import WandSparklesIcon from "@lucide/svelte/icons/wand-sparkles";
   import FormFieldProperties from "./FormFieldProperties.svelte";
   import { isFormTool } from "../stores/formDesignState.svelte.js";
   import Settings2Icon from "@lucide/svelte/icons/settings-2";
@@ -25,7 +26,7 @@
   import { cn } from "$lib/utils";
   import { badgeLabel } from "../services/app/toolbarMenu.js";
 
-  let { annotation, ui, featureUi, colorPalette, formDesign = null } = $props();
+  let { annotation, ui, featureUi, colorPalette, formDesign = null, onDetectFormFields = null } = $props();
 
   const annotationState = $derived(featureUi("annotation"));
   const formAuthoringState = $derived(featureUi("form_authoring"));
@@ -95,6 +96,19 @@
           </Tooltip.Root>
         {/each}
       </ToggleGroup.Root>
+      {#if onDetectFormFields}
+        <Tooltip.Root>
+          <Tooltip.Trigger
+            class={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }), "text-foreground/75 hover:text-foreground")}
+            aria-label="Alanları otomatik algıla"
+            disabled={!formAuthoringState.runnable || formDesign.busy}
+            onclick={() => onDetectFormFields()}
+          >
+            <WandSparklesIcon />
+          </Tooltip.Trigger>
+          <Tooltip.Content side="bottom" sideOffset={6}>{formAuthoringState.runnable ? "Alanları otomatik algıla" : formAuthoringState.warning}</Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
       {#if isFormTool(annotation.activeTool)}
         <FormFieldProperties design={formDesign} />
       {/if}

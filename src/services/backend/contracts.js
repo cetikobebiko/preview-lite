@@ -766,6 +766,11 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     ops: Object.freeze({ type: "array", items: formAuthorOp }),
   }),
+  detectSessionFormFields: command("detect_session_form_fields", {
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    pages: arrayOf(u32Type),
+  }),
   fillSessionFormFields: command("fill_session_form_fields", {
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,

@@ -2,19 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import { createFormDesignState, isFormTool } from "./formDesignState.svelte.js";
 import { SignatureLossDeclinedError } from "../services/signatureLossGuard.js";
 
-vi.mock("../pdfState.js", () => ({ authorFormFields: vi.fn() }));
+vi.mock("../pdfState.js", () => ({ authorFormFields: vi.fn(), detectFormFields: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: vi.fn() }));
 vi.mock("../services/backend/session.js", () => ({ getSessionFormInfo: vi.fn() }));
 
 function setup() {
   const author = vi.fn(async () => ({ contentGeneration: 8 }));
+  const detect = vi.fn(async () => ({ contentGeneration: 9 }));
   const ensureSigned = vi.fn(async () => {});
-  const design = createFormDesignState({ author, ensureSigned });
+  const design = createFormDesignState({ author, detect, ensureSigned });
   const onsessionSnapshot = vi.fn();
   const widget = { annot_index: 3, field_name: "Email", kind: "Text" };
   const select = () =>
     design.select({ sessionId: "s", contentGeneration: 7, pageIndex: 1, widget, onsessionSnapshot });
-  return { design, author, ensureSigned, onsessionSnapshot, select };
+  return { design, author, detect, ensureSigned, onsessionSnapshot, select };
 }
 
 describe("form design state", () => {
@@ -32,6 +33,26 @@ describe("form design state", () => {
     expect(author).toHaveBeenCalledWith("s", 7, [op]);
     expect(onsessionSnapshot).toHaveBeenCalledWith({ contentGeneration: 8 });
     expect(design.pendingSelect).toEqual({ sessionId: "s", pageIndex: 0, newest: true });
+  });
+
+  it("detects fields on every page as one guarded mutation", async () => {
+    const { design, author, detect, ensureSigned, onsessionSnapshot, select } = setup();
+    select();
+    await expect(design.detect({ sessionId: "s", contentGeneration: 7, onsessionSnapshot })).resolves.toEqual({ contentGeneration: 9 });
+    expect(ensureSigned).toHaveBeenCalledWith("s", 7, "Form alanı değişikliği");
+    expect(detect).toHaveBeenCalledWith("s", 7, []);
+    expect(author).not.toHaveBeenCalled();
+    expect(onsessionSnapshot).toHaveBeenCalledWith({ contentGeneration: 9 });
+    expect(design.selection).toBeNull();
+    expect(design.pendingSelect).toBeNull();
+
+    detect.mockRejectedValueOnce(new Error("Seçilen sayfalarda eklenecek form alanı bulunamadı"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(design.detect({ sessionId: "s", contentGeneration: 9, onsessionSnapshot }, [2])).resolves.toBeNull();
+    expect(detect).toHaveBeenLastCalledWith("s", 9, [2]);
+    expect(design.error).toContain("bulunamadı");
+    expect(design.busy).toBe(false);
+    errorSpy.mockRestore();
   });
 
   it("builds move, set_props and delete ops for the selected widget", async () => {

@@ -100,6 +100,7 @@ describe("mutation history controller", () => {
     for (const operation of [
       "rotate_page", "delete_pages", "reorder_pages", "extract_pages", "insert_blank_page",
       "add_annotation", "delete_annotation", "fill_form_fields", "author_form_fields",
+      "detect_form_fields",
     ]) {
       expect(historyOperationLabel(operation)).not.toBe("Son değişiklik");
     }

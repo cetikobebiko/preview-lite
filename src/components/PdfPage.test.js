@@ -55,6 +55,7 @@ vi.mock("../pdfState.js", () => ({
   getFormInfo: vi.fn(async () => ({ form_type: "None", signature_count: 0 })),
   fillFormFields: vi.fn(async () => undefined),
   authorFormFields: vi.fn(async () => undefined),
+  detectFormFields: vi.fn(async () => undefined),
   detectScannedPages: vi.fn(async () => []),
   runOcrOnPage: vi.fn(async () => ({ words: [] })),
   getAvailableOcrLanguages: vi.fn(async () => ["eng"]),

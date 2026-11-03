@@ -1,4 +1,4 @@
-import { authorFormFields } from "../pdfState.js";
+import { authorFormFields, detectFormFields } from "../pdfState.js";
 import {
   ensureSignedFormAuthoringAccepted,
   isSignatureLossDeclined,
@@ -28,6 +28,7 @@ export function isFormTool(tool) {
 
 const defaultDependencies = Object.freeze({
   author: authorFormFields,
+  detect: detectFormFields,
   ensureSigned: ensureSignedFormAuthoringAccepted,
 });
 
@@ -37,12 +38,16 @@ export function createFormDesignState(dependencies = defaultDependencies) {
   const state = $state({ selection: null, pendingSelect: null, busy: false, error: "" });
 
   async function run(context, ops, pendingSelect = null) {
+    return mutate(context, () => dependencies.author(context.sessionId, context.contentGeneration, ops), pendingSelect);
+  }
+
+  async function mutate(context, write, pendingSelect = null) {
     if (state.busy) return null;
     state.busy = true;
     state.error = "";
     try {
       await dependencies.ensureSigned(context.sessionId, context.contentGeneration, "Form alanı değişikliği");
-      const snapshot = await dependencies.author(context.sessionId, context.contentGeneration, ops);
+      const snapshot = await write();
       state.selection = null;
       state.pendingSelect = pendingSelect ? { sessionId: context.sessionId, ...pendingSelect } : null;
       context.onsessionSnapshot?.(snapshot);
@@ -100,6 +105,11 @@ export function createFormDesignState(dependencies = defaultDependencies) {
 
     add(context, op) {
       return run(context, [op], { pageIndex: op.pageIndex, newest: true });
+    },
+
+    // Basılı formdaki boşluklara alan ekler (tek geri alınabilir adım); `pages` boşsa tümü.
+    detect(context, pages = []) {
+      return mutate(context, () => dependencies.detect(context.sessionId, context.contentGeneration, pages));
     },
 
     moveSelected(normalizedRect) {
