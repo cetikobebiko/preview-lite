@@ -50,6 +50,12 @@ impl DocumentExportFormat {
             Self::Markdown => "md",
         }
     }
+
+    /// Whether the writer puts the page images in: the RTF and Markdown writers leave them out,
+    /// so they are not read (or PNG-encoded) for those.
+    fn has_images(self) -> bool {
+        !matches!(self, Self::Rtf | Self::Markdown)
+    }
 }
 
 /// Belgenin `pages` sayfalarını (fiziksel, bu sırayla) `format`'ta yazar; `title` belgenin
@@ -61,7 +67,7 @@ pub(crate) fn export_document(
     format: DocumentExportFormat,
     title: &str,
 ) -> Result<Vec<u8>, JobFailure> {
-    let pages = read_pages(pdfium, document, pages)?;
+    let pages = read_pages(pdfium, document, pages, format.has_images())?;
     Ok(write(&pages, format, title))
 }
 
@@ -135,6 +141,7 @@ fn read_pages(
     pdfium: &Pdfium,
     document: &PdfDocument<'_>,
     selection: &[u32],
+    images: bool,
 ) -> Result<Vec<Page>, JobFailure> {
     if selection.is_empty() || selection.len() > crate::job_worker::MAX_JOB_PAGES {
         return Err(JobFailure::new(
@@ -169,7 +176,11 @@ fn read_pages(
             width,
             height,
             blocks: paragraphs(page_segments(&text, frame, &mut budget)?),
-            images: page_images(document, &page, frame, &mut budget),
+            images: if images {
+                page_images(document, &page, frame, &mut budget)
+            } else {
+                Vec::new()
+            },
             background: None,
         });
     }
@@ -221,11 +232,15 @@ fn char_style(character: &PdfPageTextChar<'_>, page_rotation: u16) -> Style {
         || ["bold", "black", "heavy", "semibold", "demi"]
             .iter()
             .any(|part| name.contains(part));
-    let italic = character.font_is_italic() || name.contains("italic") || name.contains("oblique");
+    let (angle, slanted) = char_angle(character);
+    let italic = character.font_is_italic()
+        || name.contains("italic")
+        || name.contains("oblique")
+        || slanted;
     let color = character.fill_color().map_or([0.0; 3], |color| {
         [color.red(), color.green(), color.blue()].map(|c| f64::from(c) / 255.0)
     });
-    let angle = f64::from(character.angle_degrees().unwrap_or(0.0)) - f64::from(page_rotation);
+    let angle = angle - f64::from(page_rotation);
     let mut rotation = angle.rem_euclid(360.0);
     if rotation > 180.0 {
         rotation -= 360.0;
@@ -240,6 +255,31 @@ fn char_style(character: &PdfPageTextChar<'_>, page_rotation: u16) -> Style {
         color,
         rotation,
     }
+}
+
+/// A slant this many degrees or more (up to [`MAX_SLANT`]) is an italic drawn by shearing an
+/// upright font.
+const MIN_SLANT: f64 = 5.0;
+const MAX_SLANT: f64 = 45.0;
+
+/// The character's rotation in degrees, as `FPDFText_GetCharAngle` measures it, and whether its
+/// text matrix slants it. PDFium takes the angle from the matrix's `c` term, so an upright word
+/// set as a synthetic oblique (`[1 0 0.21 1]`, an italic made by shearing an upright font) reads
+/// as rotated by 12° and would never join its sentence. Here the angle comes from the x axis
+/// alone (`atan2(-b, a)`, the same value for a pure rotation), and the y axis leaning away from
+/// the x axis's normal is the slant.
+fn char_angle(character: &PdfPageTextChar<'_>) -> (f64, bool) {
+    let Ok(matrix) = character.matrix() else {
+        return (f64::from(character.angle_degrees().unwrap_or(0.0)), false);
+    };
+    let [a, b, c, d] = [matrix.a(), matrix.b(), matrix.c(), matrix.d()].map(f64::from);
+    let angle = (-b).atan2(a).to_degrees().rem_euclid(360.0);
+    // The x axis's normal is (-b, a); the slant is the y axis's angle from it.
+    let slant = ((-b) * d - a * c)
+        .atan2((-b) * c + a * d)
+        .to_degrees()
+        .abs();
+    (angle, (MIN_SLANT..=MAX_SLANT).contains(&slant))
 }
 
 /// The page's text as same-styled runs per line, in PDFium's reading order.
@@ -594,7 +634,7 @@ mod tests {
         let pdfium = crate::pdf_engine::get_pdfium().unwrap();
         let bytes = sample_pdf(rotate);
         let document = pdfium.load_pdf_from_byte_slice(&bytes, None).unwrap();
-        read_pages(&pdfium, &document, &[0]).unwrap()
+        read_pages(&pdfium, &document, &[0], true).unwrap()
     }
 
     #[test]
@@ -750,7 +790,9 @@ mod tests {
 
     /// One line set as "Before ", an oblique "Chevron" and " after.": PDFium reads three
     /// styles, so three blocks, and the spaces between them sit outside every block's text.
-    fn italic_sentence_pdf() -> Vec<u8> {
+    /// `sheared` sets "Chevron" in the upright font with a sheared text matrix instead of
+    /// Helvetica-Oblique (a synthetic oblique, as JSTOR cover pages set journal titles).
+    fn italic_sentence_pdf(sheared: bool) -> Vec<u8> {
         use lopdf::content::{Content, Operation};
         use lopdf::{dictionary, Document, Object, Stream, StringFormat};
 
@@ -779,7 +821,27 @@ mod tests {
             Operation::new("Td", vec![72.into(), 700.into()]),
         ];
         operations.extend(show("F1", "Before "));
-        operations.extend(show("F2", "Chevron"));
+        if sheared {
+            // Helvetica advances: "Before " is 3.224 em, "Chevron" 3.779 em, at 11 pt.
+            let at = |shear: f64, x: f64| {
+                Operation::new(
+                    "Tm",
+                    vec![
+                        1.into(),
+                        0.into(),
+                        Object::Real(shear as f32),
+                        1.into(),
+                        Object::Real(x as f32),
+                        700.into(),
+                    ],
+                )
+            };
+            operations.push(at(12f64.to_radians().tan(), 72.0 + 3.224 * 11.0));
+            operations.extend(show("F1", "Chevron"));
+            operations.push(at(0.0, 72.0 + (3.224 + 3.779) * 11.0));
+        } else {
+            operations.extend(show("F2", "Chevron"));
+        }
         operations.extend(show("F1", " after."));
         operations.push(Operation::new("ET", vec![]));
         let content = document.add_object(Stream::new(
@@ -811,9 +873,9 @@ mod tests {
     #[test]
     fn an_italic_word_keeps_its_sentence_and_spaces() {
         let pdfium = crate::pdf_engine::get_pdfium().unwrap();
-        let bytes = italic_sentence_pdf();
+        let bytes = italic_sentence_pdf(false);
         let document = pdfium.load_pdf_from_byte_slice(&bytes, None).unwrap();
-        let pages = read_pages(&pdfium, &document, &[0]).unwrap();
+        let pages = read_pages(&pdfium, &document, &[0], true).unwrap();
         let blocks: Vec<_> = pages[0]
             .blocks
             .iter()
@@ -843,6 +905,79 @@ mod tests {
         assert!(
             xml.contains(">Before </w:t>") && xml.contains(">Chevron </w:t>"),
             "{xml}"
+        );
+    }
+
+    /// A synthetic oblique is a slant, not a rotation: PDFium's char angle reads the sheared
+    /// word as turned 12°, which kept it out of its sentence and lost its italic.
+    #[test]
+    fn a_sheared_italic_word_keeps_its_sentence() {
+        let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+        let bytes = italic_sentence_pdf(true);
+        let document = pdfium.load_pdf_from_byte_slice(&bytes, None).unwrap();
+        let pages = read_pages(&pdfium, &document, &[0], true).unwrap();
+        let blocks: Vec<_> = pages[0]
+            .blocks
+            .iter()
+            .map(|b| (b.text.as_str(), b.italic, b.rotation))
+            .collect();
+        assert_eq!(
+            blocks,
+            [
+                ("Before", false, 0.0),
+                ("Chevron", true, 0.0),
+                ("after.", false, 0.0),
+            ]
+        );
+        let md = String::from_utf8(write(&pages, DocumentExportFormat::Markdown, "T")).unwrap();
+        assert_eq!(md, "Before *Chevron* after.\n");
+    }
+
+    /// RTF and Markdown have no images, so they are not read for them; the other formats still
+    /// get them.
+    #[test]
+    fn formats_without_images_do_not_read_them() {
+        let formats = [
+            DocumentExportFormat::Docx,
+            DocumentExportFormat::Pptx,
+            DocumentExportFormat::Html,
+            DocumentExportFormat::Rtf,
+            DocumentExportFormat::Markdown,
+        ];
+        let with: Vec<_> = formats.into_iter().filter(|f| f.has_images()).collect();
+        assert_eq!(
+            with,
+            [
+                DocumentExportFormat::Docx,
+                DocumentExportFormat::Pptx,
+                DocumentExportFormat::Html
+            ]
+        );
+        let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+        let bytes = sample_pdf(0);
+        let document = pdfium.load_pdf_from_byte_slice(&bytes, None).unwrap();
+        // One Pdfium at a time: a second instance on this thread would wait on the first's lock.
+        let with = read_pages(&pdfium, &document, &[0], true).unwrap();
+        let without = read_pages(&pdfium, &document, &[0], false).unwrap();
+        assert_eq!(with[0].images.len(), 1);
+        assert!(without[0].images.is_empty());
+        assert_eq!(without[0].blocks, with[0].blocks);
+        let md = export_document(
+            &pdfium,
+            &document,
+            &[0],
+            DocumentExportFormat::Markdown,
+            "T",
+        )
+        .unwrap();
+        assert_eq!(md, write(&without, DocumentExportFormat::Markdown, "T"));
+        let rtf =
+            export_document(&pdfium, &document, &[0], DocumentExportFormat::Rtf, "T").unwrap();
+        assert_eq!(rtf, write(&without, DocumentExportFormat::Rtf, "T"));
+        assert_eq!(
+            rtf,
+            write(&with, DocumentExportFormat::Rtf, "T"),
+            "the RTF writer leaves images out"
         );
     }
 
