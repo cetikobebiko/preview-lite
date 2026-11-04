@@ -279,7 +279,14 @@ geri çevrilir; yana yatık saklanıp `/Rotate` ile düzeltilmiş tarama da doğ
 Etiketler sayfanın metninden (önceden OCR yapılmışsa onun katmanından) gelir; metin yoksa
 alanlar varsayılan adları alır (Text1, Check Box1, …). PdfCraft'ın aksine metin tanıma
 çalıştırılmaz. Bir istekte en çok 60 taranmış sayfa çizilir (debug'da sayfa başına yaklaşık
-0,45 sn); fazlasında belge değişmez ve hata gösterilir.
+0,45 sn); fazlasında belge değişmez ve hata gösterilir. Çizgi alanı da alt çizgi alanı gibi
+hemen üstündeki kutunun alt kenarında durur (taranmış Writer formunda "Bölüm"/"Sınıf" çizgileri
+adres kutusuna taşıyıp atılıyordu).
+
+Uygulama içinde denendi (2026-11-04): 200 dpi taranmış İngilizce formda 10 alan, taranmış
+Türkçe Writer formunda 6 alan (11 hücreli T.C. Kimlik No comb'u ve çok satırlı adres dahil);
+form katmanından Türkçe değer, onay işareti ve comb rakamlarıyla doldurma ve ikinci algılamanın
+"bulunamadı" demesi çalıştı. Taramada metin katmanı olmadığı için adlar varsayılandır.
 
 Taşınmayanlar ve sınırlar: döndürülmüş sayfada alanın `/MK /R` ile döndürülmesi (alan doğru
 yerde, ama yazı sayfayla birlikte dönmez), etiket için metin tanıma, algılanan alanları

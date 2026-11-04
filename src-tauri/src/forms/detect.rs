@@ -7,7 +7,7 @@
 // rewritten for Rust edition 2021 (no let chains); `detect` takes the taken names as a set;
 // boxes are also built from separate horizontal and vertical lines (word-processor tables) and
 // their edges stop being rules; comb cells may differ in width by up to 1 pt (was 0.5); a
-// blank's field stops at the bottom of a box right above it;
+// blank's or rule's field stops at the bottom of a box right above it;
 // point comparisons use a 1e-3 pt tolerance because PDFium hands back f32 coordinates; the
 // number of objects read and shapes kept is bounded. Scanned pages (PdfCraft's
 // engine/src/scan_fields.rs) are rendered with PDFium in the job worker; their labels come from
@@ -995,8 +995,18 @@ pub fn detect(
         if w < 40.0 {
             continue;
         }
+        // Alan hemen üstündeki kutuya taşmaz (alt çizgi boşluklarındaki gibi).
+        let mut top = r[1] + 17.0;
+        for b in &shapes.boxes {
+            if b[0] < r[2] && b[2] > r[0] && b[1] >= r[1] + 1.0 && b[1] < top {
+                top = b[1];
+            }
+        }
+        if top - r[1] < 7.0 {
+            continue;
+        }
         // Metnin altını çizen çizgi (ya da üzerinde metin olan tablo kenarı) boşluk değildir.
-        let rect = [r[0], r[1] + 1.0, r[2], r[1] + 17.0];
+        let rect = [r[0], r[1] + 1.0, r[2], top];
         if labels.iter().any(|x| overlaps(x.rect, rect)) {
             continue;
         }
@@ -1517,6 +1527,33 @@ mod tests {
             .iter()
             .map(|c| (c.name.clone(), c.kind, c.rect.map(|v| v.round())))
             .collect()
+    }
+
+    /// Taranmış Writer formunda "Bölüm: ____ Sınıf: ____" çizgileri adres kutusunun 12 pt
+    /// altında: çizgi alanları kutuya taşmaz, ikisi de alan alır.
+    #[test]
+    fn a_rule_right_under_a_box_leaves_the_box_its_field() {
+        let shapes = Shapes {
+            boxes: vec![[56.0, 647.0, 361.0, 689.0]],
+            rules: vec![[97.0, 635.0, 244.0, 635.0], [278.0, 635.0, 332.0, 635.0]],
+        };
+        let found = detect(&[], &shapes, &[], &HashSet::new());
+        let rects: Vec<[f64; 4]> = found.iter().map(|c| c.rect).collect();
+        assert_eq!(
+            rects,
+            [
+                [57.0, 648.0, 360.0, 688.0],
+                [97.0, 636.0, 244.0, 647.0],
+                [278.0, 636.0, 332.0, 647.0],
+            ],
+            "{found:?}"
+        );
+        // Kutu çizginin hemen üstündeyse (7 pt'den az yer) çizgi alan almaz.
+        let tight = Shapes {
+            boxes: vec![[56.0, 640.0, 361.0, 689.0]],
+            rules: vec![[97.0, 635.0, 244.0, 635.0]],
+        };
+        assert_eq!(detect(&[], &tight, &[], &HashSet::new()).len(), 1);
     }
 
     #[test]
