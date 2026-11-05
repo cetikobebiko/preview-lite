@@ -1,9 +1,15 @@
-name: Secure redaction platform certification
+name: Secure redaction and sanitization platform certification
 
-# Runtime certification for secure redaction (8B, secure_rasterized_pages_v1)
-# on every target that ships a PDFium runtime (docs/engineering/platform-support.json):
+# Runtime certification for the two verified-artifact export features on every
+# target that ships a PDFium runtime (docs/engineering/platform-support.json):
 # macOS arm64, Linux x86_64 and Windows x86_64. macOS x86_64 has no PDFium
 # runtime and is not a supported target, so it is deliberately absent.
+#
+# One job definition, run per platform and per suite:
+# - Secure redaction (8B, secure_rasterized_pages_v1): secure_redaction_execution_acceptance
+# - PDF sanitization (8C): sanitization_inspection_acceptance + sanitization_publication_acceptance
+# Each suite must run exactly its expected number of tests per test binary;
+# zero tests (a cfg gate that compiled everything out) fails the job.
 
 on:
   pull_request:
@@ -21,22 +27,30 @@ concurrency:
 
 jobs:
   acceptance:
-    name: Secure redaction execution acceptance (${{ matrix.label }})
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.suite.name }} acceptance (${{ matrix.platform.label }})
+    runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        include:
+        platform:
           - os: macos-15
             label: macOS arm64
           - os: ubuntu-22.04
             label: Linux x86_64
           - os: windows-latest
             label: Windows x86_64
+        suite:
+          - name: Secure redaction execution
+            feature: secure-redaction-test-support
+            # test binary=expected test count, space separated
+            expected: secure_redaction_execution_acceptance=12
+          - name: Sanitization
+            feature: sanitization-test-support
+            expected: sanitization_inspection_acceptance=10 sanitization_publication_acceptance=10
 
     env:
-      EXPECTED_TESTS: "12"
+      CARGO_TERM_COLOR: never
 
     steps:
       - name: Checkout repository
@@ -80,35 +94,69 @@ jobs:
         if: runner.os != 'macOS'
         run: node scripts/provision-pdfium-runtime.mjs
 
-      - name: Run secure redaction execution acceptance
+      - name: Run ${{ matrix.suite.name }} acceptance
         shell: bash
         working-directory: src-tauri
-        # The suite already serializes its tests on one mutex; one thread makes the log name
-        # the test that is running, so a hang points at a test instead of a queue.
+        # Each suite already serializes its tests on one mutex; one thread makes the log
+        # name the test that is running, so a hang points at a test instead of a queue.
         timeout-minutes: 30
+        env:
+          SUITE_FEATURE: ${{ matrix.suite.feature }}
+          SUITE_EXPECTED: ${{ matrix.suite.expected }}
         run: |
           set -o pipefail
-          cargo test --locked --features secure-redaction-test-support \
-            --test secure_redaction_execution_acceptance -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/acceptance.log"
+          test_args=()
+          for entry in $SUITE_EXPECTED; do
+            test_args+=(--test "${entry%%=*}")
+          done
+          echo "cargo test --locked --features $SUITE_FEATURE ${test_args[*]} -- --test-threads=1"
+          cargo test --locked --features "$SUITE_FEATURE" "${test_args[@]}" -- --test-threads=1 \
+            2>&1 | tee "$RUNNER_TEMP/acceptance.log"
 
-      - name: Require exactly the expected test count (zero tests is a failure)
+      - name: Require exactly the expected test count per binary (zero tests is a failure)
         shell: bash
+        env:
+          SUITE_EXPECTED: ${{ matrix.suite.expected }}
         run: |
           log="$RUNNER_TEMP/acceptance.log"
-          running="$(grep -E '^running [0-9]+ tests?$' "$log" | awk '{print $2}')"
-          result="$(grep -E '^test result: ' "$log")"
-          echo "running: ${running:-<none>}"
-          echo "$result"
-          if [ "$(printf '%s\n' "$running" | grep -c .)" -ne 1 ]; then
-            echo "::error::expected exactly one test binary run, got: ${running:-none}"
-            exit 1
+          # Attribute every "running N tests" / "test result:" line to the test binary that
+          # cargo announced just before it ("Running tests/<name>.rs", "\" on Windows).
+          summary="$(sed -E 's/\x1b\[[0-9;]*m//g' "$log" | awk '
+            match($0, /Running tests[\/\\][A-Za-z0-9_]+\.rs/) {
+              name = substr($0, RSTART + 14, RLENGTH - 17); next
+            }
+            /^running [0-9]+ tests?$/ { print name "|running|" $2; next }
+            /^test result: / { print name "|result|" $0 }
+          ')"
+          echo "$summary"
+          failed=0
+          expected_binaries=0
+          for entry in $SUITE_EXPECTED; do
+            expected_binaries=$((expected_binaries + 1))
+            name="${entry%%=*}"
+            count="${entry##*=}"
+            running="$(printf '%s\n' "$summary" | awk -F'|' -v n="$name" '$1 == n && $2 == "running" { print $3 }')"
+            result="$(printf '%s\n' "$summary" | awk -F'|' -v n="$name" '$1 == n && $2 == "result" { print $3 }')"
+            if [ "$(printf '%s\n' "$running" | grep -c .)" -ne 1 ]; then
+              echo "::error::$name: expected exactly one test binary run, got: ${running:-none}"
+              failed=1
+              continue
+            fi
+            if [ "$running" != "$count" ]; then
+              echo "::error::$name: expected $count tests, cargo ran $running"
+              failed=1
+              continue
+            fi
+            if ! printf '%s\n' "$result" | grep -qE "^test result: ok\. ${count} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"; then
+              echo "::error::$name: result is not ${count} passed / 0 failed / 0 ignored: ${result:-none}"
+              failed=1
+              continue
+            fi
+            echo "$name: ${count}/${count} passed on $RUNNER_OS $(uname -m)"
+          done
+          ran_binaries="$(printf '%s\n' "$summary" | awk -F'|' '$2 == "running"' | grep -c . || true)"
+          if [ "$ran_binaries" -ne "$expected_binaries" ]; then
+            echo "::error::expected $expected_binaries test binaries, cargo ran $ran_binaries"
+            failed=1
           fi
-          if [ "$running" != "$EXPECTED_TESTS" ]; then
-            echo "::error::expected $EXPECTED_TESTS tests, cargo ran ${running}"
-            exit 1
-          fi
-          if ! printf '%s\n' "$result" | grep -qE "^test result: ok\. ${EXPECTED_TESTS} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"; then
-            echo "::error::acceptance result is not ${EXPECTED_TESTS} passed / 0 failed / 0 ignored"
-            exit 1
-          fi
-          echo "${EXPECTED_TESTS}/${EXPECTED_TESTS} secure redaction acceptance tests passed on $RUNNER_OS $(uname -m)"
+          exit "$failed"

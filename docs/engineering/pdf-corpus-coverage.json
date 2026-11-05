@@ -1119,6 +1119,22 @@
     },
     {
       "featureId": "sanitization",
+      "fixtureId": "sanitization-clean-minimal",
+      "testId": "rust:sanitization_publication_acceptance::app_incremental_revision_payloads_are_absent_from_the_verified_publication",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "negative",
+        "persistence",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_publication_acceptance.rs",
+        "verificationType": "acceptance_test",
+        "notes": "Indirect via fixture() loading clean-minimal.pdf: the app's own incremental session mutations (old /Info, note added then deleted) build superseded revisions; incremental_revisions sanitization must leave none of their payloads in the verified, published file"
+      }
+    },
+    {
+      "featureId": "sanitization",
       "fixtureId": "sanitization-combined-names",
       "testId": "rust:sanitization_capabilities::names_tree_branches_are_independently_addressable_and_dests_survive",
       "relation": "direct",
@@ -2701,6 +2717,7 @@
         "rust:sanitization_inspection_acceptance::crash_and_timeout_are_typed_cleaned_credential_safe_and_session_neutral",
         "rust:sanitization_inspection_acceptance::transform_real_process_success_is_private_until_terminal_cleanup",
         "rust:sanitization_inspection_acceptance::traversal_and_decode_cancellation_are_cancelled_not_failed_and_reaped",
+        "rust:sanitization_publication_acceptance::app_incremental_revision_payloads_are_absent_from_the_verified_publication",
         "rust_unit:sanitization_inspection::action_chain_is_typed_cycle_safe_and_local_goto_is_not_remote",
         "rust_unit:sanitization_inspection::clean_fixture_is_strict_and_has_no_supported_findings",
         "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
@@ -4167,6 +4184,12 @@
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust:sanitization_publication_acceptance::app_incremental_revision_payloads_are_absent_from_the_verified_publication",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_publication_acceptance.rs"
     }
   ],
   "gaps": [

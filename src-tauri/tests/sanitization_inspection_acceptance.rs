@@ -1,10 +1,19 @@
 //! Real-process acceptance coverage for the read-only sanitization inspection
 //! session-job path and its parent-enforced worker lifecycle.
+//!
+//! The suite runs on every target that ships a PDFium runtime
+//! (docs/engineering/platform-support.json): macOS arm64, Linux x86_64 and
+//! Windows x86_64. macOS x86_64 has no PDFium runtime and is not a supported
+//! target, so the suite compiles to zero tests there by design.
 
 #![cfg(feature = "sanitization-test-support")]
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-mod macos_arm64 {
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "windows", target_arch = "x86_64"),
+))]
+mod pdfium_runtime_targets {
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
     use parking_lot::{Mutex, RwLock};
     use preview_alternative_lib::document_session::{
@@ -144,8 +153,15 @@ mod macos_arm64 {
         (job_dir, marker)
     }
 
-    async fn wait_for_marker(path: &Path, expected: &[u8]) {
-        tokio::time::timeout(Duration::from_secs(10), async {
+    /// Phase sync with the worker: it writes `expected` into a marker file in
+    /// the private job directory when it reaches the hang point. Reads that
+    /// race the worker's write (partial content, or a Windows sharing
+    /// violation while the worker still holds the file) just retry. Returns
+    /// `false` instead of panicking when the marker never appears, so the
+    /// caller can report the job outcome rather than a bare timeout. The
+    /// budget covers a cold worker start plus PDFium load on a slow runner.
+    async fn wait_for_marker(path: &Path, expected: &[u8]) -> bool {
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 if std::fs::read(path).is_ok_and(|value| value == expected) {
                     return;
@@ -154,7 +170,7 @@ mod macos_arm64 {
             }
         })
         .await
-        .expect("sanitization worker test phase marker was not observed");
+        .is_ok()
     }
 
     async fn inspect_with_behavior(
@@ -341,12 +357,19 @@ mod macos_arm64 {
                 behavior,
             );
             let cancellation = async {
-                wait_for_marker(&marker, marker_value).await;
-                document_session::cancel_session_job(session.id.clone(), job_id, app.state())
-                    .await
-                    .unwrap();
+                let observed = wait_for_marker(&marker, marker_value).await;
+                if observed {
+                    document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+                        .await
+                        .unwrap();
+                }
+                observed
             };
-            let (outcome, ()) = tokio::join!(inspection, cancellation);
+            let (outcome, observed) = tokio::join!(inspection, cancellation);
+            assert!(
+                observed,
+                "worker never wrote its test phase marker; outcome: {outcome:?}"
+            );
             assert!(matches!(
                 outcome,
                 SessionJobOutcome::Cancelled {
@@ -415,12 +438,19 @@ mod macos_arm64 {
             SanitizationTransformTestBehavior::HangDuringSerialization,
         );
         let cancellation = async {
-            wait_for_marker(&marker, b"serialization").await;
-            document_session::cancel_session_job(session.id.clone(), job_id, app.state())
-                .await
-                .unwrap();
+            let observed = wait_for_marker(&marker, b"serialization").await;
+            if observed {
+                document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+                    .await
+                    .unwrap();
+            }
+            observed
         };
-        let (outcome, ()) = tokio::join!(transform, cancellation);
+        let (outcome, observed) = tokio::join!(transform, cancellation);
+        assert!(
+            observed,
+            "worker never wrote its test phase marker; outcome: {outcome:?}"
+        );
         assert!(matches!(
             outcome,
             SessionJobOutcome::Cancelled {
@@ -648,12 +678,19 @@ mod macos_arm64 {
             SanitizationVerificationTestBehavior::HangDuringTraversal,
         );
         let cancellation = async {
-            wait_for_marker(&marker, b"traversal").await;
-            document_session::cancel_session_job(session.id.clone(), job_id, app.state())
-                .await
-                .unwrap();
+            let observed = wait_for_marker(&marker, b"traversal").await;
+            if observed {
+                document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+                    .await
+                    .unwrap();
+            }
+            observed
         };
-        let (outcome, ()) = tokio::join!(verification, cancellation);
+        let (outcome, observed) = tokio::join!(verification, cancellation);
+        assert!(
+            observed,
+            "worker never wrote its test phase marker; outcome: {outcome:?}"
+        );
         assert!(matches!(
             outcome,
             SessionJobOutcome::Cancelled {
@@ -738,7 +775,9 @@ mod macos_arm64 {
             SanitizationInspectionTestBehavior::HangDuringTraversal,
         );
         let ownership = async {
-            wait_for_marker(&marker, b"traversal").await;
+            if !wait_for_marker(&marker, b"traversal").await {
+                return false;
+            }
             let wrong_request = sanitization::inspect_document_sanitization_core_with_test_support(
                 job_id.clone(),
                 wrong.session_id.clone(),
@@ -762,8 +801,13 @@ mod macos_arm64 {
             document_session::cancel_session_job(owner.id.clone(), job_id, app.state())
                 .await
                 .unwrap();
+            true
         };
-        let (outcome, ()) = tokio::join!(inspection, ownership);
+        let (outcome, observed) = tokio::join!(inspection, ownership);
+        assert!(
+            observed,
+            "worker never wrote its test phase marker; outcome: {outcome:?}"
+        );
         assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
         assert!(!job_dir.exists());
     }
@@ -783,7 +827,9 @@ mod macos_arm64 {
             SanitizationInspectionTestBehavior::HangDuringTraversal,
         );
         let lifecycle = async {
-            wait_for_marker(&marker, b"traversal").await;
+            if !wait_for_marker(&marker, b"traversal").await {
+                return false;
+            }
             let store = app.state::<document_session::DocumentSessionStore>();
             let close = store.close_all();
             let cancel = async {
@@ -794,8 +840,13 @@ mod macos_arm64 {
             };
             let (closed, ()) = tokio::join!(close, cancel);
             closed.unwrap();
+            true
         };
-        let (outcome, ()) = tokio::join!(inspection, lifecycle);
+        let (outcome, observed) = tokio::join!(inspection, lifecycle);
+        assert!(
+            observed,
+            "worker never wrote its test phase marker; outcome: {outcome:?}"
+        );
         assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
         assert!(!job_dir.exists());
         let closed =

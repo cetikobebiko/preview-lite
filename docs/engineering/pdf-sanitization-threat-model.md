@@ -914,7 +914,7 @@ macOS x86_64, Windows ve Linux runtime certification 8C.7 blocker'ıdır.
 | Platform | Runtime Acceptance Durumu | Karar Notu |
 |---|---|---|
 | macOS arm64 | **PASS** | Full real-process inspection, transform, verifier, publication, target TOCTOU, fault recovery, cancellation ve session neutrality testlerinin tamamı başarıyla geçmiş ve doğrulanmıştır. |
-| macOS x86_64 | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
+| macOS x86_64 | **UNSUPPORTED TARGET** | PDFium runtime yok (`docs/engineering/platform-support.json` macOS için yalnız arm64 runtime taşır). Desteklenen bir hedef değildir; bu satır sertifikasyon borcu (NOT RUN) değildir. Kabul suite'leri bu hedefte bilerek sıfır test derler. Registry'deki `macos` platformu arm64 anlamındadır. |
 | Windows | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
 | Linux | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
 

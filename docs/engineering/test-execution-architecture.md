@@ -137,7 +137,7 @@ Aynı metadata iki dosyada tekrar etmez. Çakışan tek alan `fixtureId` ve `tes
 Her registry entry `expectedTestCount` ve `expectedTestPresence` taşır:
 
 - `expectedTestCount`: uygun platform/feature profilinde gözlemlenmesi gereken `#[test]` sayısı (örn `crash_tests:3` conditional, `worker_broker_process:19`)
-- `expectedTestPresence`: `exact` (mutlaka bu sayı), `at_least_one`, `conditional` (profil bazlı `expectedTestCountByProfile` ile birlikte — ör: `plugin_worker_supervisor` default 1 vs `--features plugin-test-support` 13, `sanitization_inspection_acceptance` default 0 vs `macos_aarch64+feature` 10, `crash_tests` default 0 vs `on_macos_aarch64:3` — **B5 düzeltmesi**)
+- `expectedTestPresence`: `exact` (mutlaka bu sayı), `at_least_one`, `conditional` (profil bazlı `expectedTestCountByProfile` ile birlikte — ör: `plugin_worker_supervisor` default 1 vs `--features plugin-test-support` 13, `sanitization_inspection_acceptance` default 0 vs feature + PDFium runtime target (macOS aarch64, Linux/Windows x86_64) 10, `crash_tests` default 0 vs `on_macos_aarch64:3` — **B5 düzeltmesi**)
 
 Amaç: `cargo test --test foo` typo/filter/cfg nedeniyle **0 test çalıştırıp exit 0** dönerse B5'te platform gate tarafından yakalanabilmesi. B1 bunun metadata temelini kurar; tam enforcement B5'te.
 
