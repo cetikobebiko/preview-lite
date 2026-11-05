@@ -287,6 +287,11 @@ enum SnapshotKind {
 /// birth time (or, where the platform reports none, the inode change time) is
 /// assigned by the kernel when the file is created and is not set by an
 /// ordinary writer, so it tells the two files apart.
+///
+/// Limit: Linux takes these stamps from a coarse clock (one tick is 1-10 ms).
+/// A target deleted and recreated with the same bytes within the same tick as
+/// its own creation, and given the same inode, still looks unchanged. A target
+/// the user picked has existed far longer than one tick.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileOrigin {
     Birth(SystemTime),
@@ -3769,6 +3774,10 @@ fn verified_publication_rejects_deleted_and_recreated_target_with_same_bytes() {
     fs::write(&snapshot, b"%PDF-snapshot").unwrap();
     fs::write(&artifact, b"%PDF-verified-artifact").unwrap();
     fs::write(&target, b"%PDF-same-bytes").unwrap();
+    // A real target exists well before publication. Linux stamps files from a
+    // coarse clock (one tick is 1-10 ms), so a file recreated within the same
+    // tick as the original can carry the same birth time; see FileOrigin.
+    std::thread::sleep(std::time::Duration::from_millis(50));
     let digest = sha256_file(&artifact).unwrap();
     let (canonical_target, expectation) =
         capture_secure_publication_target_expectation(&target).unwrap();

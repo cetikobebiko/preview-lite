@@ -1071,7 +1071,13 @@ fn count_name_tree_leaves(
     leaves.saturating_add(kids)
 }
 
-#[cfg(all(test, feature = "sanitization-test-support"))]
+// Same gate as the verifier tests that use it.
+#[cfg(all(
+    test,
+    feature = "sanitization-test-support",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 pub(crate) fn count_named_destinations_for_test(document: &Document) -> u32 {
     count_named_destinations(document)
 }
