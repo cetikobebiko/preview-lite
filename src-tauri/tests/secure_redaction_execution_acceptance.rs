@@ -36,6 +36,7 @@ mod pdfium_runtime_targets {
     use std::collections::HashMap;
     use std::ffi::OsString;
     use std::path::PathBuf;
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
     use tauri::Manager;
@@ -60,7 +61,7 @@ mod pdfium_runtime_targets {
             .into_owned()
     }
 
-    fn app() -> tauri::App<tauri::test::MockRuntime> {
+    fn app() -> Rc<TestApp> {
         let broker = PdfiumWorkerBroker::with_launcher(Ok(WorkerLauncher::for_test(
             PathBuf::from(env!("CARGO_BIN_EXE_preview-alternative")),
             vec![OsString::from("--run-worker")],
@@ -73,7 +74,7 @@ mod pdfium_runtime_targets {
             )
             .unwrap();
         let capacity = std::num::NonZeroUsize::new(16).unwrap();
-        tauri::test::mock_builder()
+        let app = tauri::test::mock_builder()
             .manage(store)
             .manage(PasswordCache(password_cache))
             .manage(SearchCache(Mutex::new(lru::LruCache::new(capacity))))
@@ -85,7 +86,48 @@ mod pdfium_runtime_targets {
             )))
             .manage(RenderService::new())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap()
+            .unwrap();
+        let app = Rc::new(app);
+        TEST_APPS.with(|apps| apps.borrow_mut().push(Rc::clone(&app)));
+        app
+    }
+
+    type TestApp = tauri::App<tauri::test::MockRuntime>;
+
+    thread_local! {
+        /// Apps built by the running test. `with_worker_shutdown` shuts each
+        /// one down the way the application does on exit.
+        static TEST_APPS: std::cell::RefCell<Vec<Rc<TestApp>>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Runs a test body, then shuts down every app it built with
+    /// `shutdown_all_resources` (what `RunEvent::ExitRequested` does), even
+    /// when the body panicked, and only then re-raises the panic.
+    ///
+    /// Without it the PDFium worker outlives the test: on Windows tokio
+    /// reads the worker's anonymous pipes on blocking-pool threads, and the
+    /// `#[tokio::test]` runtime waits forever for those reads when it is
+    /// dropped. The suite then hung in its first test with no output.
+    async fn with_worker_shutdown(body: impl std::future::Future<Output = ()>) {
+        use futures_util::FutureExt as _;
+        let outcome = std::panic::AssertUnwindSafe(body).catch_unwind().await;
+        let apps = TEST_APPS.with(|apps| std::mem::take(&mut *apps.borrow_mut()));
+        for app in apps {
+            let store = app.state::<document_session::DocumentSessionStore>();
+            let active_tasks = app.state::<ActiveRenderTasks>();
+            let render_service = app.state::<RenderService>();
+            let shutdown = store.shutdown_all_resources(&active_tasks, &render_service);
+            if tokio::time::timeout(std::time::Duration::from_secs(180), shutdown)
+                .await
+                .is_err()
+            {
+                panic!("HANG: shutdown_all_resources did not return within 180 s");
+            }
+        }
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     fn request_parts() -> (
@@ -283,66 +325,69 @@ mod pdfium_runtime_targets {
 
     #[tokio::test]
     async fn full_execution_happy_path_is_worker_verified_digest_bound_and_session_neutral() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        assert!(plan.ready_for_execution && plan.executable);
-        let output = tempfile::tempdir().unwrap();
-        let target = output.path().join("secure-redacted.pdf");
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            assert!(plan.ready_for_execution && plan.executable);
+            let output = tempfile::tempdir().unwrap();
+            let target = output.path().join("secure-redacted.pdf");
 
-        let outcome = execute(&app, &session, &plan, target.to_string_lossy().into_owned()).await;
-        let report = match outcome {
-            SessionJobOutcome::Completed { value, cleanup, .. } => {
-                assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                value
-            }
-            other => panic!("execution must complete: {other:?}"),
-        };
-        let publication = report
-            .publication_report
-            .as_ref()
-            .expect("publication report");
-        assert!(report.published);
-        assert!(matches!(
-            publication.commit_state,
-            preview_alternative_lib::secure_redaction::SecureRedactionCommitState::NewCommitted
-                | preview_alternative_lib::secure_redaction::SecureRedactionCommitState::NewCommittedDurabilityUnconfirmed
-        ));
-        assert!(target.is_file());
-        let digest = sha256_file(&target);
-        assert_eq!(report.transform_report.output_digest, digest);
-        assert_eq!(report.verification_report.transform_digest, digest);
-        assert_eq!(publication.published_digest, digest);
-        assert_eq!(report.transform_report.plan_digest, plan.plan_digest);
-        assert_eq!(report.verification_report.plan_digest, plan.plan_digest);
-        assert_eq!(report.job_id, report.transform_report.job_id);
-        assert_eq!(report.job_id, report.verification_report.job_id);
-        assert_eq!(report.session_id, session.id);
-        assert!(report.verification_report.is_verified);
-        assert!(report.verification_report.blockers.is_empty());
-        assert!(report
-            .verification_report
-            .verification_checks
-            .iter()
-            .all(|check| check.status == VerificationCheckStatus::Passed));
-        preview_alternative_lib::pdf_engine::with_pdfium(|pdfium| {
-            pdfium
-                .load_pdf_from_file(&target, None)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+            let outcome = execute(&app, &session, &plan, target.to_string_lossy().into_owned()).await;
+            let report = match outcome {
+                SessionJobOutcome::Completed { value, cleanup, .. } => {
+                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    value
+                }
+                other => panic!("execution must complete: {other:?}"),
+            };
+            let publication = report
+                .publication_report
+                .as_ref()
+                .expect("publication report");
+            assert!(report.published);
+            assert!(matches!(
+                publication.commit_state,
+                preview_alternative_lib::secure_redaction::SecureRedactionCommitState::NewCommitted
+                    | preview_alternative_lib::secure_redaction::SecureRedactionCommitState::NewCommittedDurabilityUnconfirmed
+            ));
+            assert!(target.is_file());
+            let digest = sha256_file(&target);
+            assert_eq!(report.transform_report.output_digest, digest);
+            assert_eq!(report.verification_report.transform_digest, digest);
+            assert_eq!(publication.published_digest, digest);
+            assert_eq!(report.transform_report.plan_digest, plan.plan_digest);
+            assert_eq!(report.verification_report.plan_digest, plan.plan_digest);
+            assert_eq!(report.job_id, report.transform_report.job_id);
+            assert_eq!(report.job_id, report.verification_report.job_id);
+            assert_eq!(report.session_id, session.id);
+            assert!(report.verification_report.is_verified);
+            assert!(report.verification_report.blockers.is_empty());
+            assert!(report
+                .verification_report
+                .verification_checks
+                .iter()
+                .all(|check| check.status == VerificationCheckStatus::Passed));
+            preview_alternative_lib::pdf_engine::with_pdfium(|pdfium| {
+                pdfium
+                    .load_pdf_from_file(&target, None)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .expect("published target must reopen as a PDF");
+
+            let after =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                    .await
+                    .unwrap();
+            assert_eq!(after.id, session.id);
+            assert_eq!(after.content_generation, session.content_generation);
+            assert_eq!(after.state_revision, session.state_revision);
+            assert_eq!(after.dirty, session.dirty);
         })
-        .expect("published target must reopen as a PDF");
-
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap();
-        assert_eq!(after.id, session.id);
-        assert_eq!(after.content_generation, session.content_generation);
-        assert_eq!(after.state_revision, session.state_revision);
-        assert_eq!(after.dirty, session.dirty);
+        .await;
     }
 
     // The frontend recomputes `plan_digest` from the plan it receives and refuses a mismatch.
@@ -352,225 +397,175 @@ mod pdfium_runtime_targets {
     // JSON float parser rounds by one ULP.
     #[tokio::test]
     async fn returned_plan_digest_matches_its_contents_for_ui_default_policy() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let policy: SecureRedactionPolicy = serde_json::from_value(json!({
-            "schema_version": "1.0.0",
-            "profile": "secure_rasterized_pages_v1",
-            "strategy": "rasterized_pages",
-            "raster_dpi": 300,
-            "appearance": { "kind": "solid", "color": "black", "opacity": 1.0 },
-            "safety_margin_points": 2.0,
-            "interactive_content_policy": "block",
-            "signature_policy": "block",
-            "encryption_policy": "block"
-        }))
-        .unwrap();
-        let acknowledgements: RedactionAcknowledgements = serde_json::from_value(json!({
-            "schema_version": "1.0.0",
-            "rasterized_pages_accepted": false,
-            "text_search_loss_accepted": false,
-            "accessibility_loss_accepted": false,
-            "annotation_loss_accepted": false,
-            "form_loss_accepted": false,
-            "signature_invalidation_accepted": false,
-            "encryption_change_accepted": false
-        }))
-        .unwrap();
-        // On simple-text.pdf (600 x 800 pt) these give applied bottoms such as
-        // 510.79999999999995 and heights such as 56.00000000000006, which serde_json's
-        // default float parser rounds by one ULP. One region per column so none merge.
-        let regions: Vec<RedactionRegionInput> = serde_json::from_value(json!([
-            { "id": "ui-default-a", "page_index": 0, "source": "manual_selection",
-              "normalized_top_left_rect": { "x": 0.09, "y": 0.274, "width": 0.23, "height": 0.085 } },
-            { "id": "ui-default-b", "page_index": 0, "source": "manual_selection",
-              "normalized_top_left_rect": { "x": 0.37, "y": 0.279, "width": 0.23, "height": 0.085 } },
-            { "id": "ui-default-c", "page_index": 0, "source": "manual_selection",
-              "normalized_top_left_rect": { "x": 0.65, "y": 0.297, "width": 0.23, "height": 0.065 } }
-        ]))
-        .unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let policy: SecureRedactionPolicy = serde_json::from_value(json!({
+                "schema_version": "1.0.0",
+                "profile": "secure_rasterized_pages_v1",
+                "strategy": "rasterized_pages",
+                "raster_dpi": 300,
+                "appearance": { "kind": "solid", "color": "black", "opacity": 1.0 },
+                "safety_margin_points": 2.0,
+                "interactive_content_policy": "block",
+                "signature_policy": "block",
+                "encryption_policy": "block"
+            }))
+            .unwrap();
+            let acknowledgements: RedactionAcknowledgements = serde_json::from_value(json!({
+                "schema_version": "1.0.0",
+                "rasterized_pages_accepted": false,
+                "text_search_loss_accepted": false,
+                "accessibility_loss_accepted": false,
+                "annotation_loss_accepted": false,
+                "form_loss_accepted": false,
+                "signature_invalidation_accepted": false,
+                "encryption_change_accepted": false
+            }))
+            .unwrap();
+            // On simple-text.pdf (600 x 800 pt) these give applied bottoms such as
+            // 510.79999999999995 and heights such as 56.00000000000006, which serde_json's
+            // default float parser rounds by one ULP. One region per column so none merge.
+            let regions: Vec<RedactionRegionInput> = serde_json::from_value(json!([
+                { "id": "ui-default-a", "page_index": 0, "source": "manual_selection",
+                  "normalized_top_left_rect": { "x": 0.09, "y": 0.274, "width": 0.23, "height": 0.085 } },
+                { "id": "ui-default-b", "page_index": 0, "source": "manual_selection",
+                  "normalized_top_left_rect": { "x": 0.37, "y": 0.279, "width": 0.23, "height": 0.085 } },
+                { "id": "ui-default-c", "page_index": 0, "source": "manual_selection",
+                  "normalized_top_left_rect": { "x": 0.65, "y": 0.297, "width": 0.23, "height": 0.065 } }
+            ]))
+            .unwrap();
 
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        assert_eq!(plan.canonical_regions.len(), 3);
-        let recomputed = preview_alternative_lib::secure_redaction::compute_plan_digest(
-            &preview_alternative_lib::secure_redaction::PlanDigestInputs::from(&plan),
-        );
-        assert_eq!(
-            recomputed, plan.plan_digest,
-            "plan returned through the job worker must hash to its own plan_digest"
-        );
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            assert_eq!(plan.canonical_regions.len(), 3);
+            let recomputed = preview_alternative_lib::secure_redaction::compute_plan_digest(
+                &preview_alternative_lib::secure_redaction::PlanDigestInputs::from(&plan),
+            );
+            assert_eq!(
+                recomputed, plan.plan_digest,
+                "plan returned through the job worker must hash to its own plan_digest"
+            );
 
-        // Tauri IPC serializes the plan once more before the frontend sees it.
-        let over_ipc: SecureRedactionPlan =
-            serde_json::from_str(&serde_json::to_string(&plan).unwrap()).unwrap();
-        assert_eq!(over_ipc, plan);
+            // Tauri IPC serializes the plan once more before the frontend sees it.
+            let over_ipc: SecureRedactionPlan =
+                serde_json::from_str(&serde_json::to_string(&plan).unwrap()).unwrap();
+            assert_eq!(over_ipc, plan);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn existing_target_is_atomically_replaced_with_verified_bytes() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
-        let target = output.path().join("existing-target.pdf");
-        std::fs::copy(fixture("simple-text.pdf"), &target).unwrap();
-        let original = std::fs::read(&target).unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
+            let target = output.path().join("existing-target.pdf");
+            std::fs::copy(fixture("simple-text.pdf"), &target).unwrap();
+            let original = std::fs::read(&target).unwrap();
 
-        let outcome = execute(&app, &session, &plan, target.to_string_lossy().into_owned()).await;
-        let report = match outcome {
-            SessionJobOutcome::Completed { value, cleanup, .. } => {
-                assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                value
-            }
-            other => panic!("replacement must complete: {other:?}"),
-        };
-        let final_bytes = std::fs::read(&target).unwrap();
-        assert_ne!(
-            final_bytes, original,
-            "verified publication must replace the old file"
-        );
-        assert_eq!(
-            sha256_file(&target),
-            report.publication_report.unwrap().published_digest
-        );
+            let outcome =
+                execute(&app, &session, &plan, target.to_string_lossy().into_owned()).await;
+            let report = match outcome {
+                SessionJobOutcome::Completed { value, cleanup, .. } => {
+                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    value
+                }
+                other => panic!("replacement must complete: {other:?}"),
+            };
+            let final_bytes = std::fs::read(&target).unwrap();
+            assert_ne!(
+                final_bytes, original,
+                "verified publication must replace the old file"
+            );
+            assert_eq!(
+                sha256_file(&target),
+                report.publication_report.unwrap().published_digest
+            );
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn transform_and_verifier_failures_timeouts_and_invalid_authority_fail_closed() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
 
-        let cases = [
-            (
-                "transform-failure.pdf",
-                redaction::SecureRedactionExecutionTestSupport {
-                    transform_action: redaction::SecureRedactionWorkerTestAction::Fail {
-                        code: "SESSION_JOB_WORKER_CRASHED".into(),
-                        message: "controlled transform crash".into(),
+            let cases = [
+                (
+                    "transform-failure.pdf",
+                    redaction::SecureRedactionExecutionTestSupport {
+                        transform_action: redaction::SecureRedactionWorkerTestAction::Fail {
+                            code: "SESSION_JOB_WORKER_CRASHED".into(),
+                            message: "controlled transform crash".into(),
+                        },
+                        ..Default::default()
                     },
-                    ..Default::default()
-                },
-                "SESSION_JOB_WORKER_CRASHED",
-            ),
-            (
-                "transform-timeout.pdf",
-                redaction::SecureRedactionExecutionTestSupport {
-                    transform_action: redaction::SecureRedactionWorkerTestAction::Timeout,
-                    ..Default::default()
-                },
-                "SESSION_JOB_WORKER_TIMEOUT",
-            ),
-            (
-                "verifier-failure.pdf",
-                redaction::SecureRedactionExecutionTestSupport {
-                    verifier_action: redaction::SecureRedactionWorkerTestAction::Fail {
-                        code: "SESSION_JOB_WORKER_CRASHED".into(),
-                        message: "controlled verifier crash".into(),
+                    "SESSION_JOB_WORKER_CRASHED",
+                ),
+                (
+                    "transform-timeout.pdf",
+                    redaction::SecureRedactionExecutionTestSupport {
+                        transform_action: redaction::SecureRedactionWorkerTestAction::Timeout,
+                        ..Default::default()
                     },
-                    ..Default::default()
-                },
-                "SESSION_JOB_WORKER_CRASHED",
-            ),
-            (
-                "verifier-timeout.pdf",
-                redaction::SecureRedactionExecutionTestSupport {
-                    verifier_action: redaction::SecureRedactionWorkerTestAction::Timeout,
-                    ..Default::default()
-                },
-                "SESSION_JOB_WORKER_TIMEOUT",
-            ),
-        ];
+                    "SESSION_JOB_WORKER_TIMEOUT",
+                ),
+                (
+                    "verifier-failure.pdf",
+                    redaction::SecureRedactionExecutionTestSupport {
+                        verifier_action: redaction::SecureRedactionWorkerTestAction::Fail {
+                            code: "SESSION_JOB_WORKER_CRASHED".into(),
+                            message: "controlled verifier crash".into(),
+                        },
+                        ..Default::default()
+                    },
+                    "SESSION_JOB_WORKER_CRASHED",
+                ),
+                (
+                    "verifier-timeout.pdf",
+                    redaction::SecureRedactionExecutionTestSupport {
+                        verifier_action: redaction::SecureRedactionWorkerTestAction::Timeout,
+                        ..Default::default()
+                    },
+                    "SESSION_JOB_WORKER_TIMEOUT",
+                ),
+            ];
 
-        for (name, support, code) in cases {
-            let target = output.path().join(name);
-            std::fs::write(&target, b"racing authority must remain").unwrap();
-            let before = std::fs::read(&target).unwrap();
-            let outcome = execute_with_support(
-                &app,
-                &session,
-                &plan,
-                uuid::Uuid::new_v4().to_string(),
-                target.to_string_lossy().into_owned(),
-                Arc::new(support),
-            )
-            .await;
-            assert_clean_failed(outcome, code);
-            assert_eq!(std::fs::read(&target).unwrap(), before);
-        }
+            for (name, support, code) in cases {
+                let target = output.path().join(name);
+                std::fs::write(&target, b"racing authority must remain").unwrap();
+                let before = std::fs::read(&target).unwrap();
+                let outcome = execute_with_support(
+                    &app,
+                    &session,
+                    &plan,
+                    uuid::Uuid::new_v4().to_string(),
+                    target.to_string_lossy().into_owned(),
+                    Arc::new(support),
+                )
+                .await;
+                assert_clean_failed(outcome, code);
+                assert_eq!(std::fs::read(&target).unwrap(), before);
+            }
 
-        let target = output.path().join("invalid-transform-authority.pdf");
-        let support = redaction::SecureRedactionExecutionTestSupport {
-            transform_result_hook: Some(Arc::new(|result| match result {
-                preview_alternative_lib::job_worker::JobResult::SecureRedactionTransform(
-                    mut report,
-                ) => {
-                    report.job_id = uuid::Uuid::new_v4().to_string();
-                    preview_alternative_lib::job_worker::JobResult::SecureRedactionTransform(report)
-                }
-                other => other,
-            })),
-            ..Default::default()
-        };
-        let outcome = execute_with_support(
-            &app,
-            &session,
-            &plan,
-            uuid::Uuid::new_v4().to_string(),
-            target.to_string_lossy().into_owned(),
-            Arc::new(support),
-        )
-        .await;
-        assert_clean_failed(outcome, "REDACTION_TRANSFORM_REPORT_MISMATCH");
-        assert!(!target.exists());
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap();
-        assert_session_neutral(&session, &after);
-    }
-
-    #[tokio::test]
-    async fn mandatory_verification_gate_rejects_false_blocked_failed_and_not_run_reports() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
-
-        for case in ["is_verified_false", "blocker", "failed", "not_run"] {
-            let target = output.path().join(format!("gate-{case}.pdf"));
-            std::fs::write(&target, b"original gate target").unwrap();
-            let hook_case = case;
+            let target = output.path().join("invalid-transform-authority.pdf");
             let support = redaction::SecureRedactionExecutionTestSupport {
-                verifier_result_hook: Some(Arc::new(move |result| match result {
-                    preview_alternative_lib::job_worker::JobResult::SecureRedactionVerification(
+                transform_result_hook: Some(Arc::new(|result| match result {
+                    preview_alternative_lib::job_worker::JobResult::SecureRedactionTransform(
                         mut report,
                     ) => {
-                        report.is_verified = false;
-                        if hook_case == "not_run" {
-                            report.verification_checks[0].status = VerificationCheckStatus::NotRun;
-                        } else if hook_case != "blocker" {
-                            report.verification_checks[0].status = VerificationCheckStatus::Failed;
-                        }
-                        if hook_case == "blocker" || hook_case == "is_verified_false" {
-                            report.blockers.push(
-                                preview_alternative_lib::secure_redaction::RedactionBlocker {
-                                    schema_version: "1.0.0".into(),
-                                    code: "REDACTION_VERIFICATION_ACCEPTANCE_BLOCKER".into(),
-                                    message: "controlled blocker".into(),
-                                    details: None,
-                                },
-                            );
-                        }
-                        preview_alternative_lib::job_worker::JobResult::SecureRedactionVerification(
+                        report.job_id = uuid::Uuid::new_v4().to_string();
+                        preview_alternative_lib::job_worker::JobResult::SecureRedactionTransform(
                             report,
                         )
                     }
@@ -587,92 +582,99 @@ mod pdfium_runtime_targets {
                 Arc::new(support),
             )
             .await;
-            assert_clean_failed(outcome, "REDACTION_VERIFICATION_GATE_FAILED");
-            assert_eq!(std::fs::read(&target).unwrap(), b"original gate target");
-        }
+            assert_clean_failed(outcome, "REDACTION_TRANSFORM_REPORT_MISMATCH");
+            assert!(!target.exists());
+            let after =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                    .await
+                    .unwrap();
+            assert_session_neutral(&session, &after);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn mandatory_verification_gate_rejects_false_blocked_failed_and_not_run_reports() {
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
+
+            for case in ["is_verified_false", "blocker", "failed", "not_run"] {
+                let target = output.path().join(format!("gate-{case}.pdf"));
+                std::fs::write(&target, b"original gate target").unwrap();
+                let hook_case = case;
+                let support = redaction::SecureRedactionExecutionTestSupport {
+                    verifier_result_hook: Some(Arc::new(move |result| match result {
+                        preview_alternative_lib::job_worker::JobResult::SecureRedactionVerification(
+                            mut report,
+                        ) => {
+                            report.is_verified = false;
+                            if hook_case == "not_run" {
+                                report.verification_checks[0].status = VerificationCheckStatus::NotRun;
+                            } else if hook_case != "blocker" {
+                                report.verification_checks[0].status = VerificationCheckStatus::Failed;
+                            }
+                            if hook_case == "blocker" || hook_case == "is_verified_false" {
+                                report.blockers.push(
+                                    preview_alternative_lib::secure_redaction::RedactionBlocker {
+                                        schema_version: "1.0.0".into(),
+                                        code: "REDACTION_VERIFICATION_ACCEPTANCE_BLOCKER".into(),
+                                        message: "controlled blocker".into(),
+                                        details: None,
+                                    },
+                                );
+                            }
+                            preview_alternative_lib::job_worker::JobResult::SecureRedactionVerification(
+                                report,
+                            )
+                        }
+                        other => other,
+                    })),
+                    ..Default::default()
+                };
+                let outcome = execute_with_support(
+                    &app,
+                    &session,
+                    &plan,
+                    uuid::Uuid::new_v4().to_string(),
+                    target.to_string_lossy().into_owned(),
+                    Arc::new(support),
+                )
+                .await;
+                assert_clean_failed(outcome, "REDACTION_VERIFICATION_GATE_FAILED");
+                assert_eq!(std::fs::read(&target).unwrap(), b"original gate target");
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn verified_artifact_and_staged_temp_tamper_are_rejected_before_replacement() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
 
-        let target = output.path().join("artifact-tamper.pdf");
-        std::fs::write(&target, b"original artifact target").unwrap();
-        let support = redaction::SecureRedactionExecutionTestSupport {
-            phase_hook: Some(Arc::new(|phase, artifact| {
-                if phase == redaction::SecureRedactionExecutionTestPhase::AfterVerifierValidated {
-                    use std::io::Write as _;
-                    std::fs::OpenOptions::new()
-                        .append(true)
-                        .open(artifact.unwrap())
-                        .unwrap()
-                        .write_all(b"post-verifier-tamper")
-                        .unwrap();
-                }
-            })),
-            ..Default::default()
-        };
-        let outcome = execute_with_support(
-            &app,
-            &session,
-            &plan,
-            uuid::Uuid::new_v4().to_string(),
-            target.to_string_lossy().into_owned(),
-            Arc::new(support),
-        )
-        .await;
-        assert_clean_failed(outcome, "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH");
-        assert_eq!(std::fs::read(&target).unwrap(), b"original artifact target");
-
-        let staged_target = output.path().join("staged-tamper.pdf");
-        std::fs::write(&staged_target, b"original staged target").unwrap();
-        let outcome = execute_with_support(
-            &app,
-            &session,
-            &plan,
-            uuid::Uuid::new_v4().to_string(),
-            staged_target.to_string_lossy().into_owned(),
-            Arc::new(redaction::SecureRedactionExecutionTestSupport {
-                corrupt_staged_temp: true,
-                ..Default::default()
-            }),
-        )
-        .await;
-        assert_clean_failed(outcome, "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH");
-        assert_eq!(
-            std::fs::read(&staged_target).unwrap(),
-            b"original staged target"
-        );
-    }
-
-    #[tokio::test]
-    async fn missing_and_existing_target_races_preserve_the_racing_writer() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
-
-        for initially_missing in [true, false] {
-            let target = output.path().join(if initially_missing {
-                "missing-race.pdf"
-            } else {
-                "existing-race.pdf"
-            });
-            if !initially_missing {
-                std::fs::write(&target, b"captured original").unwrap();
-            }
-            let raced_target = target.clone();
+            let target = output.path().join("artifact-tamper.pdf");
+            std::fs::write(&target, b"original artifact target").unwrap();
             let support = redaction::SecureRedactionExecutionTestSupport {
-                phase_hook: Some(Arc::new(move |phase, _| {
-                    if phase == redaction::SecureRedactionExecutionTestPhase::BeforePublication {
-                        std::fs::write(&raced_target, b"racing writer wins").unwrap();
+                phase_hook: Some(Arc::new(|phase, artifact| {
+                    if phase == redaction::SecureRedactionExecutionTestPhase::AfterVerifierValidated
+                    {
+                        use std::io::Write as _;
+                        std::fs::OpenOptions::new()
+                            .append(true)
+                            .open(artifact.unwrap())
+                            .unwrap()
+                            .write_all(b"post-verifier-tamper")
+                            .unwrap();
                     }
                 })),
                 ..Default::default()
@@ -686,101 +688,221 @@ mod pdfium_runtime_targets {
                 Arc::new(support),
             )
             .await;
-            assert_clean_failed(outcome, "REDACTION_TARGET_CONFLICT");
-            assert_eq!(std::fs::read(&target).unwrap(), b"racing writer wins");
-        }
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap();
-        assert_session_neutral(&session, &after);
-    }
+            assert_clean_failed(outcome, "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH");
+            assert_eq!(std::fs::read(&target).unwrap(), b"original artifact target");
 
-    #[tokio::test]
-    async fn cancellation_before_transform_and_before_publication_is_deterministic_and_neutral() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
-
-        for phase in [
-            redaction::SecureRedactionExecutionTestPhase::BeforeTransform,
-            redaction::SecureRedactionExecutionTestPhase::BeforePublication,
-        ] {
-            let target = output.path().join(format!("cancel-{phase:?}.pdf"));
-            std::fs::write(&target, b"cancel original").unwrap();
-            let job_id = uuid::Uuid::new_v4().to_string();
-            let (support, reached, release, hits) = blocking_phase_support(phase);
-            let execution = execute_with_support(
+            let staged_target = output.path().join("staged-tamper.pdf");
+            std::fs::write(&staged_target, b"original staged target").unwrap();
+            let outcome = execute_with_support(
                 &app,
                 &session,
                 &plan,
-                job_id.clone(),
-                target.to_string_lossy().into_owned(),
-                support,
+                uuid::Uuid::new_v4().to_string(),
+                staged_target.to_string_lossy().into_owned(),
+                Arc::new(redaction::SecureRedactionExecutionTestSupport {
+                    corrupt_staged_temp: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+            assert_clean_failed(outcome, "REDACTION_VERIFIED_ARTIFACT_DIGEST_MISMATCH");
+            assert_eq!(
+                std::fs::read(&staged_target).unwrap(),
+                b"original staged target"
             );
-            let cancellation = async {
-                tokio::task::spawn_blocking(move || reached.wait())
-                    .await
-                    .unwrap();
-                document_session::cancel_session_job(session.id.clone(), job_id, app.state())
-                    .await
-                    .unwrap();
-                tokio::task::spawn_blocking(move || release.wait())
-                    .await
-                    .unwrap();
-            };
-            let (outcome, ()) = tokio::join!(execution, cancellation);
-            assert!(matches!(
-                outcome,
-                SessionJobOutcome::Cancelled {
-                    cleanup: SessionJobCleanupOutcome::Cleaned,
-                    ..
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn missing_and_existing_target_races_preserve_the_racing_writer() {
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
+
+            for initially_missing in [true, false] {
+                let target = output.path().join(if initially_missing {
+                    "missing-race.pdf"
+                } else {
+                    "existing-race.pdf"
+                });
+                if !initially_missing {
+                    std::fs::write(&target, b"captured original").unwrap();
                 }
-            ));
-            assert_eq!(hits.load(Ordering::SeqCst), 1);
-            assert_eq!(std::fs::read(&target).unwrap(), b"cancel original");
+                let raced_target = target.clone();
+                let support = redaction::SecureRedactionExecutionTestSupport {
+                    phase_hook: Some(Arc::new(move |phase, _| {
+                        if phase == redaction::SecureRedactionExecutionTestPhase::BeforePublication
+                        {
+                            std::fs::write(&raced_target, b"racing writer wins").unwrap();
+                        }
+                    })),
+                    ..Default::default()
+                };
+                let outcome = execute_with_support(
+                    &app,
+                    &session,
+                    &plan,
+                    uuid::Uuid::new_v4().to_string(),
+                    target.to_string_lossy().into_owned(),
+                    Arc::new(support),
+                )
+                .await;
+                assert_clean_failed(outcome, "REDACTION_TARGET_CONFLICT");
+                assert_eq!(std::fs::read(&target).unwrap(), b"racing writer wins");
+            }
             let after =
                 document_session::get_document_session_snapshot(session.id.clone(), app.state())
                     .await
                     .unwrap();
             assert_session_neutral(&session, &after);
-        }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_transform_and_before_publication_is_deterministic_and_neutral() {
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
+
+            for phase in [
+                redaction::SecureRedactionExecutionTestPhase::BeforeTransform,
+                redaction::SecureRedactionExecutionTestPhase::BeforePublication,
+            ] {
+                let target = output.path().join(format!("cancel-{phase:?}.pdf"));
+                std::fs::write(&target, b"cancel original").unwrap();
+                let job_id = uuid::Uuid::new_v4().to_string();
+                let (support, reached, release, hits) = blocking_phase_support(phase);
+                let execution = execute_with_support(
+                    &app,
+                    &session,
+                    &plan,
+                    job_id.clone(),
+                    target.to_string_lossy().into_owned(),
+                    support,
+                );
+                let cancellation = async {
+                    tokio::task::spawn_blocking(move || reached.wait())
+                        .await
+                        .unwrap();
+                    document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+                        .await
+                        .unwrap();
+                    tokio::task::spawn_blocking(move || release.wait())
+                        .await
+                        .unwrap();
+                };
+                let (outcome, ()) = tokio::join!(execution, cancellation);
+                assert!(matches!(
+                    outcome,
+                    SessionJobOutcome::Cancelled {
+                        cleanup: SessionJobCleanupOutcome::Cleaned,
+                        ..
+                    }
+                ));
+                assert_eq!(hits.load(Ordering::SeqCst), 1);
+                assert_eq!(std::fs::read(&target).unwrap(), b"cancel original");
+                let after = document_session::get_document_session_snapshot(
+                    session.id.clone(),
+                    app.state(),
+                )
+                .await
+                .unwrap();
+                assert_session_neutral(&session, &after);
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn cancellation_while_transform_and_verifier_children_are_running_reaps_them() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
 
-        for (phase, transform_action, verifier_action) in [
-            (
-                redaction::SecureRedactionExecutionTestPhase::TransformWorkerStarted,
-                redaction::SecureRedactionWorkerTestAction::HangUntilCancelled,
-                redaction::SecureRedactionWorkerTestAction::Real,
-            ),
-            (
-                redaction::SecureRedactionExecutionTestPhase::VerifierWorkerStarted,
-                redaction::SecureRedactionWorkerTestAction::Real,
-                redaction::SecureRedactionWorkerTestAction::HangUntilCancelled,
-            ),
-        ] {
-            let target = output.path().join(format!("cancel-child-{phase:?}.pdf"));
-            std::fs::write(&target, b"child cancel original").unwrap();
+            for (phase, transform_action, verifier_action) in [
+                (
+                    redaction::SecureRedactionExecutionTestPhase::TransformWorkerStarted,
+                    redaction::SecureRedactionWorkerTestAction::HangUntilCancelled,
+                    redaction::SecureRedactionWorkerTestAction::Real,
+                ),
+                (
+                    redaction::SecureRedactionExecutionTestPhase::VerifierWorkerStarted,
+                    redaction::SecureRedactionWorkerTestAction::Real,
+                    redaction::SecureRedactionWorkerTestAction::HangUntilCancelled,
+                ),
+            ] {
+                let target = output.path().join(format!("cancel-child-{phase:?}.pdf"));
+                std::fs::write(&target, b"child cancel original").unwrap();
+                let job_id = uuid::Uuid::new_v4().to_string();
+                let (base, reached, release, hits) = blocking_phase_support(phase);
+                let support = Arc::new(redaction::SecureRedactionExecutionTestSupport {
+                    phase_hook: base.phase_hook.clone(),
+                    transform_action,
+                    verifier_action,
+                    ..Default::default()
+                });
+                let execution = execute_with_support(
+                    &app,
+                    &session,
+                    &plan,
+                    job_id.clone(),
+                    target.to_string_lossy().into_owned(),
+                    support,
+                );
+                let cancellation = async {
+                    tokio::task::spawn_blocking(move || reached.wait())
+                        .await
+                        .unwrap();
+                    document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+                        .await
+                        .unwrap();
+                    tokio::task::spawn_blocking(move || release.wait())
+                        .await
+                        .unwrap();
+                };
+                let (outcome, ()) = tokio::join!(execution, cancellation);
+                assert!(matches!(
+                    outcome,
+                    SessionJobOutcome::Cancelled {
+                        cleanup: SessionJobCleanupOutcome::Cleaned,
+                        ..
+                    }
+                ));
+                assert_eq!(hits.load(Ordering::SeqCst), 1);
+                assert_eq!(std::fs::read(&target).unwrap(), b"child cancel original");
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_publication_boundary_reports_committed_disk_truth() {
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
+            let target = output.path().join("commit-boundary.pdf");
             let job_id = uuid::Uuid::new_v4().to_string();
-            let (base, reached, release, hits) = blocking_phase_support(phase);
-            let support = Arc::new(redaction::SecureRedactionExecutionTestSupport {
-                phase_hook: base.phase_hook.clone(),
-                transform_action,
-                verifier_action,
-                ..Default::default()
-            });
+            let (support, reached, release, hits) = blocking_phase_support(
+                redaction::SecureRedactionExecutionTestPhase::PublicationStarted,
+            );
             let execution = execute_with_support(
                 &app,
                 &session,
@@ -801,179 +923,145 @@ mod pdfium_runtime_targets {
                     .unwrap();
             };
             let (outcome, ()) = tokio::join!(execution, cancellation);
-            assert!(matches!(
-                outcome,
-                SessionJobOutcome::Cancelled {
-                    cleanup: SessionJobCleanupOutcome::Cleaned,
+            match outcome {
+                SessionJobOutcome::Completed {
+                    value,
+                    cancel_requested,
+                    cleanup,
                     ..
+                } => {
+                    assert!(cancel_requested);
+                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    assert!(value.published);
+                    assert_eq!(sha256_file(&target), value.transform_report.output_digest);
                 }
-            ));
-            assert_eq!(hits.load(Ordering::SeqCst), 1);
-            assert_eq!(std::fs::read(&target).unwrap(), b"child cancel original");
-        }
-    }
-
-    #[tokio::test]
-    async fn cancellation_after_publication_boundary_reports_committed_disk_truth() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
-        let target = output.path().join("commit-boundary.pdf");
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (support, reached, release, hits) = blocking_phase_support(
-            redaction::SecureRedactionExecutionTestPhase::PublicationStarted,
-        );
-        let execution = execute_with_support(
-            &app,
-            &session,
-            &plan,
-            job_id.clone(),
-            target.to_string_lossy().into_owned(),
-            support,
-        );
-        let cancellation = async {
-            tokio::task::spawn_blocking(move || reached.wait())
-                .await
-                .unwrap();
-            document_session::cancel_session_job(session.id.clone(), job_id, app.state())
-                .await
-                .unwrap();
-            tokio::task::spawn_blocking(move || release.wait())
-                .await
-                .unwrap();
-        };
-        let (outcome, ()) = tokio::join!(execution, cancellation);
-        match outcome {
-            SessionJobOutcome::Completed {
-                value,
-                cancel_requested,
-                cleanup,
-                ..
-            } => {
-                assert!(cancel_requested);
-                assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                assert!(value.published);
-                assert_eq!(sha256_file(&target), value.transform_report.output_digest);
+                other => panic!("commit-boundary disk truth must complete: {other:?}"),
             }
-            other => panic!("commit-boundary disk truth must complete: {other:?}"),
-        }
-        assert_eq!(hits.load(Ordering::SeqCst), 1);
+            assert_eq!(hits.load(Ordering::SeqCst), 1);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn protected_original_working_and_private_targets_fail_preflight() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(
-            &app,
-            &session,
-            policy.clone(),
-            acknowledgements.clone(),
-            regions.clone(),
-        )
-        .await;
-        let store = app.state::<document_session::DocumentSessionStore>();
-        let paths = store
-            .secure_redaction_export_paths_for_acceptance(&session.id)
-            .unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(
+                &app,
+                &session,
+                policy.clone(),
+                acknowledgements.clone(),
+                regions.clone(),
+            )
+            .await;
+            let store = app.state::<document_session::DocumentSessionStore>();
+            let paths = store
+                .secure_redaction_export_paths_for_acceptance(&session.id)
+                .unwrap();
 
-        for (target, expected_code) in [
-            (paths.original_path, "REDACTION_TARGET_PROTECTED_PATH"),
-            (paths.working_path, "REDACTION_TARGET_PROTECTED_PATH"),
-            (
-                paths.session_dir.join("private-export.pdf"),
-                "REDACTION_TARGET_PRIVATE_PATH",
-            ),
-        ] {
-            let error =
-                redaction::execute_secure_redaction_core(redaction::SecureRedactionExecutionArgs {
-                    job_id: uuid::Uuid::new_v4().to_string(),
-                    session_id: session.id.clone(),
-                    expected_content_generation: session.content_generation,
-                    policy: policy.clone(),
-                    acknowledgements: acknowledgements.clone(),
-                    regions: regions.clone(),
-                    expected_plan_digest: plan.plan_digest.clone(),
-                    target_path: target.to_string_lossy().into_owned(),
-                    store: &store,
-                })
+            for (target, expected_code) in [
+                (paths.original_path, "REDACTION_TARGET_PROTECTED_PATH"),
+                (paths.working_path, "REDACTION_TARGET_PROTECTED_PATH"),
+                (
+                    paths.session_dir.join("private-export.pdf"),
+                    "REDACTION_TARGET_PRIVATE_PATH",
+                ),
+            ] {
+                let error = redaction::execute_secure_redaction_core(
+                    redaction::SecureRedactionExecutionArgs {
+                        job_id: uuid::Uuid::new_v4().to_string(),
+                        session_id: session.id.clone(),
+                        expected_content_generation: session.content_generation,
+                        policy: policy.clone(),
+                        acknowledgements: acknowledgements.clone(),
+                        regions: regions.clone(),
+                        expected_plan_digest: plan.plan_digest.clone(),
+                        target_path: target.to_string_lossy().into_owned(),
+                        store: &store,
+                    },
+                )
                 .await
                 .unwrap_err();
-            assert_eq!(error.code, expected_code);
-        }
+                assert_eq!(error.code, expected_code);
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn save_as_waits_for_secure_export_read_lease_then_completes() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let (policy, acknowledgements, regions) = request_parts();
-        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
-        let output = tempfile::tempdir().unwrap();
-        let secure_target = output.path().join("secure-export.pdf");
-        let save_as_target = output.path().join("concurrent-save-as.pdf");
-        let (support, reached, release, _) =
-            blocking_phase_support(redaction::SecureRedactionExecutionTestPhase::BeforePublication);
-        let (lease_tx, lease_rx) = std::sync::mpsc::channel::<bool>();
-        let acquired = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let acquired_hook = Arc::clone(&acquired);
-        app.state::<document_session::DocumentSessionStore>()
-            .set_secure_redaction_save_lease_test_hook(Some(Arc::new(move |did_acquire| {
-                if did_acquire {
-                    acquired_hook.store(true, Ordering::SeqCst);
-                }
-                let _ = lease_tx.send(did_acquire);
-            })));
-
-        let execution = execute_with_support(
-            &app,
-            &session,
-            &plan,
-            uuid::Uuid::new_v4().to_string(),
-            secure_target.to_string_lossy().into_owned(),
-            support,
-        );
-        let save_as = document_session::save_document_session_as(
-            session.id.clone(),
-            session.state_revision,
-            save_as_target.to_string_lossy().into_owned(),
-            app.state(),
-        );
-        let acquired_during_coordination = Arc::clone(&acquired);
-        let coordination = async move {
-            tokio::task::spawn_blocking(move || reached.wait())
-                .await
-                .unwrap();
-            let first = tokio::task::spawn_blocking(move || lease_rx.recv().unwrap())
-                .await
-                .unwrap();
-            assert!(
-                !first,
-                "Save As must signal before awaiting the paired write lease"
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            let output = tempfile::tempdir().unwrap();
+            let secure_target = output.path().join("secure-export.pdf");
+            let save_as_target = output.path().join("concurrent-save-as.pdf");
+            let (support, reached, release, _) = blocking_phase_support(
+                redaction::SecureRedactionExecutionTestPhase::BeforePublication,
             );
-            assert!(!acquired_during_coordination.load(Ordering::SeqCst));
-            tokio::task::spawn_blocking(move || release.wait())
-                .await
-                .unwrap();
-        };
+            let (lease_tx, lease_rx) = std::sync::mpsc::channel::<bool>();
+            let acquired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let acquired_hook = Arc::clone(&acquired);
+            app.state::<document_session::DocumentSessionStore>()
+                .set_secure_redaction_save_lease_test_hook(Some(Arc::new(move |did_acquire| {
+                    if did_acquire {
+                        acquired_hook.store(true, Ordering::SeqCst);
+                    }
+                    let _ = lease_tx.send(did_acquire);
+                })));
 
-        let (execution_outcome, save_outcome, ()) = tokio::join!(execution, save_as, coordination);
-        assert!(matches!(
-            execution_outcome,
-            SessionJobOutcome::Completed { .. }
-        ));
-        let saved = save_outcome.unwrap();
-        assert!(acquired.load(Ordering::SeqCst));
-        assert_eq!(saved.display_path, save_as_target.to_string_lossy());
-        assert!(secure_target.is_file());
-        assert!(save_as_target.is_file());
-        app.state::<document_session::DocumentSessionStore>()
-            .set_secure_redaction_save_lease_test_hook(None);
+            let execution = execute_with_support(
+                &app,
+                &session,
+                &plan,
+                uuid::Uuid::new_v4().to_string(),
+                secure_target.to_string_lossy().into_owned(),
+                support,
+            );
+            let save_as = document_session::save_document_session_as(
+                session.id.clone(),
+                session.state_revision,
+                save_as_target.to_string_lossy().into_owned(),
+                app.state(),
+            );
+            let acquired_during_coordination = Arc::clone(&acquired);
+            let coordination = async move {
+                tokio::task::spawn_blocking(move || reached.wait())
+                    .await
+                    .unwrap();
+                let first = tokio::task::spawn_blocking(move || lease_rx.recv().unwrap())
+                    .await
+                    .unwrap();
+                assert!(
+                    !first,
+                    "Save As must signal before awaiting the paired write lease"
+                );
+                assert!(!acquired_during_coordination.load(Ordering::SeqCst));
+                tokio::task::spawn_blocking(move || release.wait())
+                    .await
+                    .unwrap();
+            };
+
+            let (execution_outcome, save_outcome, ()) =
+                tokio::join!(execution, save_as, coordination);
+            assert!(matches!(
+                execution_outcome,
+                SessionJobOutcome::Completed { .. }
+            ));
+            let saved = save_outcome.unwrap();
+            assert!(acquired.load(Ordering::SeqCst));
+            assert_eq!(saved.display_path, save_as_target.to_string_lossy());
+            assert!(secure_target.is_file());
+            assert!(save_as_target.is_file());
+            app.state::<document_session::DocumentSessionStore>()
+                .set_secure_redaction_save_lease_test_hook(None);
+        })
+        .await;
     }
 }
