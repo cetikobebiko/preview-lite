@@ -83,10 +83,13 @@ jobs:
       - name: Run secure redaction execution acceptance
         shell: bash
         working-directory: src-tauri
+        # The suite already serializes its tests on one mutex; one thread makes the log name
+        # the test that is running, so a hang points at a test instead of a queue.
+        timeout-minutes: 30
         run: |
           set -o pipefail
           cargo test --locked --features secure-redaction-test-support \
-            --test secure_redaction_execution_acceptance 2>&1 | tee "$RUNNER_TEMP/acceptance.log"
+            --test secure_redaction_execution_acceptance -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/acceptance.log"
 
       - name: Require exactly the expected test count (zero tests is a failure)
         shell: bash
