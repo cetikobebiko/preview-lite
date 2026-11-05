@@ -157,9 +157,9 @@ const RAW_FEATURES = [
   {
     id: "sanitization",
     label: "Sanitization",
-    status: "disabled",
-    enabled: false,
-    warning: "Sanitization inspection, verified execution ve frontend review workflow'u uygulanmıştır; 8C-7 platform/security aktivasyon kararı tamamlanana kadar özellik kapalıdır.",
+    status: "experimental",
+    enabled: true,
+    warning: "Deneysel: yalnız desteklenen PDF yapıları temizlenir; ön inceleme her gizli içeriği bulmayabilir. XFA formları, RichMedia/multimedya, optional content katmanları ve şifreli belgeler temizlenemez ve işlemi engeller. Çıktı yeni bir dosyaya tam yeniden yazımdır; dijital imzaları geçersiz kılar.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#sanitization",
   },

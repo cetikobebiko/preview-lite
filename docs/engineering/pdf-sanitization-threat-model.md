@@ -915,26 +915,21 @@ macOS x86_64, Windows ve Linux runtime certification 8C.7 blocker'ıdır.
 |---|---|---|
 | macOS arm64 | **PASS** (CI 2026-11-05: inspection 10/10, publication 10/10) | Full real-process inspection, transform, verifier, publication, target TOCTOU, fault recovery, cancellation ve session neutrality testlerinin tamamı başarıyla geçmiş ve doğrulanmıştır. |
 | macOS x86_64 | **UNSUPPORTED TARGET** | PDFium runtime yok (`docs/engineering/platform-support.json` macOS için yalnız arm64 runtime taşır). Desteklenen bir hedef değildir; bu satır sertifikasyon borcu (NOT RUN) değildir. Kabul suite'leri bu hedefte bilerek sıfır test derler. Registry'deki `macos` platformu arm64 anlamındadır. |
-| Windows x86_64 | **FAIL (hang)** | CI 2026-11-05 (PR #22, iki koşu): inspection suite'inin ilk testi 24 dk asılı kaldı, 30 dk adım timeout'u. Ayrıntı §26.5. |
+| Windows x86_64 | **PASS** (7f4c8d2 sonrası) | CI 2026-11-05 (PR #22): inspection 10/10, publication 10/10; symlink/hardlink preflight testi Windows'ta koştu (NOT RUN değil). Önceki koşulardaki asılma test kapanışından kaynaklanıyordu, üretim çıkış yolu temizdi. Ayrıntı §26.5. |
 | Linux x86_64 | **PASS** (a2976ab sonrası) | CI 2026-11-05 (PR #22): inspection 10/10, publication 10/10. İlk iki koşuda publication 9/10 idi (`ExistingDeletedRecreated` yarışı, inode yeniden kullanımı); `document_io` file-origin düzeltmesiyle giderildi. Ayrıntı §26.5. |
 
 ### 26.3 Final Aktivasyon Kararı
 
-**Decision: Outcome B — DEFER ACTIVATION**
+**İlk karar (8C-7): Outcome B — DEFER ACTIVATION.** Erteleme yalnız platform sertifikasyonu nedeniyleydi.
 
-* **Açıklama:** PDF Sanitization altyapısı, backend güvenlik sınırları, bağımsız verifier, atomik yayınlama zinciri ve frontend workflow'u %100 tamamlanmış, test edilmiş ve mimari olarak doğrulanmıştır. Ancak advertised platform setinin (macOS x86_64, Windows, Linux) runtime sertifikasyon testleri henüz çalıştırılmadığından, tahribat yaratma potansiyeli olan bu güvenlik özelliğinin tüm masaüstü platformlarında genel kullanıma sunulması ertelenmiştir.
-* **Feature Registry Durumu:** `sanitization.status = "disabled"`, `sanitization.enabled = false`.
-* **Warning Metni:** `"Sanitization inspection, verified execution ve frontend review workflow'u uygulanmıştır; 8C-7 platform/security aktivasyon kararı tamamlanana kadar özellik kapalıdır."`
+**Güncel karar (2026-11-05): ACTIVATE AS EXPERIMENTAL.** Üç desteklenen hedefin (macOS arm64, Linux x86_64, Windows x86_64) tamamında runtime kabulü CI'da geçti (§26.2, §26.5).
 
-### 26.5 Platform Sertifikasyon Koşusu (2026-11-05)
-
-`secure-redaction-acceptance.yml` platform × suite matrisine Sanitization suite'i eklendi (`cargo test --locked --features sanitization-test-support --test sanitization_inspection_acceptance --test sanitization_publication_acceptance -- --test-threads=1`; binary başına tam 10 test beklenir, sıfır test FAIL'dir). Yeni kabul testi `app_incremental_revision_payloads_are_absent_from_the_verified_publication`, uygulamanın kendi artımlı mutasyonlarıyla (eski /Info değerleri, eklenip silinen not) eski revizyonlar üretir ve `incremental_revisions` temizliğinden sonra bağımsız verifier'ın geçtiğini ve bu payload'ların yayınlanan baytlarda hiçbir yazımla kalmadığını doğrular; macOS arm64 ve Linux x86_64'te PASS.
-
-* **Linux x86_64 — ilk koşular FAIL, düzeltme sonrası PASS (üretim bulgusu):** `missing_and_existing_target_toctou_matrix_is_fail_closed`, `ExistingDeletedRecreated` yarışında `SANITIZATION_TARGET_CONFLICT` yerine yayınlamayı tamamladı. Kök neden: `document_io` target identity'si yalnız `(dev, inode)` + SHA-256'dır (`metadata_identity`, `VerifiedArtifactTargetExpectation::Existing`). Linux ext4 silinen dosyanın inode numarasını hemen yeniden kullanır; aynı baytlarla yeniden yaratılan hedef baseline'dan ayırt edilemez ve üzerine yazılır. macOS APFS inode'u hemen yeniden kullanmadığı için orada yakalanır. Primitive secure redaction ile paylaşılır. **Düzeltme (PR #22):** verified-artifact target beklentisi artık dosyanın kökenini de bağlar (`FileOrigin`: birth time; platform vermiyorsa inode change time). Bu değer çekirdek tarafından oluşturma anında atanır ve sıradan bir yazıcı tarafından ayarlanamaz; aynı inode ve aynı baytlarla yeniden yaratılan hedef `*_TARGET_CONFLICT` ile reddedilir. Birim testleri: `verified_publication_rejects_recreated_target_with_reused_identity_and_same_bytes` (inode yeniden kullanımını her dosya sisteminde simüle eder; kontrol olmadan düştüğü doğrulandı), `verified_publication_rejects_deleted_and_recreated_target_with_same_bytes`, `verified_publication_replaces_an_untouched_existing_target` (yanlış çakışma olmadığını korur).
-* **Windows x86_64 — FAIL (asılma, kök neden bilinmiyor):** Sanitization ve secure redaction suite'leri ilk testlerinde asılı kalır. Session activation, inspection ve execution adımlarına konan 180 sn test timeout'ları tetiklenmedi; asılma async bir bekleme değil, ya senkron test app kurulumunda (`DocumentSessionStore` / mock Tauri app) ya da current-thread runtime'ı bloke eden senkron bir çağrıdadır. Real PDFium worker'ın Windows'ta CI'da ilk kez çalıştığı yoldur.
-* **Karar:** Aktivasyon yapılmadı. `sanitization.status = "disabled"`, `enabled = false` kalır. Menü ve komut paleti girişleri eklendi; registry onları gizler.
+* **Feature Registry Durumu:** `sanitization.status = "experimental"`, `sanitization.enabled = true` (`stable` değil).
+* **Warning Metni:** `"Deneysel: yalnız desteklenen PDF yapıları temizlenir; ön inceleme her gizli içeriği bulmayabilir. XFA formları, RichMedia/multimedya, optional content katmanları ve şifreli belgeler temizlenemez ve işlemi engeller. Çıktı yeni bir dosyaya tam yeniden yazımdır; dijital imzaları geçersiz kılar."` "Belge güvenli" / "tamamen temiz" türü bir iddia içermez; `featureRegistry.test.js` bunu kilitler.
+* **Giriş noktaları:** Belge menüsü "Belgeyi temizle (gizli içerik ve metadata)…" ve komut paleti `open-sanitization`; ikisi de yalnız özellik runnable iken görünür.
+* **Değişmeyenler:** Legacy `sanitize_pdf_document` fail-closed `FEATURE_UNAVAILABLE` kalır; ana process sanitization için kullanıcı PDF'ini parse etmez (architecture testleri korunur). Desteklenmeyen kontroller (XFA, RichMedia, OCProperties, encryption, `all_annotations`, `all_form_fields`) engelleyici kalır.
 
 ### 26.4 Final Kapanış Kararı
 
-> **8C COMPLETE — ACTIVATION DEFERRED PENDING PLATFORM CERTIFICATION — PROMPT 9 READY**
+> **8C COMPLETE — ACTIVATED AS EXPERIMENTAL AFTER 3-PLATFORM CERTIFICATION (2026-11-05)**
 
