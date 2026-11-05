@@ -669,7 +669,9 @@ Secure export, target preflight'ından publication sonuna kadar session operatio
 
 **Boundary validated:** `document_io` testleri same-digest/different-identity target değişimini, symlink/directory/unsupported hard-link reddini, pre-commit `OriginalPreserved`, `NewCommitted`, `NewCommittedDurabilityUnconfirmed`, `RecoveryRequired` ve `Indeterminate` state propagation'ını kapsar. `document_session` testleri generic child kill/reap/timeout, snapshot/job/credential cleanup ve publication failure `commitState`/`recoveryPath`/`replacementDigest` wire metadata köprüsünü doğrular. Worker/verifier corpus testleri full rewrite, reopen ve pixel/placement/stale-digest corruption regresyonlarının otoritesidir.
 
-**Not run:** macOS x86_64 runtime execution acceptance — architecture unavailable. Windows runtime execution acceptance — environment unavailable. Linux runtime execution acceptance — environment unavailable. Platform-specific implementation ve cfg-gated filesystem testleri korunur; gerçek runtime certification feature activation/release öncesinde ayrıca yapılmalıdır. Feature matrix'te redaction `disabled`, eski `apply_redactions` ise `FEATURE_UNAVAILABLE` kalır.
+**Platform kapsamı:** Acceptance suite, PDFium runtime'ı bulunan her hedefte derlenir ve koşar: macOS arm64 (`aarch64-apple-darwin`), Linux x86_64 (`x86_64-unknown-linux-gnu`) ve Windows x86_64 (`x86_64-pc-windows-msvc`); kanonik kaynak `docs/engineering/platform-support.json`'dır. `.github/workflows/secure-redaction-acceptance.yml` üç platformda `cargo test --locked --features secure-redaction-test-support --test secure_redaction_execution_acceptance` komutunu koşar ve her platformda tam olarak 11 geçen test ister; 0 test başarı sayılmaz.
+
+**Desteklenmeyen hedef — macOS x86_64:** PDFium runtime'ı yoktur (`libpdfium.dylib` yalnız arm64'tür ve `platform-support.json` bir `x86_64-apple-darwin` kaydı taşımaz). Bu bir NOT RUN borcu değil, desteklenmeyen hedeftir; suite orada bilinçli olarak 0 test derler. Feature registry'deki `"macos"` platform değeri arm64'ü kasteder; ayrı bir mimari kapısı yoktur.
 
 ---
 
@@ -800,7 +802,7 @@ Backend live sub-phase/yüzde event'i vermediği için UI sahte yüzde üretmez;
 
 ### 17.6 Activation ve platform borcu
 
-Frontend ve canonical callsite'ın production source'ta bulunması feature activation anlamına gelmez. `redaction.enabled == false`, `visual_redaction_mask.enabled == false` ve legacy `apply_redactions == FEATURE_UNAVAILABLE` invariant'ları korunur. macOS arm64 execution acceptance doğrulaması geçerlidir. macOS x86_64, Windows ve Linux runtime execution acceptance **NOT RUN** borcu activation certification'a taşınmıştır.
+Frontend ve canonical callsite'ın production source'ta bulunması feature activation anlamına gelmez. `redaction.enabled == false`, `visual_redaction_mask.enabled == false` ve legacy `apply_redactions == FEATURE_UNAVAILABLE` invariant'ları korunur. Activation yalnız §18'deki platform sertifikasyonuna bağlıdır: macOS arm64, Linux x86_64 ve Windows x86_64 runtime execution acceptance. macOS x86_64 PDFium runtime'ı olmadığı için desteklenmeyen hedeftir, sertifikasyon borcu değildir.
 
 ## 18. Prompt 8B Final Audit ve Activation Kararı
 
@@ -818,9 +820,9 @@ olmalıdır, `stable` değildir.
 | Platform | Certification |
 |---|---|
 | macOS arm64 | **PASS** — real worker transform, independent verifier ve atomic publication acceptance |
-| macOS x86_64 | **NOT RUN** — bu architecture ortamı yok |
-| Windows | **NOT RUN** — runtime environment yok |
-| Linux | **NOT RUN** — runtime environment yok |
+| macOS x86_64 | **Desteklenmeyen hedef** — PDFium runtime yok; registry `"macos"` değeri arm64'ü kasteder |
+| Windows x86_64 | **PENDING** — `secure-redaction-acceptance.yml` CI koşusu |
+| Linux x86_64 | **PENDING** — `secure-redaction-acceptance.yml` CI koşusu |
 
 ### 18.2 Final blocker matrisi
 
@@ -832,9 +834,9 @@ olmalıdır, `stable` değildir.
 | Frontend workflow | **PASS** | pending review semantics, two-pass acknowledgement, ready-only Save dialog, canonical controller ve stale-result guards |
 | Whole-object optional strategy | **NO-GO — non-blocking** | detached-object lifetime SIGSEGV ve diğer mandatory proof eksikleri; production strategy eklenmemiştir |
 | macOS arm64 runtime | **PASS** | `secure_redaction_execution_acceptance` |
-| macOS x86_64 runtime | **NOT RUN** | architecture unavailable |
-| Windows runtime | **NOT RUN** | environment unavailable |
-| Linux runtime | **NOT RUN** | environment unavailable |
+| macOS x86_64 runtime | **N/A — unsupported target** | PDFium runtime yok (`platform-support.json`'da kayıt yok) |
+| Windows x86_64 runtime | **PENDING** | `secure-redaction-acceptance.yml` |
+| Linux x86_64 runtime | **PENDING** | `secure-redaction-acceptance.yml` |
 | Documentation parity | **PASS** | feature matrix, IPC inventory ve bu karar aynı disabled/8C sınırını taşır |
 | Production test-seam isolation | **PASS** | seam'ler yalnız Cargo `secure-redaction-test-support` opt-in feature'ında derlenir; default/release build, Tauri IPC, environment ve frontend payload ile etkinleşmez |
 

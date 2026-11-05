@@ -1,11 +1,20 @@
 //! Real-process acceptance coverage for the authoritative secure-redaction
 //! export chain.  This deliberately uses the public session lifecycle and the
 //! production core rather than reproducing worker or publication behavior.
+//!
+//! The suite runs on every target that ships a PDFium runtime
+//! (docs/engineering/platform-support.json): macOS arm64, Linux x86_64 and
+//! Windows x86_64. macOS x86_64 has no PDFium runtime and is not a supported
+//! target, so the suite compiles to zero tests there by design.
 
 #![cfg(feature = "secure-redaction-test-support")]
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-mod macos_arm64 {
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "windows", target_arch = "x86_64"),
+))]
+mod pdfium_runtime_targets {
     use parking_lot::{Mutex, RwLock};
     use preview_alternative_lib::document_session::{
         self, SessionJobCleanupOutcome, SessionJobOutcome,
