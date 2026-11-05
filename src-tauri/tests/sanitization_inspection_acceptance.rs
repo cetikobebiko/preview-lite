@@ -36,6 +36,7 @@ mod pdfium_runtime_targets {
     use std::collections::{BTreeSet, HashMap};
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+    use std::rc::Rc;
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
     use std::time::Duration;
@@ -49,7 +50,7 @@ mod pdfium_runtime_targets {
             .join(name)
     }
 
-    fn app() -> tauri::App<tauri::test::MockRuntime> {
+    fn app() -> Rc<TestApp> {
         let broker = PdfiumWorkerBroker::with_launcher(Ok(WorkerLauncher::for_test(
             PathBuf::from(env!("CARGO_BIN_EXE_preview-alternative")),
             vec![OsString::from("--run-worker")],
@@ -62,7 +63,7 @@ mod pdfium_runtime_targets {
             )
             .unwrap();
         let capacity = std::num::NonZeroUsize::new(16).unwrap();
-        tauri::test::mock_builder()
+        let app = tauri::test::mock_builder()
             .manage(store)
             .manage(PasswordCache(password_cache))
             .manage(SearchCache(Mutex::new(lru::LruCache::new(capacity))))
@@ -74,7 +75,44 @@ mod pdfium_runtime_targets {
             )))
             .manage(RenderService::new())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap()
+            .unwrap();
+        let app = Rc::new(app);
+        TEST_APPS.with(|apps| apps.borrow_mut().push(Rc::clone(&app)));
+        app
+    }
+
+    type TestApp = tauri::App<tauri::test::MockRuntime>;
+
+    thread_local! {
+        /// Apps built by the running test. `with_worker_shutdown` shuts each
+        /// one down the way the application does on exit.
+        static TEST_APPS: std::cell::RefCell<Vec<Rc<TestApp>>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Runs a test body, then shuts down every app it built with
+    /// `shutdown_all_resources` (what `RunEvent::ExitRequested` does), even
+    /// when the body panicked, and only then re-raises the panic.
+    ///
+    /// Without it the PDFium worker outlives the test: on Windows tokio
+    /// reads the worker's anonymous pipes on blocking-pool threads, and the
+    /// `#[tokio::test]` runtime waits forever for those reads when it is
+    /// dropped. The suite then hung in its first test with no output.
+    async fn with_worker_shutdown(body: impl std::future::Future<Output = ()>) {
+        use futures_util::FutureExt as _;
+        let outcome = std::panic::AssertUnwindSafe(body).catch_unwind().await;
+        let apps = TEST_APPS.with(|apps| std::mem::take(&mut *apps.borrow_mut()));
+        for app in apps {
+            let store = app.state::<document_session::DocumentSessionStore>();
+            let _ = within(
+                "shutdown_all_resources",
+                store.shutdown_all_resources(&app.state(), &app.state()),
+            )
+            .await;
+        }
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     async fn activated_session(
@@ -304,84 +342,184 @@ mod pdfium_runtime_targets {
 
     #[tokio::test]
     async fn crash_and_timeout_are_typed_cleaned_credential_safe_and_session_neutral() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let app = app();
-        let session =
-            activated_session(&app, &fixture("encrypted.pdf"), Some("fixture-password")).await;
-        let paths_before = app
-            .state::<document_session::DocumentSessionStore>()
-            .secure_redaction_export_paths_for_acceptance(&session.id)
-            .unwrap();
-        for (behavior, timeout, expected_code) in [
-            (
-                SanitizationInspectionTestBehavior::HangDuringTraversal,
-                Duration::from_secs(2),
-                "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
-            ),
-            (
-                SanitizationInspectionTestBehavior::CrashDuringTraversal,
-                Duration::from_secs(10),
-                "SESSION_JOB_WORKER_CRASHED",
-            ),
-        ] {
-            let job_id = uuid::Uuid::new_v4().to_string();
-            let (job_dir, _) = job_paths(&app, &session.id, &job_id);
-            let outcome = inspect_with_behavior(&app, &session, job_id, timeout, behavior).await;
-            let encoded = serde_json::to_string(&outcome).unwrap();
-            match outcome {
-                SessionJobOutcome::Failed { error, cleanup, .. } => {
-                    assert_eq!(error.code, expected_code);
-                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                }
-                other => panic!("expected sanitization worker failure: {other:?}"),
-            }
-            assert!(!encoded.contains("fixture-password"));
-            assert!(!encoded.contains(&job_dir.to_string_lossy().to_string()));
-            assert!(!job_dir.exists());
-            let after =
-                document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                    .await
-                    .unwrap();
-            assert_session_neutral(&session, &after);
-            let paths_after = app
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let app = app();
+            let session =
+                activated_session(&app, &fixture("encrypted.pdf"), Some("fixture-password")).await;
+            let paths_before = app
                 .state::<document_session::DocumentSessionStore>()
                 .secure_redaction_export_paths_for_acceptance(&session.id)
                 .unwrap();
-            assert_eq!(paths_after.original_path, paths_before.original_path);
-            assert_eq!(paths_after.working_path, paths_before.working_path);
-        }
+            for (behavior, timeout, expected_code) in [
+                (
+                    SanitizationInspectionTestBehavior::HangDuringTraversal,
+                    Duration::from_secs(2),
+                    "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
+                ),
+                (
+                    SanitizationInspectionTestBehavior::CrashDuringTraversal,
+                    Duration::from_secs(10),
+                    "SESSION_JOB_WORKER_CRASHED",
+                ),
+            ] {
+                let job_id = uuid::Uuid::new_v4().to_string();
+                let (job_dir, _) = job_paths(&app, &session.id, &job_id);
+                let outcome =
+                    inspect_with_behavior(&app, &session, job_id, timeout, behavior).await;
+                let encoded = serde_json::to_string(&outcome).unwrap();
+                match outcome {
+                    SessionJobOutcome::Failed { error, cleanup, .. } => {
+                        assert_eq!(error.code, expected_code);
+                        assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    }
+                    other => panic!("expected sanitization worker failure: {other:?}"),
+                }
+                assert!(!encoded.contains("fixture-password"));
+                assert!(!encoded.contains(&job_dir.to_string_lossy().to_string()));
+                assert!(!job_dir.exists());
+                let after = document_session::get_document_session_snapshot(
+                    session.id.clone(),
+                    app.state(),
+                )
+                .await
+                .unwrap();
+                assert_session_neutral(&session, &after);
+                let paths_after = app
+                    .state::<document_session::DocumentSessionStore>()
+                    .secure_redaction_export_paths_for_acceptance(&session.id)
+                    .unwrap();
+                assert_eq!(paths_after.original_path, paths_before.original_path);
+                assert_eq!(paths_after.working_path, paths_before.working_path);
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn traversal_and_decode_cancellation_are_cancelled_not_failed_and_reaped() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let directory = tempfile::tempdir().unwrap();
-        let decode_fixture = javascript_stream_fixture(directory.path());
-        for (path, behavior, marker_value) in [
-            (
-                fixture("unsupported-active-content.pdf"),
-                SanitizationInspectionTestBehavior::HangDuringTraversal,
-                b"traversal".as_slice(),
-            ),
-            (
-                decode_fixture.clone(),
-                SanitizationInspectionTestBehavior::HangDuringDecode,
-                b"decode".as_slice(),
-            ),
-        ] {
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let directory = tempfile::tempdir().unwrap();
+            let decode_fixture = javascript_stream_fixture(directory.path());
+            for (path, behavior, marker_value) in [
+                (
+                    fixture("unsupported-active-content.pdf"),
+                    SanitizationInspectionTestBehavior::HangDuringTraversal,
+                    b"traversal".as_slice(),
+                ),
+                (
+                    decode_fixture.clone(),
+                    SanitizationInspectionTestBehavior::HangDuringDecode,
+                    b"decode".as_slice(),
+                ),
+            ] {
+                let app = app();
+                let session = activated_session(&app, &path, None).await;
+                let job_id = uuid::Uuid::new_v4().to_string();
+                let (job_dir, marker) = job_paths(&app, &session.id, &job_id);
+                let inspection = inspect_with_behavior(
+                    &app,
+                    &session,
+                    job_id.clone(),
+                    Duration::from_secs(30),
+                    behavior,
+                );
+                let cancellation = async {
+                    let observed = wait_for_marker(&marker, marker_value).await;
+                    if observed {
+                        document_session::cancel_session_job(
+                            session.id.clone(),
+                            job_id,
+                            app.state(),
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    observed
+                };
+                let (outcome, observed) = tokio::join!(inspection, cancellation);
+                assert!(
+                    observed,
+                    "worker never wrote its test phase marker; outcome: {outcome:?}"
+                );
+                assert!(matches!(
+                    outcome,
+                    SessionJobOutcome::Cancelled {
+                        cleanup: SessionJobCleanupOutcome::Cleaned,
+                        ..
+                    }
+                ));
+                assert!(!matches!(outcome, SessionJobOutcome::Failed { .. }));
+                assert!(!job_dir.exists());
+                let after = document_session::get_document_session_snapshot(
+                    session.id.clone(),
+                    app.state(),
+                )
+                .await
+                .unwrap();
+                assert_session_neutral(&session, &after);
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn transform_crash_timeout_and_cancel_are_typed_cleaned_and_session_neutral() {
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let source = fixture("clean-minimal.pdf");
+            for (behavior, timeout, expected_code) in [
+                (
+                    SanitizationTransformTestBehavior::CrashDuringMutation,
+                    Duration::from_secs(10),
+                    "SESSION_JOB_WORKER_CRASHED",
+                ),
+                (
+                    SanitizationTransformTestBehavior::HangDuringMutation,
+                    Duration::from_secs(2),
+                    "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
+                ),
+            ] {
+                let app = app();
+                let session = activated_session(&app, &source, None).await;
+                let job_id = uuid::Uuid::new_v4().to_string();
+                let (job_dir, _) = job_paths(&app, &session.id, &job_id);
+                let outcome =
+                    transform_with_behavior(&app, &session, &source, job_id, timeout, behavior)
+                        .await;
+                match outcome {
+                    SessionJobOutcome::Failed { error, cleanup, .. } => {
+                        assert_eq!(error.code, expected_code);
+                        assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    }
+                    other => panic!("expected transform worker failure: {other:?}"),
+                }
+                assert!(!job_dir.exists());
+                let after = document_session::get_document_session_snapshot(
+                    session.id.clone(),
+                    app.state(),
+                )
+                .await
+                .unwrap();
+                assert_session_neutral(&session, &after);
+            }
+
             let app = app();
-            let session = activated_session(&app, &path, None).await;
+            let session = activated_session(&app, &source, None).await;
             let job_id = uuid::Uuid::new_v4().to_string();
-            let (job_dir, marker) = job_paths(&app, &session.id, &job_id);
-            let inspection = inspect_with_behavior(
+            let (job_dir, _) = job_paths(&app, &session.id, &job_id);
+            let marker = job_dir.join("sanitization-transform-test-phase");
+            let transform = transform_with_behavior(
                 &app,
                 &session,
+                &source,
                 job_id.clone(),
                 Duration::from_secs(30),
-                behavior,
+                SanitizationTransformTestBehavior::HangDuringSerialization,
             );
             let cancellation = async {
-                let observed = wait_for_marker(&marker, marker_value).await;
+                let observed = wait_for_marker(&marker, b"serialization").await;
                 if observed {
                     document_session::cancel_session_job(session.id.clone(), job_id, app.state())
                         .await
@@ -389,7 +527,7 @@ mod pdfium_runtime_targets {
                 }
                 observed
             };
-            let (outcome, observed) = tokio::join!(inspection, cancellation);
+            let (outcome, observed) = tokio::join!(transform, cancellation);
             assert!(
                 observed,
                 "worker never wrote its test phase marker; outcome: {outcome:?}"
@@ -401,279 +539,155 @@ mod pdfium_runtime_targets {
                     ..
                 }
             ));
-            assert!(!matches!(outcome, SessionJobOutcome::Failed { .. }));
             assert!(!job_dir.exists());
             let after =
                 document_session::get_document_session_snapshot(session.id.clone(), app.state())
                     .await
                     .unwrap();
             assert_session_neutral(&session, &after);
-        }
-    }
-
-    #[tokio::test]
-    async fn transform_crash_timeout_and_cancel_are_typed_cleaned_and_session_neutral() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let source = fixture("clean-minimal.pdf");
-        for (behavior, timeout, expected_code) in [
-            (
-                SanitizationTransformTestBehavior::CrashDuringMutation,
-                Duration::from_secs(10),
-                "SESSION_JOB_WORKER_CRASHED",
-            ),
-            (
-                SanitizationTransformTestBehavior::HangDuringMutation,
-                Duration::from_secs(2),
-                "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
-            ),
-        ] {
-            let app = app();
-            let session = activated_session(&app, &source, None).await;
-            let job_id = uuid::Uuid::new_v4().to_string();
-            let (job_dir, _) = job_paths(&app, &session.id, &job_id);
-            let outcome =
-                transform_with_behavior(&app, &session, &source, job_id, timeout, behavior).await;
-            match outcome {
-                SessionJobOutcome::Failed { error, cleanup, .. } => {
-                    assert_eq!(error.code, expected_code);
-                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                }
-                other => panic!("expected transform worker failure: {other:?}"),
-            }
-            assert!(!job_dir.exists());
-            let after =
-                document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                    .await
-                    .unwrap();
-            assert_session_neutral(&session, &after);
-        }
-
-        let app = app();
-        let session = activated_session(&app, &source, None).await;
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (job_dir, _) = job_paths(&app, &session.id, &job_id);
-        let marker = job_dir.join("sanitization-transform-test-phase");
-        let transform = transform_with_behavior(
-            &app,
-            &session,
-            &source,
-            job_id.clone(),
-            Duration::from_secs(30),
-            SanitizationTransformTestBehavior::HangDuringSerialization,
-        );
-        let cancellation = async {
-            let observed = wait_for_marker(&marker, b"serialization").await;
-            if observed {
-                document_session::cancel_session_job(session.id.clone(), job_id, app.state())
-                    .await
-                    .unwrap();
-            }
-            observed
-        };
-        let (outcome, observed) = tokio::join!(transform, cancellation);
-        assert!(
-            observed,
-            "worker never wrote its test phase marker; outcome: {outcome:?}"
-        );
-        assert!(matches!(
-            outcome,
-            SessionJobOutcome::Cancelled {
-                cleanup: SessionJobCleanupOutcome::Cleaned,
-                ..
-            }
-        ));
-        assert!(!job_dir.exists());
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap();
-        assert_session_neutral(&session, &after);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn transform_real_process_success_is_private_until_terminal_cleanup() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let app = app();
-        let source = fixture("clean-minimal.pdf");
-        let session = activated_session(&app, &source, None).await;
-        let before_paths = app
-            .state::<document_session::DocumentSessionStore>()
-            .secure_redaction_export_paths_for_acceptance(&session.id)
-            .unwrap();
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (job_dir, _) = job_paths(&app, &session.id, &job_id);
-        let (input_digest, inspection_digest, policy) = transform_authority(&source);
-        let requested_controls: BTreeSet<String> = policy.controls.iter().cloned().collect();
-        let expected_policy = policy.clone();
-        let expected_input_digest = input_digest.clone();
-        let expected_inspection_digest = inspection_digest.clone();
-        let outcome = app
-            .state::<document_session::DocumentSessionStore>()
-            .run_snapshot_job(
-                &job_id,
-                &session.id,
-                session.content_generation,
-                move |context| {
-                    let result = preview_alternative_lib::job_worker::run_job(
-                        &context,
-                        preview_alternative_lib::job_worker::JobCommand::SanitizePdf {
-                            content_generation: context.captured_content_generation,
-                            policy,
-                            expected_input_digest: input_digest,
-                            expected_inspection_digest: inspection_digest,
-                            output_name: sanitization::SANITIZATION_TRANSFORM_OUTPUT_NAME
-                                .to_string(),
-                            test_behavior: SanitizationTransformTestBehavior::Real,
-                        },
-                        Duration::from_secs(30),
-                    )?;
-                    let (report, artifact) =
-                        sanitization_transform::validate_transform_worker_result_for_acceptance(
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let app = app();
+            let source = fixture("clean-minimal.pdf");
+            let session = activated_session(&app, &source, None).await;
+            let before_paths = app
+                .state::<document_session::DocumentSessionStore>()
+                .secure_redaction_export_paths_for_acceptance(&session.id)
+                .unwrap();
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let (job_dir, _) = job_paths(&app, &session.id, &job_id);
+            let (input_digest, inspection_digest, policy) = transform_authority(&source);
+            let requested_controls: BTreeSet<String> = policy.controls.iter().cloned().collect();
+            let expected_policy = policy.clone();
+            let expected_input_digest = input_digest.clone();
+            let expected_inspection_digest = inspection_digest.clone();
+            let outcome = app
+                .state::<document_session::DocumentSessionStore>()
+                .run_snapshot_job(
+                    &job_id,
+                    &session.id,
+                    session.content_generation,
+                    move |context| {
+                        let result = preview_alternative_lib::job_worker::run_job(
                             &context,
-                            result,
-                            &expected_policy,
-                            &expected_input_digest,
-                            &expected_inspection_digest,
+                            preview_alternative_lib::job_worker::JobCommand::SanitizePdf {
+                                content_generation: context.captured_content_generation,
+                                policy,
+                                expected_input_digest: input_digest,
+                                expected_inspection_digest: inspection_digest,
+                                output_name: sanitization::SANITIZATION_TRANSFORM_OUTPUT_NAME
+                                    .to_string(),
+                                test_behavior: SanitizationTransformTestBehavior::Real,
+                            },
+                            Duration::from_secs(30),
                         )?;
-                    let metadata = std::fs::symlink_metadata(&artifact).unwrap();
-                    assert!(artifact.exists());
-                    assert!(metadata.file_type().is_file());
-                    assert!(!metadata.file_type().is_symlink());
-                    assert!(metadata.len() > 0);
-                    assert_eq!(
-                        artifact.file_name().and_then(|name| name.to_str()),
-                        Some(sanitization::SANITIZATION_TRANSFORM_OUTPUT_NAME)
-                    );
-                    assert!(artifact.starts_with(
-                        context
-                            .snapshot_path
-                            .parent()
-                            .unwrap()
-                            .canonicalize()
-                            .unwrap()
-                    ));
-                    assert_eq!(metadata.len(), report.output_size_bytes);
-                    assert_eq!(
-                        preview_alternative_lib::hex_lower(Sha256::digest(
-                            std::fs::read(&artifact).unwrap()
-                        )),
-                        report.output_digest
-                    );
-                    assert_eq!(report.input_digest, expected_input_digest);
-                    assert_eq!(report.profile, expected_policy.profile);
-                    assert_eq!(
-                        report
-                            .controls
-                            .iter()
-                            .map(|control| control.control_id.clone())
-                            .collect::<BTreeSet<_>>(),
-                        requested_controls
-                    );
-                    Ok(report)
-                },
-            )
-            .await
-            .unwrap();
-        match outcome {
-            SessionJobOutcome::Completed { value, cleanup, .. } => {
-                assert_eq!(value.status, "transformed_unverified");
-                assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-            }
-            other => panic!("expected real-process transform success: {other:?}"),
-        }
-        assert!(
-            !job_dir.exists(),
-            "terminal cleanup must remove private artifact"
-        );
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                        let (report, artifact) =
+                            sanitization_transform::validate_transform_worker_result_for_acceptance(
+                                &context,
+                                result,
+                                &expected_policy,
+                                &expected_input_digest,
+                                &expected_inspection_digest,
+                            )?;
+                        let metadata = std::fs::symlink_metadata(&artifact).unwrap();
+                        assert!(artifact.exists());
+                        assert!(metadata.file_type().is_file());
+                        assert!(!metadata.file_type().is_symlink());
+                        assert!(metadata.len() > 0);
+                        assert_eq!(
+                            artifact.file_name().and_then(|name| name.to_str()),
+                            Some(sanitization::SANITIZATION_TRANSFORM_OUTPUT_NAME)
+                        );
+                        assert!(artifact.starts_with(
+                            context
+                                .snapshot_path
+                                .parent()
+                                .unwrap()
+                                .canonicalize()
+                                .unwrap()
+                        ));
+                        assert_eq!(metadata.len(), report.output_size_bytes);
+                        assert_eq!(
+                            preview_alternative_lib::hex_lower(Sha256::digest(
+                                std::fs::read(&artifact).unwrap()
+                            )),
+                            report.output_digest
+                        );
+                        assert_eq!(report.input_digest, expected_input_digest);
+                        assert_eq!(report.profile, expected_policy.profile);
+                        assert_eq!(
+                            report
+                                .controls
+                                .iter()
+                                .map(|control| control.control_id.clone())
+                                .collect::<BTreeSet<_>>(),
+                            requested_controls
+                        );
+                        Ok(report)
+                    },
+                )
                 .await
                 .unwrap();
-        assert_session_neutral(&session, &after);
-        let after_paths = app
-            .state::<document_session::DocumentSessionStore>()
-            .secure_redaction_export_paths_for_acceptance(&session.id)
-            .unwrap();
-        assert_eq!(after_paths.original_path, before_paths.original_path);
-        assert_eq!(after_paths.working_path, before_paths.working_path);
+            match outcome {
+                SessionJobOutcome::Completed { value, cleanup, .. } => {
+                    assert_eq!(value.status, "transformed_unverified");
+                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                }
+                other => panic!("expected real-process transform success: {other:?}"),
+            }
+            assert!(
+                !job_dir.exists(),
+                "terminal cleanup must remove private artifact"
+            );
+            let after =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                    .await
+                    .unwrap();
+            assert_session_neutral(&session, &after);
+            let after_paths = app
+                .state::<document_session::DocumentSessionStore>()
+                .secure_redaction_export_paths_for_acceptance(&session.id)
+                .unwrap();
+            assert_eq!(after_paths.original_path, before_paths.original_path);
+            assert_eq!(after_paths.working_path, before_paths.working_path);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn independent_transform_then_verify_happy_path_is_private_and_session_neutral() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let app = app();
-        let source = fixture("clean-minimal.pdf");
-        let session = activated_session(&app, &source, None).await;
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (job_dir, _) = job_paths(&app, &session.id, &job_id);
-        let outcome = transform_and_verify_with_behavior(
-            &app,
-            &session,
-            &source,
-            job_id,
-            Duration::from_secs(30),
-            SanitizationVerificationTestBehavior::Real,
-        )
-        .await;
-        match outcome {
-            SessionJobOutcome::Completed { value, cleanup, .. } => {
-                assert!(value.is_verified);
-                assert!(value.blockers.is_empty());
-                assert!(value.controls.iter().all(|control| {
-                    control.status == sanitization::SanitizationVerificationStatus::Passed
-                }));
-                assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-            }
-            other => panic!("expected independent verification success: {other:?}"),
-        }
-        assert!(!job_dir.exists());
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap();
-        assert_session_neutral(&session, &after);
-    }
-
-    #[tokio::test]
-    async fn mandatory_skip_pdfium_failure_crash_and_timeout_fail_closed() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let source = fixture("clean-minimal.pdf");
-        for (behavior, timeout, expected_code) in [
-            (
-                SanitizationVerificationTestBehavior::SkipMandatoryRender,
-                Duration::from_secs(30),
-                "SANITIZATION_VERIFICATION_FAILED",
-            ),
-            (
-                SanitizationVerificationTestBehavior::FailPdfiumReopen,
-                Duration::from_secs(30),
-                "SANITIZATION_VERIFICATION_FAILED",
-            ),
-            (
-                SanitizationVerificationTestBehavior::CrashDuringTraversal,
-                Duration::from_secs(30),
-                "SESSION_JOB_WORKER_CRASHED",
-            ),
-            (
-                SanitizationVerificationTestBehavior::HangDuringTraversal,
-                Duration::from_secs(2),
-                "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
-            ),
-        ] {
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
             let app = app();
+            let source = fixture("clean-minimal.pdf");
             let session = activated_session(&app, &source, None).await;
             let job_id = uuid::Uuid::new_v4().to_string();
             let (job_dir, _) = job_paths(&app, &session.id, &job_id);
             let outcome = transform_and_verify_with_behavior(
-                &app, &session, &source, job_id, timeout, behavior,
+                &app,
+                &session,
+                &source,
+                job_id,
+                Duration::from_secs(30),
+                SanitizationVerificationTestBehavior::Real,
             )
             .await;
             match outcome {
-                SessionJobOutcome::Failed { error, cleanup, .. } => {
-                    assert_eq!(error.code, expected_code);
+                SessionJobOutcome::Completed { value, cleanup, .. } => {
+                    assert!(value.is_verified);
+                    assert!(value.blockers.is_empty());
+                    assert!(value.controls.iter().all(|control| {
+                        control.status == sanitization::SanitizationVerificationStatus::Passed
+                    }));
                     assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
                 }
-                other => panic!("expected verifier failure: {other:?}"),
+                other => panic!("expected independent verification success: {other:?}"),
             }
             assert!(!job_dir.exists());
             let after =
@@ -681,131 +695,168 @@ mod pdfium_runtime_targets {
                     .await
                     .unwrap();
             assert_session_neutral(&session, &after);
-        }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn mandatory_skip_pdfium_failure_crash_and_timeout_fail_closed() {
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let source = fixture("clean-minimal.pdf");
+            for (behavior, timeout, expected_code) in [
+                (
+                    SanitizationVerificationTestBehavior::SkipMandatoryRender,
+                    Duration::from_secs(30),
+                    "SANITIZATION_VERIFICATION_FAILED",
+                ),
+                (
+                    SanitizationVerificationTestBehavior::FailPdfiumReopen,
+                    Duration::from_secs(30),
+                    "SANITIZATION_VERIFICATION_FAILED",
+                ),
+                (
+                    SanitizationVerificationTestBehavior::CrashDuringTraversal,
+                    Duration::from_secs(30),
+                    "SESSION_JOB_WORKER_CRASHED",
+                ),
+                (
+                    SanitizationVerificationTestBehavior::HangDuringTraversal,
+                    Duration::from_secs(2),
+                    "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
+                ),
+            ] {
+                let app = app();
+                let session = activated_session(&app, &source, None).await;
+                let job_id = uuid::Uuid::new_v4().to_string();
+                let (job_dir, _) = job_paths(&app, &session.id, &job_id);
+                let outcome = transform_and_verify_with_behavior(
+                    &app, &session, &source, job_id, timeout, behavior,
+                )
+                .await;
+                match outcome {
+                    SessionJobOutcome::Failed { error, cleanup, .. } => {
+                        assert_eq!(error.code, expected_code);
+                        assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    }
+                    other => panic!("expected verifier failure: {other:?}"),
+                }
+                assert!(!job_dir.exists());
+                let after = document_session::get_document_session_snapshot(
+                    session.id.clone(),
+                    app.state(),
+                )
+                .await
+                .unwrap();
+                assert_session_neutral(&session, &after);
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn verifier_cancellation_is_cancelled_reaped_cleaned_and_session_neutral() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let app = app();
-        let source = fixture("clean-minimal.pdf");
-        let session = activated_session(&app, &source, None).await;
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (job_dir, _) = job_paths(&app, &session.id, &job_id);
-        let marker = job_dir.join("sanitization-verification-test-phase");
-        let verification = transform_and_verify_with_behavior(
-            &app,
-            &session,
-            &source,
-            job_id.clone(),
-            Duration::from_secs(30),
-            SanitizationVerificationTestBehavior::HangDuringTraversal,
-        );
-        let cancellation = async {
-            let observed = wait_for_marker(&marker, b"traversal").await;
-            if observed {
-                document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let app = app();
+            let source = fixture("clean-minimal.pdf");
+            let session = activated_session(&app, &source, None).await;
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let (job_dir, _) = job_paths(&app, &session.id, &job_id);
+            let marker = job_dir.join("sanitization-verification-test-phase");
+            let verification = transform_and_verify_with_behavior(
+                &app,
+                &session,
+                &source,
+                job_id.clone(),
+                Duration::from_secs(30),
+                SanitizationVerificationTestBehavior::HangDuringTraversal,
+            );
+            let cancellation = async {
+                let observed = wait_for_marker(&marker, b"traversal").await;
+                if observed {
+                    document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+                        .await
+                        .unwrap();
+                }
+                observed
+            };
+            let (outcome, observed) = tokio::join!(verification, cancellation);
+            assert!(
+                observed,
+                "worker never wrote its test phase marker; outcome: {outcome:?}"
+            );
+            assert!(matches!(
+                outcome,
+                SessionJobOutcome::Cancelled {
+                    cleanup: SessionJobCleanupOutcome::Cleaned,
+                    ..
+                }
+            ));
+            assert!(!job_dir.exists());
+            let after =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
                     .await
                     .unwrap();
-            }
-            observed
-        };
-        let (outcome, observed) = tokio::join!(verification, cancellation);
-        assert!(
-            observed,
-            "worker never wrote its test phase marker; outcome: {outcome:?}"
-        );
-        assert!(matches!(
-            outcome,
-            SessionJobOutcome::Cancelled {
-                cleanup: SessionJobCleanupOutcome::Cleaned,
-                ..
-            }
-        ));
-        assert!(!job_dir.exists());
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap();
-        assert_session_neutral(&session, &after);
+            assert_session_neutral(&session, &after);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn cancellation_before_worker_execution_is_cancelled_and_creates_no_authoritative_report()
     {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app, &fixture("clean-minimal.pdf"), None).await;
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (job_dir, _) = job_paths(&app, &session.id, &job_id);
-        document_session::cancel_session_job(session.id.clone(), job_id.clone(), app.state())
-            .await
-            .unwrap();
-        let outcome = inspect_with_behavior(
-            &app,
-            &session,
-            job_id,
-            Duration::from_secs(10),
-            SanitizationInspectionTestBehavior::Real,
-        )
-        .await;
-        assert!(matches!(
-            outcome,
-            SessionJobOutcome::Cancelled {
-                cleanup: SessionJobCleanupOutcome::Cleaned,
-                ..
-            }
-        ));
-        assert!(!job_dir.exists());
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app, &fixture("clean-minimal.pdf"), None).await;
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let (job_dir, _) = job_paths(&app, &session.id, &job_id);
+            document_session::cancel_session_job(session.id.clone(), job_id.clone(), app.state())
                 .await
                 .unwrap();
-        assert_session_neutral(&session, &after);
+            let outcome = inspect_with_behavior(
+                &app,
+                &session,
+                job_id,
+                Duration::from_secs(10),
+                SanitizationInspectionTestBehavior::Real,
+            )
+            .await;
+            assert!(matches!(
+                outcome,
+                SessionJobOutcome::Cancelled {
+                    cleanup: SessionJobCleanupOutcome::Cleaned,
+                    ..
+                }
+            ));
+            assert!(!job_dir.exists());
+            let after =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                    .await
+                    .unwrap();
+            assert_session_neutral(&session, &after);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn wrong_session_stale_generation_and_wrong_owner_cancellation_fail_closed() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let app = app();
-        let owner = activated_session(&app, &fixture("clean-minimal.pdf"), None).await;
-        let wrong = document_session::open_document_session(
-            fixture("clean-minimal.pdf").to_string_lossy().into_owned(),
-            app.state(),
-        )
-        .await
-        .unwrap();
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let app = app();
+            let owner = activated_session(&app, &fixture("clean-minimal.pdf"), None).await;
+            let wrong = document_session::open_document_session(
+                fixture("clean-minimal.pdf").to_string_lossy().into_owned(),
+                app.state(),
+            )
+            .await
+            .unwrap();
 
-        let stale = sanitization::inspect_document_sanitization_core_with_test_support(
-            uuid::Uuid::new_v4().to_string(),
-            owner.id.clone(),
-            owner.content_generation - 1,
-            sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
-            &app.state::<document_session::DocumentSessionStore>(),
-            Duration::from_secs(10),
-            SanitizationInspectionTestBehavior::Real,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(stale.code, "STALE_GENERATION");
-
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (job_dir, marker) = job_paths(&app, &owner.id, &job_id);
-        let inspection = inspect_with_behavior(
-            &app,
-            &owner,
-            job_id.clone(),
-            Duration::from_secs(30),
-            SanitizationInspectionTestBehavior::HangDuringTraversal,
-        );
-        let ownership = async {
-            if !wait_for_marker(&marker, b"traversal").await {
-                return false;
-            }
-            let wrong_request = sanitization::inspect_document_sanitization_core_with_test_support(
-                job_id.clone(),
-                wrong.session_id.clone(),
-                1,
+            let stale = sanitization::inspect_document_sanitization_core_with_test_support(
+                uuid::Uuid::new_v4().to_string(),
+                owner.id.clone(),
+                owner.content_generation - 1,
                 sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
                 &app.state::<document_session::DocumentSessionStore>(),
                 Duration::from_secs(10),
@@ -813,70 +864,102 @@ mod pdfium_runtime_targets {
             )
             .await
             .unwrap_err();
-            assert_eq!(wrong_request.code, "DOCUMENT_SESSION_INVALID_STATE");
-            let wrong_cancel = document_session::cancel_session_job(
-                wrong.session_id.clone(),
+            assert_eq!(stale.code, "STALE_GENERATION");
+
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let (job_dir, marker) = job_paths(&app, &owner.id, &job_id);
+            let inspection = inspect_with_behavior(
+                &app,
+                &owner,
                 job_id.clone(),
-                app.state(),
-            )
-            .await
-            .unwrap_err();
-            assert_eq!(wrong_cancel.code, "SESSION_JOB_OWNER_MISMATCH");
-            document_session::cancel_session_job(owner.id.clone(), job_id, app.state())
+                Duration::from_secs(30),
+                SanitizationInspectionTestBehavior::HangDuringTraversal,
+            );
+            let ownership = async {
+                if !wait_for_marker(&marker, b"traversal").await {
+                    return false;
+                }
+                let wrong_request =
+                    sanitization::inspect_document_sanitization_core_with_test_support(
+                        job_id.clone(),
+                        wrong.session_id.clone(),
+                        1,
+                        sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
+                        &app.state::<document_session::DocumentSessionStore>(),
+                        Duration::from_secs(10),
+                        SanitizationInspectionTestBehavior::Real,
+                    )
+                    .await
+                    .unwrap_err();
+                assert_eq!(wrong_request.code, "DOCUMENT_SESSION_INVALID_STATE");
+                let wrong_cancel = document_session::cancel_session_job(
+                    wrong.session_id.clone(),
+                    job_id.clone(),
+                    app.state(),
+                )
                 .await
-                .unwrap();
-            true
-        };
-        let (outcome, observed) = tokio::join!(inspection, ownership);
-        assert!(
-            observed,
-            "worker never wrote its test phase marker; outcome: {outcome:?}"
-        );
-        assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
-        assert!(!job_dir.exists());
+                .unwrap_err();
+                assert_eq!(wrong_cancel.code, "SESSION_JOB_OWNER_MISMATCH");
+                document_session::cancel_session_job(owner.id.clone(), job_id, app.state())
+                    .await
+                    .unwrap();
+                true
+            };
+            let (outcome, observed) = tokio::join!(inspection, ownership);
+            assert!(
+                observed,
+                "worker never wrote its test phase marker; outcome: {outcome:?}"
+            );
+            assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
+            assert!(!job_dir.exists());
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn session_close_during_inspection_waits_for_cancelled_job_and_accepts_no_report() {
-        let _serial = ACCEPTANCE_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app, &fixture("clean-minimal.pdf"), None).await;
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let (job_dir, marker) = job_paths(&app, &session.id, &job_id);
-        let inspection = inspect_with_behavior(
-            &app,
-            &session,
-            job_id.clone(),
-            Duration::from_secs(30),
-            SanitizationInspectionTestBehavior::HangDuringTraversal,
-        );
-        let lifecycle = async {
-            if !wait_for_marker(&marker, b"traversal").await {
-                return false;
-            }
-            let store = app.state::<document_session::DocumentSessionStore>();
-            let close = store.close_all();
-            let cancel = async {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                document_session::cancel_session_job(session.id.clone(), job_id, app.state())
-                    .await
-                    .unwrap();
+        with_worker_shutdown(async {
+            let _serial = ACCEPTANCE_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app, &fixture("clean-minimal.pdf"), None).await;
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let (job_dir, marker) = job_paths(&app, &session.id, &job_id);
+            let inspection = inspect_with_behavior(
+                &app,
+                &session,
+                job_id.clone(),
+                Duration::from_secs(30),
+                SanitizationInspectionTestBehavior::HangDuringTraversal,
+            );
+            let lifecycle = async {
+                if !wait_for_marker(&marker, b"traversal").await {
+                    return false;
+                }
+                let store = app.state::<document_session::DocumentSessionStore>();
+                let close = store.close_all();
+                let cancel = async {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+                        .await
+                        .unwrap();
+                };
+                let (closed, ()) = tokio::join!(close, cancel);
+                closed.unwrap();
+                true
             };
-            let (closed, ()) = tokio::join!(close, cancel);
-            closed.unwrap();
-            true
-        };
-        let (outcome, observed) = tokio::join!(inspection, lifecycle);
-        assert!(
-            observed,
-            "worker never wrote its test phase marker; outcome: {outcome:?}"
-        );
-        assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
-        assert!(!job_dir.exists());
-        let closed =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap_err();
-        assert_eq!(closed.code, "DOCUMENT_SESSION_NOT_FOUND");
+            let (outcome, observed) = tokio::join!(inspection, lifecycle);
+            assert!(
+                observed,
+                "worker never wrote its test phase marker; outcome: {outcome:?}"
+            );
+            assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
+            assert!(!job_dir.exists());
+            let closed =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                    .await
+                    .unwrap_err();
+            assert_eq!(closed.code, "DOCUMENT_SESSION_NOT_FOUND");
+        })
+        .await;
     }
 }

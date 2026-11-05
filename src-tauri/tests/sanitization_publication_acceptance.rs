@@ -34,6 +34,7 @@ mod pdfium_runtime_targets {
     use std::collections::HashMap;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::sync::Arc;
@@ -56,7 +57,7 @@ mod pdfium_runtime_targets {
         preview_alternative_lib::hex_lower(Sha256::digest(std::fs::read(path).unwrap()))
     }
 
-    fn app() -> tauri::App<tauri::test::MockRuntime> {
+    fn app() -> Rc<TestApp> {
         let broker = PdfiumWorkerBroker::with_launcher(Ok(WorkerLauncher::for_test(
             PathBuf::from(env!("CARGO_BIN_EXE_preview-alternative")),
             vec![OsString::from("--run-worker")],
@@ -69,7 +70,7 @@ mod pdfium_runtime_targets {
             )
             .unwrap();
         let capacity = std::num::NonZeroUsize::new(16).unwrap();
-        tauri::test::mock_builder()
+        let app = tauri::test::mock_builder()
             .manage(store)
             .manage(PasswordCache(password_cache))
             .manage(SearchCache(Mutex::new(lru::LruCache::new(capacity))))
@@ -81,7 +82,44 @@ mod pdfium_runtime_targets {
             )))
             .manage(RenderService::new())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap()
+            .unwrap();
+        let app = Rc::new(app);
+        TEST_APPS.with(|apps| apps.borrow_mut().push(Rc::clone(&app)));
+        app
+    }
+
+    type TestApp = tauri::App<tauri::test::MockRuntime>;
+
+    thread_local! {
+        /// Apps built by the running test. `with_worker_shutdown` shuts each
+        /// one down the way the application does on exit.
+        static TEST_APPS: std::cell::RefCell<Vec<Rc<TestApp>>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Runs a test body, then shuts down every app it built with
+    /// `shutdown_all_resources` (what `RunEvent::ExitRequested` does), even
+    /// when the body panicked, and only then re-raises the panic.
+    ///
+    /// Without it the PDFium worker outlives the test: on Windows tokio
+    /// reads the worker's anonymous pipes on blocking-pool threads, and the
+    /// `#[tokio::test]` runtime waits forever for those reads when it is
+    /// dropped. The suite then hung in its first test with no output.
+    async fn with_worker_shutdown(body: impl std::future::Future<Output = ()>) {
+        use futures_util::FutureExt as _;
+        let outcome = std::panic::AssertUnwindSafe(body).catch_unwind().await;
+        let apps = TEST_APPS.with(|apps| std::mem::take(&mut *apps.borrow_mut()));
+        for app in apps {
+            let store = app.state::<document_session::DocumentSessionStore>();
+            let _ = within(
+                "shutdown_all_resources",
+                store.shutdown_all_resources(&app.state(), &app.state()),
+            )
+            .await;
+        }
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     async fn activated_session(
@@ -265,286 +303,262 @@ mod pdfium_runtime_targets {
     #[tokio::test]
     async fn missing_and_existing_targets_publish_exact_verified_bytes_and_remain_session_neutral()
     {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let output = tempfile::tempdir().unwrap();
-        for existing in [false, true] {
-            let target = output.path().join(if existing {
-                "existing-target.pdf"
-            } else {
-                "missing-target.pdf"
-            });
-            if existing {
-                std::fs::write(&target, b"external-old-bytes").unwrap();
-            }
-            let outcome = execute(&app, &session, &target, None).await;
-            let report = match outcome {
-                SessionJobOutcome::Completed {
-                    value,
-                    cancel_requested,
-                    cleanup,
-                    ..
-                } => {
-                    assert!(!cancel_requested);
-                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                    value
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let output = tempfile::tempdir().unwrap();
+            for existing in [false, true] {
+                let target = output.path().join(if existing {
+                    "existing-target.pdf"
+                } else {
+                    "missing-target.pdf"
+                });
+                if existing {
+                    std::fs::write(&target, b"external-old-bytes").unwrap();
                 }
-                other => panic!("full execution must complete: {other:?}"),
-            };
-            let publication = report.publication.as_ref().unwrap();
-            assert!(publication.published);
-            assert!(report.verification.is_verified);
-            assert_eq!(
-                report.transform.output_digest,
-                report.verification.transform_digest
-            );
-            assert_eq!(report.transform.output_digest, publication.published_digest);
-            assert_eq!(report.transform.output_digest, digest(&target));
-            assert!(!std::fs::read(&target)
-                .unwrap()
-                .windows(5)
-                .any(|window| window == b"/Prev"));
-            assert_eq!(
-                report.assurance,
-                sanitization::SanitizationAssurance::VerifiedCustom
-            );
-            let mut invalid = report.clone();
-            invalid.publication.as_mut().unwrap().published = false;
-            assert!(sanitization::validate_execution_report(&invalid, &policy()).is_err());
-            let mut invalid = report.clone();
-            invalid.publication.as_mut().unwrap().published_digest = "0".repeat(64);
-            assert!(sanitization::validate_execution_report(&invalid, &policy()).is_err());
-            let mut invalid = report;
-            invalid.assurance = sanitization::SanitizationAssurance::NotPublished;
-            assert!(sanitization::validate_execution_report(&invalid, &policy()).is_err());
-        }
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
-                .unwrap();
-        assert_session_neutral(&session, &after);
+                let outcome = execute(&app, &session, &target, None).await;
+                let report = match outcome {
+                    SessionJobOutcome::Completed {
+                        value,
+                        cancel_requested,
+                        cleanup,
+                        ..
+                    } => {
+                        assert!(!cancel_requested);
+                        assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                        value
+                    }
+                    other => panic!("full execution must complete: {other:?}"),
+                };
+                let publication = report.publication.as_ref().unwrap();
+                assert!(publication.published);
+                assert!(report.verification.is_verified);
+                assert_eq!(
+                    report.transform.output_digest,
+                    report.verification.transform_digest
+                );
+                assert_eq!(report.transform.output_digest, publication.published_digest);
+                assert_eq!(report.transform.output_digest, digest(&target));
+                assert!(!std::fs::read(&target)
+                    .unwrap()
+                    .windows(5)
+                    .any(|window| window == b"/Prev"));
+                assert_eq!(
+                    report.assurance,
+                    sanitization::SanitizationAssurance::VerifiedCustom
+                );
+                let mut invalid = report.clone();
+                invalid.publication.as_mut().unwrap().published = false;
+                assert!(sanitization::validate_execution_report(&invalid, &policy()).is_err());
+                let mut invalid = report.clone();
+                invalid.publication.as_mut().unwrap().published_digest = "0".repeat(64);
+                assert!(sanitization::validate_execution_report(&invalid, &policy()).is_err());
+                let mut invalid = report;
+                invalid.assurance = sanitization::SanitizationAssurance::NotPublished;
+                assert!(sanitization::validate_execution_report(&invalid, &policy()).is_err());
+            }
+            let after =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                    .await
+                    .unwrap();
+            assert_session_neutral(&session, &after);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn artifact_toctou_and_staged_corruption_fail_before_replacement_and_cleanup() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        for corrupt_staged in [false, true] {
-            let app = app();
-            let session = activated_session(&app).await;
-            let output = tempfile::tempdir().unwrap();
-            let target = output.path().join("preserved.pdf");
-            std::fs::write(&target, b"preserve-external-writer").unwrap();
-            let support = if corrupt_staged {
-                SanitizationExecutionTestSupport {
-                    corrupt_staged_temp: true,
-                    ..Default::default()
-                }
-            } else {
-                SanitizationExecutionTestSupport {
-                    phase_hook: Some(Arc::new(|phase, artifact| {
-                        if phase == SanitizationExecutionTestPhase::AfterVerifierValidated {
-                            std::fs::OpenOptions::new()
-                                .append(true)
-                                .open(artifact.unwrap())
-                                .unwrap()
-                                .write_all(b"artifact-toctou")
-                                .unwrap();
-                        }
-                    })),
-                    ..Default::default()
-                }
-            };
-            use std::io::Write as _;
-            let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
-            assert_failed(outcome, "SANITIZATION_OUTPUT_DIGEST_MISMATCH");
-            assert_eq!(std::fs::read(&target).unwrap(), b"preserve-external-writer");
-            assert_eq!(
-                std::fs::read_dir(output.path()).unwrap().count(),
-                1,
-                "adjacent staged temp must be cleaned"
-            );
-        }
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            for corrupt_staged in [false, true] {
+                let app = app();
+                let session = activated_session(&app).await;
+                let output = tempfile::tempdir().unwrap();
+                let target = output.path().join("preserved.pdf");
+                std::fs::write(&target, b"preserve-external-writer").unwrap();
+                let support = if corrupt_staged {
+                    SanitizationExecutionTestSupport {
+                        corrupt_staged_temp: true,
+                        ..Default::default()
+                    }
+                } else {
+                    SanitizationExecutionTestSupport {
+                        phase_hook: Some(Arc::new(|phase, artifact| {
+                            if phase == SanitizationExecutionTestPhase::AfterVerifierValidated {
+                                std::fs::OpenOptions::new()
+                                    .append(true)
+                                    .open(artifact.unwrap())
+                                    .unwrap()
+                                    .write_all(b"artifact-toctou")
+                                    .unwrap();
+                            }
+                        })),
+                        ..Default::default()
+                    }
+                };
+                use std::io::Write as _;
+                let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
+                assert_failed(outcome, "SANITIZATION_OUTPUT_DIGEST_MISMATCH");
+                assert_eq!(std::fs::read(&target).unwrap(), b"preserve-external-writer");
+                assert_eq!(
+                    std::fs::read_dir(output.path()).unwrap().count(),
+                    1,
+                    "adjacent staged temp must be cleaned"
+                );
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn missing_and_existing_target_toctou_matrix_is_fail_closed() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        #[derive(Clone, Copy, Debug)]
-        enum Race {
-            MissingCreated,
-            ExistingModified,
-            ExistingReplacedSameDigest,
-            ExistingDeletedRecreated,
-        }
-        for race in [
-            Race::MissingCreated,
-            Race::ExistingModified,
-            Race::ExistingReplacedSameDigest,
-            Race::ExistingDeletedRecreated,
-        ] {
-            let app = app();
-            let session = activated_session(&app).await;
-            let output = tempfile::tempdir().unwrap();
-            let target = output.path().join("raced.pdf");
-            if !matches!(race, Race::MissingCreated) {
-                std::fs::write(&target, b"baseline-target").unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            #[derive(Clone, Copy, Debug)]
+            enum Race {
+                MissingCreated,
+                ExistingModified,
+                ExistingReplacedSameDigest,
+                ExistingDeletedRecreated,
             }
-            let hook_target = target.clone();
-            let support = SanitizationExecutionTestSupport {
-                phase_hook: Some(Arc::new(move |phase, _| {
-                    if phase != SanitizationExecutionTestPhase::BeforePublication {
-                        return;
-                    }
-                    match race {
-                        Race::MissingCreated => {
-                            std::fs::write(&hook_target, b"external-created").unwrap();
-                        }
-                        Race::ExistingModified => {
-                            std::fs::write(&hook_target, b"external-modified").unwrap();
-                        }
-                        Race::ExistingReplacedSameDigest => {
-                            let replacement = hook_target.with_extension("replacement");
-                            std::fs::write(&replacement, b"baseline-target").unwrap();
-                            std::fs::rename(replacement, &hook_target).unwrap();
-                        }
-                        Race::ExistingDeletedRecreated => {
-                            std::fs::remove_file(&hook_target).unwrap();
-                            std::fs::write(&hook_target, b"baseline-target").unwrap();
-                        }
-                    }
-                })),
-                ..Default::default()
-            };
-            let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
-            match outcome {
-                SessionJobOutcome::Failed { error, cleanup, .. } => {
-                    assert_eq!(
-                        error.code, "SANITIZATION_TARGET_CONFLICT",
-                        "{race:?}: {error:?}"
-                    );
-                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+            for race in [
+                Race::MissingCreated,
+                Race::ExistingModified,
+                Race::ExistingReplacedSameDigest,
+                Race::ExistingDeletedRecreated,
+            ] {
+                let app = app();
+                let session = activated_session(&app).await;
+                let output = tempfile::tempdir().unwrap();
+                let target = output.path().join("raced.pdf");
+                if !matches!(race, Race::MissingCreated) {
+                    std::fs::write(&target, b"baseline-target").unwrap();
                 }
-                other => panic!(
-                    "{race:?}: the target race was not detected, publication outcome: {other:?}"
-                ),
+                let hook_target = target.clone();
+                let support = SanitizationExecutionTestSupport {
+                    phase_hook: Some(Arc::new(move |phase, _| {
+                        if phase != SanitizationExecutionTestPhase::BeforePublication {
+                            return;
+                        }
+                        match race {
+                            Race::MissingCreated => {
+                                std::fs::write(&hook_target, b"external-created").unwrap();
+                            }
+                            Race::ExistingModified => {
+                                std::fs::write(&hook_target, b"external-modified").unwrap();
+                            }
+                            Race::ExistingReplacedSameDigest => {
+                                let replacement = hook_target.with_extension("replacement");
+                                std::fs::write(&replacement, b"baseline-target").unwrap();
+                                std::fs::rename(replacement, &hook_target).unwrap();
+                            }
+                            Race::ExistingDeletedRecreated => {
+                                std::fs::remove_file(&hook_target).unwrap();
+                                std::fs::write(&hook_target, b"baseline-target").unwrap();
+                            }
+                        }
+                    })),
+                    ..Default::default()
+                };
+                let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
+                match outcome {
+                    SessionJobOutcome::Failed { error, cleanup, .. } => {
+                        assert_eq!(
+                            error.code, "SANITIZATION_TARGET_CONFLICT",
+                            "{race:?}: {error:?}"
+                        );
+                        assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    }
+                    other => panic!(
+                        "{race:?}: the target race was not detected, publication outcome: {other:?}"
+                    ),
+                }
+                let expected = match race {
+                    Race::MissingCreated => b"external-created".as_slice(),
+                    Race::ExistingModified => b"external-modified".as_slice(),
+                    Race::ExistingReplacedSameDigest | Race::ExistingDeletedRecreated => {
+                        b"baseline-target".as_slice()
+                    }
+                };
+                assert_eq!(std::fs::read(&target).unwrap(), expected);
             }
-            let expected = match race {
-                Race::MissingCreated => b"external-created".as_slice(),
-                Race::ExistingModified => b"external-modified".as_slice(),
-                Race::ExistingReplacedSameDigest | Race::ExistingDeletedRecreated => {
-                    b"baseline-target".as_slice()
-                }
-            };
-            assert_eq!(std::fs::read(&target).unwrap(), expected);
-        }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn protected_private_symlink_hardlink_and_directory_targets_are_rejected_preflight() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let store = app.state::<document_session::DocumentSessionStore>();
-        let paths = store
-            .secure_redaction_export_paths_for_acceptance(&session.id)
-            .unwrap();
-        let output = tempfile::tempdir().unwrap();
-        let regular = output.path().join("regular.pdf");
-        std::fs::write(&regular, b"regular").unwrap();
-        let symlink_path = output.path().join("symlink.pdf");
-        create_file_symlink(&regular, &symlink_path);
-        let dangling = output.path().join("dangling.pdf");
-        create_file_symlink(&output.path().join("missing.pdf"), &dangling);
-        let hardlink = output.path().join("hardlink.pdf");
-        std::fs::hard_link(&regular, &hardlink).unwrap();
-        let directory = output.path().join("directory.pdf");
-        std::fs::create_dir(&directory).unwrap();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let store = app.state::<document_session::DocumentSessionStore>();
+            let paths = store
+                .secure_redaction_export_paths_for_acceptance(&session.id)
+                .unwrap();
+            let output = tempfile::tempdir().unwrap();
+            let regular = output.path().join("regular.pdf");
+            std::fs::write(&regular, b"regular").unwrap();
+            let symlink_path = output.path().join("symlink.pdf");
+            create_file_symlink(&regular, &symlink_path);
+            let dangling = output.path().join("dangling.pdf");
+            create_file_symlink(&output.path().join("missing.pdf"), &dangling);
+            let hardlink = output.path().join("hardlink.pdf");
+            std::fs::hard_link(&regular, &hardlink).unwrap();
+            let directory = output.path().join("directory.pdf");
+            std::fs::create_dir(&directory).unwrap();
 
-        for (target, code) in [
-            (paths.original_path, "SANITIZATION_TARGET_PROTECTED_PATH"),
-            (paths.working_path, "SANITIZATION_TARGET_PROTECTED_PATH"),
-            (
-                paths.session_dir.join("private-output.pdf"),
-                "SANITIZATION_TARGET_PRIVATE_PATH",
-            ),
-            (symlink_path, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
-            (dangling, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
-            (hardlink, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
-            (directory, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
-        ] {
-            let error = sanitization_publication::execute_document_sanitization_core(
-                uuid::Uuid::new_v4().to_string(),
-                session.id.clone(),
-                session.content_generation,
-                policy(),
-                target.to_string_lossy().into_owned(),
-                &store,
-            )
-            .await
-            .unwrap_err();
-            assert_eq!(error.code, code, "target={}", target.display());
-        }
+            for (target, code) in [
+                (paths.original_path, "SANITIZATION_TARGET_PROTECTED_PATH"),
+                (paths.working_path, "SANITIZATION_TARGET_PROTECTED_PATH"),
+                (
+                    paths.session_dir.join("private-output.pdf"),
+                    "SANITIZATION_TARGET_PRIVATE_PATH",
+                ),
+                (symlink_path, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
+                (dangling, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
+                (hardlink, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
+                (directory, "SANITIZATION_TARGET_PREFLIGHT_FAILED"),
+            ] {
+                let error = sanitization_publication::execute_document_sanitization_core(
+                    uuid::Uuid::new_v4().to_string(),
+                    session.id.clone(),
+                    session.content_generation,
+                    policy(),
+                    target.to_string_lossy().into_owned(),
+                    &store,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(error.code, code, "target={}", target.display());
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn malformed_verification_never_starts_publication() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let output = tempfile::tempdir().unwrap();
-        let target = output.path().join("not-published.pdf");
-        let publication_started = Arc::new(AtomicBool::new(false));
-        let observed = Arc::clone(&publication_started);
-        let support = SanitizationExecutionTestSupport {
-            verifier_result_hook: Some(Arc::new(|result| match result {
-                preview_alternative_lib::job_worker::JobResult::SanitizationVerification(
-                    mut report,
-                ) => {
-                    report.is_verified = false;
-                    preview_alternative_lib::job_worker::JobResult::SanitizationVerification(report)
-                }
-                other => other,
-            })),
-            phase_hook: Some(Arc::new(move |phase, _| {
-                if phase == SanitizationExecutionTestPhase::PublicationStarted {
-                    observed.store(true, Ordering::SeqCst);
-                }
-            })),
-            ..Default::default()
-        };
-        let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
-        assert_failed(outcome, "SANITIZATION_VERIFICATION_REPORT_INVALID");
-        assert!(!publication_started.load(Ordering::SeqCst));
-        assert!(!target.exists());
-    }
-
-    #[tokio::test]
-    async fn verifier_crash_and_timeout_never_start_publication() {
-        use preview_alternative_lib::sanitization_verifier::SanitizationVerificationTestBehavior;
-
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        for (behavior, timeout, expected_code) in [
-            (
-                SanitizationVerificationTestBehavior::CrashDuringTraversal,
-                std::time::Duration::from_secs(10),
-                "SESSION_JOB_WORKER_CRASHED",
-            ),
-            (
-                SanitizationVerificationTestBehavior::HangDuringTraversal,
-                std::time::Duration::from_secs(1),
-                "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
-            ),
-        ] {
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
             let app = app();
             let session = activated_session(&app).await;
             let output = tempfile::tempdir().unwrap();
-            let target = output.path().join("verifier-failed.pdf");
+            let target = output.path().join("not-published.pdf");
             let publication_started = Arc::new(AtomicBool::new(false));
             let observed = Arc::clone(&publication_started);
             let support = SanitizationExecutionTestSupport {
-                verification_behavior: behavior,
-                verification_timeout: timeout,
+                verifier_result_hook: Some(Arc::new(|result| match result {
+                    preview_alternative_lib::job_worker::JobResult::SanitizationVerification(
+                        mut report,
+                    ) => {
+                        report.is_verified = false;
+                        preview_alternative_lib::job_worker::JobResult::SanitizationVerification(
+                            report,
+                        )
+                    }
+                    other => other,
+                })),
                 phase_hook: Some(Arc::new(move |phase, _| {
                     if phase == SanitizationExecutionTestPhase::PublicationStarted {
                         observed.store(true, Ordering::SeqCst);
@@ -553,226 +567,285 @@ mod pdfium_runtime_targets {
                 ..Default::default()
             };
             let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
-            assert_failed(outcome, expected_code);
+            assert_failed(outcome, "SANITIZATION_VERIFICATION_REPORT_INVALID");
             assert!(!publication_started.load(Ordering::SeqCst));
             assert!(!target.exists());
-        }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn verifier_crash_and_timeout_never_start_publication() {
+        with_worker_shutdown(async {
+            use preview_alternative_lib::sanitization_verifier::SanitizationVerificationTestBehavior;
+
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            for (behavior, timeout, expected_code) in [
+                (
+                    SanitizationVerificationTestBehavior::CrashDuringTraversal,
+                    std::time::Duration::from_secs(10),
+                    "SESSION_JOB_WORKER_CRASHED",
+                ),
+                (
+                    SanitizationVerificationTestBehavior::HangDuringTraversal,
+                    std::time::Duration::from_secs(1),
+                    "DOCUMENT_SESSION_PDF_ENGINE_ERROR",
+                ),
+            ] {
+                let app = app();
+                let session = activated_session(&app).await;
+                let output = tempfile::tempdir().unwrap();
+                let target = output.path().join("verifier-failed.pdf");
+                let publication_started = Arc::new(AtomicBool::new(false));
+                let observed = Arc::clone(&publication_started);
+                let support = SanitizationExecutionTestSupport {
+                    verification_behavior: behavior,
+                    verification_timeout: timeout,
+                    phase_hook: Some(Arc::new(move |phase, _| {
+                        if phase == SanitizationExecutionTestPhase::PublicationStarted {
+                            observed.store(true, Ordering::SeqCst);
+                        }
+                    })),
+                    ..Default::default()
+                };
+                let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
+                assert_failed(outcome, expected_code);
+                assert!(!publication_started.load(Ordering::SeqCst));
+                assert!(!target.exists());
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn atomic_fault_matrix_preserves_exact_typed_disk_truth_and_recovery_metadata() {
-        use preview_alternative_lib::document_io::VerifiedArtifactPublicationTestFault as Fault;
+        with_worker_shutdown(async {
+            use preview_alternative_lib::document_io::VerifiedArtifactPublicationTestFault as Fault;
 
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        for (fault, expected_state, replacement_committed) in [
-            (Fault::TempCreate, "prepared", false),
-            (Fault::CopyWrite, "original_preserved", false),
-            (Fault::TempSync, "original_preserved", false),
-            (Fault::Replace, "original_preserved", false),
-            (Fault::PostCommitIdentity, "indeterminate", true),
-            (Fault::PostCommitDigest, "indeterminate", true),
-            (
-                Fault::RecoveryRequiredAfterCommit,
-                "recovery_required",
-                true,
-            ),
-        ] {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            for (fault, expected_state, replacement_committed) in [
+                (Fault::TempCreate, "prepared", false),
+                (Fault::CopyWrite, "original_preserved", false),
+                (Fault::TempSync, "original_preserved", false),
+                (Fault::Replace, "original_preserved", false),
+                (Fault::PostCommitIdentity, "indeterminate", true),
+                (Fault::PostCommitDigest, "indeterminate", true),
+                (
+                    Fault::RecoveryRequiredAfterCommit,
+                    "recovery_required",
+                    true,
+                ),
+            ] {
+                let app = app();
+                let session = activated_session(&app).await;
+                let output = tempfile::tempdir().unwrap();
+                let target = output.path().join("fault-target.pdf");
+                std::fs::write(&target, b"original-target-bytes").unwrap();
+                let support = SanitizationExecutionTestSupport {
+                    publication_fault: fault,
+                    ..Default::default()
+                };
+                let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
+                match outcome {
+                    SessionJobOutcome::Failed { error, cleanup, .. } => {
+                        assert_eq!(error.code, "SANITIZATION_PUBLICATION_FAILED");
+                        assert_eq!(error.commit_state.as_deref(), Some(expected_state));
+                        assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                        if replacement_committed {
+                            assert_ne!(std::fs::read(&target).unwrap(), b"original-target-bytes");
+                            assert!(error.replacement_digest.is_some());
+                        } else {
+                            assert_eq!(std::fs::read(&target).unwrap(), b"original-target-bytes");
+                        }
+                        if fault == Fault::RecoveryRequiredAfterCommit {
+                            let recovery = PathBuf::from(&*error.recovery_path.unwrap());
+                            assert!(recovery.is_file());
+                            assert_eq!(std::fs::read(recovery).unwrap(), b"original-target-bytes");
+                        } else {
+                            assert!(error.recovery_path.is_none());
+                        }
+                    }
+                    other => panic!("fault must produce typed failure: {other:?}"),
+                }
+                assert_eq!(
+                    std::fs::read_dir(output.path())
+                        .unwrap()
+                        .filter(|entry| entry
+                            .as_ref()
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".antigravity-pdf-"))
+                        .count(),
+                    0,
+                    "ordinary adjacent staged temps must be cleaned"
+                );
+            }
+
             let app = app();
             let session = activated_session(&app).await;
             let output = tempfile::tempdir().unwrap();
-            let target = output.path().join("fault-target.pdf");
+            let target = output.path().join("durability-target.pdf");
             std::fs::write(&target, b"original-target-bytes").unwrap();
             let support = SanitizationExecutionTestSupport {
-                publication_fault: fault,
+                publication_fault: Fault::ParentDurability,
                 ..Default::default()
             };
             let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
             match outcome {
-                SessionJobOutcome::Failed { error, cleanup, .. } => {
-                    assert_eq!(error.code, "SANITIZATION_PUBLICATION_FAILED");
-                    assert_eq!(error.commit_state.as_deref(), Some(expected_state));
-                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                    if replacement_committed {
-                        assert_ne!(std::fs::read(&target).unwrap(), b"original-target-bytes");
-                        assert!(error.replacement_digest.is_some());
-                    } else {
-                        assert_eq!(std::fs::read(&target).unwrap(), b"original-target-bytes");
-                    }
-                    if fault == Fault::RecoveryRequiredAfterCommit {
-                        let recovery = PathBuf::from(&*error.recovery_path.unwrap());
-                        assert!(recovery.is_file());
-                        assert_eq!(std::fs::read(recovery).unwrap(), b"original-target-bytes");
-                    } else {
-                        assert!(error.recovery_path.is_none());
-                    }
-                }
-                other => panic!("fault must produce typed failure: {other:?}"),
+                SessionJobOutcome::Completed { value, .. } => assert!(matches!(
+                    value.publication.unwrap().commit_state,
+                    sanitization::SanitizationPublicationCommitState::NewCommittedDurabilityUnconfirmed
+                )),
+                other => panic!("durability uncertainty must preserve committed success: {other:?}"),
             }
-            assert_eq!(
-                std::fs::read_dir(output.path())
-                    .unwrap()
-                    .filter(|entry| entry
-                        .as_ref()
-                        .unwrap()
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with(".antigravity-pdf-"))
-                    .count(),
-                0,
-                "ordinary adjacent staged temps must be cleaned"
-            );
-        }
-
-        let app = app();
-        let session = activated_session(&app).await;
-        let output = tempfile::tempdir().unwrap();
-        let target = output.path().join("durability-target.pdf");
-        std::fs::write(&target, b"original-target-bytes").unwrap();
-        let support = SanitizationExecutionTestSupport {
-            publication_fault: Fault::ParentDurability,
-            ..Default::default()
-        };
-        let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
-        match outcome {
-            SessionJobOutcome::Completed { value, .. } => assert!(matches!(
-                value.publication.unwrap().commit_state,
-                sanitization::SanitizationPublicationCommitState::NewCommittedDurabilityUnconfirmed
-            )),
-            other => panic!("durability uncertainty must preserve committed success: {other:?}"),
-        }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn cancellation_before_publication_cancels_but_after_commit_boundary_disk_truth_wins() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        for (phase, expect_completed) in [
-            (SanitizationExecutionTestPhase::BeforePublication, false),
-            (SanitizationExecutionTestPhase::PublicationStarted, true),
-        ] {
-            let app = app();
-            let session = activated_session(&app).await;
-            let output = tempfile::tempdir().unwrap();
-            let target = output.path().join("cancel-boundary.pdf");
-            let job_id = uuid::Uuid::new_v4().to_string();
-            let (support, gate, _) = blocking_support(phase);
-            let PhaseGate { reached, release } = gate;
-            let store = app.state::<document_session::DocumentSessionStore>();
-            let execution =
-                sanitization_publication::execute_document_sanitization_core_with_test_support(
-                    job_id.clone(),
-                    session.id.clone(),
-                    session.content_generation,
-                    policy(),
-                    target.to_string_lossy().into_owned(),
-                    &store,
-                    Some(support),
-                );
-            let cancellation = async {
-                let held = PhaseGate::wait_reached(reached).await;
-                if held {
-                    document_session::cancel_session_job(session.id.clone(), job_id, app.state())
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            for (phase, expect_completed) in [
+                (SanitizationExecutionTestPhase::BeforePublication, false),
+                (SanitizationExecutionTestPhase::PublicationStarted, true),
+            ] {
+                let app = app();
+                let session = activated_session(&app).await;
+                let output = tempfile::tempdir().unwrap();
+                let target = output.path().join("cancel-boundary.pdf");
+                let job_id = uuid::Uuid::new_v4().to_string();
+                let (support, gate, _) = blocking_support(phase);
+                let PhaseGate { reached, release } = gate;
+                let store = app.state::<document_session::DocumentSessionStore>();
+                let execution =
+                    sanitization_publication::execute_document_sanitization_core_with_test_support(
+                        job_id.clone(),
+                        session.id.clone(),
+                        session.content_generation,
+                        policy(),
+                        target.to_string_lossy().into_owned(),
+                        &store,
+                        Some(support),
+                    );
+                let cancellation = async {
+                    let held = PhaseGate::wait_reached(reached).await;
+                    if held {
+                        document_session::cancel_session_job(
+                            session.id.clone(),
+                            job_id,
+                            app.state(),
+                        )
                         .await
                         .unwrap();
-                }
-                let _ = release.send(());
-                held
-            };
-            let (outcome, held) = tokio::join!(execution, cancellation);
-            let outcome = outcome.unwrap();
-            assert!(
-                held,
-                "execution never reached {phase:?}; outcome: {outcome:?}"
-            );
-            if expect_completed {
-                match outcome {
-                    SessionJobOutcome::Completed {
-                        value,
-                        cancel_requested,
-                        ..
-                    } => {
-                        assert!(cancel_requested);
-                        assert!(value.publication.unwrap().published);
                     }
-                    other => panic!("post-boundary cancellation must preserve commit: {other:?}"),
+                    let _ = release.send(());
+                    held
+                };
+                let (outcome, held) = tokio::join!(execution, cancellation);
+                let outcome = outcome.unwrap();
+                assert!(
+                    held,
+                    "execution never reached {phase:?}; outcome: {outcome:?}"
+                );
+                if expect_completed {
+                    match outcome {
+                        SessionJobOutcome::Completed {
+                            value,
+                            cancel_requested,
+                            ..
+                        } => {
+                            assert!(cancel_requested);
+                            assert!(value.publication.unwrap().published);
+                        }
+                        other => {
+                            panic!("post-boundary cancellation must preserve commit: {other:?}")
+                        }
+                    }
+                    assert!(target.is_file());
+                } else {
+                    assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
+                    assert!(!target.exists());
                 }
-                assert!(target.is_file());
-            } else {
-                assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }));
-                assert!(!target.exists());
             }
-        }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn save_as_waits_for_verified_export_guard_then_completes() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let session = activated_session(&app).await;
-        let output = tempfile::tempdir().unwrap();
-        let target = output.path().join("sanitized.pdf");
-        let save_as_target = output.path().join("save-as.pdf");
-        let (support, gate, _) =
-            blocking_support(SanitizationExecutionTestPhase::BeforePublication);
-        let PhaseGate { reached, release } = gate;
-        let (lease_tx, lease_rx) = std::sync::mpsc::channel::<bool>();
-        let acquired = Arc::new(AtomicBool::new(false));
-        let acquired_hook = Arc::clone(&acquired);
-        app.state::<document_session::DocumentSessionStore>()
-            .set_verified_artifact_save_lease_test_hook(Some(Arc::new(move |did_acquire| {
-                if did_acquire {
-                    acquired_hook.store(true, Ordering::SeqCst);
-                }
-                let _ = lease_tx.send(did_acquire);
-            })));
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session(&app).await;
+            let output = tempfile::tempdir().unwrap();
+            let target = output.path().join("sanitized.pdf");
+            let save_as_target = output.path().join("save-as.pdf");
+            let (support, gate, _) =
+                blocking_support(SanitizationExecutionTestPhase::BeforePublication);
+            let PhaseGate { reached, release } = gate;
+            let (lease_tx, lease_rx) = std::sync::mpsc::channel::<bool>();
+            let acquired = Arc::new(AtomicBool::new(false));
+            let acquired_hook = Arc::clone(&acquired);
+            app.state::<document_session::DocumentSessionStore>()
+                .set_verified_artifact_save_lease_test_hook(Some(Arc::new(move |did_acquire| {
+                    if did_acquire {
+                        acquired_hook.store(true, Ordering::SeqCst);
+                    }
+                    let _ = lease_tx.send(did_acquire);
+                })));
 
-        let execution = execute(&app, &session, &target, Some(support));
-        let save_as = document_session::save_document_session_as(
-            session.id.clone(),
-            session.state_revision,
-            save_as_target.to_string_lossy().into_owned(),
-            app.state(),
-        );
-        let acquired_during = Arc::clone(&acquired);
-        let coordination = async move {
-            let held = PhaseGate::wait_reached(reached).await;
-            let first_lease_attempt = if held {
-                tokio::task::spawn_blocking(move || lease_rx.recv_timeout(PHASE_TIMEOUT).ok())
-                    .await
-                    .unwrap()
-            } else {
-                None
+            let execution = execute(&app, &session, &target, Some(support));
+            let save_as = document_session::save_document_session_as(
+                session.id.clone(),
+                session.state_revision,
+                save_as_target.to_string_lossy().into_owned(),
+                app.state(),
+            );
+            let acquired_during = Arc::clone(&acquired);
+            let coordination = async move {
+                let held = PhaseGate::wait_reached(reached).await;
+                let first_lease_attempt = if held {
+                    tokio::task::spawn_blocking(move || lease_rx.recv_timeout(PHASE_TIMEOUT).ok())
+                        .await
+                        .unwrap()
+                } else {
+                    None
+                };
+                let acquired_while_held = acquired_during.load(Ordering::SeqCst);
+                let _ = release.send(());
+                (held, first_lease_attempt, acquired_while_held)
             };
-            let acquired_while_held = acquired_during.load(Ordering::SeqCst);
-            let _ = release.send(());
-            (held, first_lease_attempt, acquired_while_held)
-        };
-        let (execution_outcome, save_outcome, (held, first_lease_attempt, acquired_while_held)) =
-            tokio::join!(execution, save_as, coordination);
-        assert!(
-            held,
-            "execution never reached BeforePublication; outcome: {execution_outcome:?}"
-        );
-        assert_eq!(
-            first_lease_attempt,
-            Some(false),
-            "Save As must find the verified-export lease held while publication is pending"
-        );
-        assert!(!acquired_while_held);
-        assert!(matches!(
-            execution_outcome,
-            SessionJobOutcome::Completed { .. }
-        ));
-        let display_path = save_outcome.unwrap().display_path;
-        assert!(
-            same_file(Path::new(&display_path), &save_as_target),
-            "display path {display_path} is not the Save As target {}",
-            save_as_target.display()
-        );
-        assert!(acquired.load(Ordering::SeqCst));
-        assert!(target.is_file());
-        assert!(save_as_target.is_file());
-        app.state::<document_session::DocumentSessionStore>()
-            .set_verified_artifact_save_lease_test_hook(None);
+            let (execution_outcome, save_outcome, (held, first_lease_attempt, acquired_while_held)) =
+                tokio::join!(execution, save_as, coordination);
+            assert!(
+                held,
+                "execution never reached BeforePublication; outcome: {execution_outcome:?}"
+            );
+            assert_eq!(
+                first_lease_attempt,
+                Some(false),
+                "Save As must find the verified-export lease held while publication is pending"
+            );
+            assert!(!acquired_while_held);
+            assert!(matches!(
+                execution_outcome,
+                SessionJobOutcome::Completed { .. }
+            ));
+            let display_path = save_outcome.unwrap().display_path;
+            assert!(
+                same_file(Path::new(&display_path), &save_as_target),
+                "display path {display_path} is not the Save As target {}",
+                save_as_target.display()
+            );
+            assert!(acquired.load(Ordering::SeqCst));
+            assert!(target.is_file());
+            assert!(save_as_target.is_file());
+            app.state::<document_session::DocumentSessionStore>()
+                .set_verified_artifact_save_lease_test_hook(None);
+        })
+        .await;
     }
 
     // Payloads that live only in superseded revisions once the session's own
@@ -870,215 +943,218 @@ mod pdfium_runtime_targets {
 
     #[tokio::test]
     async fn app_incremental_revision_payloads_are_absent_from_the_verified_publication() {
-        let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        let app = app();
-        let opened = activated_session(&app).await;
-        let session_id = opened.id.clone();
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let opened = activated_session(&app).await;
+            let session_id = opened.id.clone();
 
-        // The app's own incremental mutations: old /Info values, a note that
-        // is added and then deleted, then the /Info values the user keeps.
-        let with_old_info = document_session::update_session_metadata(
-            session_id.clone(),
-            opened.content_generation,
-            serde_json::from_value(serde_json::json!({
-                "title": OLD_INFO_TITLE,
-                "author": OLD_INFO_AUTHOR,
-                "subject": "",
-                "keywords": "",
-            }))
-            .unwrap(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
-        let with_note = document_session::add_session_annotation(
-            session_id.clone(),
-            with_old_info.content_generation,
-            0,
-            "Text".to_string(),
-            serde_json::from_value(serde_json::json!({
-                "x": 0.1, "y": 0.1, "width": 0.05, "height": 0.05,
-            }))
-            .unwrap(),
-            "#FFCC00".to_string(),
-            Some(DELETED_NOTE.to_string()),
-            None,
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
-        let annotations = document_session::get_session_page_annotations(
-            session_id.clone(),
-            with_note.content_generation,
-            0,
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
-        let note = annotations
-            .iter()
-            .find(|annotation| annotation.contents.as_deref() == Some(DELETED_NOTE))
-            .expect("the added note must be listed before it is deleted");
-        let without_note = document_session::delete_session_annotation(
-            session_id.clone(),
-            with_note.content_generation,
-            0,
-            note.id.clone(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
-        let session = document_session::update_session_metadata(
-            session_id.clone(),
-            without_note.content_generation,
-            serde_json::from_value(serde_json::json!({
-                "title": CURRENT_INFO_TITLE,
-                "author": "",
-                "subject": "",
-                "keywords": "",
-            }))
-            .unwrap(),
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap();
-        assert!(document_session::get_session_page_annotations(
-            session_id.clone(),
-            session.content_generation,
-            0,
-            app.state(),
-            app.state(),
-        )
-        .await
-        .unwrap()
-        .iter()
-        .all(|annotation| annotation.contents.as_deref() != Some(DELETED_NOTE)));
-
-        // Precondition: the working copy is an incremental file whose
-        // superseded revisions still carry every payload.
-        let working_path = app
-            .state::<document_session::DocumentSessionStore>()
-            .secure_redaction_export_paths_for_acceptance(&session_id)
+            // The app's own incremental mutations: old /Info values, a note that
+            // is added and then deleted, then the /Info values the user keeps.
+            let with_old_info = document_session::update_session_metadata(
+                session_id.clone(),
+                opened.content_generation,
+                serde_json::from_value(serde_json::json!({
+                    "title": OLD_INFO_TITLE,
+                    "author": OLD_INFO_AUTHOR,
+                    "subject": "",
+                    "keywords": "",
+                }))
+                .unwrap(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap();
+            let with_note = document_session::add_session_annotation(
+                session_id.clone(),
+                with_old_info.content_generation,
+                0,
+                "Text".to_string(),
+                serde_json::from_value(serde_json::json!({
+                    "x": 0.1, "y": 0.1, "width": 0.05, "height": 0.05,
+                }))
+                .unwrap(),
+                "#FFCC00".to_string(),
+                Some(DELETED_NOTE.to_string()),
+                None,
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap();
+            let annotations = document_session::get_session_page_annotations(
+                session_id.clone(),
+                with_note.content_generation,
+                0,
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap();
+            let note = annotations
+                .iter()
+                .find(|annotation| annotation.contents.as_deref() == Some(DELETED_NOTE))
+                .expect("the added note must be listed before it is deleted");
+            let without_note = document_session::delete_session_annotation(
+                session_id.clone(),
+                with_note.content_generation,
+                0,
+                note.id.clone(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap();
+            let session = document_session::update_session_metadata(
+                session_id.clone(),
+                without_note.content_generation,
+                serde_json::from_value(serde_json::json!({
+                    "title": CURRENT_INFO_TITLE,
+                    "author": "",
+                    "subject": "",
+                    "keywords": "",
+                }))
+                .unwrap(),
+                app.state(),
+                app.state(),
+            )
+            .await
+            .unwrap();
+            assert!(document_session::get_session_page_annotations(
+                session_id.clone(),
+                session.content_generation,
+                0,
+                app.state(),
+                app.state(),
+            )
+            .await
             .unwrap()
-            .working_path;
-        let working = std::fs::read(&working_path).unwrap();
-        assert!(
-            working
-                .windows(5)
-                .filter(|window| *window == b"%%EOF")
-                .count()
-                > 1,
-            "the session mutations must have been saved as incremental revisions"
-        );
-        for payload in [OLD_INFO_TITLE, OLD_INFO_AUTHOR, DELETED_NOTE] {
-            assert!(
-                payload_survives(&working, payload),
-                "precondition: {payload} must still be in an old revision of the working copy"
-            );
-        }
-        assert_eq!(info_title(&working).as_deref(), Some(CURRENT_INFO_TITLE));
-
-        let inspection = sanitization::inspect_document_sanitization_core_with_test_support(
-            uuid::Uuid::new_v4().to_string(),
-            session.id.clone(),
-            session.content_generation,
-            sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
-            &app.state::<document_session::DocumentSessionStore>(),
-            Duration::from_secs(180),
-            preview_alternative_lib::sanitization_inspection::SanitizationInspectionTestBehavior::Real,
-        )
-        .await
-        .unwrap();
-        let inspection = match inspection {
-            SessionJobOutcome::Completed { value, .. } => value,
-            other => panic!("inspection of the incremental working copy failed: {other:?}"),
-        };
-        assert!(inspection.document_facts.incremental_revisions_detected);
-        let history = inspection
-            .controls
             .iter()
-            .find(|control| control.control_id == "incremental_revisions")
-            .unwrap();
-        assert!(history.present && history.finding_count > 0);
+            .all(|annotation| annotation.contents.as_deref() != Some(DELETED_NOTE)));
 
-        let output = tempfile::tempdir().unwrap();
-        let target = output.path().join("history-removed.pdf");
-        let report = match execute(&app, &session, &target, None).await {
-            SessionJobOutcome::Completed { value, cleanup, .. } => {
-                assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
-                value
+            // Precondition: the working copy is an incremental file whose
+            // superseded revisions still carry every payload.
+            let working_path = app
+                .state::<document_session::DocumentSessionStore>()
+                .secure_redaction_export_paths_for_acceptance(&session_id)
+                .unwrap()
+                .working_path;
+            let working = std::fs::read(&working_path).unwrap();
+            assert!(
+                working
+                    .windows(5)
+                    .filter(|window| *window == b"%%EOF")
+                    .count()
+                    > 1,
+                "the session mutations must have been saved as incremental revisions"
+            );
+            for payload in [OLD_INFO_TITLE, OLD_INFO_AUTHOR, DELETED_NOTE] {
+                assert!(
+                    payload_survives(&working, payload),
+                    "precondition: {payload} must still be in an old revision of the working copy"
+                );
             }
-            other => panic!("sanitizing the incremental working copy failed: {other:?}"),
-        };
+            assert_eq!(info_title(&working).as_deref(), Some(CURRENT_INFO_TITLE));
 
-        // The independent verifier's own verdict on the published bytes.
-        let verification = &report.verification;
-        assert!(verification.is_verified);
-        assert!(verification.blockers.is_empty());
-        assert!(verification.unresolved_findings.is_empty());
-        for (name, check) in [
-            ("full_rewrite", &verification.full_rewrite),
-            (
-                "incremental_history_removed",
-                &verification.incremental_history_removed,
-            ),
-            ("object_graph_scan", &verification.object_graph_scan),
-            ("removed_payload_scan", &verification.removed_payload_scan),
-            ("parser_reopen", &verification.parser_reopen),
-            ("pdfium_reopen", &verification.pdfium_reopen),
-            ("render_smoke", &verification.render_smoke),
-        ] {
-            assert_eq!(
-                check.status,
-                sanitization::SanitizationVerificationStatus::Passed,
-                "{name}: {check:?}"
-            );
-        }
-        let control = verification
-            .controls
-            .iter()
-            .find(|control| control.control_id == "incremental_revisions")
+            let inspection = sanitization::inspect_document_sanitization_core_with_test_support(
+                uuid::Uuid::new_v4().to_string(),
+                session.id.clone(),
+                session.content_generation,
+                sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
+                &app.state::<document_session::DocumentSessionStore>(),
+                Duration::from_secs(180),
+                preview_alternative_lib::sanitization_inspection::SanitizationInspectionTestBehavior::Real,
+            )
+            .await
             .unwrap();
-        assert!(control.detected_before);
-        assert_eq!(control.forbidden_findings_after, 0);
-        assert_eq!(
-            control.status,
-            sanitization::SanitizationVerificationStatus::Passed
-        );
-        let publication = report.publication.as_ref().unwrap();
-        assert!(publication.published);
-        assert_eq!(publication.published_digest, verification.transform_digest);
-        assert_eq!(digest(&target), verification.transform_digest);
-
-        // And on the published bytes themselves: one revision, no history
-        // pointer, none of the superseded payloads in any spelling, and the
-        // current /Info value kept (history removal, not metadata stripping).
-        let published = std::fs::read(&target).unwrap();
-        assert_eq!(
-            published
-                .windows(5)
-                .filter(|window| *window == b"%%EOF")
-                .count(),
-            1
-        );
-        assert!(!published.windows(5).any(|window| window == b"/Prev"));
-        for payload in [OLD_INFO_TITLE, OLD_INFO_AUTHOR, DELETED_NOTE] {
-            assert!(
-                !payload_survives(&published, payload),
-                "{payload} from a superseded revision survived publication"
-            );
-        }
-        assert_eq!(info_title(&published).as_deref(), Some(CURRENT_INFO_TITLE));
-
-        let after =
-            document_session::get_document_session_snapshot(session.id.clone(), app.state())
-                .await
+            let inspection = match inspection {
+                SessionJobOutcome::Completed { value, .. } => value,
+                other => panic!("inspection of the incremental working copy failed: {other:?}"),
+            };
+            assert!(inspection.document_facts.incremental_revisions_detected);
+            let history = inspection
+                .controls
+                .iter()
+                .find(|control| control.control_id == "incremental_revisions")
                 .unwrap();
-        assert_session_neutral(&session, &after);
+            assert!(history.present && history.finding_count > 0);
+
+            let output = tempfile::tempdir().unwrap();
+            let target = output.path().join("history-removed.pdf");
+            let report = match execute(&app, &session, &target, None).await {
+                SessionJobOutcome::Completed { value, cleanup, .. } => {
+                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                    value
+                }
+                other => panic!("sanitizing the incremental working copy failed: {other:?}"),
+            };
+
+            // The independent verifier's own verdict on the published bytes.
+            let verification = &report.verification;
+            assert!(verification.is_verified);
+            assert!(verification.blockers.is_empty());
+            assert!(verification.unresolved_findings.is_empty());
+            for (name, check) in [
+                ("full_rewrite", &verification.full_rewrite),
+                (
+                    "incremental_history_removed",
+                    &verification.incremental_history_removed,
+                ),
+                ("object_graph_scan", &verification.object_graph_scan),
+                ("removed_payload_scan", &verification.removed_payload_scan),
+                ("parser_reopen", &verification.parser_reopen),
+                ("pdfium_reopen", &verification.pdfium_reopen),
+                ("render_smoke", &verification.render_smoke),
+            ] {
+                assert_eq!(
+                    check.status,
+                    sanitization::SanitizationVerificationStatus::Passed,
+                    "{name}: {check:?}"
+                );
+            }
+            let control = verification
+                .controls
+                .iter()
+                .find(|control| control.control_id == "incremental_revisions")
+                .unwrap();
+            assert!(control.detected_before);
+            assert_eq!(control.forbidden_findings_after, 0);
+            assert_eq!(
+                control.status,
+                sanitization::SanitizationVerificationStatus::Passed
+            );
+            let publication = report.publication.as_ref().unwrap();
+            assert!(publication.published);
+            assert_eq!(publication.published_digest, verification.transform_digest);
+            assert_eq!(digest(&target), verification.transform_digest);
+
+            // And on the published bytes themselves: one revision, no history
+            // pointer, none of the superseded payloads in any spelling, and the
+            // current /Info value kept (history removal, not metadata stripping).
+            let published = std::fs::read(&target).unwrap();
+            assert_eq!(
+                published
+                    .windows(5)
+                    .filter(|window| *window == b"%%EOF")
+                    .count(),
+                1
+            );
+            assert!(!published.windows(5).any(|window| window == b"/Prev"));
+            for payload in [OLD_INFO_TITLE, OLD_INFO_AUTHOR, DELETED_NOTE] {
+                assert!(
+                    !payload_survives(&published, payload),
+                    "{payload} from a superseded revision survived publication"
+                );
+            }
+            assert_eq!(info_title(&published).as_deref(), Some(CURRENT_INFO_TITLE));
+
+            let after =
+                document_session::get_document_session_snapshot(session.id.clone(), app.state())
+                    .await
+                    .unwrap();
+            assert_session_neutral(&session, &after);
+        })
+        .await;
     }
 }
