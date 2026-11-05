@@ -11,9 +11,7 @@
 use parking_lot::{Mutex, RwLock};
 use preview_alternative_lib::document_session::{self, SessionJobOutcome};
 use preview_alternative_lib::pdf_engine::render_service::RenderService;
-use preview_alternative_lib::pdf_engine::subprocess_manager::{
-    PdfiumWorkerBroker, WorkerLauncher,
-};
+use preview_alternative_lib::pdf_engine::subprocess_manager::{PdfiumWorkerBroker, WorkerLauncher};
 use preview_alternative_lib::sanitization;
 use preview_alternative_lib::sanitization_inspection::SanitizationInspectionTestBehavior;
 use preview_alternative_lib::{
@@ -52,7 +50,10 @@ fn start_watchdog() {
         std::thread::sleep(Duration::from_secs(15));
         let (name, since) = *PHASE.lock();
         let stuck = since.map_or(0, |since| since.elapsed().as_secs());
-        eprintln!("[probe {:>7.2}s] .. still in '{name}' for {stuck}s", elapsed());
+        eprintln!(
+            "[probe {:>7.2}s] .. still in '{name}' for {stuck}s",
+            elapsed()
+        );
         if stuck >= 240 {
             eprintln!("[probe] HANG: '{name}' did not finish within 240 s; exiting");
             std::process::exit(3);
@@ -69,7 +70,11 @@ fn windows_session_activation_and_inspection_probe() {
     *START.lock() = Some(Instant::now());
     start_watchdog();
 
-    note(format!("os={} arch={}", std::env::consts::OS, std::env::consts::ARCH));
+    note(format!(
+        "os={} arch={}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
     note(format!("worker exe={}", worker_executable().display()));
     for key in ["PDFIUM_PATH", "PDFIUM_RESOLVED_PATH", "TEMP", "TMP"] {
         note(format!("{key}={:?}", std::env::var_os(key)));
@@ -113,6 +118,34 @@ fn windows_session_activation_and_inspection_probe() {
         &stderr[..stderr.len().min(2000)]
     ));
 
+    phase("scenario A: graceful shutdown_all_resources before drop");
+    scenario(true);
+    phase("scenario B: no shutdown (what the acceptance tests do)");
+    scenario(false);
+    phase("done");
+}
+
+fn list_processes(label: &str) {
+    if !cfg!(windows) {
+        return;
+    }
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'preview-alternative*' -or $_.Name -like 'windows_session_hang_probe*' } | ForEach-Object { \"$($_.ProcessId) parent=$($_.ParentProcessId) $($_.CommandLine)\" }",
+        ])
+        .output();
+    match output {
+        Ok(output) => note(format!(
+            "processes ({label}):\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )),
+        Err(error) => note(format!("process listing failed: {error}")),
+    }
+}
+
+fn scenario(graceful: bool) {
     // 2. The acceptance suites' app() setup, step by step.
     phase("tokio runtime (current_thread, as #[tokio::test])");
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -212,9 +245,32 @@ fn windows_session_activation_and_inspection_probe() {
             .close_all()
             .await
             .unwrap();
+        if graceful {
+            phase("shutdown_all_resources (what the app does on exit)");
+            let warnings = app
+                .state::<document_session::DocumentSessionStore>()
+                .shutdown_all_resources(&app.state(), &app.state())
+                .await;
+            note(format!("shutdown warnings: {}", warnings.len()));
+        }
     });
+    list_processes("after scenario, app alive");
 
     phase("drop app");
     drop(app);
-    phase("done");
+    list_processes("after drop app");
+
+    phase("runtime.shutdown_timeout(45 s) (#[tokio::test] drops it with no timeout)");
+    let started = Instant::now();
+    runtime.shutdown_timeout(Duration::from_secs(45));
+    let took = started.elapsed().as_secs_f64();
+    note(format!(
+        "runtime shutdown took {took:.2}s -> {}",
+        if took >= 44.0 {
+            "a blocking-pool thread never finished (this is the hang)"
+        } else {
+            "clean"
+        }
+    ));
+    list_processes("after runtime shutdown");
 }
