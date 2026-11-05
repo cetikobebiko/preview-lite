@@ -913,10 +913,10 @@ macOS x86_64, Windows ve Linux runtime certification 8C.7 blocker'ıdır.
 
 | Platform | Runtime Acceptance Durumu | Karar Notu |
 |---|---|---|
-| macOS arm64 | **PASS** (CI 2026-11-05: inspection 10/10, publication 10/10) | Full real-process inspection, transform, verifier, publication, target TOCTOU, fault recovery, cancellation ve session neutrality testlerinin tamamı başarıyla geçmiş ve doğrulanmıştır. |
+| macOS arm64 | **PASS** (CI 2026-11-05: inspection 10/10, publication 11/11 (7d5dfaf)) | Full real-process inspection, transform, verifier, publication, target TOCTOU, fault recovery, cancellation ve session neutrality testlerinin tamamı başarıyla geçmiş ve doğrulanmıştır. |
 | macOS x86_64 | **UNSUPPORTED TARGET** | PDFium runtime yok (`docs/engineering/platform-support.json` macOS için yalnız arm64 runtime taşır). Desteklenen bir hedef değildir; bu satır sertifikasyon borcu (NOT RUN) değildir. Kabul suite'leri bu hedefte bilerek sıfır test derler. Registry'deki `macos` platformu arm64 anlamındadır. |
-| Windows x86_64 | **PASS** (7f4c8d2 sonrası) | CI 2026-11-05 (PR #22): inspection 10/10, publication 10/10; symlink/hardlink preflight testi Windows'ta koştu (NOT RUN değil). Önceki koşulardaki asılma test kapanışından kaynaklanıyordu, üretim çıkış yolu temizdi. Ayrıntı §26.5. |
-| Linux x86_64 | **PASS** (a2976ab sonrası) | CI 2026-11-05 (PR #22): inspection 10/10, publication 10/10. İlk iki koşuda publication 9/10 idi (`ExistingDeletedRecreated` yarışı, inode yeniden kullanımı); `document_io` file-origin düzeltmesiyle giderildi. Ayrıntı §26.5. |
+| Windows x86_64 | **PASS** (7f4c8d2 sonrası) | CI 2026-11-05 (PR #22): inspection 10/10, publication 11/11 (7d5dfaf); symlink/hardlink preflight testi Windows'ta koştu (NOT RUN değil). Önceki koşulardaki asılma test kapanışından kaynaklanıyordu, üretim çıkış yolu temizdi. Ayrıntı §26.5. |
+| Linux x86_64 | **PASS** (a2976ab sonrası) | CI 2026-11-05 (PR #22): inspection 10/10, publication 11/11 (7d5dfaf). İlk iki koşuda publication 9/10 idi (`ExistingDeletedRecreated` yarışı, inode yeniden kullanımı); `document_io` file-origin düzeltmesiyle giderildi. Ayrıntı §26.5. |
 
 ### 26.3 Final Aktivasyon Kararı
 
