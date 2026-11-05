@@ -279,6 +279,43 @@ enum SnapshotKind {
     RegularFile,
 }
 
+/// When the file at a path came into existence.
+///
+/// File identities are recycled: Linux ext4 hands a deleted file's inode
+/// number to the next file created, so deleting a target and recreating it
+/// with the same bytes leaves `(device, inode)` and the digest unchanged. The
+/// birth time (or, where the platform reports none, the inode change time) is
+/// assigned by the kernel when the file is created and is not set by an
+/// ordinary writer, so it tells the two files apart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FileOrigin {
+    Birth(SystemTime),
+    #[cfg(unix)]
+    Changed {
+        seconds: i64,
+        nanoseconds: i64,
+    },
+    Unavailable,
+}
+
+fn file_origin(metadata: &Metadata) -> FileOrigin {
+    if let Ok(created) = metadata.created() {
+        return FileOrigin::Birth(created);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        FileOrigin::Changed {
+            seconds: metadata.ctime(),
+            nanoseconds: metadata.ctime_nsec(),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        FileOrigin::Unavailable
+    }
+}
+
 #[derive(Clone, Debug)]
 struct FileSnapshot {
     kind: SnapshotKind,
@@ -286,6 +323,7 @@ struct FileSnapshot {
     len: u64,
     modified: Option<SystemTime>,
     links: Option<u64>,
+    origin: FileOrigin,
 }
 
 impl FileSnapshot {
@@ -296,6 +334,7 @@ impl FileSnapshot {
             len: 0,
             modified: None,
             links: None,
+            origin: FileOrigin::Unavailable,
         }
     }
 
@@ -477,6 +516,7 @@ fn snapshot_regular_file(path: &Path, reject_links: bool) -> Result<FileSnapshot
         len: metadata.len(),
         modified: metadata.modified().ok(),
         links: Some(links),
+        origin: file_origin(&metadata),
     })
 }
 
@@ -1787,7 +1827,8 @@ pub(crate) enum TargetExpectation {
 /// Verified-artifact publication has a stricter target contract than Save/Save
 /// As. A digest alone cannot distinguish a same-content replacement from the
 /// file the user originally selected, so bind the expectation to the canonical
-/// namespace and filesystem identity captured at preflight.
+/// namespace, filesystem identity and file origin captured at preflight. The
+/// origin catches a delete-and-recreate that reuses the inode number.
 #[derive(Clone, Debug)]
 pub(crate) enum VerifiedArtifactTargetExpectation {
     Missing {
@@ -1796,6 +1837,7 @@ pub(crate) enum VerifiedArtifactTargetExpectation {
     Existing {
         namespace: PathBuf,
         identity: FileIdentity,
+        origin: FileOrigin,
         digest: String,
     },
 }
@@ -1837,6 +1879,7 @@ pub(crate) fn capture_verified_artifact_target_expectation(
                     resolved.path.display()
                 )
             })?,
+            origin: resolved.snapshot.origin.clone(),
             digest: sha256_file(&resolved.path)
                 .map_err(|error| format!("Target SHA-256 okunamadı: {error}"))?,
         },
@@ -2069,6 +2112,7 @@ fn atomic_publish_verified_artifact_impl(
                 VerifiedArtifactTargetExpectation::Existing {
                     namespace,
                     identity,
+                    origin,
                     digest,
                 } => {
                     if current.namespace != *namespace
@@ -2083,6 +2127,11 @@ fn atomic_publish_verified_artifact_impl(
                     {
                         return Err(DocumentIoFailure::preflight(format!(
                             "{conflict}: hedef file identity preflight baseline'ından değişti"
+                        )));
+                    }
+                    if current.snapshot.origin != *origin {
+                        return Err(DocumentIoFailure::preflight(format!(
+                            "{conflict}: hedef preflight sonrasında silinip yeniden oluşturuldu"
                         )));
                     }
                     let actual = sha256_file(&current.path).map_err(|error| {
@@ -3622,6 +3671,122 @@ fn verified_publication_rejects_target_baseline_race_without_overwrite() {
 
     assert_eq!(error.state, CommitState::OriginalPreserved);
     assert_eq!(fs::read(&target).unwrap(), b"%PDF-racing-writer");
+}
+
+#[test]
+fn verified_publication_replaces_an_untouched_existing_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    let artifact = directory.path().join("verified-artifact.pdf");
+    let target = directory.path().join("published.pdf");
+    fs::write(&snapshot, b"%PDF-snapshot").unwrap();
+    fs::write(&artifact, b"%PDF-verified-artifact").unwrap();
+    fs::write(&target, b"%PDF-original-target").unwrap();
+    let digest = sha256_file(&artifact).unwrap();
+    let (canonical_target, expectation) =
+        capture_secure_publication_target_expectation(&target).unwrap();
+    if cfg!(any(unix, windows)) {
+        assert!(matches!(
+            &expectation,
+            VerifiedArtifactTargetExpectation::Existing { origin, .. }
+                if *origin != FileOrigin::Unavailable
+        ));
+    }
+    // Reading the target (as a user or indexer might) is not a race.
+    let _ = fs::read(&target).unwrap();
+
+    let report = atomic_publish_prevalidated_pdf(
+        "secure_redaction_publish_test",
+        &snapshot,
+        &canonical_target,
+        &artifact,
+        &digest,
+        expectation,
+    )
+    .unwrap();
+
+    assert_eq!(report.committed_digest, digest);
+    assert_eq!(sha256_file(&target).unwrap(), digest);
+}
+
+#[test]
+fn verified_publication_rejects_recreated_target_with_reused_identity_and_same_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    let artifact = directory.path().join("verified-artifact.pdf");
+    let target = directory.path().join("published.pdf");
+    fs::write(&snapshot, b"%PDF-snapshot").unwrap();
+    fs::write(&artifact, b"%PDF-verified-artifact").unwrap();
+    fs::write(&target, b"%PDF-same-bytes").unwrap();
+    let digest = sha256_file(&artifact).unwrap();
+    let (canonical_target, expectation) =
+        capture_secure_publication_target_expectation(&target).unwrap();
+    // What a delete-and-recreate on a filesystem that reuses the inode number
+    // looks like: same namespace, same identity, same bytes, different origin.
+    // Simulated so the check is exercised on every filesystem, not only where
+    // the kernel happens to hand the inode back.
+    let VerifiedArtifactTargetExpectation::Existing {
+        namespace,
+        identity,
+        digest: target_digest,
+        ..
+    } = expectation
+    else {
+        panic!("existing target must produce an Existing expectation");
+    };
+    let recreated = VerifiedArtifactTargetExpectation::Existing {
+        namespace,
+        identity,
+        origin: FileOrigin::Birth(std::time::UNIX_EPOCH),
+        digest: target_digest,
+    };
+
+    let error = atomic_publish_prevalidated_pdf(
+        "secure_redaction_publish_test",
+        &snapshot,
+        &canonical_target,
+        &artifact,
+        &digest,
+        recreated,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.state, CommitState::OriginalPreserved);
+    assert!(
+        error.detail.contains("REDACTION_TARGET_CONFLICT"),
+        "{}",
+        error.detail
+    );
+    assert_eq!(fs::read(&target).unwrap(), b"%PDF-same-bytes");
+}
+
+#[test]
+fn verified_publication_rejects_deleted_and_recreated_target_with_same_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    let artifact = directory.path().join("verified-artifact.pdf");
+    let target = directory.path().join("published.pdf");
+    fs::write(&snapshot, b"%PDF-snapshot").unwrap();
+    fs::write(&artifact, b"%PDF-verified-artifact").unwrap();
+    fs::write(&target, b"%PDF-same-bytes").unwrap();
+    let digest = sha256_file(&artifact).unwrap();
+    let (canonical_target, expectation) =
+        capture_secure_publication_target_expectation(&target).unwrap();
+    fs::remove_file(&target).unwrap();
+    fs::write(&target, b"%PDF-same-bytes").unwrap();
+
+    let error = atomic_publish_prevalidated_pdf(
+        "secure_redaction_publish_test",
+        &snapshot,
+        &canonical_target,
+        &artifact,
+        &digest,
+        expectation,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.state, CommitState::OriginalPreserved);
+    assert_eq!(fs::read(&target).unwrap(), b"%PDF-same-bytes");
 }
 
 #[cfg(unix)]
