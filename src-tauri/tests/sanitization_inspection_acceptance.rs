@@ -82,40 +82,61 @@ mod pdfium_runtime_targets {
         path: &Path,
         password: Option<&str>,
     ) -> document_session::DocumentSessionSnapshot {
-        let opened = document_session::open_document_session(
-            path.to_string_lossy().into_owned(),
-            app.state(),
+        let opened = within(
+            "open_document_session",
+            document_session::open_document_session(
+                path.to_string_lossy().into_owned(),
+                app.state(),
+            ),
         )
         .await
         .unwrap();
         if let Some(password) = password {
-            document_session::authenticate_document_session(
-                opened.session_id.clone(),
-                password.to_string(),
-                app.state(),
-                app.state(),
+            within(
+                "authenticate_document_session",
+                document_session::authenticate_document_session(
+                    opened.session_id.clone(),
+                    password.to_string(),
+                    app.state(),
+                    app.state(),
+                ),
             )
             .await
             .unwrap();
         }
-        let prepared = document_session::prepare_candidate_activation(
-            opened.session_id,
-            None,
-            None,
-            app.state(),
+        let prepared = within(
+            "prepare_candidate_activation",
+            document_session::prepare_candidate_activation(
+                opened.session_id,
+                None,
+                None,
+                app.state(),
+            ),
         )
         .await
         .unwrap();
-        document_session::commit_candidate_activation(
-            prepared.activation_token,
-            app.state(),
-            app.state(),
-            app.state(),
-            app.state(),
+        within(
+            "commit_candidate_activation",
+            document_session::commit_candidate_activation(
+                prepared.activation_token,
+                app.state(),
+                app.state(),
+                app.state(),
+                app.state(),
+            ),
         )
         .await
         .unwrap()
         .snapshot
+    }
+
+    /// Bounds one session/worker phase so a run that never returns fails
+    /// naming the phase instead of hanging until the CI step timeout.
+    async fn within<T>(phase: &str, future: impl std::future::Future<Output = T>) -> T {
+        match tokio::time::timeout(std::time::Duration::from_secs(180), future).await {
+            Ok(value) => value,
+            Err(_) => panic!("HANG: {phase} did not return within 180 s"),
+        }
     }
 
     fn javascript_stream_fixture(directory: &Path) -> PathBuf {
@@ -180,14 +201,17 @@ mod pdfium_runtime_targets {
         timeout: Duration,
         behavior: SanitizationInspectionTestBehavior,
     ) -> SessionJobOutcome<sanitization::SanitizationInspectionReport> {
-        sanitization::inspect_document_sanitization_core_with_test_support(
-            job_id,
-            session.id.clone(),
-            session.content_generation,
-            sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
-            &app.state::<document_session::DocumentSessionStore>(),
-            timeout,
-            behavior,
+        within(
+            "inspect_document_sanitization",
+            sanitization::inspect_document_sanitization_core_with_test_support(
+                job_id,
+                session.id.clone(),
+                session.content_generation,
+                sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
+                &app.state::<document_session::DocumentSessionStore>(),
+                timeout,
+                behavior,
+            ),
         )
         .await
         .unwrap()

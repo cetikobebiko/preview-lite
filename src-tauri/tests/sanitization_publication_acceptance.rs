@@ -87,30 +87,48 @@ mod pdfium_runtime_targets {
     async fn activated_session(
         app: &tauri::App<tauri::test::MockRuntime>,
     ) -> document_session::DocumentSessionSnapshot {
-        let opened = document_session::open_document_session(
-            fixture().to_string_lossy().into_owned(),
-            app.state(),
+        let opened = within(
+            "open_document_session",
+            document_session::open_document_session(
+                fixture().to_string_lossy().into_owned(),
+                app.state(),
+            ),
         )
         .await
         .unwrap();
-        let prepared = document_session::prepare_candidate_activation(
-            opened.session_id,
-            None,
-            None,
-            app.state(),
+        let prepared = within(
+            "prepare_candidate_activation",
+            document_session::prepare_candidate_activation(
+                opened.session_id,
+                None,
+                None,
+                app.state(),
+            ),
         )
         .await
         .unwrap();
-        document_session::commit_candidate_activation(
-            prepared.activation_token,
-            app.state(),
-            app.state(),
-            app.state(),
-            app.state(),
+        within(
+            "commit_candidate_activation",
+            document_session::commit_candidate_activation(
+                prepared.activation_token,
+                app.state(),
+                app.state(),
+                app.state(),
+                app.state(),
+            ),
         )
         .await
         .unwrap()
         .snapshot
+    }
+
+    /// Bounds one session/worker phase so a run that never returns fails
+    /// naming the phase instead of hanging until the CI step timeout.
+    async fn within<T>(phase: &str, future: impl std::future::Future<Output = T>) -> T {
+        match tokio::time::timeout(std::time::Duration::from_secs(180), future).await {
+            Ok(value) => value,
+            Err(_) => panic!("HANG: {phase} did not return within 180 s"),
+        }
     }
 
     fn policy() -> SanitizationPolicy {
@@ -131,14 +149,17 @@ mod pdfium_runtime_targets {
         target: &Path,
         support: Option<Arc<SanitizationExecutionTestSupport>>,
     ) -> SessionJobOutcome<sanitization::SanitizationExecutionReport> {
-        sanitization_publication::execute_document_sanitization_core_with_test_support(
-            uuid::Uuid::new_v4().to_string(),
-            session.id.clone(),
-            session.content_generation,
-            policy(),
-            target.to_string_lossy().into_owned(),
-            &app.state::<document_session::DocumentSessionStore>(),
-            support,
+        within(
+            "execute_document_sanitization",
+            sanitization_publication::execute_document_sanitization_core_with_test_support(
+                uuid::Uuid::new_v4().to_string(),
+                session.id.clone(),
+                session.content_generation,
+                policy(),
+                target.to_string_lossy().into_owned(),
+                &app.state::<document_session::DocumentSessionStore>(),
+                support,
+            ),
         )
         .await
         .unwrap()
@@ -349,7 +370,7 @@ mod pdfium_runtime_targets {
     #[tokio::test]
     async fn missing_and_existing_target_toctou_matrix_is_fail_closed() {
         let _serial = EXECUTION_TEST_MUTEX.lock().await;
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Debug)]
         enum Race {
             MissingCreated,
             ExistingModified,
@@ -396,7 +417,18 @@ mod pdfium_runtime_targets {
                 ..Default::default()
             };
             let outcome = execute(&app, &session, &target, Some(Arc::new(support))).await;
-            assert_failed(outcome, "SANITIZATION_TARGET_CONFLICT");
+            match outcome {
+                SessionJobOutcome::Failed { error, cleanup, .. } => {
+                    assert_eq!(
+                        error.code, "SANITIZATION_TARGET_CONFLICT",
+                        "{race:?}: {error:?}"
+                    );
+                    assert!(matches!(cleanup, SessionJobCleanupOutcome::Cleaned));
+                }
+                other => panic!(
+                    "{race:?}: the target race was not detected, publication outcome: {other:?}"
+                ),
+            }
             let expected = match race {
                 Race::MissingCreated => b"external-created".as_slice(),
                 Race::ExistingModified => b"external-modified".as_slice(),
