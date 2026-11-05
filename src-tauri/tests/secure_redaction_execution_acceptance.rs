@@ -345,6 +345,68 @@ mod pdfium_runtime_targets {
         assert_eq!(after.dirty, session.dirty);
     }
 
+    // The frontend recomputes `plan_digest` from the plan it receives and refuses a mismatch.
+    // The plan crosses the job-worker JSON file and the Tauri IPC, so every f64 must survive
+    // both round trips bit for bit. The UI's default policy (300 dpi, 2 pt margin) and
+    // non-round region coordinates produce values such as 51.480000000000004 that a lossy
+    // JSON float parser rounds by one ULP.
+    #[tokio::test]
+    async fn returned_plan_digest_matches_its_contents_for_ui_default_policy() {
+        let _serial = EXECUTION_TEST_MUTEX.lock().await;
+        let app = app();
+        let session = activated_session(&app).await;
+        let policy: SecureRedactionPolicy = serde_json::from_value(json!({
+            "schema_version": "1.0.0",
+            "profile": "secure_rasterized_pages_v1",
+            "strategy": "rasterized_pages",
+            "raster_dpi": 300,
+            "appearance": { "kind": "solid", "color": "black", "opacity": 1.0 },
+            "safety_margin_points": 2.0,
+            "interactive_content_policy": "block",
+            "signature_policy": "block",
+            "encryption_policy": "block"
+        }))
+        .unwrap();
+        let acknowledgements: RedactionAcknowledgements = serde_json::from_value(json!({
+            "schema_version": "1.0.0",
+            "rasterized_pages_accepted": false,
+            "text_search_loss_accepted": false,
+            "accessibility_loss_accepted": false,
+            "annotation_loss_accepted": false,
+            "form_loss_accepted": false,
+            "signature_invalidation_accepted": false,
+            "encryption_change_accepted": false
+        }))
+        .unwrap();
+        // On simple-text.pdf (600 x 800 pt) these give applied bottoms such as
+        // 510.79999999999995 and heights such as 56.00000000000006, which serde_json's
+        // default float parser rounds by one ULP. One region per column so none merge.
+        let regions: Vec<RedactionRegionInput> = serde_json::from_value(json!([
+            { "id": "ui-default-a", "page_index": 0, "source": "manual_selection",
+              "normalized_top_left_rect": { "x": 0.09, "y": 0.274, "width": 0.23, "height": 0.085 } },
+            { "id": "ui-default-b", "page_index": 0, "source": "manual_selection",
+              "normalized_top_left_rect": { "x": 0.37, "y": 0.279, "width": 0.23, "height": 0.085 } },
+            { "id": "ui-default-c", "page_index": 0, "source": "manual_selection",
+              "normalized_top_left_rect": { "x": 0.65, "y": 0.297, "width": 0.23, "height": 0.065 } }
+        ]))
+        .unwrap();
+
+        let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+        assert_eq!(plan.canonical_regions.len(), 3);
+        let recomputed = preview_alternative_lib::secure_redaction::compute_plan_digest(
+            &preview_alternative_lib::secure_redaction::PlanDigestInputs::from(&plan),
+        );
+        assert_eq!(
+            recomputed, plan.plan_digest,
+            "plan returned through the job worker must hash to its own plan_digest"
+        );
+
+        // Tauri IPC serializes the plan once more before the frontend sees it.
+        let over_ipc: SecureRedactionPlan =
+            serde_json::from_str(&serde_json::to_string(&plan).unwrap()).unwrap();
+        assert_eq!(over_ipc, plan);
+    }
+
     #[tokio::test]
     async fn existing_target_is_atomically_replaced_with_verified_bytes() {
         let _serial = EXECUTION_TEST_MUTEX.lock().await;

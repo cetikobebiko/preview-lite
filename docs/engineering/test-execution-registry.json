@@ -366,15 +366,15 @@
         "secure_redaction_test_support_feature"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 11,
+      "expectedTestCount": 12,
       "expectedTestPresence": "conditional",
       "expectedTestCountByProfile": {
         "default": 0,
-        "with_secure_redaction_test_support_on_macos_aarch64": 11,
-        "with_secure_redaction_test_support_on_linux_x86_64": 11,
-        "with_secure_redaction_test_support_on_windows_x86_64": 11
+        "with_secure_redaction_test_support_on_macos_aarch64": 12,
+        "with_secure_redaction_test_support_on_linux_x86_64": 12,
+        "with_secure_redaction_test_support_on_windows_x86_64": 12
       },
-      "notes": "#![cfg(feature = \"secure-redaction-test-support\")] + cfg(any(macos aarch64, linux x86_64, windows x86_64)) — zero-test risk. pdfium_runtime_target_arch = the architecture platform-support.json ships a PDFium runtime for: aarch64 on macOS, x86_64 on Linux and Windows. macOS x86_64 has no PDFium runtime and is an unsupported target (0 tests by design), not NOT_RUN debt. CI: .github/workflows/secure-redaction-acceptance.yml requires exactly 11 passed per platform."
+      "notes": "#![cfg(feature = \"secure-redaction-test-support\")] + cfg(any(macos aarch64, linux x86_64, windows x86_64)) — zero-test risk. pdfium_runtime_target_arch = the architecture platform-support.json ships a PDFium runtime for: aarch64 on macOS, x86_64 on Linux and Windows. macOS x86_64 has no PDFium runtime and is an unsupported target (0 tests by design), not NOT_RUN debt. CI: .github/workflows/secure-redaction-acceptance.yml requires exactly 12 passed per platform."
     },
     {
       "id": "rust:secure_redaction_planning_worker",
