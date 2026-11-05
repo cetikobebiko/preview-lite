@@ -1,0 +1,37 @@
+name: Windows session hang probe (temporary)
+
+# TEMPORARY diagnostic for the Windows acceptance hang (PR #22). Removed once
+# the hang is understood; not a certification job.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-hang-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Windows session hang probe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Provision verified PDFium runtime
+        run: node scripts/provision-pdfium-runtime.mjs
+      - name: Run probe
+        shell: bash
+        working-directory: src-tauri
+        timeout-minutes: 25
+        run: |
+          cargo test --locked --features sanitization-test-support \
+            --test windows_session_hang_probe -- --nocapture --test-threads=1
