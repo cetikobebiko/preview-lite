@@ -852,7 +852,13 @@ authority ve publication yürütür. Legacy `apply_redactions` fail-closed kalı
 8B-8.3 phase hooks, controlled child failure/timeout, result injection ve
 staged-temp corruption seam'leri yalnız explicit
 `secure-redaction-test-support` Cargo feature'ı ile integration acceptance
-derlemesine alınır. Default feature set boştur. Production command yalnız
+derlemesine alınır. Sanitization acceptance ile paylaşılan Save write-lease
+gözlem hook'u (`set_secure_redaction_save_lease_test_hook` /
+`set_verified_artifact_save_lease_test_hook`, store alanı ve Save içindeki iki
+çağrı) ile `secure_redaction_export_paths_for_acceptance` accessor'ı
+`any(secure-redaction-test-support, sanitization-test-support)` altında derlenir;
+daha önce default/release build'de de bulunuyorlardı (IPC'ye açık değildi).
+`architecture.test.js` her bildirim ve kullanımın bu gate altında olduğunu kilitler. Default feature set boştur. Production command yalnız
 `execute_secure_redaction_core` çağırır; environment variable, IPC payload,
 frontend input veya runtime configuration test authority üretemez. Whole-object
 SIGSEGV probe'u yalnız `tests/whole_object_backend_characterization.rs` child
