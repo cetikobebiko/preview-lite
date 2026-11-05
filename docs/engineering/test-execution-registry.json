@@ -64,9 +64,9 @@
       ],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 41,
+      "expectedTestCount": 44,
       "expectedTestPresence": "exact",
-      "notes": "PDFium-independent atomic filesystem and replace semantics; compiles isolated document_io module (43 unit tests; 4 are unix-only and 3 windows-only, so 40 run on Unix) + 1 integration typecheck test; FAST_LOCAL runs on Linux, so 41 exact."
+      "notes": "PDFium-independent atomic filesystem and replace semantics; compiles isolated document_io module (46 unit tests; 4 are unix-only and 3 windows-only, so 43 run on Unix; the three verified-publication file-origin tests run everywhere) + 1 integration typecheck test; FAST_LOCAL runs on Linux, so 44 exact."
     },
     {
       "id": "rust:document_io_pdfium",

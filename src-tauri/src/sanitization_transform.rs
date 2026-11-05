@@ -1071,7 +1071,7 @@ fn count_name_tree_leaves(
     leaves.saturating_add(kids)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sanitization-test-support"))]
 pub(crate) fn count_named_destinations_for_test(document: &Document) -> u32 {
     count_named_destinations(document)
 }
