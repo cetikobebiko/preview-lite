@@ -1163,6 +1163,22 @@
     },
     {
       "featureId": "sanitization",
+      "fixtureId": "sanitization-combined-names",
+      "testId": "rust:sanitization_publication_acceptance::ui_minimum_profile_removes_name_tree_javascript_and_embedded_files_and_keeps_destinations",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/sanitization_publication_acceptance.rs",
+        "verificationType": "acceptance_test",
+        "notes": "Direct real-process execute with the panel's minimum profile on combined-names.pdf: JavaScript and EmbeddedFiles name trees removed, Dests kept, verified and published"
+      }
+    },
+    {
+      "featureId": "sanitization",
       "fixtureId": "sanitization-dangling-critical-references",
       "testId": "rust:sanitization_capabilities::reachable_dangling_critical_references_open_but_block_graph_completeness",
       "relation": "direct",
@@ -2718,6 +2734,7 @@
         "rust:sanitization_inspection_acceptance::transform_real_process_success_is_private_until_terminal_cleanup",
         "rust:sanitization_inspection_acceptance::traversal_and_decode_cancellation_are_cancelled_not_failed_and_reaped",
         "rust:sanitization_publication_acceptance::app_incremental_revision_payloads_are_absent_from_the_verified_publication",
+        "rust:sanitization_publication_acceptance::ui_minimum_profile_removes_name_tree_javascript_and_embedded_files_and_keeps_destinations",
         "rust_unit:sanitization_inspection::action_chain_is_typed_cycle_safe_and_local_goto_is_not_remote",
         "rust_unit:sanitization_inspection::clean_fixture_is_strict_and_has_no_supported_findings",
         "rust_unit:sanitization_inspection::embedded_metadata_xfa_optional_multimedia_signature_encryption_and_history_are_reported",
@@ -4187,6 +4204,12 @@
     },
     {
       "id": "rust:sanitization_publication_acceptance::app_incremental_revision_payloads_are_absent_from_the_verified_publication",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/sanitization_publication_acceptance.rs"
+    },
+    {
+      "id": "rust:sanitization_publication_acceptance::ui_minimum_profile_removes_name_tree_javascript_and_embedded_files_and_keeps_destinations",
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/sanitization_publication_acceptance.rs"

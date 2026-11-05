@@ -220,21 +220,76 @@ fn page_box_size(
     Ok((width, height))
 }
 
+/// Named destinations the document can resolve: the leaves of the catalog's
+/// `/Names /Dests` name tree plus the legacy catalog `/Dests` dictionary.
+///
+/// Only destinations: other name trees (`/EmbeddedFiles`, `/JavaScript`, …)
+/// are removed by their own controls, and counting their leaves here made
+/// every removal of them look like a lost destination.
 fn count_named_destinations(document: &Document) -> u32 {
-    document
-        .objects
-        .values()
-        .filter_map(|object| match object {
-            Object::Dictionary(dictionary) => dictionary.get(b"Names").ok(),
-            Object::Stream(stream) => stream.dict.get(b"Names").ok(),
-            _ => None,
-        })
-        .filter_map(|value| resolve_object(document, value))
-        .filter_map(|value| value.as_array().ok())
-        .map(|array| array.len() / 2)
-        .sum::<usize>()
-        .try_into()
-        .unwrap_or(u32::MAX)
+    let Ok(catalog) = document.catalog() else {
+        return 0;
+    };
+    let mut count = 0usize;
+    if let Some(tree) = catalog
+        .get(b"Names")
+        .ok()
+        .and_then(|names| resolve_dictionary(document, names))
+        .and_then(|names| names.get(b"Dests").ok())
+    {
+        count = count.saturating_add(count_name_tree_leaves(
+            document,
+            tree,
+            0,
+            &mut HashSet::new(),
+        ));
+    }
+    if let Some(legacy) = catalog
+        .get(b"Dests")
+        .ok()
+        .and_then(|dests| resolve_dictionary(document, dests))
+    {
+        count = count.saturating_add(legacy.len());
+    }
+    count.try_into().unwrap_or(u32::MAX)
+}
+
+/// Leaf entries of one name tree, following `/Kids`. Cycles and over-deep
+/// trees stop counting (inspection already rejects both before a transform).
+fn count_name_tree_leaves(
+    document: &Document,
+    node: &Object,
+    depth: usize,
+    visited: &mut HashSet<ObjectId>,
+) -> usize {
+    if depth > crate::sanitization::MAX_SANITIZATION_NAME_TREE_DEPTH {
+        return 0;
+    }
+    if let Object::Reference(id) = node {
+        if !visited.insert(*id) {
+            return 0;
+        }
+    }
+    let Some(node) = resolve_dictionary(document, node) else {
+        return 0;
+    };
+    let leaves = node
+        .get(b"Names")
+        .ok()
+        .and_then(|names| resolve_object(document, names))
+        .and_then(|names| names.as_array().ok())
+        .map_or(0, |names| names.len() / 2);
+    let kids = node
+        .get(b"Kids")
+        .ok()
+        .and_then(|kids| resolve_object(document, kids))
+        .and_then(|kids| kids.as_array().ok())
+        .map_or(0, |kids| {
+            kids.iter().fold(0usize, |total, kid| {
+                total.saturating_add(count_name_tree_leaves(document, kid, depth + 1, visited))
+            })
+        });
+    leaves.saturating_add(kids)
 }
 
 fn count_local_goto_actions(document: &Document) -> u32 {
@@ -1628,6 +1683,118 @@ mod tests {
         assert_eq!(
             verification.preservation_checks.status,
             SanitizationVerificationStatus::Passed
+        );
+    }
+
+    #[test]
+    fn removing_embedded_files_or_javascript_name_trees_keeps_destinations_and_verifies() {
+        // combined-names.pdf has one destination in /Names /Dests next to a
+        // /JavaScript and an /EmbeddedFiles name tree. Removing either tree must
+        // not read as a lost destination (it did before: every /Names leaf array
+        // was counted as a destination, so this always failed preservation).
+        for controls in [
+            &["embedded_files"][..],
+            &["document_javascript"][..],
+            &["document_javascript", "embedded_files"][..],
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let policy = policy(controls);
+            let report = transform(&fixture("combined-names.pdf"), temp.path(), &policy);
+            assert_eq!(
+                report.expected_document_invariants.named_destination_count, 1,
+                "controls={controls:?}"
+            );
+            let verification = verify(temp.path(), &policy, &report).unwrap();
+            assert_eq!(
+                verification.preservation_checks.status,
+                SanitizationVerificationStatus::Passed,
+                "controls={controls:?} preservation={:?}",
+                verification.preservation_checks
+            );
+            assert!(
+                verification.is_verified,
+                "controls={controls:?} report={verification:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_destination_lost_in_the_output_still_fails_preservation() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = policy(&["embedded_files"]);
+        let mut report = transform(&fixture("combined-names.pdf"), temp.path(), &policy);
+        let artifact = temp.path().join(SANITIZATION_TRANSFORM_OUTPUT_NAME);
+        let mut document = Document::load(&artifact).unwrap();
+        let names_id = document
+            .catalog()
+            .unwrap()
+            .get(b"Names")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_dictionary_mut(names_id)
+            .unwrap()
+            .remove(b"Dests");
+        document.prune_objects();
+        document.save(&artifact).unwrap();
+        rebind(&mut report, &artifact);
+
+        let verification = verify(temp.path(), &policy, &report).unwrap();
+        assert_eq!(
+            verification.preservation_checks.status,
+            SanitizationVerificationStatus::Failed
+        );
+        assert!(!verification.is_verified);
+    }
+
+    #[test]
+    fn named_destination_count_covers_nested_and_legacy_dests_only() {
+        let mut document = Document::load(fixture("clean-minimal.pdf")).unwrap();
+        let page_id = *document.get_pages().get(&1).unwrap();
+        let target = || {
+            Object::Array(vec![
+                Object::Reference(page_id),
+                Object::Name(b"Fit".to_vec()),
+            ])
+        };
+        let leaf_a = document.add_object(dictionary! {
+            "Limits" => vec![Object::string_literal("a"), Object::string_literal("b")],
+            "Names" => vec![
+                Object::string_literal("a"), target(),
+                Object::string_literal("b"), target(),
+            ],
+        });
+        let leaf_b = document.add_object(dictionary! {
+            "Limits" => vec![Object::string_literal("c"), Object::string_literal("c")],
+            "Names" => vec![Object::string_literal("c"), target()],
+        });
+        let dests = document.add_object(dictionary! {
+            "Kids" => vec![Object::Reference(leaf_a), Object::Reference(leaf_b)],
+        });
+        let embedded = document.add_object(dictionary! {
+            "Names" => vec![Object::string_literal("x.bin"), Object::Null],
+        });
+        let javascript = document.add_object(dictionary! {
+            "Names" => vec![Object::string_literal("s"), Object::Null],
+        });
+        let names = document.add_object(dictionary! {
+            "Dests" => Object::Reference(dests),
+            "EmbeddedFiles" => Object::Reference(embedded),
+            "JavaScript" => Object::Reference(javascript),
+        });
+        let catalog = document.catalog_mut().unwrap();
+        catalog.set("Names", Object::Reference(names));
+        catalog.set(
+            "Dests",
+            dictionary! { "legacy-one" => target(), "legacy-two" => target() },
+        );
+
+        // 3 tree leaves + 2 legacy entries; the other trees are not destinations.
+        assert_eq!(count_named_destinations(&document), 5);
+        assert_eq!(
+            crate::sanitization_transform::count_named_destinations_for_test(&document),
+            5
         );
     }
 

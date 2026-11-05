@@ -125,10 +125,17 @@ mod pdfium_runtime_targets {
     async fn activated_session(
         app: &tauri::App<tauri::test::MockRuntime>,
     ) -> document_session::DocumentSessionSnapshot {
+        activated_session_for(app, &fixture()).await
+    }
+
+    async fn activated_session_for(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        path: &Path,
+    ) -> document_session::DocumentSessionSnapshot {
         let opened = within(
             "open_document_session",
             document_session::open_document_session(
-                fixture().to_string_lossy().into_owned(),
+                path.to_string_lossy().into_owned(),
                 app.state(),
             ),
         )
@@ -1154,6 +1161,106 @@ mod pdfium_runtime_targets {
                     .await
                     .unwrap();
             assert_session_neutral(&session, &after);
+        })
+        .await;
+    }
+
+    /// The controls the panel's minimum profile selects (every control with
+    /// production removal support, sanitization-controls-v1.json).
+    const UI_MINIMUM_PROFILE_CONTROLS: [&str; 16] = [
+        "document_javascript",
+        "additional_actions",
+        "annotation_actions",
+        "form_actions",
+        "launch_actions",
+        "uri_actions",
+        "remote_navigation_actions",
+        "form_submission_actions",
+        "embedded_files",
+        "associated_files",
+        "file_attachment_annotations",
+        "document_info",
+        "xmp_metadata",
+        "page_metadata",
+        "object_metadata",
+        "incremental_revisions",
+    ];
+
+    #[tokio::test]
+    async fn ui_minimum_profile_removes_name_tree_javascript_and_embedded_files_and_keeps_destinations(
+    ) {
+        // Found in the running app: every document with an /EmbeddedFiles name
+        // tree failed verification (preservation_checks) because all /Names leaf
+        // arrays were counted as named destinations.
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/sanitization/combined-names.pdf");
+            let session = activated_session_for(&app, &source).await;
+            let policy = SanitizationPolicy {
+                schema_version: sanitization::SANITIZATION_POLICY_SCHEMA_VERSION.to_string(),
+                profile: SanitizationProfile::VerifiedLimitedV1,
+                controls: UI_MINIMUM_PROFILE_CONTROLS
+                    .iter()
+                    .map(|control| control.to_string())
+                    .collect(),
+                acknowledgements: SanitizationAcknowledgements {
+                    acknowledge_signature_invalidation: false,
+                },
+                expected_inspection_version: sanitization::SANITIZATION_INSPECTION_VERSION
+                    .to_string(),
+            };
+            let output = tempfile::tempdir().unwrap();
+            let target = output.path().join("combined-names.sanitized.pdf");
+            let outcome = within(
+                "execute_document_sanitization",
+                sanitization_publication::execute_document_sanitization_core(
+                    uuid::Uuid::new_v4().to_string(),
+                    session.id.clone(),
+                    session.content_generation,
+                    policy,
+                    target.to_string_lossy().into_owned(),
+                    &app.state::<document_session::DocumentSessionStore>(),
+                ),
+            )
+            .await
+            .unwrap();
+            let report = match outcome {
+                SessionJobOutcome::Completed { value, .. } => value,
+                other => panic!("UI minimum profile must publish: {other:?}"),
+            };
+            assert!(report.verification.is_verified);
+            assert_eq!(
+                report.verification.preservation_checks.status,
+                sanitization::SanitizationVerificationStatus::Passed
+            );
+            assert_eq!(
+                report.assurance,
+                sanitization::SanitizationAssurance::VerifiedLimited
+            );
+            assert!(report.publication.as_ref().unwrap().published);
+            assert_eq!(digest(&target), report.verification.transform_digest);
+
+            let published = std::fs::read(&target).unwrap();
+            for payload in [
+                "SANITIZATION_COMBINED_NAMES_JS_001",
+                "SANITIZATION_COMBINED_NAMES_EMBEDDED_001",
+            ] {
+                assert!(
+                    !payload_survives(&published, payload),
+                    "{payload} survived publication"
+                );
+            }
+            let document = lopdf::Document::load_mem(&published).unwrap();
+            let names = match document.catalog().unwrap().get(b"Names").unwrap() {
+                lopdf::Object::Reference(id) => document.get_dictionary(*id).unwrap(),
+                lopdf::Object::Dictionary(names) => names,
+                other => panic!("unexpected /Names {other:?}"),
+            };
+            assert!(names.has(b"Dests"), "the destination tree must be kept");
+            assert!(!names.has(b"EmbeddedFiles"));
+            assert!(!names.has(b"JavaScript"));
         })
         .await;
     }

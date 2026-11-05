@@ -999,21 +999,81 @@ fn count_local_goto_actions(document: &Document) -> u32 {
         .unwrap_or(u32::MAX)
 }
 
+/// Named destinations the document can resolve: the leaves of the catalog's
+/// `/Names /Dests` name tree plus the legacy catalog `/Dests` dictionary.
+///
+/// Only destinations: other name trees (`/EmbeddedFiles`, `/JavaScript`, …)
+/// are removed by their own controls, and counting their leaves here made
+/// every removal of them look like a lost destination.
 fn count_named_destinations(document: &Document) -> u32 {
-    document
-        .objects
-        .values()
-        .filter_map(|object| match object {
-            Object::Dictionary(dictionary) => dictionary.get(b"Names").ok(),
-            Object::Stream(stream) => stream.dict.get(b"Names").ok(),
-            _ => None,
-        })
-        .filter_map(|value| resolve_object(document, value))
-        .filter_map(|value| value.as_array().ok())
-        .map(|array| array.len() / 2)
-        .sum::<usize>()
-        .try_into()
-        .unwrap_or(u32::MAX)
+    let Ok(catalog) = document.catalog() else {
+        return 0;
+    };
+    let mut count = 0usize;
+    if let Some(tree) = catalog
+        .get(b"Names")
+        .ok()
+        .and_then(|names| resolve_dictionary(document, names))
+        .and_then(|names| names.get(b"Dests").ok())
+    {
+        count = count.saturating_add(count_name_tree_leaves(
+            document,
+            tree,
+            0,
+            &mut HashSet::new(),
+        ));
+    }
+    if let Some(legacy) = catalog
+        .get(b"Dests")
+        .ok()
+        .and_then(|dests| resolve_dictionary(document, dests))
+    {
+        count = count.saturating_add(legacy.len());
+    }
+    count.try_into().unwrap_or(u32::MAX)
+}
+
+/// Leaf entries of one name tree, following `/Kids`. Cycles and over-deep
+/// trees stop counting (inspection already rejects both before a transform).
+fn count_name_tree_leaves(
+    document: &Document,
+    node: &Object,
+    depth: usize,
+    visited: &mut HashSet<ObjectId>,
+) -> usize {
+    if depth > crate::sanitization::MAX_SANITIZATION_NAME_TREE_DEPTH {
+        return 0;
+    }
+    if let Object::Reference(id) = node {
+        if !visited.insert(*id) {
+            return 0;
+        }
+    }
+    let Some(node) = resolve_dictionary(document, node) else {
+        return 0;
+    };
+    let leaves = node
+        .get(b"Names")
+        .ok()
+        .and_then(|names| resolve_object(document, names))
+        .and_then(|names| names.as_array().ok())
+        .map_or(0, |names| names.len() / 2);
+    let kids = node
+        .get(b"Kids")
+        .ok()
+        .and_then(|kids| resolve_object(document, kids))
+        .and_then(|kids| kids.as_array().ok())
+        .map_or(0, |kids| {
+            kids.iter().fold(0usize, |total, kid| {
+                total.saturating_add(count_name_tree_leaves(document, kid, depth + 1, visited))
+            })
+        });
+    leaves.saturating_add(kids)
+}
+
+#[cfg(test)]
+pub(crate) fn count_named_destinations_for_test(document: &Document) -> u32 {
+    count_named_destinations(document)
 }
 
 fn capture_expected_document_invariants(

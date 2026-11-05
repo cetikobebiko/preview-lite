@@ -47,7 +47,7 @@ jobs:
             expected: secure_redaction_execution_acceptance=12
           - name: Sanitization
             feature: sanitization-test-support
-            expected: sanitization_inspection_acceptance=10 sanitization_publication_acceptance=10
+            expected: sanitization_inspection_acceptance=10 sanitization_publication_acceptance=11
 
     env:
       CARGO_TERM_COLOR: never
