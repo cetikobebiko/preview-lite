@@ -913,10 +913,10 @@ macOS x86_64, Windows ve Linux runtime certification 8C.7 blocker'ıdır.
 
 | Platform | Runtime Acceptance Durumu | Karar Notu |
 |---|---|---|
-| macOS arm64 | **PASS** | Full real-process inspection, transform, verifier, publication, target TOCTOU, fault recovery, cancellation ve session neutrality testlerinin tamamı başarıyla geçmiş ve doğrulanmıştır. |
+| macOS arm64 | **PASS** (CI 2026-11-05: inspection 10/10, publication 10/10) | Full real-process inspection, transform, verifier, publication, target TOCTOU, fault recovery, cancellation ve session neutrality testlerinin tamamı başarıyla geçmiş ve doğrulanmıştır. |
 | macOS x86_64 | **UNSUPPORTED TARGET** | PDFium runtime yok (`docs/engineering/platform-support.json` macOS için yalnız arm64 runtime taşır). Desteklenen bir hedef değildir; bu satır sertifikasyon borcu (NOT RUN) değildir. Kabul suite'leri bu hedefte bilerek sıfır test derler. Registry'deki `macos` platformu arm64 anlamındadır. |
-| Windows | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
-| Linux | **NOT RUN** | Target platform üzerinde runtime publication acceptance çalıştırılmamıştır. |
+| Windows x86_64 | **FAIL (hang)** | CI 2026-11-05 (PR #22, iki koşu): inspection suite'inin ilk testi 24 dk asılı kaldı, 30 dk adım timeout'u. Ayrıntı §26.5. |
+| Linux x86_64 | **FAIL** | CI 2026-11-05 (PR #22, iki koşu): inspection 10/10 PASS; publication 9/10 — `ExistingDeletedRecreated` target yarışı yakalanmadı. Ayrıntı §26.5. |
 
 ### 26.3 Final Aktivasyon Kararı
 
@@ -925,6 +925,14 @@ macOS x86_64, Windows ve Linux runtime certification 8C.7 blocker'ıdır.
 * **Açıklama:** PDF Sanitization altyapısı, backend güvenlik sınırları, bağımsız verifier, atomik yayınlama zinciri ve frontend workflow'u %100 tamamlanmış, test edilmiş ve mimari olarak doğrulanmıştır. Ancak advertised platform setinin (macOS x86_64, Windows, Linux) runtime sertifikasyon testleri henüz çalıştırılmadığından, tahribat yaratma potansiyeli olan bu güvenlik özelliğinin tüm masaüstü platformlarında genel kullanıma sunulması ertelenmiştir.
 * **Feature Registry Durumu:** `sanitization.status = "disabled"`, `sanitization.enabled = false`.
 * **Warning Metni:** `"Sanitization inspection, verified execution ve frontend review workflow'u uygulanmıştır; 8C-7 platform/security aktivasyon kararı tamamlanana kadar özellik kapalıdır."`
+
+### 26.5 Platform Sertifikasyon Koşusu (2026-11-05)
+
+`secure-redaction-acceptance.yml` platform × suite matrisine Sanitization suite'i eklendi (`cargo test --locked --features sanitization-test-support --test sanitization_inspection_acceptance --test sanitization_publication_acceptance -- --test-threads=1`; binary başına tam 10 test beklenir, sıfır test FAIL'dir). Yeni kabul testi `app_incremental_revision_payloads_are_absent_from_the_verified_publication`, uygulamanın kendi artımlı mutasyonlarıyla (eski /Info değerleri, eklenip silinen not) eski revizyonlar üretir ve `incremental_revisions` temizliğinden sonra bağımsız verifier'ın geçtiğini ve bu payload'ların yayınlanan baytlarda hiçbir yazımla kalmadığını doğrular; macOS arm64 ve Linux x86_64'te PASS.
+
+* **Linux x86_64 — FAIL (üretim bulgusu, düzeltilmedi):** `missing_and_existing_target_toctou_matrix_is_fail_closed`, `ExistingDeletedRecreated` yarışında `SANITIZATION_TARGET_CONFLICT` yerine yayınlamayı tamamladı. Kök neden: `document_io` target identity'si yalnız `(dev, inode)` + SHA-256'dır (`metadata_identity`, `VerifiedArtifactTargetExpectation::Existing`). Linux ext4 silinen dosyanın inode numarasını hemen yeniden kullanır; aynı baytlarla yeniden yaratılan hedef baseline'dan ayırt edilemez ve üzerine yazılır. macOS APFS inode'u hemen yeniden kullanmadığı için orada yakalanır. Primitive secure redaction ile paylaşılır. Olası çözüm (karar gerektirir): identity'ye ctime/birth time veya dosya sistemi generation numarası eklemek.
+* **Windows x86_64 — FAIL (asılma, kök neden bilinmiyor):** Sanitization ve secure redaction suite'leri ilk testlerinde asılı kalır. Session activation, inspection ve execution adımlarına konan 180 sn test timeout'ları tetiklenmedi; asılma async bir bekleme değil, ya senkron test app kurulumunda (`DocumentSessionStore` / mock Tauri app) ya da current-thread runtime'ı bloke eden senkron bir çağrıdadır. Real PDFium worker'ın Windows'ta CI'da ilk kez çalıştığı yoldur.
+* **Karar:** Aktivasyon yapılmadı. `sanitization.status = "disabled"`, `enabled = false` kalır. Menü ve komut paleti girişleri eklendi; registry onları gizler.
 
 ### 26.4 Final Kapanış Kararı
 
