@@ -301,6 +301,7 @@ export function createFeatureRuntime({
       "open-security": () => ui.openModal("security"),
       "open-optimize": () => ui.openModal("optimize"),
       "open-xfdf": () => ui.openModal("xfdf"),
+      "open-sanitization": () => ui.openModal("sanitization"),
       "open-page-labels": () => ui.openModal("page_labels"),
       "open-outline-editor": () => ui.openModal("outline_editor"),
       "open-page-marks": () => ui.openModal("page_marks"),

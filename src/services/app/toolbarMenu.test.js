@@ -33,6 +33,30 @@ describe("toolbar overflow menu", () => {
     expect(ui.togglePanel).toHaveBeenCalledWith("sensitiveDataScan");
   });
 
+  it("lists the sanitization entry in Belge only while sanitization can run", () => {
+    const { sections, ui, onFeatureAction } = menu({ featureUi: gates({ sanitization: on("EXPERIMENTAL") }) });
+    const documentSection = sections.find((section) => section.id === "document");
+    const entry = documentSection.items.find((item) => item.id === "sanitization");
+    expect(entry).toMatchObject({
+      label: "Belgeyi temizle (gizli içerik ve metadata)…",
+      disabled: false,
+      badge: "Deneysel",
+    });
+
+    entry.onSelect();
+    expect(onFeatureAction).toHaveBeenCalledWith("sanitization", expect.any(Function));
+    expect(ui.openModal).toHaveBeenCalledWith("sanitization");
+
+    // Disabled feature (registry default today): absent.
+    expect(menu().find("sanitization")).toBeUndefined();
+    // Visible but not runnable (e.g. development preview of a disabled feature): still absent,
+    // never a disabled entry.
+    const preview = { visible: true, runnable: false, warning: "kapalı", badge: "DISABLED" };
+    expect(menu({ featureUi: gates({ sanitization: preview }) }).find("sanitization")).toBeUndefined();
+    // Needs an open PDF session.
+    expect(menu({ isPdf: false, featureUi: gates({ sanitization: on() }) }).find("sanitization")).toBeUndefined();
+  });
+
   it("omits invisible features and disables visible ones that cannot run", () => {
     const { find } = menu({
       featureUi: gates({ local_ai: { visible: true, runnable: false, warning: "Ollama yok", badge: "EXPERIMENTAL" } }),
