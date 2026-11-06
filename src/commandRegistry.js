@@ -28,6 +28,7 @@ export const COMMANDS = Object.freeze([
   { id: "export-notes-md", title: "Notları Markdown (.md) Olarak Dışa Aktar", icon: "📝", category: "Not Alma", featureId: "markdown_notes_export" },
   { id: "undo-mutation", title: "Son Değişikliği Geri Al (Cmd+Z)", icon: "↩️", category: "Düzenleme", featureId: "undo_redo" },
   { id: "redo-mutation", title: "Geri Alınan Değişikliği Yinele (Shift+Cmd+Z)", icon: "↪️", category: "Düzenleme", featureId: "undo_redo" },
+  { id: "insert-blank-page-after-current", title: "Geçerli Sayfadan Sonra Boş Sayfa Ekle", icon: "📄", category: "Düzenleme", featureId: "page_insert_blank" },
   { id: "split-pdf", title: "PDF Sayfalarını Böl / Seçili Sayfaları Dışa Aktar", icon: "✂️", category: "Düzenleme", featureId: "page_manipulation" },
   { id: "merge-pdf", title: "Başka Bir PDF ile Birleştir", icon: "➕", category: "Düzenleme", featureId: "page_merge_direct" },
   { id: "reset-zoom", title: "Yakınlaştırmayı Sıfırla (%100)", icon: "🎯", category: "Görünüm", featureId: "pdf_viewer" },

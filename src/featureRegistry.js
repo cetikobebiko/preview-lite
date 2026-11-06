@@ -85,9 +85,9 @@ const RAW_FEATURES = [
   {
     id: "page_insert_blank",
     label: "Insert blank page",
-    status: "disabled",
-    enabled: false,
-    warning: "Boş sayfa ekleme bu sürümde özellik bayrağıyla devre dışıdır.",
+    status: "experimental",
+    enabled: true,
+    warning: "Boş sayfa artımlı olarak eklenir ve geri alınabilir; imzalı belgede imzadan sonra yapılmış bir değişiklik olarak görünür.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#page-manipulation",
   },

@@ -83,6 +83,19 @@ describe("feature policy", () => {
     expect(presentation.runnable).toBe(false);
   });
 
+  it("runs blank page insert as experimental and keeps direct merge disabled", () => {
+    const blank = getFeaturePresentation("page_insert_blank", productionMac);
+    expect(blank.status).toBe("experimental");
+    expect(blank.feature.enabled).toBe(true);
+    expect(blank.runnable).toBe(true);
+    expect(blank.visible).toBe(true);
+    expect(blank.badge).toBe("EXPERIMENTAL");
+    expect(blank.warning).toContain("geri alınabilir");
+    expect(blank.warning).toContain("imzadan sonra");
+    expect(getFeature("page_merge_direct").status).toBe("disabled");
+    expect(isFeatureRunnable("page_merge_direct", developmentMac)).toBe(false);
+  });
+
   it("keeps all four signature features disabled and not runnable", () => {
     for (const id of [
       "pades_signing",

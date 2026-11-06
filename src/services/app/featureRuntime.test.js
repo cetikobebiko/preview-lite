@@ -3,6 +3,7 @@ import { createFeatureRuntime } from "./featureRuntime.js";
 import { createDocumentScopedStateReconciler } from "./documentScopedState.js";
 import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
 import { createAnnotationState } from "../../stores/annotationState.svelte.js";
+import { SignatureLossDeclinedError } from "../signatureLossGuard.js";
 
 describe("featureRuntime lifecycle & façade assertions", () => {
   function setupTestRuntime(overrides = {}) {
@@ -88,6 +89,62 @@ describe("featureRuntime lifecycle & façade assertions", () => {
       createExportController,
     };
   }
+
+  describe("insert-blank-page-after-current command", () => {
+    function setupBlankPageRuntime({ resolveSize, insert, viewer, documentRuntime } = {}) {
+      const onToast = vi.fn();
+      const onError = vi.fn();
+      const blankPageActions = {
+        resolveSize: resolveSize ?? vi.fn(async () => ({ width: 792, height: 612 })),
+        insert: insert ?? vi.fn(async () => ({ id: "session-1", contentGeneration: 2 })),
+      };
+      const applyMutationSnapshot = vi.fn(async () => {});
+      const { runtime } = setupTestRuntime({
+        viewer: { activeImageSourcePath: "", currentPageIndex: 1, pageOrder: [0, 2, 1], rotation: 0, flipH: false, flipV: false, ...viewer },
+        documentRuntime: { isPdf: true, isLoadedPdfDocument: true, activeDisplayPath: "/test.pdf", fileName: "document.pdf", openFile: vi.fn(), applyMutationSnapshot, ...documentRuntime },
+        blankPageActions,
+        onToast,
+        onError,
+      });
+      return { runtime, blankPageActions, applyMutationSnapshot, onToast, onError };
+    }
+
+    it("inserts after the current page's physical index with its size and maps later pages", async () => {
+      const { runtime, blankPageActions, applyMutationSnapshot, onToast } = setupBlankPageRuntime();
+
+      await expect(runtime.commandRouter.dispatch("insert-blank-page-after-current")).resolves.toEqual({ status: "handled" });
+
+      // Display position 1 is physical page 2 in pageOrder [0, 2, 1].
+      expect(blankPageActions.resolveSize).toHaveBeenCalledWith("session-1", 1, 2);
+      expect(blankPageActions.insert).toHaveBeenCalledWith("session-1", 1, 3, 792, 612);
+      const [snapshot, { mapPageIndex }] = applyMutationSnapshot.mock.calls[0];
+      expect(snapshot).toEqual({ id: "session-1", contentGeneration: 2 });
+      expect([0, 1, 2, 3].map(mapPageIndex)).toEqual([0, 1, 2, 4]);
+      expect(onToast).toHaveBeenCalledWith("Sayfa 2 sonrasına boş sayfa eklendi.");
+    });
+
+    it("stays silent when the signature notice is declined and reports other failures", async () => {
+      const insert = vi.fn()
+        .mockRejectedValueOnce(new SignatureLossDeclinedError())
+        .mockRejectedValueOnce(new Error("worker gone"));
+      const { runtime, applyMutationSnapshot, onError } = setupBlankPageRuntime({ insert });
+
+      await runtime.commandRouter.dispatch("insert-blank-page-after-current");
+      expect(onError).not.toHaveBeenCalled();
+
+      await runtime.commandRouter.dispatch("insert-blank-page-after-current");
+      expect(onError).toHaveBeenCalledWith("Boş sayfa eklenemedi: worker gone");
+      expect(applyMutationSnapshot).not.toHaveBeenCalled();
+    });
+
+    it("does nothing without an open PDF page", async () => {
+      const { runtime, blankPageActions, onToast } = setupBlankPageRuntime({ viewer: { pageOrder: [] } });
+
+      await runtime.commandRouter.dispatch("insert-blank-page-after-current");
+      expect(blankPageActions.insert).not.toHaveBeenCalled();
+      expect(onToast).toHaveBeenCalledWith("Boş sayfa eklemek için açık bir PDF sayfası gerekir.");
+    });
+  });
 
   it("starts search, sensitive scan, and secure redaction controllers", () => {
     const { runtime, searchControllerMock, sensitiveScanControllerMock, secureRedactionControllerMock } = setupTestRuntime();

@@ -8,6 +8,8 @@ import {
   getRuntimeFeatureContext,
 } from "../../featureRegistry.js";
 import { stopSpeaking } from "../../ttsActions.js";
+import { insertBlankPage } from "../../pdfState.js";
+import { isSignatureLossDeclined } from "../signatureLossGuard.js";
 import {
   mergePdfsDirectAction,
   performOcrOnPageAction,
@@ -27,6 +29,8 @@ import { selectViewportHighlights } from "../../utils/pdfGeometry.js";
 import { open, save } from "../platform/dialogs.js";
 import { listen } from "../platform/events.js";
 import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
+import { resolveBlankPageSize } from "./blankPageSize.js";
+import { pageMappingAfterImport } from "./pageIndexMapping.js";
 import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
 import { createCommandActionRouter } from "./commandActionRouter.js";
 import { createDocumentExportController } from "./documentExportController.js";
@@ -44,6 +48,11 @@ const defaultExportActions = Object.freeze({
   exportPage: exportSessionPageToImage,
   extractPages: extractSessionPages,
   convertImage: convertAndSaveImage,
+});
+
+const defaultBlankPageActions = Object.freeze({
+  resolveSize: resolveBlankPageSize,
+  insert: insertBlankPage,
 });
 
 /** Composes feature workflows and search without owning document lifecycle state. */
@@ -64,6 +73,7 @@ export function createFeatureRuntime({
   onToast,
   onError,
   exportActions = defaultExportActions,
+  blankPageActions = defaultBlankPageActions,
   createExportController = createDocumentExportController,
   createSearchController: createSearch = createSearchController,
   createSensitiveDataScanController: createSensitiveScan = createSensitiveDataScanController,
@@ -256,6 +266,29 @@ export function createFeatureRuntime({
     ...exportActions,
   });
 
+  // Inserts a blank page after the viewer's current page, sized like it (blankPageSize.js).
+  async function insertBlankPageAfterCurrent() {
+    const sessionId = documentSession.activeSessionId;
+    const contentGeneration = documentSession.contentGeneration;
+    // Backend commands take physical page indices; currentPageIndex is the display position.
+    const displayPageIndex = viewer.currentPageIndex;
+    const pageIndex = toPhysicalPageIndex(viewer.pageOrder, displayPageIndex);
+    if (!documentRuntime.isPdf || !sessionId || pageIndex < 0) {
+      onToast("Boş sayfa eklemek için açık bir PDF sayfası gerekir.");
+      return;
+    }
+    const atIndex = pageIndex + 1;
+    try {
+      const { width, height } = await blankPageActions.resolveSize(sessionId, contentGeneration, pageIndex);
+      const snapshot = await blankPageActions.insert(sessionId, contentGeneration, atIndex, width, height);
+      await documentRuntime.applyMutationSnapshot(snapshot, { mapPageIndex: pageMappingAfterImport(atIndex, 1, 0) });
+      onToast(`Sayfa ${displayPageIndex + 1} sonrasına boş sayfa eklendi.`);
+    } catch (error) {
+      if (isSignatureLossDeclined(error) || reportUnavailable(error)) return;
+      onError("Boş sayfa eklenemedi: " + (error?.message ?? String(error)));
+    }
+  }
+
   function toggleDarkMode() {
     viewer.isSmartDarkMode = !viewer.isSmartDarkMode;
     onToast(viewer.isSmartDarkMode ? "Akıllı Gece Modu Açıldı" : "Normal Mod");
@@ -323,6 +356,7 @@ export function createFeatureRuntime({
       "export-notes-md": exportNotesMarkdown,
       "undo-mutation": documentRuntime.undo,
       "redo-mutation": documentRuntime.redo,
+      "insert-blank-page-after-current": insertBlankPageAfterCurrent,
       "split-pdf": documentExportController.splitPdf,
       "merge-pdf": transform.mergePdf,
       "reset-zoom": viewerRuntime.navigation.resetZoom,

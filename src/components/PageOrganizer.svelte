@@ -17,12 +17,15 @@
   import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import CopyPlusIcon from "@lucide/svelte/icons/copy-plus";
+  import FilePlusIcon from "@lucide/svelte/icons/file-plus";
   import AppDialog from "./AppDialog.svelte";
   import { Button } from "$lib/components/ui/button";
   import { SvelteMap } from "svelte/reactivity";
   import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
   import { Input } from "$lib/components/ui/input";
-  import { rotatePage, deletePages, reorderPages, importPages } from "../pdfState.js";
+  import { rotatePage, deletePages, reorderPages, importPages, insertBlankPage } from "../pdfState.js";
+  import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
+  import { resolveBlankPageSize } from "../services/app/blankPageSize.js";
   import { getSessionPageCount } from "../services/backend/session.js";
   import { parsePageRanges } from "../utils/pageRanges.js";
   import { isSignatureLossDeclined } from "../services/signatureLossGuard.js";
@@ -46,6 +49,8 @@
   let pages = $state([]); // { id, index, canvas, rotation, status, error }
   // Copying pages works on physical positions, so it waits until a drag reorder is saved.
   const orderDirty = $derived(pages.some((page, position) => page.index !== position));
+  // Blank-page buttons are only shown while the feature can actually run.
+  const blankPagePresentation = getFeaturePresentation("page_insert_blank", getRuntimeFeatureContext());
   // Insert or replace with another PDF's pages: chosen file, its pages, and where they go.
   const IMPORT_SOURCE_PAGE_LIMIT = 10_000;
   let importFile = $state(null);
@@ -427,20 +432,17 @@
     isSaving = false;
   }
 
-  // Applies a page copy, then reloads the grid for the new page count.
-  async function applyImport(request) {
+  // Runs a page-adding mutation, then reloads the grid for the new page count.
+  // `mappingFor(addedCount)` gives the old-to-new page index mapping.
+  async function applyPageInsertion(mutate, mappingFor) {
     isSaving = true;
     try {
       const oldCount = pageCount;
-      const sessionSnapshot = await importPages(sessionId, contentGeneration, request);
+      const sessionSnapshot = await mutate();
       const newCount = await getSessionPageCount(sessionSnapshot.id, sessionSnapshot.contentGeneration);
-      const inserted = newCount - oldCount + request.replaceCount;
       pageCount = newCount;
       contentGeneration = sessionSnapshot.contentGeneration;
-      onpageMutated?.({
-        snapshot: sessionSnapshot,
-        mapPageIndex: pageMappingAfterImport(request.atIndex, inserted, request.replaceCount),
-      });
+      onpageMutated?.({ snapshot: sessionSnapshot, mapPageIndex: mappingFor(newCount - oldCount) });
       return true;
     } catch (e) {
       if (!isSignatureLossDeclined(e)) importError = e?.message ?? String(e);
@@ -450,11 +452,32 @@
     }
   }
 
+  // Applies a page copy or another PDF's pages.
+  function applyImport(request) {
+    return applyPageInsertion(
+      () => importPages(sessionId, contentGeneration, request),
+      (added) => pageMappingAfterImport(request.atIndex, added + request.replaceCount, request.replaceCount),
+    );
+  }
+
   async function handleDuplicate(index) {
     const page = pages[index];
     if (!page || orderDirty) return;
     importError = "";
     await applyImport({ sourcePages: [page.index], atIndex: page.index + 1, replaceCount: 0 });
+  }
+
+  // Inserts a blank page at `atIndex`, sized like the page at `neighborIndex` (see blankPageSize.js).
+  async function handleInsertBlank(atIndex, neighborIndex) {
+    if (orderDirty || isSaving || !blankPagePresentation.runnable) return;
+    importError = "";
+    await applyPageInsertion(
+      async () => {
+        const { width, height } = await resolveBlankPageSize(sessionId, contentGeneration, neighborIndex);
+        return await insertBlankPage(sessionId, contentGeneration, atIndex, width, height);
+      },
+      () => pageMappingAfterImport(atIndex, 1, 0),
+    );
   }
 
   async function chooseImportFile() {
@@ -556,6 +579,11 @@
   <div class="mb-2 grid gap-2 text-xs">
     <div class="flex flex-wrap items-center gap-2">
       <Button variant="outline" size="sm" onclick={chooseImportFile} disabled={isSaving || orderDirty}>Dosyadan sayfa ekle / değiştir…</Button>
+      {#if blankPagePresentation.runnable && pages.length > 0}
+        <Button variant="outline" size="sm" onclick={() => handleInsertBlank(0, 0)} disabled={isSaving || orderDirty} title="İlk sayfanın boyutunda boş sayfa ekler">
+          <FilePlusIcon class="size-3.5" />Başa boş sayfa ekle
+        </Button>
+      {/if}
       {#if orderDirty}<span class="text-muted-foreground">Sayfa eklemek ve çoğaltmak için önce sıralamayı kaydedin.</span>{/if}
     </div>
     {#if importFile}
@@ -620,6 +648,9 @@
             <button type="button" class="icon-btn" onclick={() => handleRotate(i, -90)} title="Sola Döndür" aria-label="Sola Döndür"><RotateCcwIcon class="size-3.5" /></button>
             <button type="button" class="icon-btn" onclick={() => handleRotate(i, 90)} title="Sağa Döndür" aria-label="Sağa Döndür"><RotateCwIcon class="size-3.5" /></button>
             <button type="button" class="icon-btn" onclick={() => handleDuplicate(i)} disabled={isSaving || orderDirty} title="Sayfayı Çoğalt" aria-label="Sayfayı Çoğalt"><CopyPlusIcon class="size-3.5" /></button>
+            {#if blankPagePresentation.runnable}
+              <button type="button" class="icon-btn" onclick={() => handleInsertBlank(page.index + 1, page.index)} disabled={isSaving || orderDirty} title="Sonrasına boş sayfa ekle" aria-label="Sayfa {i + 1} sonrasına boş sayfa ekle"><FilePlusIcon class="size-3.5" /></button>
+            {/if}
             <button type="button" class="icon-btn delete-btn" onclick={() => handleDelete(i)} title="Sayfayı Sil" aria-label="Sayfayı Sil"><Trash2Icon class="size-3.5" /></button>
           </div>
         </div>
