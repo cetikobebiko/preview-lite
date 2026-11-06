@@ -712,6 +712,36 @@
     },
     {
       "featureId": "redaction",
+      "fixtureId": "redaction-inherited-geometry",
+      "testId": "rust:secure_redaction_execution_acceptance::inherited_page_boxes_execute_with_the_planned_geometry",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_execution_acceptance.rs",
+        "verificationType": "acceptance_test",
+        "notes": "Direct execution acceptance on inherited-geometry.pdf: /MediaBox and /CropBox inherited from /Pages execute, verify and publish with explicit planned boxes"
+      }
+    },
+    {
+      "featureId": "redaction",
+      "fixtureId": "redaction-inherited-geometry",
+      "testId": "rust:secure_redaction_raster_primitives::source_page_check_resolves_inherited_boxes_like_the_planner",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs",
+        "verificationType": "raster_primitive_test",
+        "notes": "Source-page geometry check resolves inherited boxes with the planner's structural view and refuses without it"
+      }
+    },
+    {
+      "featureId": "redaction",
       "fixtureId": "redaction-inherited-resources",
       "testId": "rust:secure_redaction_planning_worker::test_inherited_resources_fixture_inspection",
       "relation": "direct",
@@ -2625,6 +2655,7 @@
         "rust:job_worker_process::secure_redaction_worker_round_trips_rotated_page_geometry",
         "rust:redaction_fixtures_and_capabilities::test_semantic_fixture_corpus_assertions",
         "rust:secure_redaction_execution_acceptance::existing_target_is_atomically_replaced_with_verified_bytes",
+        "rust:secure_redaction_execution_acceptance::inherited_page_boxes_execute_with_the_planned_geometry",
         "rust:secure_redaction_planning_worker::test_embedded_files_fixture_inspection",
         "rust:secure_redaction_planning_worker::test_incremental_revision_fixture_inspection",
         "rust:secure_redaction_planning_worker::test_inherited_geometry_fixture_inspection",
@@ -2634,6 +2665,7 @@
         "rust:secure_redaction_planning_worker::test_stream_literal_prev_false_positive_resistance",
         "rust:secure_redaction_planning_worker::test_unresolved_acroform_produces_xfa_unknown",
         "rust:secure_redaction_planning_worker::test_unresolved_resources_produces_unknown_facts",
+        "rust:secure_redaction_raster_primitives::source_page_check_resolves_inherited_boxes_like_the_planner",
         "rust:secure_redaction_raster_primitives::test_13_rotation_0_mapping",
         "rust:secure_redaction_raster_primitives::test_17_cropbox_mapping",
         "rust:secure_redaction_raster_primitives::test_18_nonzero_origin_mapping",
@@ -3629,6 +3661,12 @@
       "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
     },
     {
+      "id": "rust:secure_redaction_raster_primitives::source_page_check_resolves_inherited_boxes_like_the_planner",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_raster_primitives.rs"
+    },
+    {
       "id": "rust:secure_redaction_planning_worker::test_embedded_files_fixture_inspection",
       "kind": "integration_test",
       "state": "current",
@@ -3732,6 +3770,12 @@
     },
     {
       "id": "rust:secure_redaction_execution_acceptance::existing_target_is_atomically_replaced_with_verified_bytes",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/secure_redaction_execution_acceptance.rs"
+    },
+    {
+      "id": "rust:secure_redaction_execution_acceptance::inherited_page_boxes_execute_with_the_planned_geometry",
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/secure_redaction_execution_acceptance.rs"

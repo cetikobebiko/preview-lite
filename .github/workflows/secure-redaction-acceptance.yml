@@ -36,7 +36,7 @@ jobs:
             label: Windows x86_64
 
     env:
-      EXPECTED_TESTS: "12"
+      EXPECTED_TESTS: "13"
 
     steps:
       - name: Checkout repository

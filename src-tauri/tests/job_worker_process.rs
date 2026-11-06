@@ -481,7 +481,7 @@ fn ephemeral_job_worker_executes_plan_secure_redaction() {
         let source = pdfium
             .load_pdf_from_file(&snapshot, None)
             .map_err(|error| error.to_string())?;
-        let expected = build_lossless_raster_payload_for_page(&typed_plan, &source, 0, None)
+        let expected = build_lossless_raster_payload_for_page(&typed_plan, &source, None, 0, None)
             .map_err(|error| error.to_string())?;
         let output = pdfium
             .load_pdf_from_file(
@@ -764,7 +764,7 @@ fn secure_redaction_worker_mixes_rasterized_and_imported_pages_in_one_artifact()
         assert_eq!(output_object_types, vec![PdfPageObjectType::Image]);
         assert!(output_affected.annotations().is_empty());
 
-        let expected = build_lossless_raster_payload_for_page(&typed_plan, &source, 0, None)
+        let expected = build_lossless_raster_payload_for_page(&typed_plan, &source, None, 0, None)
             .map_err(|error| error.to_string())?;
         let spec = RedactionRasterSpec {
             page_index: 0,
@@ -1233,7 +1233,7 @@ fn corrupt_one_covered_raster_pixel(pipeline: &SecureRedactionWorkerPipeline) ->
         let source = pdfium
             .load_pdf_from_file(&pipeline.snapshot, None)
             .map_err(|error| error.to_string())?;
-        let expected = build_lossless_raster_payload_for_page(&typed_plan, &source, 0, None)
+        let expected = build_lossless_raster_payload_for_page(&typed_plan, &source, None, 0, None)
             .map_err(|error| error.to_string())?;
         let rect = &expected.region_mappings[0].device_pixel_rect;
         assert!(
@@ -1577,9 +1577,7 @@ fn secure_redaction_worker_round_trips_rotated_page_geometry() {
                 rotation
             );
 
-            let expected = build_lossless_raster_payload_for_page(
-                &typed_plan,
-                &source,
+            let expected = build_lossless_raster_payload_for_page(&typed_plan, &source, None,
                 page_index as u32,
                 None,
             )

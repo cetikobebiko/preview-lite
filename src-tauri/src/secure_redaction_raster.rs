@@ -923,6 +923,76 @@ fn validate_pdf_point_rect_identity(
     Ok(())
 }
 
+/// Requires a *source* page of the bound document to have exactly the planned geometry.
+///
+/// The geometry is re-derived with the planner's own function and rules, so boxes inherited
+/// from the page tree (`/Pages /MediaBox`, `/CropBox`) resolve exactly as they did when the
+/// plan was made. `source_structure` must be the structural view of the same immutable
+/// snapshot the planner used (`lopdf::Document::load(snapshot).ok()`), or `None` exactly when
+/// the planner had none. PDFium's box getters read only the page's own dictionary, so
+/// [`validate_pdfium_page_geometry`] cannot be used for source pages.
+pub fn validate_source_page_geometry(
+    pdfium_page: &PdfPage<'_>,
+    source_structure: Option<&lopdf::Document>,
+    expected: &CanonicalPageGeometry,
+    page_index: u32,
+) -> Result<(), crate::document_session::SessionJobOperationError> {
+    let actual = crate::secure_redaction_inspection::inspect_page_geometry(
+        pdfium_page,
+        source_structure,
+        page_index,
+    )?;
+
+    validate_pdf_point_rect_identity(
+        &actual.media_box,
+        &expected.media_box,
+        "MediaBox",
+        page_index,
+    )?;
+    for (label, actual, expected) in [
+        ("CropBox", &actual.crop_box, &expected.crop_box),
+        ("TrimBox", &actual.trim_box, &expected.trim_box),
+        ("BleedBox", &actual.bleed_box, &expected.bleed_box),
+        ("ArtBox", &actual.art_box, &expected.art_box),
+    ] {
+        match (actual, expected) {
+            (Some(actual), Some(expected)) => {
+                validate_pdf_point_rect_identity(actual, expected, label, page_index)?;
+            }
+            (None, None) => {}
+            _ => {
+                return Err(make_redaction_error(
+                    SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+                    format!(
+                        "Source {label} presence does not match plan for page_index {page_index}"
+                    ),
+                ));
+            }
+        }
+    }
+    validate_pdf_point_rect_identity(
+        &actual.effective_box,
+        &expected.effective_box,
+        "effective box",
+        page_index,
+    )?;
+    if actual.rotation != expected.rotation {
+        return Err(make_redaction_error(
+            SecureRedactionErrorCode::RedactionPageGeometryMismatch,
+            format!(
+                "Source page rotation {:?} does not match plan rotation {:?} for page_index {page_index}",
+                actual.rotation, expected.rotation
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Requires a page whose boxes are written on the page itself (a rebuilt or imported
+/// *output* page) to have exactly the planned geometry. PDFium's box getters do not follow
+/// page-tree inheritance, so an output page that lacks an explicit box fails closed here.
+/// Source pages use [`validate_source_page_geometry`].
 pub fn validate_pdfium_page_geometry(
     pdfium_page: &PdfPage<'_>,
     expected: &CanonicalPageGeometry,
@@ -1111,6 +1181,7 @@ pub fn raster_image_placement_matrix(
 pub fn build_lossless_raster_payload_for_page(
     plan: &SecureRedactionPlan,
     document: &PdfDocument<'_>,
+    source_structure: Option<&lopdf::Document>,
     page_index: u32,
     cancellation: Option<&SessionJobCancellationCheckpoint>,
 ) -> Result<LosslessRasterPayload, crate::document_session::SessionJobOperationError> {
@@ -1157,7 +1228,12 @@ pub fn build_lossless_raster_payload_for_page(
 
     // Page identity authority is the bound document plus exact page index. Do
     // not accept a caller-provided PdfPage handle at this plan-bound boundary.
-    validate_pdfium_page_geometry(&pdfium_page, &page_plan.geometry, page_index)?;
+    validate_source_page_geometry(
+        &pdfium_page,
+        source_structure,
+        &page_plan.geometry,
+        page_index,
+    )?;
 
     if !page_plan.executable || !page_plan.blockers.is_empty() {
         return Err(make_redaction_error(
