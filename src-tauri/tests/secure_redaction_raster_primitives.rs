@@ -824,7 +824,9 @@ fn test_43_cancellation_during_mapping() {
         token.cancel();
         let cancel = SessionJobCancellationCheckpoint::new(token);
 
-        assert!(build_lossless_raster_payload_for_page(&plan, &doc, 0, Some(&cancel)).is_err());
+        assert!(
+            build_lossless_raster_payload_for_page(&plan, &doc, None, 0, Some(&cancel)).is_err()
+        );
     });
 }
 
@@ -851,8 +853,8 @@ fn test_45_plan_remains_byte_and_semantic_unchanged() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let payload =
-            build_lossless_raster_payload_for_page(&plan, &doc, 0, None).expect("Build payload");
+        let payload = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None)
+            .expect("Build payload");
 
         assert_eq!(payload.region_mappings.len(), 1);
 
@@ -885,7 +887,7 @@ fn test_46_plan_digest_unchanged_after_raster_mapping() {
         let _ = doc.pages().get(0).expect("Page 0");
 
         let _payload =
-            build_lossless_raster_payload_for_page(&plan, &doc, 0, None).expect("Payload");
+            build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None).expect("Payload");
 
         assert_eq!(plan.plan_digest, saved_digest);
     });
@@ -912,7 +914,7 @@ fn test_47_canonical_region_device_pixel_rect_remains_unmutated() {
         let _ = doc.pages().get(0).expect("Page 0");
 
         let _payload =
-            build_lossless_raster_payload_for_page(&plan, &doc, 0, None).expect("Payload");
+            build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None).expect("Payload");
 
         for region in &plan.page_plans[0].canonical_regions {
             assert!(region.device_pixel_rect.is_none());
@@ -947,7 +949,7 @@ fn test_48_no_filesystem_output_created() {
         let _ = doc.pages().get(0).expect("Page 0");
 
         let _payload =
-            build_lossless_raster_payload_for_page(&plan, &doc, 0, None).expect("Payload");
+            build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None).expect("Payload");
     });
 
     let after_files: Vec<_> = fs::read_dir(&dir)
@@ -993,7 +995,7 @@ fn test_49_full_plan_not_ready_refuses_raster() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let res = build_lossless_raster_payload_for_page(&plan, &doc, 0, None);
+        let res = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None);
         assert!(res.is_err());
     });
 }
@@ -1028,7 +1030,7 @@ fn test_50_document_level_blocker_refuses_raster() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let res = build_lossless_raster_payload_for_page(&plan, &doc, 0, None);
+        let res = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None);
         assert!(res.is_err());
     });
 }
@@ -1055,7 +1057,7 @@ fn test_51_unaffected_page_strategy_refuses_raster() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let res = build_lossless_raster_payload_for_page(&plan, &doc, 0, None);
+        let res = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None);
         assert!(res.is_err());
     });
 }
@@ -1081,7 +1083,7 @@ fn test_52_empty_canonical_regions_refuses_raster() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let res = build_lossless_raster_payload_for_page(&plan, &doc, 0, None);
+        let res = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None);
         assert!(res.is_err());
     });
 }
@@ -1111,8 +1113,8 @@ fn test_53_caller_cannot_inject_policy_or_dpi() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let payload =
-            build_lossless_raster_payload_for_page(&plan, &doc, 0, None).expect("Build payload");
+        let payload = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None)
+            .expect("Build payload");
 
         // Payload DPI and dimensions are governed solely by plan.policy
         assert_eq!(payload.width, expected_w);
@@ -1223,7 +1225,7 @@ fn test_55_acroform_widget_blocked_full_plan() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        assert!(build_lossless_raster_payload_for_page(&plan, &doc, 0, None).is_err());
+        assert!(build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None).is_err());
     });
 }
 
@@ -1246,7 +1248,7 @@ fn test_56_text_image_rasterization() {
             .expect("Load pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let payload = build_lossless_raster_payload_for_page(&plan, &doc, 0, None)
+        let payload = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None)
             .expect("Build payload for text-image.pdf");
 
         assert!(payload.width > 0);
@@ -1353,7 +1355,7 @@ fn test_60_encrypted_fixture_raster_blocked() {
             .expect("Load encrypted pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let res = build_lossless_raster_payload_for_page(&plan, &doc, 0, None);
+        let res = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None);
         assert!(res.is_err());
         match res.err().unwrap() {
             preview_alternative_lib::document_session::SessionJobOperationError::Failed(info) => {
@@ -1388,7 +1390,7 @@ fn test_61_signed_fixture_raster_blocked() {
             .expect("Load signed pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let res = build_lossless_raster_payload_for_page(&plan, &doc, 0, None);
+        let res = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None);
         assert!(res.is_err());
         match res.err().unwrap() {
             preview_alternative_lib::document_session::SessionJobOperationError::Failed(info) => {
@@ -1423,7 +1425,7 @@ fn test_62_xfa_fixture_raster_blocked() {
             .expect("Load XFA pdf");
         let _ = doc.pages().get(0).expect("Page 0");
 
-        let res = build_lossless_raster_payload_for_page(&plan, &doc, 0, None);
+        let res = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None);
         assert!(res.is_err());
         match res.err().unwrap() {
             preview_alternative_lib::document_session::SessionJobOperationError::Failed(info) => {
@@ -1459,8 +1461,8 @@ fn test_63_document_bound_page_identity_uses_exact_page_index() {
 
         // No PdfPage handle is accepted by this API, so page 1 cannot be
         // injected for the page-0 plan. The red square exists only on page 0.
-        let payload =
-            build_lossless_raster_payload_for_page(&plan, &doc, 0, None).expect("Page-0 payload");
+        let payload = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None)
+            .expect("Page-0 payload");
         let start = 75 * payload.stride + 30 * 4;
         assert_eq!(&payload.pixels[start..start + 4], [255, 0, 0, 255]);
     });
@@ -1527,7 +1529,7 @@ fn test_65_full_pipeline_rotations_exact_payload_and_mapping() {
             expected.into_iter().enumerate()
         {
             let payload =
-                build_lossless_raster_payload_for_page(&plan, &doc, page_index as u32, None)
+                build_lossless_raster_payload_for_page(&plan, &doc, None, page_index as u32, None)
                     .unwrap_or_else(|e| {
                         panic!("rotation {page_index} full pipeline failed: {e:?}")
                     });
@@ -1571,7 +1573,7 @@ fn full_pipeline_origin_fixture(
         let doc = pdfium
             .load_pdf_from_file(&pdf_path, None)
             .expect("Load fixture");
-        let payload = build_lossless_raster_payload_for_page(&plan, &doc, 0, None)
+        let payload = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None)
             .expect("Full pipeline payload");
         let mapping = payload.region_mappings.first().expect("one mapped region");
         assert_eq!(plan.page_plans[0].geometry.media_box, expected_media);
@@ -1606,7 +1608,7 @@ fn test_66_full_pipeline_cropbox_exact_payload_and_mapping() {
         let doc = pdfium
             .load_pdf_from_file(&pdf_path, None)
             .expect("Load CropBox fixture");
-        let payload = build_lossless_raster_payload_for_page(&plan, &doc, 0, None)
+        let payload = build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None)
             .expect("CropBox full pipeline payload");
         let mapping = payload.region_mappings.first().expect("one mapped region");
         assert_eq!(
@@ -1668,4 +1670,48 @@ fn test_68_full_pipeline_negative_origin_exact_payload_and_mapping() {
         (600, 800),
         (60, 80, 120, 160),
     );
+}
+
+// The fixture sets /MediaBox and /CropBox only on /Pages. The planner resolves them through
+// the page tree; the source-page check before rasterization must use the same structural
+// view. PDFium's box getters read only the page dictionary, so without it the check
+// cannot find the planned MediaBox and refuses.
+#[test]
+fn source_page_check_resolves_inherited_boxes_like_the_planner() {
+    let pdf_path = fixture_path("inherited-geometry.pdf");
+    let plan = inspect_and_plan_secure_redaction(
+        &pdf_path,
+        None,
+        1,
+        sample_policy(),
+        sample_acknowledgements(),
+        vec![sample_region("reg1", 0, 0.1, 0.1, 0.2, 0.2)],
+    )
+    .expect("Build plan");
+    assert!(plan.page_plans[0].geometry.crop_box.is_some());
+    let structure = lopdf::Document::load(&pdf_path).expect("structural view of the fixture");
+
+    with_test_pdfium(|pdfium| {
+        let doc = pdfium
+            .load_pdf_from_file(&pdf_path, None)
+            .expect("Load pdf");
+
+        let payload =
+            build_lossless_raster_payload_for_page(&plan, &doc, Some(&structure), 0, None)
+                .expect("inherited boxes resolve to the planned geometry");
+        assert_eq!(payload.region_mappings.len(), 1);
+
+        match build_lossless_raster_payload_for_page(&plan, &doc, None, 0, None) {
+            Err(preview_alternative_lib::document_session::SessionJobOperationError::Failed(
+                info,
+            )) => {
+                assert_eq!(
+                    info.code,
+                    preview_alternative_lib::secure_redaction::SecureRedactionErrorCode::RedactionPageGeometryMismatch.code_str()
+                );
+            }
+            Err(_) => panic!("Expected SessionJobOperationError::Failed"),
+            Ok(_) => panic!("without the page tree the inherited MediaBox is not visible"),
+        }
+    });
 }

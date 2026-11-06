@@ -1065,7 +1065,12 @@ pub fn resolve_inherited_box(
     InheritedLookup::Unknown
 }
 
-fn inspect_page_geometry(
+/// The planner's canonical page geometry (StandardEffectiveBoxV1). With `lopdf_doc`, every
+/// box is resolved through the page tree (`/MediaBox` and `/CropBox` are inheritable and many
+/// producers set them only on `/Pages`); without it, PDFium's page-dictionary getters are used.
+/// Execution re-derives a source page's geometry with this same function
+/// (`secure_redaction_raster::validate_source_page_geometry`).
+pub(crate) fn inspect_page_geometry(
     pdfium_page: &PdfPage<'_>,
     lopdf_doc: Option<&lopdf::Document>,
     page_idx: u32,

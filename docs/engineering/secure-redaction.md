@@ -261,8 +261,9 @@ edilmemiştir.
 
 Production DTO/enum, plan digest, transform worker, report, frontend
 normalization veya selector değişikliği yoktur. Planner whole-object strategy
-seçemez; bütün affected pages mevcut raster strategy'yi kullanır. Feature
-registry `redaction.enabled == false` / `status == disabled` kalır; legacy
+seçemez; bütün affected pages mevcut raster strategy'yi kullanır. Whole-object
+NO-GO kararı feature registry durumunu değiştirmez (§18'deki activation sonrası
+`redaction` `experimental`'dır ve yalnız raster strategy'yi kullanır); legacy
 `apply_redactions` hâlâ `FEATURE_UNAVAILABLE`, visual mask hâlâ mock/disabled'dır.
 Original/working PDF, session generation/state ve digest-bound independent
 verification → atomic publication hattı değişmemiştir.
@@ -669,7 +670,11 @@ Secure export, target preflight'ından publication sonuna kadar session operatio
 
 **Boundary validated:** `document_io` testleri same-digest/different-identity target değişimini, symlink/directory/unsupported hard-link reddini, pre-commit `OriginalPreserved`, `NewCommitted`, `NewCommittedDurabilityUnconfirmed`, `RecoveryRequired` ve `Indeterminate` state propagation'ını kapsar. `document_session` testleri generic child kill/reap/timeout, snapshot/job/credential cleanup ve publication failure `commitState`/`recoveryPath`/`replacementDigest` wire metadata köprüsünü doğrular. Worker/verifier corpus testleri full rewrite, reopen ve pixel/placement/stale-digest corruption regresyonlarının otoritesidir.
 
-**Not run:** macOS x86_64 runtime execution acceptance — architecture unavailable. Windows runtime execution acceptance — environment unavailable. Linux runtime execution acceptance — environment unavailable. Platform-specific implementation ve cfg-gated filesystem testleri korunur; gerçek runtime certification feature activation/release öncesinde ayrıca yapılmalıdır. Feature matrix'te redaction `disabled`, eski `apply_redactions` ise `FEATURE_UNAVAILABLE` kalır.
+**Platform kapsamı:** Acceptance suite, PDFium runtime'ı bulunan her hedefte derlenir ve koşar: macOS arm64 (`aarch64-apple-darwin`), Linux x86_64 (`x86_64-unknown-linux-gnu`) ve Windows x86_64 (`x86_64-pc-windows-msvc`); kanonik kaynak `docs/engineering/platform-support.json`'dır. `.github/workflows/secure-redaction-acceptance.yml` üç platformda `cargo test --locked --features secure-redaction-test-support --test secure_redaction_execution_acceptance` komutunu koşar ve her platformda tam olarak 13 geçen test ister; 0 test başarı sayılmaz.
+
+**Plan digest transport:** Planı frontend, aldığı plandan `plan_digest`'i yeniden hesaplayarak doğrular. Plan job worker'dan main process'e JSON dosyasıyla, oradan Tauri IPC ile gelir; her f64 bu iki geçişte bit-bit korunmalıdır. `serde_json` varsayılan float parser'ı bir ULP sapabildiği için (ör. `51.480000000000004` → `51.48`) UI varsayılan politikasıyla (300 DPI, 2 pt pay) plan `REDACTION_PLAN_DIGEST_MISMATCH` ile reddediliyordu. `serde_json` artık `float_roundtrip` feature'ıyla derlenir; `returned_plan_digest_matches_its_contents_for_ui_default_policy` gerçek worker'dan dönen planın kendi digest'ine eşit olduğunu ve IPC serileştirmesinden değişmeden geçtiğini doğrular.
+
+**Desteklenmeyen hedef — macOS x86_64:** PDFium runtime'ı yoktur (`libpdfium.dylib` yalnız arm64'tür ve `platform-support.json` bir `x86_64-apple-darwin` kaydı taşımaz). Bu bir NOT RUN borcu değil, desteklenmeyen hedeftir; suite orada bilinçli olarak 0 test derler. Feature registry'deki `"macos"` platform değeri arm64'ü kasteder; ayrı bir mimari kapısı yoktur.
 
 ---
 
@@ -681,9 +686,10 @@ Secure export, target preflight'ından publication sonuna kadar session operatio
 * **Bağımlılık Kısıtı:** Yeni dependency eklenmemiştir (`pdfium-render v0.8.37`, `lopdf v0.34.0` korunmuştur). İkinci bir render motoru (PDF.js, MuPDF vb.) kesinlikle eklenemez.
 
 ### 16.2 Plan-bound Raster API ve Readiness Gate
-* `build_lossless_raster_payload_for_page(plan: &SecureRedactionPlan, document: &PdfDocument, page_index: u32, cancellation)` imzası ile rasterizasyon doğrudan tam plan yetkisine bağlanmıştır. Primitive, sayfa handle’ını yalnızca bağlı `document.pages().get(page_index)` çağrısıyla edinir; caller tarafından `PdfPage` injection kabul edilmez.
+* `build_lossless_raster_payload_for_page(plan: &SecureRedactionPlan, document: &PdfDocument, source_structure: Option<&lopdf::Document>, page_index: u32, cancellation)` imzası ile rasterizasyon doğrudan tam plan yetkisine bağlanmıştır. Primitive, sayfa handle’ını yalnızca bağlı `document.pages().get(page_index)` çağrısıyla edinir; caller tarafından `PdfPage` injection kabul edilmez.
 * Caller tarafından bağımsız `SecureRedactionPolicy` injection kabul edilmez; tüm render parametreleri (DPI, boyutlar) strictly `plan.policy` üzerinden alınır.
-* **Geometry identity denetimi:** `PdfPage::width()/height()` raw MediaBox boyutları değildir; CropBox ve intrinsic rotation’dan etkilenen effective display size’dır. Bu nedenle raw MediaBox ile karşılaştırılmaz. Primitive, PDFium’dan `boundaries().media()`, distinct `boundaries().crop()` ve intrinsic `rotation()` okur; MediaBox, CropBox varlığı ve `left`, `bottom`, `width`, `height` değerlerini `GEOMETRY_EPSILON` ile plan geometry’siyle karşılaştırır. Effective box, CropBox varsa CropBox, yoksa MediaBox’tır ve ayrıca doğrulanır. Her okunamayan veya finite olmayan zorunlu geometry değeri `REDACTION_PAGE_GEOMETRY_MISMATCH` ile fail-closed olur.
+* **Geometry identity denetimi:** `PdfPage::width()/height()` raw MediaBox boyutları değildir; CropBox ve intrinsic rotation’dan etkilenen effective display size’dır. Bu nedenle raw MediaBox ile karşılaştırılmaz. Kaynak sayfa `validate_source_page_geometry` ile denetlenir: geometry, planner’ın kendi fonksiyonuyla (`secure_redaction_inspection::inspect_page_geometry`) bağlı kaynak belgeden yeniden türetilir ve MediaBox, CropBox/TrimBox/BleedBox/ArtBox varlığı ve `left`, `bottom`, `width`, `height` değerleri, effective box ve intrinsic rotation `GEOMETRY_EPSILON` ile plan geometry’siyle karşılaştırılır. Her okunamayan, finite olmayan veya farklı zorunlu geometry değeri `REDACTION_PAGE_GEOMETRY_MISMATCH` ile fail-closed olur.
+* **Kalıtılan sayfa kutuları:** `/MediaBox` ve `/CropBox` sayfa ağacından kalıtılabilir; birçok üretici (ör. macOS PDFKit) bunları yalnız `/Pages` düğümüne yazar. PDFium’un `FPDFPage_GetMediaBox`/`GetCropBox` getter’ları yalnız sayfanın kendi sözlüğünü okur ve kalıtımı uygulamaz; planner ise kutuları lopdf ile sayfa ağacından çözer. Kaynak sayfa denetimi yalnız PDFium getter’larıyla yapıldığında bu belgelerde planlama geçip execution `Failed to read PDFium MediaBox` ile düşüyordu (uygulama içi kontrolde bulundu). Transform worker artık planner’ın kullandığı yapısal görünümü aynı şekilde yükler (`lopdf::Document::load(snapshot).ok()`) ve `source_structure` olarak geçirir. **lopdf gerekçesi ve güvenlik değerlendirmesi:** kullanım yalnız salt-okunur sayfa ağacı kutu çözümlemesidir; render, metin veya geometry otoritesi PDFium’da kalır. Yükleme izole transform worker içinde, plan digest’iyle bağlı ve SHA-256’sı yeniden doğrulanmış immutable snapshot üzerinde yapılır; aynı worker zaten planı aynı snapshot’tan aynı yükleme ile yeniden üretir. Yeni path-native akış, credential kullanımı veya yazma yoktur. Çıktı sayfaları (yeniden kurulan ve `copy_page_from_document` ile import edilen) kutuları sayfa sözlüğünde açıkça taşır; transform reopen denetimi ve bağımsız verifier bu nedenle yalnız PDFium getter’larını kullanan katı `validate_pdfium_page_geometry` ile kalır. Testler: `secure_redaction_execution_acceptance::inherited_page_boxes_execute_with_the_planned_geometry` (düzeltme olmadan aynı hatayla düşer) ve `secure_redaction_raster_primitives::source_page_check_resolves_inherited_boxes_like_the_planner`.
 * `rotation()` için production dalı `Err(_) -> REDACTION_PAGE_GEOMETRY_MISMATCH` invariant’ını taşır. PDFium rotation-read failure üreten bir fixture/adaptör bulunmadığından bu dal fixture ile sertifikalandırılmaz.
 * **Fail-closed Preflight Denetimleri:**
   * `plan.executable == true`
@@ -761,9 +767,9 @@ Secure export, target preflight'ından publication sonuna kadar session operatio
   * Tests 67–68: Non-zero ve negative MediaBox origin fixture’ları için gerçek full pipeline geometry, payload dimensions ve exact mapping assert edilir.
 * **8B-6 regression gate:** Full-pipeline 0/90/180/270 rotation, CropBox != MediaBox, non-zero origin, negative origin, exact device mapping, document-bound page identity, plan/digest immutability ve no-output invariant birlikte zorunludur.
 
-## 17. 8B-9 Frontend Workflow (Implemented, Feature Disabled)
+## 17. 8B-9 Frontend Workflow (Implemented, Feature Experimental)
 
-Production kaynak kodunda frontend workflow uygulanmıştır; bu bir activation kararı değildir. Feature registry kaydı `status: disabled` ve `enabled: false` kalır. Kullanıcıya runnable bir kontrol sunulmaz ve legacy `apply_redactions` hâlâ parse öncesi `FEATURE_UNAVAILABLE` döndürür.
+Production kaynak kodunda frontend workflow uygulanmıştır. Activation §18'deki platform sertifikasyonu sonrasında yapılmıştır: feature registry kaydı `status: experimental`, `enabled: true`. Legacy `apply_redactions` hâlâ parse öncesi `FEATURE_UNAVAILABLE` döndürür; frontend `applyRedactionsAction` wrapper'ı da feature durumundan bağımsız olarak backend'e ulaşmadan reddeder.
 
 ### 17.1 Pending region ve manual selection sınırı
 
@@ -800,27 +806,41 @@ Backend live sub-phase/yüzde event'i vermediği için UI sahte yüzde üretmez;
 
 ### 17.6 Activation ve platform borcu
 
-Frontend ve canonical callsite'ın production source'ta bulunması feature activation anlamına gelmez. `redaction.enabled == false`, `visual_redaction_mask.enabled == false` ve legacy `apply_redactions == FEATURE_UNAVAILABLE` invariant'ları korunur. macOS arm64 execution acceptance doğrulaması geçerlidir. macOS x86_64, Windows ve Linux runtime execution acceptance **NOT RUN** borcu activation certification'a taşınmıştır.
+Activation yalnız §18'deki platform sertifikasyonuna bağlıydı: macOS arm64, Linux x86_64 ve Windows x86_64 runtime execution acceptance. Üçü de CI'da geçtikten sonra `redaction` `experimental`/enabled yapılmıştır. `visual_redaction_mask.enabled == false` (mock) ve legacy `apply_redactions == FEATURE_UNAVAILABLE` invariant'ları korunur. macOS x86_64 PDFium runtime'ı olmadığı için desteklenmeyen hedeftir, sertifikasyon borcu değildir.
 
 ## 18. Prompt 8B Final Audit ve Activation Kararı
 
 ### 18.1 Karar
 
-**8B COMPLETE — ACTIVATION DEFERRED.** `secure_rasterized_pages_v1` production
-profili ve explicit rectangular secure-redaction export zinciri tamamlanmıştır.
-Registry advertised platform kümesi `ALL_DESKTOP_PLATFORMS` olduğu halde yalnız
-macOS arm64 runtime acceptance çalıştırılmıştır. Yeni platform/architecture gate
-icat edilmemiştir; bu nedenle `redaction.status == "disabled"` ve
-`redaction.enabled == false` korunur. Release platform certification tamamlanınca
-activation ayrı bir karardır; ilk activation yapılırsa status `experimental`
-olmalıdır, `stable` değildir.
+**8B ACTIVATED — EXPERIMENTAL.** `secure_rasterized_pages_v1` production
+profili ve explicit rectangular secure-redaction export zinciri, registry'nin
+advertised platform kümesi `ALL_DESKTOP_PLATFORMS`'un PDFium runtime'ı olan her
+hedefinde runtime acceptance'tan geçmiştir. `"macos"` arm64'ü kasteder; yeni
+platform/architecture gate icat edilmemiştir. Bu nedenle `redaction.status ==
+"experimental"` ve `redaction.enabled == true`'dur; `stable` değildir.
+
+Kanıt: `.github/workflows/secure-redaction-acceptance.yml`, her platformda
+`cargo test --locked --features secure-redaction-test-support --test
+secure_redaction_execution_acceptance` koşar ve tam olarak 13 geçen test ister
+(0 test başarısızlıktır). Üç platformda 13/13 gözlenen koşu: 8276c56 (CI run 42141857368). Bu feature-level runtime sertifikasyonudur;
+`platform-support.json` platform statüleri ve exact-artifact/release
+sertifikasyonu bundan etkilenmez.
+
+Uygulama içi kontrol (macOS arm64, debug build, gerçek menü ve panel): menüden
+"Güvenli redaksiyon" → bölge → plan → kayıp onayları → yeniden plan → Save →
+"Doğrulama: Başarılı", `new_committed`. Yeniden açılan çıktıda işaretli sayfada
+gizli metin aranamaz ve metin katmanı yoktur; işaretlenmeyen sayfa değişmez; kaynak
+oturum kirlenmez. Bu kontrol aktivasyondan önce iki üretim hatası buldu: plan
+digest'inin float round-trip'te bozulması (§15.11) ve `/Pages`'ten kalıtılan
+`/MediaBox`/`/CropBox` ile execution'ın düşmesi (§16.2); ikisi de düzeltildi ve
+acceptance suite'e birer testle eklendi.
 
 | Platform | Certification |
 |---|---|
-| macOS arm64 | **PASS** — real worker transform, independent verifier ve atomic publication acceptance |
-| macOS x86_64 | **NOT RUN** — bu architecture ortamı yok |
-| Windows | **NOT RUN** — runtime environment yok |
-| Linux | **NOT RUN** — runtime environment yok |
+| macOS arm64 | **PASS** — CI `macos-15`, 13/13: real worker transform, independent verifier ve atomic publication acceptance |
+| macOS x86_64 | **Desteklenmeyen hedef** — PDFium runtime yok; registry `"macos"` değeri arm64'ü kasteder |
+| Windows x86_64 | **PASS** — CI `windows-latest`, 13/13 |
+| Linux x86_64 | **PASS** — CI `ubuntu-22.04`, 13/13 (PDFium `provision-pdfium-runtime.mjs` ile) |
 
 ### 18.2 Final blocker matrisi
 
@@ -831,11 +851,11 @@ olmalıdır, `stable` değildir.
 | Atomic publication | **PASS** | verifier digest binding, target identity/digest precondition ve typed commit states |
 | Frontend workflow | **PASS** | pending review semantics, two-pass acknowledgement, ready-only Save dialog, canonical controller ve stale-result guards |
 | Whole-object optional strategy | **NO-GO — non-blocking** | detached-object lifetime SIGSEGV ve diğer mandatory proof eksikleri; production strategy eklenmemiştir |
-| macOS arm64 runtime | **PASS** | `secure_redaction_execution_acceptance` |
-| macOS x86_64 runtime | **NOT RUN** | architecture unavailable |
-| Windows runtime | **NOT RUN** | environment unavailable |
-| Linux runtime | **NOT RUN** | environment unavailable |
-| Documentation parity | **PASS** | feature matrix, IPC inventory ve bu karar aynı disabled/8C sınırını taşır |
+| macOS arm64 runtime | **PASS** | `secure_redaction_execution_acceptance`, CI 13/13 |
+| macOS x86_64 runtime | **N/A — unsupported target** | PDFium runtime yok (`platform-support.json`'da kayıt yok) |
+| Windows x86_64 runtime | **PASS** | `secure_redaction_execution_acceptance`, CI 13/13 |
+| Linux x86_64 runtime | **PASS** | `secure_redaction_execution_acceptance`, CI 13/13 |
+| Documentation parity | **PASS** | feature matrix, IPC inventory ve bu karar aynı experimental/8C sınırını taşır |
 | Production test-seam isolation | **PASS** | seam'ler yalnız Cargo `secure-redaction-test-support` opt-in feature'ında derlenir; default/release build, Tauri IPC, environment ve frontend payload ile etkinleşmez |
 
 ### 18.3 Production surface ve test seam sınırı
@@ -850,7 +870,13 @@ authority ve publication yürütür. Legacy `apply_redactions` fail-closed kalı
 8B-8.3 phase hooks, controlled child failure/timeout, result injection ve
 staged-temp corruption seam'leri yalnız explicit
 `secure-redaction-test-support` Cargo feature'ı ile integration acceptance
-derlemesine alınır. Default feature set boştur. Production command yalnız
+derlemesine alınır. Sanitization acceptance ile paylaşılan Save write-lease
+gözlem hook'u (`set_secure_redaction_save_lease_test_hook` /
+`set_verified_artifact_save_lease_test_hook`, store alanı ve Save içindeki iki
+çağrı) ile `secure_redaction_export_paths_for_acceptance` accessor'ı
+`any(secure-redaction-test-support, sanitization-test-support)` altında derlenir;
+daha önce default/release build'de de bulunuyorlardı (IPC'ye açık değildi).
+`architecture.test.js` her bildirim ve kullanımın bu gate altında olduğunu kilitler. Default feature set boştur. Production command yalnız
 `execute_secure_redaction_core` çağırır; environment variable, IPC payload,
 frontend input veya runtime configuration test authority üretemez. Whole-object
 SIGSEGV probe'u yalnız `tests/whole_object_backend_characterization.rs` child

@@ -348,11 +348,14 @@
       "usesPdfium": true,
       "realWorker": true,
       "supportedPlatforms": [
-        "macos"
+        "macos",
+        "linux",
+        "windows"
       ],
       "fixtureIds": [
         "redaction-simple-text",
-        "redaction-mixed-secure-redaction-pages"
+        "redaction-mixed-secure-redaction-pages",
+        "redaction-inherited-geometry"
       ],
       "syntheticInputs": [
         "synthetic_tempdir"
@@ -360,17 +363,19 @@
       "nativeRequirements": [
         "pdfium_dynamic_lib",
         "pdfium_worker_executable",
-        "aarch64",
+        "pdfium_runtime_target_arch",
         "secure_redaction_test_support_feature"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 11,
+      "expectedTestCount": 13,
       "expectedTestPresence": "conditional",
       "expectedTestCountByProfile": {
         "default": 0,
-        "with_secure_redaction_test_support_on_macos_aarch64": 11
+        "with_secure_redaction_test_support_on_macos_aarch64": 13,
+        "with_secure_redaction_test_support_on_linux_x86_64": 13,
+        "with_secure_redaction_test_support_on_windows_x86_64": 13
       },
-      "notes": "#![cfg(feature = \"secure-redaction-test-support\")] + cfg(macos aarch64) — zero-test risk"
+      "notes": "#![cfg(feature = \"secure-redaction-test-support\")] + cfg(any(macos aarch64, linux x86_64, windows x86_64)) — zero-test risk. pdfium_runtime_target_arch = the architecture platform-support.json ships a PDFium runtime for: aarch64 on macOS, x86_64 on Linux and Windows. macOS x86_64 has no PDFium runtime and is an unsupported target (0 tests by design), not NOT_RUN debt. CI: .github/workflows/secure-redaction-acceptance.yml requires exactly 13 passed per platform."
     },
     {
       "id": "rust:secure_redaction_planning_worker",
@@ -442,7 +447,8 @@
         "redaction-signature-marked-byterange",
         "redaction-xfa-fixture",
         "redaction-text-image",
-        "redaction-image-only"
+        "redaction-image-only",
+        "redaction-inherited-geometry"
       ],
       "syntheticInputs": [
         "synthetic_geometry"
@@ -451,9 +457,9 @@
         "pdfium_dynamic_lib"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 40,
+      "expectedTestCount": 41,
       "expectedTestPresence": "at_least_one",
-      "notes": "NATIVE retained: mapping/render/raster-payload/plan-immutability with PDFium runtime (40 tests) — B2 split."
+      "notes": "NATIVE retained: mapping/render/raster-payload/plan-immutability with PDFium runtime (41 tests) — B2 split."
     },
     {
       "id": "rust:session_worker_integration",

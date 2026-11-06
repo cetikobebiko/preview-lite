@@ -1,10 +1,11 @@
-import { assertFeatureRunnable, guardFeatureAction } from "../featureActionGuard.js";
+import {
+  assertFeatureRunnable,
+  FeatureUnavailableError,
+  guardFeatureAction,
+} from "../featureActionGuard.js";
 import { getRuntimeFeatureContext } from "../featureRegistry.js";
 import { mergePdfs } from "./backend/manipulation.js";
-import {
-  applyRedactions,
-  startSensitiveDataScan,
-} from "./backend/redaction.js";
+import { startSensitiveDataScan } from "./backend/redaction.js";
 import {
   performOcrOnPage,
   shareExternalFileMacos,
@@ -26,23 +27,14 @@ export const mergePdfsDirectAction = (
     () => mergePdfs(filePaths, outputPath),
   );
 
-export const applyRedactionsAction = (
-  sessionId,
-  expectedContentGeneration,
-  outputPath,
-  redactions,
-  context,
-) =>
-  guardFeatureAction(
-    "redaction",
-    runtimeContext(context),
-    () => applyRedactions(
-      sessionId,
-      expectedContentGeneration,
-      outputPath,
-      redactions,
-    ),
-  );
+// Legacy `apply_redactions` stays fail-closed whatever the `redaction` feature
+// says: secure redaction (plan/execute_secure_redaction) replaced it and the
+// backend answers FEATURE_UNAVAILABLE before parsing. It never reaches the backend.
+export const applyRedactionsAction = async () => {
+  throw new FeatureUnavailableError("apply_redactions", {
+    reason: "Eski apply_redactions komutu kapalıdır; güvenli redaksiyon akışını kullanın.",
+  });
+};
 
 export const startSensitiveDataScanAction = (
   sessionId,

@@ -3988,6 +3988,12 @@ struct InstanceManifest {
     application_identifier: String,
 }
 
+// Test-only observation seam for the Save/secure-export lease ordering. Compiled
+// only into the opt-in acceptance features; never into default or release builds.
+#[cfg(any(
+    feature = "secure-redaction-test-support",
+    feature = "sanitization-test-support"
+))]
 type SecureRedactionSaveLeaseTestHook = Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>;
 
 pub struct DocumentSessionStore {
@@ -4012,6 +4018,10 @@ pub struct DocumentSessionStore {
     search_cancellations: Mutex<HashMap<String, (u64, CancellationToken)>>,
     mutation_transaction_manager: Arc<MutationTransactionManager>,
     shutdown_admission_closed: AtomicBool,
+    #[cfg(any(
+        feature = "secure-redaction-test-support",
+        feature = "sanitization-test-support"
+    ))]
     secure_redaction_save_lease_test_hook: Mutex<SecureRedactionSaveLeaseTestHook>,
     #[cfg(test)]
     snapshot_worker_panic_jobs: Mutex<HashSet<Uuid>>,
@@ -4151,6 +4161,10 @@ impl DocumentSessionStore {
             search_cancellations: Mutex::new(HashMap::new()),
             mutation_transaction_manager: Arc::new(MutationTransactionManager::new()),
             shutdown_admission_closed: AtomicBool::new(false),
+            #[cfg(any(
+                feature = "secure-redaction-test-support",
+                feature = "sanitization-test-support"
+            ))]
             secure_redaction_save_lease_test_hook: Mutex::new(None),
             #[cfg(test)]
             snapshot_worker_panic_jobs: Mutex::new(HashSet::new()),
@@ -4872,10 +4886,18 @@ impl DocumentSessionStore {
         let entry = self.entry(session_id)?;
         #[cfg(test)]
         self.pause_after_lifecycle_before_operation().await;
+        #[cfg(any(
+            feature = "secure-redaction-test-support",
+            feature = "sanitization-test-support"
+        ))]
         if let Some(hook) = self.secure_redaction_save_lease_test_hook.lock().clone() {
             hook(false);
         }
         let _lease = entry.operation.clone().write_owned().await;
+        #[cfg(any(
+            feature = "secure-redaction-test-support",
+            feature = "sanitization-test-support"
+        ))]
         if let Some(hook) = self.secure_redaction_save_lease_test_hook.lock().clone() {
             hook(true);
         }
@@ -5954,6 +5976,10 @@ impl DocumentSessionStore {
             .await
     }
 
+    #[cfg(any(
+        feature = "secure-redaction-test-support",
+        feature = "sanitization-test-support"
+    ))]
     #[doc(hidden)]
     pub fn secure_redaction_export_paths_for_acceptance(
         &self,
@@ -5969,6 +5995,10 @@ impl DocumentSessionStore {
         })
     }
 
+    #[cfg(any(
+        feature = "secure-redaction-test-support",
+        feature = "sanitization-test-support"
+    ))]
     #[doc(hidden)]
     pub fn set_secure_redaction_save_lease_test_hook(
         &self,
@@ -5977,6 +6007,10 @@ impl DocumentSessionStore {
         *self.secure_redaction_save_lease_test_hook.lock() = hook;
     }
 
+    #[cfg(any(
+        feature = "secure-redaction-test-support",
+        feature = "sanitization-test-support"
+    ))]
     #[doc(hidden)]
     pub fn set_verified_artifact_save_lease_test_hook(
         &self,

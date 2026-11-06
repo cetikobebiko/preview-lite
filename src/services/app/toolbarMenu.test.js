@@ -33,6 +33,19 @@ describe("toolbar overflow menu", () => {
     expect(ui.togglePanel).toHaveBeenCalledWith("sensitiveDataScan");
   });
 
+  it("routes the secure redaction entry through the redaction feature guard to its panel", () => {
+    const { find, ui, onFeatureAction } = menu({ featureUi: gates({ redaction: on("EXPERIMENTAL") }) });
+    const redaction = find("redaction");
+    expect(redaction).toMatchObject({ label: "Güvenli redaksiyon", checked: false, disabled: false, badge: "Deneysel" });
+
+    redaction.onSelect();
+    expect(onFeatureAction).toHaveBeenCalledWith("redaction", expect.any(Function));
+    expect(ui.togglePanel).toHaveBeenCalledWith("secureRedaction");
+
+    expect(menu().find("redaction")).toBeUndefined();
+    expect(menu({ isPdf: false, featureUi: gates({ redaction: on() }) }).find("redaction")).toBeUndefined();
+  });
+
   it("omits invisible features and disables visible ones that cannot run", () => {
     const { find } = menu({
       featureUi: gates({ local_ai: { visible: true, runnable: false, warning: "Ollama yok", badge: "EXPERIMENTAL" } }),

@@ -840,6 +840,26 @@ describe("backend service boundaries", () => {
     );
     expect(redactionSource).not.toMatch(/std::env::(?:var|var_os)\(/);
     expect(workerSource).not.toContain("WHOLE_OBJECT_DESTROY_PROBE");
+
+    // The Save lease observation hook and the private-path accessor are shared
+    // with the sanitization acceptance suites; every declaration and use must
+    // sit directly under the opt-in acceptance feature gate.
+    const sessionSource = readSource(resolve(rustSourceRoot, "document_session.rs")).replace(/\r\n/g, "\n");
+    const acceptanceGate =
+      /#\[cfg\(any\(\s*feature = "secure-redaction-test-support",\s*feature = "sanitization-test-support"\s*\)\)\]\s*(?:#\[doc\(hidden\)\]\s*)?$/;
+    const seamUses = [
+      ...sessionSource.matchAll(
+        /^[ \t]*(?:type SecureRedactionSaveLeaseTestHook\b|secure_redaction_save_lease_test_hook:|if let Some\(hook\) = self\.secure_redaction_save_lease_test_hook\b|pub fn (?:secure_redaction_export_paths_for_acceptance|set_secure_redaction_save_lease_test_hook|set_verified_artifact_save_lease_test_hook)\b)/gm,
+      ),
+    ];
+    // type alias, field, initializer, two Save hook calls, three accessors
+    expect(seamUses).toHaveLength(8);
+    for (const use of seamUses) {
+      expect(sessionSource.slice(0, use.index), `ungated seam: ${use[0].trim()}`).toMatch(acceptanceGate);
+    }
+    const allHookReferences = sessionSource.match(/(?<!set_)secure_redaction_save_lease_test_hook\b|SecureRedactionSaveLeaseTestHook\b/g);
+    // alias, field name + type, initializer, two Save calls, the setter's body
+    expect(allHookReferences).toHaveLength(7);
   });
 
   it("CLOSURE-3: locks absence of TLS certificate/hostname verification bypass in production AI code", () => {
