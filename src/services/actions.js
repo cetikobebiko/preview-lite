@@ -4,7 +4,6 @@ import {
   guardFeatureAction,
 } from "../featureActionGuard.js";
 import { getRuntimeFeatureContext } from "../featureRegistry.js";
-import { mergePdfs } from "./backend/manipulation.js";
 import { startSensitiveDataScan } from "./backend/redaction.js";
 import {
   performOcrOnPage,
@@ -15,17 +14,6 @@ import {
 } from "./backend/platform.js";
 
 const runtimeContext = (context) => context ?? getRuntimeFeatureContext();
-
-export const mergePdfsDirectAction = (
-  filePaths,
-  outputPath,
-  context,
-) =>
-  guardFeatureAction(
-    "page_merge_direct",
-    runtimeContext(context),
-    () => mergePdfs(filePaths, outputPath),
-  );
 
 // Legacy `apply_redactions` stays fail-closed whatever the `redaction` feature
 // says: secure redaction (plan/execute_secure_redaction) replaced it and the

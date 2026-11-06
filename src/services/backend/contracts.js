@@ -885,10 +885,6 @@ export const CONTRACTS = Object.freeze({
       margin: Object.freeze({ type: "number", min: 0, max: 144 }),
     }),
   }),
-  mergePdfs: command("merge_pdfs", {
-    filePaths: arrayOf(stringType),
-    outputPath: stringType,
-  }),
   mergeSessionPdfs: command("merge_session_pdfs", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,

@@ -76,9 +76,9 @@ const RAW_FEATURES = [
   {
     id: "page_merge_direct",
     label: "Direct page merge command",
-    status: "disabled",
-    enabled: false,
-    warning: "Bu doğrudan birleştirme giriş noktasının payload sözleşmesi uyumsuzdur ve çalıştırılmaz.",
+    status: "experimental",
+    enabled: true,
+    warning: "Açık belgenin kaydedilmemiş hali kullanılır. Sonuç yeni bir dosyaya yazılır ve otomatik açılır; açık belgenin veya eklenen PDF'in yolu hedef olamaz. Kullanıcı parolasıyla şifreli ek PDF'ler açılamaz ve birleştirme başarısız olur; yalnız sahip parolalı ek PDF'ler birleştirilir. Sonuç dosyası şifresiz yazılır, kaynakların parola ve izin kısıtlamaları taşınmaz.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#page-manipulation",
   },

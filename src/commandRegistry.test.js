@@ -59,7 +59,10 @@ describe("Command Palette policy", () => {
 
   it("does not emit select for a disabled developer command", async () => {
     const onSelect = vi.fn();
-    const command = getCommandById("merge-pdf");
+    const command = getCommandById("camera-scan");
+    // Precondition: the mapped feature is still disabled; pick another command if it ships.
+    expect(getFeature(command.featureId)).toMatchObject({ status: "disabled", enabled: false });
+    expect(getCommandPresentation(command, developmentMac).visible).toBe(true);
     await expect(
       selectCommand(command, developmentMac, onSelect),
     ).rejects.toBeInstanceOf(FeatureUnavailableError);
@@ -71,6 +74,15 @@ describe("Command Palette policy", () => {
     const command = getCommandById("open-search");
     await expect(selectCommand(command, productionMac, onSelect)).resolves.toBe("selected");
     expect(onSelect).toHaveBeenCalledWith("open-search");
+  });
+
+  it("selects the experimental merge-pdf command in production", async () => {
+    const onSelect = vi.fn();
+    const command = getCommandById("merge-pdf");
+    expect(command.featureId).toBe("page_merge_direct");
+    expect(getCommandPresentation(command, productionMac)).toMatchObject({ visible: true, runnable: true });
+    await selectCommand(command, productionMac, onSelect);
+    expect(onSelect).toHaveBeenCalledWith("merge-pdf");
   });
 
   it("fails closed for unknown command input", async () => {

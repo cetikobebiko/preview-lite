@@ -252,6 +252,8 @@ describe("backend service boundaries", () => {
       "authenticatePdfPassword",
       "createSessionJobSnapshot",
       "askLocalAi",
+      // `manipulation::merge_pdfs` is not registered; merges run through merge_session_pdfs.
+      "mergePdfs",
     ]) {
       expect(CONTRACTS).not.toHaveProperty(key);
     }
@@ -265,6 +267,7 @@ describe("backend service boundaries", () => {
       "authenticate_pdf_password",
       "create_session_job_snapshot",
       "ask_local_ai",
+      "merge_pdfs",
     ]) {
       expect(frontendSource).not.toContain(command);
     }

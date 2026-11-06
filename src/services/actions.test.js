@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FeatureUnavailableError } from "../featureActionGuard.js";
+import * as actions from "./actions.js";
 import {
   applyRedactionsAction,
-  mergePdfsDirectAction,
   performOcrOnPageAction,
   scanSensitiveDataAction,
   shareExternalFileMacosAction,
@@ -13,7 +13,6 @@ import {
 } from "./actions.js";
 
 const backend = vi.hoisted(() => ({
-  mergePdfs: vi.fn(),
   applyRedactions: vi.fn(),
   scanSensitiveData: vi.fn(),
   startSensitiveDataScan: vi.fn(),
@@ -24,9 +23,6 @@ const backend = vi.hoisted(() => ({
   stopSpeaking: vi.fn(),
 }));
 
-vi.mock("./backend/manipulation.js", () => ({
-  mergePdfs: backend.mergePdfs,
-}));
 vi.mock("./backend/redaction.js", () => ({
   applyRedactions: backend.applyRedactions,
   scanSensitiveData: backend.scanSensitiveData,
@@ -48,11 +44,15 @@ beforeEach(() => {
 
 describe("feature-aware backend actions", () => {
   it.each([
-    ["direct merge", () => mergePdfsDirectAction(["/a.pdf"], "/b.pdf", productionMac), backend.mergePdfs],
     ["redaction", () => applyRedactionsAction("sid", 1, "/b.pdf", [], productionMac), backend.applyRedactions],
   ])("blocks %s before the raw service", async (_label, action, rawService) => {
     await expect(action()).rejects.toBeInstanceOf(FeatureUnavailableError);
     expect(rawService).not.toHaveBeenCalled();
+  });
+
+  it("no longer exposes the path-native direct merge action", () => {
+    // The palette merge now runs through mergeSessionPdfs (documentTransformController).
+    expect(actions).not.toHaveProperty("mergePdfsDirectAction");
   });
 
   it("allows enabled sensitive-data scanning and returns the job handle", () => {

@@ -21,13 +21,16 @@ beforeEach(() => {
 describe("validated backend client", () => {
   it("rejects missing required fields before invoke", async () => {
     await expect(
-      callBackend("mergePdfs", {
-        filePaths: ["/tmp/a.pdf"],
-        outputPath: undefined,
+      callBackend("mergeSessionPdfs", {
+        jobId: JOB_ID,
+        sessionId: "sid",
+        expectedContentGeneration: 1,
+        additionalPaths: ["/tmp/a.pdf"],
+        targetPath: undefined,
       }),
     ).rejects.toMatchObject({
-      command: "merge_pdfs",
-      message: expect.stringContaining("outputPath"),
+      command: "merge_session_pdfs",
+      message: expect.stringContaining("targetPath"),
       cause: expect.any(TypeError),
     });
     expect(invokeMock).not.toHaveBeenCalled();
@@ -57,13 +60,16 @@ describe("validated backend client", () => {
     });
 
     await expect(
-      callBackend("mergePdfs", {
-        filePaths: ["/tmp/a.pdf"],
-        outputPath: "/tmp/b.pdf",
+      callBackend("mergeSessionPdfs", {
+        jobId: JOB_ID,
+        sessionId: "sid",
+        expectedContentGeneration: 1,
+        additionalPaths: ["/tmp/a.pdf"],
+        targetPath: "/tmp/b.pdf",
         alias: "not allowed",
       }),
     ).rejects.toMatchObject({
-      command: "merge_pdfs",
+      command: "merge_session_pdfs",
       message: expect.stringContaining("alias"),
     });
     expect(invokeMock).not.toHaveBeenCalled();
@@ -493,12 +499,15 @@ describe("validated backend client", () => {
     expect(invokeMock).not.toHaveBeenCalled();
 
     await expect(
-      invokeProfiled("merge_pdfs", {
-        filePaths: "not-an-array",
-        outputPath: "/tmp/out.pdf",
+      invokeProfiled("merge_session_pdfs", {
+        jobId: JOB_ID,
+        sessionId: "sid",
+        expectedContentGeneration: 1,
+        additionalPaths: "not-an-array",
+        targetPath: "/tmp/out.pdf",
       }),
     ).rejects.toMatchObject({
-      command: "merge_pdfs",
+      command: "merge_session_pdfs",
       message: expect.stringContaining("expected array"),
     });
     expect(invokeMock).not.toHaveBeenCalled();
