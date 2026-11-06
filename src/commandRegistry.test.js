@@ -3,11 +3,13 @@ import {
   COMMANDS,
   filterCommands,
   getCommandById,
+  getCommandPresentation,
   moveCommandSelection,
   selectCommand,
   validateCommandFeatureMappings,
 } from "./commandRegistry.js";
 import { FeatureUnavailableError } from "./featureActionGuard.js";
+import { getFeature, isFeatureRunnable } from "./featureRegistry.js";
 
 const productionMac = { build: "production", platform: "macos" };
 const developmentMac = { build: "development", platform: "macos" };
@@ -26,6 +28,27 @@ describe("Command Palette policy", () => {
     expect(filterCommands("markdown", productionMac)).toEqual([]);
     const ocrCommands = filterCommands("OCR", productionMac);
     expect(ocrCommands.map((command) => command.id)).toContain("run-ocr-page");
+  });
+
+  it("maps the sanitization command to the sanitization feature and lists it only while runnable", () => {
+    const command = getCommandById("open-sanitization");
+    expect(command).toMatchObject({ featureId: "sanitization", hideUnlessRunnable: true });
+    expect(command.title).toContain("Temizle");
+
+    const runnable = (context) => getFeature("sanitization").enabled && isFeatureRunnable("sanitization", context);
+    for (const context of [productionMac, developmentMac]) {
+      const listed = filterCommands("temizle", context).map((entry) => entry.id).includes("open-sanitization");
+      expect(listed).toBe(runnable(context));
+    }
+
+    // The rule itself, independent of today's registry state: a visible but not runnable
+    // feature (development preview) hides the command, a runnable one lists it.
+    const runnableProbe = [{ id: "probe-runnable", title: "probe", category: "x", featureId: "search", hideUnlessRunnable: true }];
+    expect(filterCommands("", productionMac, runnableProbe).map((entry) => entry.id)).toEqual(["probe-runnable"]);
+    const previewProbe = [{ id: "probe-preview", title: "probe", category: "x", featureId: "visual_redaction_mask", hideUnlessRunnable: true }];
+    expect(getCommandPresentation(previewProbe[0], developmentMac)).toMatchObject({ visible: true, runnable: false });
+    expect(filterCommands("", developmentMac, previewProbe)).toEqual([]);
+    expect(filterCommands("", developmentMac, [{ ...previewProbe[0], hideUnlessRunnable: false }])).toHaveLength(1);
   });
 
   it("wraps keyboard navigation in both directions", () => {

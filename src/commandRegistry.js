@@ -5,6 +5,7 @@ export const COMMANDS = Object.freeze([
   { id: "open-metadata", title: "Belge Meta Verilerini Düzenle (Title, Author, Keywords)", icon: "🏷️", category: "Güvenlik & Meta", featureId: null },
   { id: "open-security", title: "Parola ile Koru / Güvenliği Kaldır (Kopya Kaydet)", icon: "🔒", category: "Güvenlik & Meta", featureId: null },
   { id: "open-optimize", title: "Dosya Boyutunu Küçült (Optimize Edilmiş Kopya Kaydet)", icon: "🗜️", category: "Dışa Aktar", featureId: null },
+  { id: "open-sanitization", title: "Belgeyi Temizle (Gizli İçerik ve Metadata, Yeni Dosyaya Kaydet)", icon: "🧹", category: "Güvenlik & Meta", featureId: "sanitization", hideUnlessRunnable: true },
   { id: "open-xfdf", title: "Açıklamaları ve Form Verisini Dışa / İçe Aktar (XFDF)", icon: "💬", category: "Dışa Aktar", featureId: null },
   { id: "open-page-labels", title: "Sayfa Etiketlerini Düzenle (i, ii, 1, 2…)", icon: "🔢", category: "Düzenleme", featureId: "page_manipulation" },
   { id: "open-outline-editor", title: "Yer İmlerini Düzenle", icon: "🔖", category: "Düzenleme", featureId: "page_manipulation" },
@@ -85,6 +86,8 @@ export function filterCommands(query = "", context = {}, commands = COMMANDS) {
       presentation: getCommandPresentation(command, context),
     }))
     .filter((command) => command.presentation.visible)
+    // Some commands (destructive exports) are never listed as a disabled preview.
+    .filter((command) => !command.hideUnlessRunnable || command.presentation.runnable)
     .filter((command) => (
       !normalizedQuery ||
       command.title.toLocaleLowerCase("tr").includes(normalizedQuery) ||

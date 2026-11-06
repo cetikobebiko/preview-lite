@@ -182,8 +182,8 @@ Primary classes have the following meaning:
 | `job_worker_process` | `NATIVE_PLATFORM` | Real-process mutation and verification aggregate |
 | `redaction_fixtures_and_capabilities` | `NATIVE_PLATFORM` | Aggregate includes explicit real PDFium initialization |
 | `sanitization_capabilities` | `NATIVE_PLATFORM` | Aggregate includes real PDFium reopen/render checks |
-| `sanitization_inspection_acceptance` | `NATIVE_PLATFORM` | Native macOS arm64 session/worker acceptance target |
-| `sanitization_publication_acceptance` | `NATIVE_PLATFORM` | Mutation/publication persistence acceptance |
+| `sanitization_inspection_acceptance` | `NATIVE_PLATFORM` | Native session/worker acceptance target on macOS arm64, Linux x86_64 and Windows x86_64 (`secure-redaction-acceptance.yml`, Sanitization suite) |
+| `sanitization_publication_acceptance` | `NATIVE_PLATFORM` | Mutation/publication persistence acceptance, incl. app-made incremental revisions; macOS arm64, Linux x86_64 and Windows x86_64 |
 | `secure_redaction_execution_acceptance` | `NATIVE_PLATFORM` | Session-native execution/publication acceptance |
 | `session_worker_integration` | `NATIVE_PLATFORM` | Production session-to-real-worker behavior |
 | `whole_object_backend_characterization` | `NATIVE_PLATFORM` | Explicit real PDFium object mutation/reopen characterization |

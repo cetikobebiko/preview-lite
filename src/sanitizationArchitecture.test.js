@@ -6,10 +6,10 @@ import { getFeature } from "./featureRegistry.js";
 const read = (path) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 describe("8C.3 private sanitization transform architecture boundary", () => {
-  it("keeps sanitization disabled and fail-closed", () => {
+  it("keeps sanitization experimental (never stable) and the legacy command fail-closed", () => {
     const feature = getFeature("sanitization");
-    expect(feature.status).toBe("disabled");
-    expect(feature.enabled).toBe(false);
+    expect(feature.status).toBe("experimental");
+    expect(feature.enabled).toBe(true);
 
     const backend = read("src-tauri/src/redaction.rs");
     expect(backend).toMatch(/fn sanitize_pdf_document_unavailable\s*\(\s*\)/);

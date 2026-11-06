@@ -165,11 +165,21 @@ describe("feature policy", () => {
       expect(redaction.warning).toContain(loss);
     }
 
+    // Activated as experimental after macOS arm64, Linux x86_64 and Windows x86_64
+    // runtime certification (pdf-sanitization-threat-model.md §26.5).
     const sanitization = getFeature("sanitization");
-    expect(sanitization.status).toBe("disabled");
-    expect(sanitization.enabled).toBe(false);
-    expect(isFeatureRunnable("sanitization", productionMac)).toBe(false);
-    expect(isFeatureRunnable("sanitization", developmentMac)).toBe(false);
+    expect(sanitization.status).toBe("experimental");
+    expect(sanitization.enabled).toBe(true);
+    expect(sanitization.platform).toEqual(["macos", "windows", "linux"]);
+    expect(isFeatureRunnable("sanitization", productionMac)).toBe(true);
+    expect(isFeatureRunnable("sanitization", developmentMac)).toBe(true);
+    expect(isFeatureRunnable("sanitization", { build: "production", platform: "unknown" })).toBe(false);
+    for (const limit of ["yalnız desteklenen", "XFA", "RichMedia", "optional content", "şifreli", "tam yeniden yazım", "imzaları geçersiz"]) {
+      expect(sanitization.warning).toContain(limit);
+    }
+    for (const overclaim of [/güvenli/i, /tamamen temiz/i, /tehdit yok/i]) {
+      expect(sanitization.warning).not.toMatch(overclaim);
+    }
 
     const visualMask = getFeature("visual_redaction_mask");
     expect(visualMask.status).toBe("mock");

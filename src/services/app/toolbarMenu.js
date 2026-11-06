@@ -88,6 +88,9 @@ export function buildToolbarMenu({ isPdf, hasDocument, viewer, ui, featureUi, on
       isPdf ? item("security", "Güvenlik (parola)…", () => ui.openModal("security")) : null,
       isPdf ? item("optimize", "Dosya boyutunu küçült…", () => ui.openModal("optimize")) : null,
       isPdf ? item("xfdf", "Açıklamalar ve form verisi (XFDF)…", () => ui.openModal("xfdf")) : null,
+      // Destructive export: listed only while the feature can actually run, never as a disabled preview.
+      isPdf ? feature("sanitization", "Belgeyi temizle (gizli içerik ve metadata)…", () => ui.openModal("sanitization"), {},
+        featureUi("sanitization").visible && featureUi("sanitization").runnable) : null,
     ],
   });
   sections.push({

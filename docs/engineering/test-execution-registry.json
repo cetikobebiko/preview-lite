@@ -64,9 +64,9 @@
       ],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 41,
+      "expectedTestCount": 44,
       "expectedTestPresence": "exact",
-      "notes": "PDFium-independent atomic filesystem and replace semantics; compiles isolated document_io module (43 unit tests; 4 are unix-only and 3 windows-only, so 40 run on Unix) + 1 integration typecheck test; FAST_LOCAL runs on Linux, so 41 exact."
+      "notes": "PDFium-independent atomic filesystem and replace semantics; compiles isolated document_io module (46 unit tests; 4 are unix-only and 3 windows-only, so 43 run on Unix; the three verified-publication file-origin tests run everywhere) + 1 integration typecheck test; FAST_LOCAL runs on Linux, so 44 exact."
     },
     {
       "id": "rust:document_io_pdfium",
@@ -283,7 +283,9 @@
       "usesPdfium": true,
       "realWorker": true,
       "supportedPlatforms": [
-        "macos"
+        "macos",
+        "linux",
+        "windows"
       ],
       "fixtureIds": [
         "sanitization-clean-minimal",
@@ -297,7 +299,7 @@
       "nativeRequirements": [
         "pdfium_dynamic_lib",
         "pdfium_worker_executable",
-        "aarch64",
+        "pdfium_runtime_target_arch",
         "sanitization_test_support_feature"
       ],
       "artifactRequirement": null,
@@ -305,9 +307,11 @@
       "expectedTestPresence": "conditional",
       "expectedTestCountByProfile": {
         "default": 0,
-        "with_sanitization_test_support_on_macos_aarch64": 10
+        "with_sanitization_test_support_on_macos_aarch64": 10,
+        "with_sanitization_test_support_on_linux_x86_64": 10,
+        "with_sanitization_test_support_on_windows_x86_64": 10
       },
-      "notes": "#![cfg(feature = \"sanitization-test-support\")] + #[cfg(all(target_os=\"macos\", target_arch=\"aarch64\"))] — default cargo test yields 0 tests (PASS masquerade risk)"
+      "notes": "#![cfg(feature = \"sanitization-test-support\")] + cfg(any(macos aarch64, linux x86_64, windows x86_64)) — default cargo test yields 0 tests (PASS masquerade risk). pdfium_runtime_target_arch = the architecture platform-support.json ships a PDFium runtime for: aarch64 on macOS, x86_64 on Linux and Windows. macOS x86_64 has no PDFium runtime and is an unsupported target (0 tests by design), not NOT_RUN debt. Worker phase sync uses marker files in the private job directory and reports the job outcome when a marker never appears. CI: .github/workflows/secure-redaction-acceptance.yml (Sanitization matrix suite) requires exactly 10 passed per platform for this binary."
     },
     {
       "id": "rust:sanitization_publication_acceptance",
@@ -317,28 +321,34 @@
       "usesPdfium": true,
       "realWorker": true,
       "supportedPlatforms": [
-        "macos"
+        "macos",
+        "linux",
+        "windows"
       ],
       "fixtureIds": [
-        "sanitization-clean-minimal"
+        "sanitization-clean-minimal",
+        "sanitization-combined-names"
       ],
       "syntheticInputs": [
+        "app_incremental_session_mutations",
         "synthetic_tempdir"
       ],
       "nativeRequirements": [
         "pdfium_dynamic_lib",
         "pdfium_worker_executable",
-        "aarch64",
+        "pdfium_runtime_target_arch",
         "sanitization_test_support_feature"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 9,
+      "expectedTestCount": 11,
       "expectedTestPresence": "conditional",
       "expectedTestCountByProfile": {
         "default": 0,
-        "with_sanitization_test_support_on_macos_aarch64": 9
+        "with_sanitization_test_support_on_macos_aarch64": 11,
+        "with_sanitization_test_support_on_linux_x86_64": 11,
+        "with_sanitization_test_support_on_windows_x86_64": 11
       },
-      "notes": "#![cfg(feature = \"sanitization-test-support\")] + cfg(macos aarch64) — zero-test risk"
+      "notes": "#![cfg(feature = \"sanitization-test-support\")] + cfg(any(macos aarch64, linux x86_64, windows x86_64)) — zero-test risk. pdfium_runtime_target_arch = the architecture platform-support.json ships a PDFium runtime for: aarch64 on macOS, x86_64 on Linux and Windows. macOS x86_64 has no PDFium runtime and is an unsupported target (0 tests by design), not NOT_RUN debt. The symlink/hardlink preflight test runs on Windows too and fails with an explicit NOT RUN message (never skips) when the host cannot create symlinks (ERROR_PRIVILEGE_NOT_HELD). app_incremental_revision_payloads_are_absent_from_the_verified_publication builds history with the app's own incremental session mutations (metadata, note added then deleted) and checks the independent verifier verdict and the published bytes. CI: .github/workflows/secure-redaction-acceptance.yml (Sanitization matrix suite) requires exactly 11 passed per platform for this binary. ui_minimum_profile_removes_name_tree_javascript_and_embedded_files_and_keeps_destinations runs the panel's minimum profile on combined-names.pdf (regression: /Names leaf arrays were counted as destinations, so EmbeddedFiles removal always failed preservation)."
     },
     {
       "id": "rust:secure_redaction_execution_acceptance",
