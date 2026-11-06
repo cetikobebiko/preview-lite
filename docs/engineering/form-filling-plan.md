@@ -653,8 +653,9 @@ Kapsam dışı:
 - Birleştirme, bölme ve sayfa çıkarma yeni dosyalar üretiyor; açık belgeyi değiştirmedikleri
   için uyarı yok. Çıktılarda imzalar geçersizdir.
 - Güvenli redaksiyon ve sanitization kendi imza onaylarını zaten istiyor.
-- `insertBlankPage`'in `page_insert_blank` özelliği kapalı; koruma yerinde ama bu yola
-  ulaşılamıyor.
+- `insertBlankPage`'in `page_insert_blank` özelliği o sırada kapalıydı; koruma yerindeydi ama
+  bu yola ulaşılamıyordu. (2026-11-06: özellik `experimental` olarak açıldı; uyarı
+  `pdfState.signatureLoss.test.js` içinde altıncı mutasyon olarak test ediliyor.)
 
 Doğrulama: `signatureLossGuard.test.js` (4), `pdfState.signatureLoss.test.js` (beş mutasyon ×
 reddet/kabul: reddedince backend çağrılmıyor ve hata loglanmıyor), `PageOrganizer.test.js`

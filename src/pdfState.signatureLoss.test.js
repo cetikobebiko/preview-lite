@@ -22,10 +22,9 @@ afterEach(() => {
 
 const runnable = { build: "development", platform: "macos" };
 // The guards remember decisions per session, so every case uses its own session id.
-// insertBlankPage is guarded too, but its `page_insert_blank` feature is disabled, so the
-// feature gate rejects it before the guard runs.
 const incrementalCases = [
   ["rotatePage", "rotateSessionPage", (id) => pdfState.rotatePage(id, 1, 0, 90)],
+  ["insertBlankPage", "insertSessionBlankPage", (id) => pdfState.insertBlankPage(id, 1, 1, 612, 792)],
   ["deletePages", "deleteSessionPages", (id) => pdfState.deletePages(id, 1, [0])],
   ["reorderPages", "reorderSessionPages", (id) => pdfState.reorderPages(id, 1, [1, 0])],
   [
@@ -59,6 +58,19 @@ describe("incremental mutations on a signed document", () => {
     expect(message).toContain("imzalı içerik korunur");
     expect(message).toContain("değiştirilmiş olarak gösterir");
     expect(message).not.toContain("geçersiz");
+  });
+});
+
+describe("insertBlankPage", () => {
+  it("asks the signed-document notice first and passes the page size through unchanged", async () => {
+    confirm.mockResolvedValueOnce(true);
+    await pdfState.insertBlankPage("blank-size", 4, 2, 792, 612);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0][0]).toContain("Boş sayfa ekleme");
+    expect(sessionBackend.insertSessionBlankPage).toHaveBeenCalledWith("blank-size", 4, 2, 792, 612);
+    expect(confirm.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionBackend.insertSessionBlankPage.mock.invocationCallOrder[0],
+    );
   });
 });
 

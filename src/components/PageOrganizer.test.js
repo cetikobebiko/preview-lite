@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
-import { rotatePage } from "../pdfState.js";
-import { renderThumbnail } from "../services/backend/viewer.js";
+import { insertBlankPage, rotatePage } from "../pdfState.js";
+import { getPageSizes, renderThumbnail } from "../services/backend/viewer.js";
+import { getSessionPageCount } from "../services/backend/session.js";
 import { paintBufferToCanvas } from "../utils/canvasUtils.js";
 import { pageFailureRegistry } from "../services/pageFailureRegistry.js";
 import PageOrganizer from "./PageOrganizer.svelte";
@@ -34,13 +35,36 @@ vi.mock("svelte", async () => {
 vi.mock("../services/backend/viewer.js", () => ({
   cancelRenderRequest: vi.fn(async () => ({ cancelled: true })),
   renderThumbnail: vi.fn(),
+  getPageSizes: vi.fn(),
+}));
+
+vi.mock("../services/backend/session.js", () => ({
+  getSessionPageCount: vi.fn(),
 }));
 
 vi.mock("../pdfState.js", () => ({
   rotatePage: vi.fn(async () => undefined),
   deletePages: vi.fn(async () => undefined),
   reorderPages: vi.fn(async () => undefined),
+  importPages: vi.fn(async () => undefined),
+  insertBlankPage: vi.fn(async () => undefined),
 }));
+
+// Lets a test turn `page_insert_blank` into a visible-but-not-runnable feature, which is
+// how a disabled feature is presented in a development build.
+const featureOverride = vi.hoisted(() => ({ blankPageRunnable: true }));
+vi.mock("../featureRegistry.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getFeaturePresentation(featureId, context) {
+      const presentation = actual.getFeaturePresentation(featureId, context);
+      return featureId === "page_insert_blank" && !featureOverride.blankPageRunnable
+        ? { ...presentation, status: "disabled", visible: true, runnable: false }
+        : presentation;
+    },
+  };
+});
 
 vi.mock("../utils/canvasUtils.js", () => ({
   paintBufferToCanvas: vi.fn((canvas, rendered) => {
@@ -90,6 +114,7 @@ const originalConfirm = globalThis.confirm;
 const originalAnimate = Element.prototype.animate;
 
 beforeEach(() => {
+  featureOverride.blankPageRunnable = true;
   pageFailureRegistry.reset();
   globalThis.alert = vi.fn();
   globalThis.confirm = vi.fn(() => true);
@@ -358,5 +383,111 @@ describe("PageOrganizer worker-safety failures", () => {
     await flushAsyncWork();
     await flushAsyncWork();
     expect(renderThumbnail).toHaveBeenCalledOnce();
+  });
+});
+
+describe("PageOrganizer blank page insert", () => {
+  const LETTER = { widthPt: 612, heightPt: 792 };
+  // A portrait page with /Rotate 90: the worker reports its displayed (landscape) size.
+  const ROTATED_LETTER = { widthPt: 792, heightPt: 612 };
+  const props = { sessionId: "blank-doc", contentGeneration: 1, pageCount: 3 };
+
+  function renderBlankOrganizer(extraProps = {}) {
+    getPageSizes.mockResolvedValue([LETTER, ROTATED_LETTER, LETTER]);
+    insertBlankPage.mockResolvedValue({ id: "blank-doc", contentGeneration: 2 });
+    getSessionPageCount.mockResolvedValue(4);
+    return renderOrganizer({ props: { ...props, ...extraProps } });
+  }
+
+  it("inserts after a card with that page's displayed size and maps later pages by one", async () => {
+    const onpageMutated = vi.fn();
+    const { getByLabelText } = renderBlankOrganizer({ onpageMutated });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(3));
+
+    await fireEvent.click(getByLabelText("Sayfa 2 sonrasına boş sayfa ekle"));
+    await waitFor(() => expect(onpageMutated).toHaveBeenCalledOnce());
+
+    expect(getPageSizes).toHaveBeenCalledWith("blank-doc", 1);
+    expect(insertBlankPage).toHaveBeenCalledWith("blank-doc", 1, 2, 792, 612);
+    expect(getSessionPageCount).toHaveBeenCalledWith("blank-doc", 2);
+    const { snapshot, mapPageIndex } = onpageMutated.mock.calls[0][0];
+    expect(snapshot).toEqual({ id: "blank-doc", contentGeneration: 2 });
+    expect([0, 1, 2].map(mapPageIndex)).toEqual([0, 1, 3]);
+    // The dialog renders in a portal, outside the render container.
+    await waitFor(() => expect(document.querySelectorAll(".page-card")).toHaveLength(4));
+  });
+
+  it("inserts at the start with the first page's size", async () => {
+    const onpageMutated = vi.fn();
+    const { getByRole } = renderBlankOrganizer({ onpageMutated });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(3));
+
+    await fireEvent.click(getByRole("button", { name: "Başa boş sayfa ekle" }));
+    await waitFor(() => expect(onpageMutated).toHaveBeenCalledOnce());
+
+    expect(insertBlankPage).toHaveBeenCalledWith("blank-doc", 1, 0, 612, 792);
+    const { mapPageIndex } = onpageMutated.mock.calls[0][0];
+    expect([0, 1, 2].map(mapPageIndex)).toEqual([1, 2, 3]);
+  });
+
+  it("falls back to A4 when the page sizes cannot be loaded", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const onpageMutated = vi.fn();
+    const { getByLabelText } = renderBlankOrganizer({ onpageMutated });
+    getPageSizes.mockRejectedValue(new Error("worker gone"));
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(3));
+
+    await fireEvent.click(getByLabelText("Sayfa 1 sonrasına boş sayfa ekle"));
+    await waitFor(() => expect(onpageMutated).toHaveBeenCalledOnce());
+
+    expect(insertBlankPage).toHaveBeenCalledWith("blank-doc", 1, 1, 595, 842);
+    warn.mockRestore();
+  });
+
+  it("disables both buttons while a drag reorder is unsaved", async () => {
+    const { getByLabelText, getByRole } = renderBlankOrganizer();
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(3));
+    const startButton = getByRole("button", { name: "Başa boş sayfa ekle" });
+    expect(startButton.disabled).toBe(false);
+
+    const cards = document.querySelectorAll(".page-card");
+    const dataTransfer = { effectAllowed: "", dropEffect: "" };
+    await fireEvent.dragStart(cards[0], { dataTransfer });
+    await fireEvent.drop(cards[2], { dataTransfer });
+
+    expect(startButton.disabled).toBe(true);
+    for (const page of [1, 2, 3]) {
+      expect(getByLabelText(`Sayfa ${page} sonrasına boş sayfa ekle`).disabled).toBe(true);
+    }
+    await fireEvent.click(startButton);
+    expect(insertBlankPage).not.toHaveBeenCalled();
+  });
+
+  it("shows no blank-page buttons when the feature cannot run", async () => {
+    featureOverride.blankPageRunnable = false;
+    const { queryByLabelText, queryAllByLabelText, queryByRole } = renderBlankOrganizer();
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(3));
+
+    expect(queryByRole("button", { name: "Başa boş sayfa ekle" })).toBeNull();
+    expect(queryByLabelText("Sayfa 1 sonrasına boş sayfa ekle")).toBeNull();
+    expect(queryAllByLabelText("Sayfayı Çoğalt")).toHaveLength(3);
+  });
+
+  it("stays silent when the signature notice is declined and shows other errors", async () => {
+    const onpageMutated = vi.fn();
+    const { getByRole, queryByRole } = renderBlankOrganizer({ onpageMutated });
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(3));
+    const startButton = getByRole("button", { name: "Başa boş sayfa ekle" });
+
+    insertBlankPage.mockRejectedValueOnce(new SignatureLossDeclinedError());
+    await fireEvent.click(startButton);
+    await waitFor(() => expect(startButton.disabled).toBe(false));
+    expect(queryByRole("alert")).toBeNull();
+
+    insertBlankPage.mockRejectedValueOnce(new Error("Ekleme indeksi aralık dışında"));
+    await fireEvent.click(startButton);
+    await waitFor(() => expect(getByRole("alert").textContent).toContain("Ekleme indeksi aralık dışında"));
+    expect(onpageMutated).not.toHaveBeenCalled();
+    expect(globalThis.alert).not.toHaveBeenCalled();
   });
 });

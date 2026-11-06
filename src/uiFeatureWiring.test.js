@@ -113,6 +113,16 @@ describe("UI feature wiring source contracts", () => {
     expect(sanitizationPanel).not.toContain("callBackend");
   });
 
+  it("wires blank page insert through the page_insert_blank presentation and guard", () => {
+    const pageOrganizerSource = readSource("src/components/PageOrganizer.svelte");
+    const pdfStateSource = readSource("src/pdfState.js");
+    expect(pageOrganizerSource).toContain('getFeaturePresentation("page_insert_blank", getRuntimeFeatureContext())');
+    expect(pageOrganizerSource.match(/\{#if blankPagePresentation\.runnable/g)).toHaveLength(2);
+    expect(pageOrganizerSource).toContain("pageMappingAfterImport(atIndex, 1, 0)");
+    expect(pdfStateSource).toMatch(/guardFeatureAction\(\s*"page_insert_blank"/);
+    expect(featureRuntimeSource).toContain('"insert-blank-page-after-current": insertBlankPageAfterCurrent');
+  });
+
   it("does not mount disabled page overlays from stale local UI state", () => {
     expect(pdfPageSource).toContain(
       "{#if formAuthoringPresentation.runnable && isFormTool(activeTool)}",

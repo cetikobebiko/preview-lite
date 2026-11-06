@@ -2504,7 +2504,7 @@
     {
       "id": "page_insert_blank",
       "name": "Page Insert Blank",
-      "statusObservation": "disabled",
+      "statusObservation": "experimental",
       "fixtureIds": [],
       "testIds": [],
       "dimensions": {
