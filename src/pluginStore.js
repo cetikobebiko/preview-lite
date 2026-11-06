@@ -5,6 +5,7 @@ import {
   addBatchJob as addBatchJobBackend,
   cancelPluginExecution as cancelPluginExecutionBackend,
   getPluginExecutionStatus as getPluginExecutionStatusBackend,
+  getPluginFeatureStatus as getPluginFeatureStatusBackend,
   grantPluginConsent as grantPluginConsentBackend,
   inspectPluginPackage as inspectPluginPackageBackend,
   installPluginPackage as installPluginPackageBackend,
@@ -29,6 +30,32 @@ export const dynamicSlots = writable({
   toolbar: [],
   contextMenu: [],
 });
+
+// Backend gate as last observed. `checked: false` until the first query; any
+// failure reads as closed (fail-closed).
+export const pluginBackendGate = writable({ checked: false, enabled: false, buildProfile: null });
+
+export async function checkPluginBackendGate() {
+  return await guardFeatureAction(
+    'plugin_system',
+    getRuntimeFeatureContext(),
+    async () => {
+      let gate;
+      try {
+        const status = await getPluginFeatureStatusBackend();
+        gate = {
+          checked: true,
+          enabled: status?.enabled === true,
+          buildProfile: typeof status?.build_profile === 'string' ? status.build_profile : null,
+        };
+      } catch {
+        gate = { checked: true, enabled: false, buildProfile: null };
+      }
+      pluginBackendGate.set(gate);
+      return gate;
+    },
+  );
+}
 
 export async function refreshInstalledPlugins() {
   return await guardFeatureAction(
@@ -126,7 +153,7 @@ export async function startPluginHook(pluginId, hookName, payloadJson = "{}") {
           plugin_id: pluginId,
           hook_name: hookName,
           state: "RUNNING",
-          result_json: null,
+          result: null,
           error: null,
         },
       }));

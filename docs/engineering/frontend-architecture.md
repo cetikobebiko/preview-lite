@@ -198,7 +198,7 @@ aktivasyon 8C.7 kapsamındadır.
 ## Plugin System Frontend Workflow (Prompt 9B)
 
 Eklenti yönetimi `PluginManagerModal.svelte` ve `pluginStore.js` bileşenleri üzerinden yürütülür:
-- **Feature Gate Koruması**: Tüm eklenti eylemleri (`inspectPlugin`, `installPlugin`, `grantConsent`, `togglePluginEnabled`, `startPluginHook`, `cancelPlugin`) `guardFeatureAction('plugin_system', ...)` ile korunur. Feature devre dışıyken (`enabled: false`) tüm eylemler fail-closed olarak `FeatureUnavailableError` fırlatır.
+- **Feature Gate Koruması**: Tüm eklenti eylemleri (`inspectPlugin`, `installPlugin`, `grantConsent`, `togglePluginEnabled`, `startPluginHook`, `cancelPlugin`, `checkPluginBackendGate`) `guardFeatureAction('plugin_system', ...)` ile korunur. `plugin_system` `buildProfiles: ["development"]` taşır: yalnız geliştirme derlemesinde çalıştırılabilir, üretimde gizlidir ve eylemler fail-closed `FeatureUnavailableError` fırlatır. Modal açılınca `get_plugin_feature_status` ile arka uç kapısını okur; arka uç kapalıysa uyumsuzluk uyarısı gösterir ve yetki artıran eylemleri kapatır. Hata kodları `pluginErrors.js` ile Türkçe mesajlara eşlenir.
 - **İki Aşamalı Onay & Yükleme**: Eklenti paketi seçildiğinde önce statik denetim (`inspectPlugin`) çalışır; manifest bilgileri, imzasız paket uyarısı ve izin bazlı veri etkisi açıklamaları sunulur. Kullanıcı onay kutusunu işaretlemeden (`consentAcknowledged === true`) yükleme butonu aktifleşmez. Onaylandığında atomik staging (`installPlugin`) ve tekil politika versiyonu (`grantConsent`) adımları işletilir.
 - **Svelte 5 Runes**: `PluginManagerModal.svelte` tamamen Svelte 5 runes (`$state`, `$derived`, `$props`) ile reaktifliği yönetir; legacy Svelte 3/4 syntax'ı barındırmaz.
 

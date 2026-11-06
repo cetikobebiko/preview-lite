@@ -1,9 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import {
   installedPlugins,
   inspectionCandidate,
   activeExecutions,
+  pluginBackendGate,
+  checkPluginBackendGate,
   refreshInstalledPlugins,
   inspectPlugin,
   installPlugin,
@@ -28,6 +30,7 @@ vi.mock('./services/backend/plugins.js', () => ({
   startPluginExecution: vi.fn(),
   cancelPluginExecution: vi.fn(),
   getPluginExecutionStatus: vi.fn(),
+  getPluginFeatureStatus: vi.fn(),
   addBatchJob: vi.fn(),
 }));
 
@@ -39,7 +42,13 @@ describe('pluginStore & frontend actions', () => {
     activeExecutions.set({});
   });
 
-  it('fails with FeatureUnavailableError when plugin system is disabled by default in featureRegistry', async () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('fails with FeatureUnavailableError in a production build (plugin_system is development-only)', async () => {
+    vi.stubEnv('DEV', false);
+    await expect(checkPluginBackendGate()).rejects.toThrow(FeatureUnavailableError);
     await expect(refreshInstalledPlugins()).rejects.toThrow(FeatureUnavailableError);
     await expect(inspectPlugin('/some/path')).rejects.toThrow(FeatureUnavailableError);
     await expect(installPlugin('/some/path', 'digest123')).rejects.toThrow(FeatureUnavailableError);
@@ -49,6 +58,45 @@ describe('pluginStore & frontend actions', () => {
     await expect(startPluginHook('p1', 'on_custom_command')).rejects.toThrow(FeatureUnavailableError);
     await expect(cancelPlugin('exec-1')).rejects.toThrow(FeatureUnavailableError);
     await expect(pollExecutionStatus('exec-1')).rejects.toThrow(FeatureUnavailableError);
+    for (const fn of Object.values(pluginBackend)) {
+      if (typeof fn === 'function') expect(fn).not.toHaveBeenCalled();
+    }
+  });
+
+  it('reaches the backend in a development build without any registry override', async () => {
+    vi.stubEnv('DEV', true);
+    pluginBackend.listInstalledPlugins.mockResolvedValue([]);
+    await expect(refreshInstalledPlugins()).resolves.toEqual([]);
+    expect(pluginBackend.listInstalledPlugins).toHaveBeenCalledTimes(1);
+  });
+
+  describe('backend gate parity (development build)', () => {
+    beforeEach(() => {
+      vi.stubEnv('DEV', true);
+      pluginBackendGate.set({ checked: false, enabled: false, buildProfile: null });
+    });
+
+    it('records an open backend gate', async () => {
+      pluginBackend.getPluginFeatureStatus.mockResolvedValue({ enabled: true, build_profile: 'development' });
+      await checkPluginBackendGate();
+      expect(get(pluginBackendGate)).toEqual({ checked: true, enabled: true, buildProfile: 'development' });
+    });
+
+    it('records a closed backend gate when the frontend is open (mismatch)', async () => {
+      pluginBackend.getPluginFeatureStatus.mockResolvedValue({ enabled: false, build_profile: 'production' });
+      await checkPluginBackendGate();
+      expect(get(pluginBackendGate)).toEqual({ checked: true, enabled: false, buildProfile: 'production' });
+    });
+
+    it('fails closed when the status query fails or returns garbage', async () => {
+      pluginBackend.getPluginFeatureStatus.mockRejectedValue(new Error('no command'));
+      await checkPluginBackendGate();
+      expect(get(pluginBackendGate)).toMatchObject({ checked: true, enabled: false });
+
+      pluginBackend.getPluginFeatureStatus.mockResolvedValue({ enabled: 'yes' });
+      await checkPluginBackendGate();
+      expect(get(pluginBackendGate)).toMatchObject({ checked: true, enabled: false });
+    });
   });
 
   describe('with enabled plugin feature context in test harness', () => {

@@ -438,10 +438,15 @@ impl PluginWorkerLauncher {
                 format!("Mevcut uygulama yolu tespit edilemedi: {}", e),
             )
         })?;
-        Ok(Self {
+        Ok(Self::production_entrypoint(executable))
+    }
+
+    /// The production worker entrypoint (`--run-plugin-worker`) of a given app binary.
+    pub fn production_entrypoint(executable: PathBuf) -> Self {
+        Self {
             executable,
             arguments: vec![std::ffi::OsString::from("--run-plugin-worker")],
-        })
+        }
     }
 
     #[cfg(any(test, feature = "plugin-test-support"))]
@@ -779,16 +784,25 @@ async fn read_supervisor_response<R: tokio::io::AsyncRead + Unpin>(
                 .unwrap_or_else(|| "İzin reddedildi.".to_string()),
         )),
         WorkerTerminalStatus::Failed => {
-            let err_wire = resp.error.unwrap_or_else(|| PluginErrorWire {
-                code: PluginErrorCode::PluginExecutionNotFound
-                    .as_str()
-                    .to_string(),
-                message: "Bilinmeyen worker hatası.".to_string(),
-            });
-            Err(PluginError::new(
-                PluginErrorCode::PluginExecutionNotFound,
-                format!("[{}] {}", err_wire.code, err_wire.message),
-            ))
+            // Keep the worker's own code (digest mismatch, undeclared hook, script
+            // error...) so callers and the UI see the real cause. A missing or
+            // unknown code is a protocol violation.
+            match resp.error {
+                Some(err_wire) => match PluginErrorCode::from_wire(&err_wire.code) {
+                    Some(code) => Err(PluginError::new(code, err_wire.message)),
+                    None => Err(PluginError::new(
+                        PluginErrorCode::PluginWorkerProtocolError,
+                        format!(
+                            "Worker bilinmeyen hata kodu döndürdü: [{}] {}",
+                            err_wire.code, err_wire.message
+                        ),
+                    )),
+                },
+                None => Err(PluginError::new(
+                    PluginErrorCode::PluginWorkerProtocolError,
+                    "Başarısız yanıtta hata verisi eksik.",
+                )),
+            }
         }
     }
 }
