@@ -148,9 +148,9 @@ const RAW_FEATURES = [
   {
     id: "redaction",
     label: "Secure redaction",
-    status: "disabled",
-    enabled: false,
-    warning: "Secure redaction pipeline ve kullanıcı workflow'u tamamlanmıştır; release platform certification tamamlanana kadar özellik kapalıdır.",
+    status: "experimental",
+    enabled: true,
+    warning: "Deneysel: seçilen bölgeler yeni bir dosyada kalıcı olarak kaldırılır, ancak etkilenen sayfalar resme dönüştürülür. Bu sayfalarda metin seçimi, arama, erişilebilirlik (ekran okuyucu metni), form alanları ve vektör kalitesi kaybolur. Hassas veri taraması eksiksiz değildir; gizlenmesi gereken her bölgeyi kendiniz kontrol edin.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#redaction",
   },

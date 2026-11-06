@@ -152,11 +152,18 @@ describe("feature policy", () => {
     expect(isFeatureRunnable("sensitive_data_scan", productionMac)).toBe(true);
     expect(isFeatureRunnable("sensitive_data_scan", developmentMac)).toBe(true);
 
+    // Activated as experimental after macOS arm64, Linux x86_64 and Windows
+    // x86_64 runtime certification (docs/engineering/secure-redaction.md §18).
     const redaction = getFeature("redaction");
-    expect(redaction.status).toBe("disabled");
-    expect(redaction.enabled).toBe(false);
-    expect(isFeatureRunnable("redaction", productionMac)).toBe(false);
-    expect(isFeatureRunnable("redaction", developmentMac)).toBe(false);
+    expect(redaction.status).toBe("experimental");
+    expect(redaction.enabled).toBe(true);
+    expect(redaction.platform).toEqual(["macos", "windows", "linux"]);
+    expect(isFeatureRunnable("redaction", productionMac)).toBe(true);
+    expect(isFeatureRunnable("redaction", developmentMac)).toBe(true);
+    expect(isFeatureRunnable("redaction", { build: "production", platform: "unknown" })).toBe(false);
+    for (const loss of ["resme", "metin seçimi", "arama", "erişilebilirlik", "form", "vektör", "eksiksiz değildir"]) {
+      expect(redaction.warning).toContain(loss);
+    }
 
     const sanitization = getFeature("sanitization");
     expect(sanitization.status).toBe("disabled");
