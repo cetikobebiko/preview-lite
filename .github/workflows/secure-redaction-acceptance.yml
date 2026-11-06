@@ -44,7 +44,7 @@ jobs:
           - name: Secure redaction execution
             feature: secure-redaction-test-support
             # test binary=expected test count, space separated
-            expected: secure_redaction_execution_acceptance=12
+            expected: secure_redaction_execution_acceptance=13
           - name: Sanitization
             feature: sanitization-test-support
             expected: sanitization_inspection_acceptance=10 sanitization_publication_acceptance=11

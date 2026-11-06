@@ -1337,6 +1337,10 @@ fn execute_secure_redaction_transform(
     let source =
         crate::pdf_engine::open_pdfium_doc(&pdfium, &snapshot_path.to_string_lossy(), credential)
             .map_err(pdf_open_failed)?;
+    // Read-only structural view of the same digest-checked snapshot, loaded exactly as the
+    // planner loads it: source-page geometry is validated with the planner's page-tree
+    // inheritance rules, which PDFium's box getters do not apply.
+    let source_structure = lopdf::Document::load(snapshot_path).ok();
     let mut output = pdfium.create_new_pdf().map_err(|error| {
         job_failed(
             "SESSION_JOB_PDF_WRITE_FAILED",
@@ -1382,6 +1386,7 @@ fn execute_secure_redaction_transform(
                     crate::secure_redaction_raster::build_lossless_raster_payload_for_page(
                         &plan,
                         &source,
+                        source_structure.as_ref(),
                         page_plan.page_index,
                         None,
                     )

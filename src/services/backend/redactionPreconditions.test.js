@@ -14,11 +14,15 @@ vi.mock("@tauri-apps/api/core", () => ({
 describe("Prompt 8B-1 — Redaction Preconditions & Capability Invariants", () => {
   const root = process.cwd();
 
-  it("verifies 8A precondition: redaction feature is disabled", () => {
+  it("keeps secure redaction experimental (never stable) and the visual mask a disabled mock", () => {
     const feature = featureRegistry.redaction;
     expect(feature).toBeDefined();
-    expect(feature.enabled).toBe(false);
-    expect(feature.status).toBe("disabled");
+    expect(feature.enabled).toBe(true);
+    expect(feature.status).toBe("experimental");
+
+    const visualMask = featureRegistry.visual_redaction_mask;
+    expect(visualMask.status).toBe("mock");
+    expect(visualMask.enabled).toBe(false);
   });
 
   it("verifies 8A precondition: sensitive_data_scan is separate from redaction and is enabled", () => {
@@ -28,10 +32,19 @@ describe("Prompt 8B-1 — Redaction Preconditions & Capability Invariants", () =
     expect(scanFeature.status).not.toBe("disabled");
   });
 
-  it("verifies 8A precondition: guardFeatureAction for redaction rejects with FEATURE_UNAVAILABLE", async () => {
+  it("legacy apply_redactions action stays FEATURE_UNAVAILABLE now that secure redaction is enabled", async () => {
+    const { applyRedactionsAction } = await import("../actions.js");
+    await expect(
+      applyRedactionsAction("sid", 1, "/out.pdf", [], { build: "production", platform: "macos" })
+    ).rejects.toSatisfy((err) => err instanceof FeatureUnavailableError && err.code === "FEATURE_UNAVAILABLE");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("visual_redaction_mask guard rejects with FEATURE_UNAVAILABLE", async () => {
     const callback = vi.fn();
     await expect(
-      guardFeatureAction("redaction", { platform: "macos" }, callback)
+      guardFeatureAction("visual_redaction_mask", { platform: "macos" }, callback)
     ).rejects.toSatisfy((err) => {
       return (
         err instanceof FeatureUnavailableError &&

@@ -171,10 +171,16 @@ mod pdfium_runtime_targets {
     async fn activated_session(
         app: &tauri::App<tauri::test::MockRuntime>,
     ) -> document_session::DocumentSessionSnapshot {
-        let opened =
-            document_session::open_document_session(fixture("simple-text.pdf"), app.state())
-                .await
-                .unwrap();
+        activated_session_for(app, "simple-text.pdf").await
+    }
+
+    async fn activated_session_for(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> document_session::DocumentSessionSnapshot {
+        let opened = document_session::open_document_session(fixture(name), app.state())
+            .await
+            .unwrap();
         let prepared = document_session::prepare_candidate_activation(
             opened.session_id,
             None,
@@ -451,6 +457,86 @@ mod pdfium_runtime_targets {
             let over_ipc: SecureRedactionPlan =
                 serde_json::from_str(&serde_json::to_string(&plan).unwrap()).unwrap();
             assert_eq!(over_ipc, plan);
+        })
+        .await;
+    }
+
+    // Many producers (macOS PDFKit among them) put /MediaBox and /CropBox on the /Pages
+    // node, not on each page. Planning resolves those inherited boxes; execution must
+    // validate the source page with the same rules, and the published pages must carry the
+    // planned geometry explicitly.
+    #[tokio::test]
+    async fn inherited_page_boxes_execute_with_the_planned_geometry() {
+        with_worker_shutdown(async {
+            let _serial = EXECUTION_TEST_MUTEX.lock().await;
+            let app = app();
+            let session = activated_session_for(&app, "inherited-geometry.pdf").await;
+            let (policy, acknowledgements, regions) = request_parts();
+            let plan = plan(&app, &session, policy, acknowledgements, regions).await;
+            assert!(plan.ready_for_execution && plan.executable);
+            let geometry = plan.page_plans[0].geometry.clone();
+            let media = &geometry.media_box;
+            assert_eq!(
+                (media.left, media.bottom, media.width, media.height),
+                (10.0, 20.0, 600.0, 800.0),
+                "precondition: MediaBox is inherited from /Pages"
+            );
+            let crop = geometry.crop_box.clone().expect("inherited CropBox");
+            assert_eq!(
+                (crop.left, crop.bottom, crop.width, crop.height),
+                (30.0, 40.0, 560.0, 760.0),
+                "precondition: CropBox is inherited from /Pages"
+            );
+            let output = tempfile::tempdir().unwrap();
+            let target = output.path().join("inherited-redacted.pdf");
+
+            let outcome =
+                execute(&app, &session, &plan, target.to_string_lossy().into_owned()).await;
+            let report = match outcome {
+                SessionJobOutcome::Completed { value, .. } => value,
+                other => panic!("execution with inherited page boxes must complete: {other:?}"),
+            };
+            assert!(report.published);
+            assert!(report.verification_report.is_verified);
+            assert!(report
+                .verification_report
+                .verification_checks
+                .iter()
+                .all(|check| check.status == VerificationCheckStatus::Passed));
+            assert_eq!(sha256_file(&target), report.transform_report.output_digest);
+
+            let (published_media, published_crop, text) =
+                preview_alternative_lib::pdf_engine::with_pdfium(|pdfium| {
+                    let document = pdfium
+                        .load_pdf_from_file(&target, None)
+                        .map_err(|error| error.to_string())?;
+                    let page = document.pages().get(0).map_err(|error| error.to_string())?;
+                    let rect = |bounds: pdfium_render::prelude::PdfRect| {
+                        (
+                            bounds.left().value,
+                            bounds.bottom().value,
+                            bounds.right().value,
+                            bounds.top().value,
+                        )
+                    };
+                    let media = page
+                        .boundaries()
+                        .media()
+                        .map_err(|error| error.to_string())?;
+                    let crop = page
+                        .boundaries()
+                        .crop()
+                        .map_err(|error| error.to_string())?;
+                    let text = page.text().map_err(|error| error.to_string())?.all();
+                    Ok::<_, String>((rect(media.bounds), rect(crop.bounds), text))
+                })
+                .expect("published target must reopen with explicit page boxes");
+            assert_eq!(published_media, (10.0, 20.0, 610.0, 820.0));
+            assert_eq!(published_crop, (30.0, 40.0, 590.0, 800.0));
+            assert!(
+                !text.contains("INHERITED GEOMETRY"),
+                "the rasterized page must carry no text layer: {text:?}"
+            );
         })
         .await;
     }
