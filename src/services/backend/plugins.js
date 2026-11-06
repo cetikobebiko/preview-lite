@@ -18,6 +18,10 @@ export const setPluginEnabled = (pluginId, enabled) =>
 export const listInstalledPlugins = () =>
   callBackend("listInstalledPlugins");
 
+// Read-only: the backend gate comes from the Rust build profile.
+export const getPluginFeatureStatus = () =>
+  callBackend("getPluginFeatureStatus");
+
 export const startPluginExecution = (pluginId, hookName, payloadJson = "{}", executionId = "") =>
   callBackend("startPluginExecution", { pluginId, hookName, payloadJson, executionId });
 

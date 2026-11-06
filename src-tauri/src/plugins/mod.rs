@@ -25,6 +25,82 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
+use worker::PluginWorkerLauncher;
+
+type InstalledPlugins = Arc<RwLock<HashMap<String, InstalledPluginInfoV1>>>;
+
+/// Hashes the installed manifest and script as they are on disk now.
+fn installed_package_digest(
+    app_data_dir: &Path,
+    entry: &InstalledPluginInfoV1,
+) -> Result<String, PluginError> {
+    let install_dir = install::resolve_installed_plugin_dir(app_data_dir, entry)?;
+    let read = |path: PathBuf| {
+        fs::read(path).map_err(|_| {
+            PluginError::new(
+                PluginErrorCode::PluginPathInvalid,
+                "Eklenti disk dosyaları okunamadı.",
+            )
+        })
+    };
+    let manifest_bytes = read(install_dir.join("manifest.json"))?;
+    let script_bytes = read(install_dir.join(&entry.main_script))?;
+    Ok(compute_package_digest(&manifest_bytes, &script_bytes))
+}
+
+/// Logical quarantine: consent revoked and disabled; files stay in place.
+fn quarantine_entry(entry: &mut InstalledPluginInfoV1) {
+    entry.consent_granted = false;
+    entry.consent_policy_version = 0;
+    entry.enabled = false;
+}
+
+/// Re-hashes the installed files after a failed worker run and quarantines the
+/// plugin when they no longer match the consented digest. Catches a change that
+/// lands between the host pre-check and the worker's own revalidation.
+async fn quarantine_if_tampered(
+    app_data_dir: &Path,
+    installed_plugins: &InstalledPlugins,
+    plugin_id: &str,
+) {
+    let mut lock = installed_plugins.write().await;
+    let tampered = match lock.get(plugin_id) {
+        Some(entry) => match installed_package_digest(app_data_dir, entry) {
+            Ok(digest) => digest != entry.package_digest,
+            // Unreadable or relocated files are not the consented package either.
+            Err(_) => true,
+        },
+        None => false,
+    };
+    if tampered {
+        if let Some(entry) = lock.get_mut(plugin_id) {
+            quarantine_entry(entry);
+        }
+        let _ = install::save_persisted_registry(app_data_dir, &lock);
+    }
+}
+
+/// Top-level thread-safe state container for the plugin subsystem.
+/// Build-profile gate decision for the plugin subsystem.
+///
+/// The gate's only source is the Rust build profile: development builds
+/// (`debug_assertions`) open it, production builds keep it closed. There is no
+/// webview-callable command that changes it.
+pub const fn plugin_feature_gate_for_build(debug_assertions: bool) -> bool {
+    debug_assertions
+}
+
+/// Gate value compiled into this binary.
+pub const PLUGIN_FEATURE_ENABLED_IN_THIS_BUILD: bool =
+    plugin_feature_gate_for_build(cfg!(debug_assertions));
+
+/// Read-only gate observation returned to the frontend.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PluginFeatureStatus {
+    pub enabled: bool,
+    /// `"development"` or `"production"`, matching the frontend registry vocabulary.
+    pub build_profile: String,
+}
 
 /// Top-level thread-safe state container for the plugin subsystem.
 #[derive(Clone)]
@@ -34,11 +110,28 @@ pub struct PluginState {
     execution_registry: PluginExecutionRegistry,
     feature_enabled: Arc<AtomicBool>,
     feature_gate_lock: Arc<RwLock<()>>,
+    worker_launcher: Option<PluginWorkerLauncher>,
 }
 
 impl PluginState {
-    pub fn new() -> Self {
-        Self::with_app_data_dir_opt(default_plugin_app_data_dir())
+    /// Production constructor used by Tauri `setup`: the data directory comes from
+    /// `app.path().app_data_dir()` and the gate from the build profile.
+    pub fn for_app(app_data_dir: Option<PathBuf>) -> Self {
+        let state = Self::with_app_data_dir_opt(app_data_dir);
+        // Not shared yet, so no gate lock is needed for the initial value.
+        state
+            .feature_enabled
+            .store(PLUGIN_FEATURE_ENABLED_IN_THIS_BUILD, Ordering::SeqCst);
+        state
+    }
+
+    /// Runs plugin hooks through `executable --run-plugin-worker` instead of the
+    /// current executable. Integration tests need this because their current
+    /// executable is the test harness, not the app binary. The worker entrypoint
+    /// argument is fixed; only the binary path changes.
+    pub fn with_worker_executable(mut self, executable: PathBuf) -> Self {
+        self.worker_launcher = Some(PluginWorkerLauncher::production_entrypoint(executable));
+        self
     }
 
     pub fn with_app_data_dir(app_data_dir: PathBuf) -> Self {
@@ -57,6 +150,7 @@ impl PluginState {
             // Production Default is strictly DISABLED (fail-closed)
             feature_enabled: Arc::new(AtomicBool::new(false)),
             feature_gate_lock: Arc::new(RwLock::new(())),
+            worker_launcher: None,
         }
     }
 
@@ -76,6 +170,22 @@ impl PluginState {
 
     pub fn is_feature_enabled(&self) -> bool {
         self.feature_enabled.load(Ordering::SeqCst)
+    }
+
+    pub fn feature_status(&self) -> PluginFeatureStatus {
+        PluginFeatureStatus {
+            enabled: self.is_feature_enabled(),
+            build_profile: if cfg!(debug_assertions) {
+                "development"
+            } else {
+                "production"
+            }
+            .to_string(),
+        }
+    }
+
+    pub fn app_data_dir(&self) -> Option<&Path> {
+        self.app_data_dir.as_deref()
     }
 
     /// Read-only inspection of a candidate package directory.
@@ -189,29 +299,10 @@ impl PluginState {
             }
 
             // Verify disk integrity before enabling
-            let install_dir = install::resolve_installed_plugin_dir(app_data_dir, entry)
-                .map_err(|e| e.to_wire())?;
-            let manifest_path = install_dir.join("manifest.json");
-            let script_path = install_dir.join(&entry.main_script);
-            let manifest_bytes = fs::read(&manifest_path).map_err(|_| {
-                PluginError::new(
-                    PluginErrorCode::PluginPathInvalid,
-                    "Eklenti disk dosyaları bulunamadı.",
-                )
-                .to_wire()
-            })?;
-            let script_bytes = fs::read(&script_path).map_err(|_| {
-                PluginError::new(
-                    PluginErrorCode::PluginPathInvalid,
-                    "Eklenti disk dosyaları bulunamadı.",
-                )
-                .to_wire()
-            })?;
-            let disk_digest = compute_package_digest(&manifest_bytes, &script_bytes);
+            let disk_digest =
+                installed_package_digest(app_data_dir, entry).map_err(|e| e.to_wire())?;
             if disk_digest != entry.package_digest {
-                entry.consent_granted = false;
-                entry.consent_policy_version = 0;
-                entry.enabled = false;
+                quarantine_entry(entry);
                 let _ = install::save_persisted_registry(app_data_dir, &lock);
                 return Err(PluginError::new(
                     PluginErrorCode::PluginPackageDigestMismatch,
@@ -348,39 +439,23 @@ impl PluginState {
         }
 
         // Pre-check disk digest before starting execution
-        let install_dir = install::resolve_installed_plugin_dir(app_data_dir, &plugin)
-            .map_err(|e| e.to_wire())?;
-        let manifest_path = install_dir.join("manifest.json");
-        let script_path = install_dir.join(&plugin.main_script);
-        let manifest_bytes = fs::read(&manifest_path).map_err(|_| {
-            PluginError::new(
-                PluginErrorCode::PluginPathInvalid,
-                "Eklenti disk dosyaları okunamadı.",
-            )
-            .to_wire()
-        })?;
-        let script_bytes = fs::read(&script_path).map_err(|_| {
-            PluginError::new(
-                PluginErrorCode::PluginPathInvalid,
-                "Eklenti disk dosyaları okunamadı.",
-            )
-            .to_wire()
-        })?;
-        let disk_digest = compute_package_digest(&manifest_bytes, &script_bytes);
-        if disk_digest != plugin.package_digest {
-            // Quarantine tampered plugin
+        let disk_digest = installed_package_digest(app_data_dir, &plugin);
+        if disk_digest.as_deref().ok() != Some(plugin.package_digest.as_str()) {
+            // Quarantine tampered (or unreadable) plugin
             let mut lock = self.installed_plugins.write().await;
             if let Some(entry) = lock.get_mut(plugin_id) {
-                entry.consent_granted = false;
-                entry.consent_policy_version = 0;
-                entry.enabled = false;
+                quarantine_entry(entry);
                 let _ = install::save_persisted_registry(app_data_dir, &lock);
             }
-            return Err(PluginError::new(
-                PluginErrorCode::PluginPackageDigestMismatch,
-                "Eklenti disk dosyaları değiştirilmiş, yürütme engellendi.",
-            )
-            .to_wire());
+            return Err(disk_digest
+                .err()
+                .unwrap_or_else(|| {
+                    PluginError::new(
+                        PluginErrorCode::PluginPackageDigestMismatch,
+                        "Eklenti disk dosyaları değiştirilmiş, yürütme engellendi.",
+                    )
+                })
+                .to_wire());
         }
 
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
@@ -414,21 +489,37 @@ impl PluginState {
         let expected_manifest_digest = plugin.manifest_digest.clone();
         let expected_script_digest = plugin.script_digest.clone();
         let granted_permissions = plugin.permissions.clone();
+        let installed_plugins = self.installed_plugins.clone();
+        let launcher = match &self.worker_launcher {
+            Some(launcher) => Ok(launcher.clone()),
+            None => PluginWorkerLauncher::current_executable(),
+        };
 
         // Spawn async supervisor task
         tokio::spawn(async move {
-            let res = worker::supervise_plugin_execution(
-                &app_data_dir_clone,
-                &plugin_id_str,
-                &plugin_version,
-                &expected_package_digest,
-                &expected_manifest_digest,
-                &expected_script_digest,
-                hook_req,
-                granted_permissions,
-                cancel_rx,
-            )
-            .await;
+            let res = match launcher {
+                Ok(launcher) => {
+                    worker::supervise_plugin_execution_with_launcher(
+                        launcher,
+                        &app_data_dir_clone,
+                        &plugin_id_str,
+                        &plugin_version,
+                        &expected_package_digest,
+                        &expected_manifest_digest,
+                        &expected_script_digest,
+                        hook_req,
+                        granted_permissions,
+                        cancel_rx,
+                    )
+                    .await
+                }
+                Err(err) => Err(err),
+            };
+
+            if res.is_err() {
+                quarantine_if_tampered(&app_data_dir_clone, &installed_plugins, &plugin_id_str)
+                    .await;
+            }
 
             match res {
                 Ok(hook_result) => {
@@ -491,42 +582,6 @@ impl PluginState {
     }
 }
 
-impl Default for PluginState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub fn default_plugin_app_data_dir() -> Option<PathBuf> {
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        if !appdata.trim().is_empty() {
-            return Some(PathBuf::from(appdata).join("antigravity-preview"));
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.trim().is_empty() {
-            #[cfg(target_os = "macos")]
-            {
-                return Some(
-                    PathBuf::from(home)
-                        .join("Library")
-                        .join("Application Support")
-                        .join("antigravity-preview"),
-                );
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                return Some(
-                    PathBuf::from(home)
-                        .join(".config")
-                        .join("antigravity-preview"),
-                );
-            }
-        }
-    }
-    None
-}
-
 // ---------------------------------------------------------------------------
 // Tauri Command Handlers
 // ---------------------------------------------------------------------------
@@ -582,6 +637,15 @@ pub async fn list_installed_plugins(
     state: State<'_, PluginState>,
 ) -> Result<Vec<InstalledPluginInfoV1>, PluginErrorWire> {
     Ok(state.list_installed_plugins().await)
+}
+
+/// Read-only: reports the build-profile gate. There is deliberately no command that
+/// changes it.
+#[tauri::command]
+pub async fn get_plugin_feature_status(
+    state: State<'_, PluginState>,
+) -> Result<PluginFeatureStatus, PluginErrorWire> {
+    Ok(state.feature_status())
 }
 
 #[tauri::command]
@@ -1523,5 +1587,401 @@ mod tests {
             launcher.arguments,
             vec![std::ffi::OsString::from("--run-plugin-worker")]
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Build-profile gate (5a)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_gate_decision_closed_for_production_profile() {
+        assert!(!plugin_feature_gate_for_build(false));
+        assert!(plugin_feature_gate_for_build(true));
+    }
+
+    #[test]
+    fn test_gate_constant_follows_debug_assertions() {
+        assert_eq!(PLUGIN_FEATURE_ENABLED_IN_THIS_BUILD, cfg!(debug_assertions));
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn test_release_build_gate_is_closed() {
+        let dir = tempdir().unwrap();
+        let state = PluginState::for_app(Some(dir.path().to_path_buf()));
+        assert!(!PLUGIN_FEATURE_ENABLED_IN_THIS_BUILD);
+        assert!(!state.is_feature_enabled());
+        assert_eq!(
+            state.feature_status(),
+            PluginFeatureStatus {
+                enabled: false,
+                build_profile: "production".to_string(),
+            }
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_build_gate_is_open() {
+        let dir = tempdir().unwrap();
+        let state = PluginState::for_app(Some(dir.path().to_path_buf()));
+        assert!(state.is_feature_enabled());
+        assert_eq!(
+            state.feature_status(),
+            PluginFeatureStatus {
+                enabled: true,
+                build_profile: "development".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_for_app_without_data_dir_fails_closed_even_with_gate_open() {
+        let state = PluginState::for_app(None);
+        state.set_feature_enabled(true).await;
+        let err = state
+            .install_package("/some/path", "digest")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_PATH_INVALID");
+    }
+
+    #[test]
+    fn test_plugin_root_is_under_given_app_data_dir() {
+        let dir = tempdir().unwrap();
+        let state = PluginState::for_app(Some(dir.path().to_path_buf()));
+        assert_eq!(state.app_data_dir(), Some(dir.path()));
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Permission & lifecycle proof (5a)
+    // -----------------------------------------------------------------------
+
+    const TWO_HOOK_MANIFEST_PERMS: [PluginPermission; 1] = [PluginPermission::UiNotification];
+
+    /// Installs `make_valid_manifest_json(id)` (ui:notification; on_custom_command +
+    /// on_document_open). With `consent` it also grants consent and enables it.
+    async fn install_test_plugin(
+        state: &PluginState,
+        id: &str,
+        consent: bool,
+    ) -> (
+        PluginInspectionResult,
+        InstalledPluginInfoV1,
+        tempfile::TempDir,
+    ) {
+        let package = tempdir().unwrap();
+        fs::write(
+            package.path().join("manifest.json"),
+            make_valid_manifest_json(id),
+        )
+        .unwrap();
+        fs::write(
+            package.path().join("main.rhai"),
+            "fn on_custom_command(p) {}",
+        )
+        .unwrap();
+        let path = package.path().to_string_lossy().to_string();
+        let insp = state.inspect_package(&path).await.unwrap();
+        let installed = state
+            .install_package(&path, &insp.package_digest)
+            .await
+            .unwrap();
+        if consent {
+            state
+                .grant_consent(id, &insp.package_digest, &TWO_HOOK_MANIFEST_PERMS)
+                .await
+                .unwrap();
+            state.set_plugin_enabled(id, true).await.unwrap();
+        }
+        (insp, installed, package)
+    }
+
+    async fn entry(state: &PluginState, id: &str) -> InstalledPluginInfoV1 {
+        state
+            .list_installed_plugins()
+            .await
+            .into_iter()
+            .find(|p| p.id == id)
+            .unwrap()
+    }
+
+    fn assert_quarantined(info: &InstalledPluginInfoV1) {
+        assert!(!info.consent_granted);
+        assert_eq!(info.consent_policy_version, 0);
+        assert!(!info.enabled);
+    }
+
+    async fn assert_tamper_quarantines_on_execution(file: &str, replacement: &str) {
+        let (state, _dir) = setup_enabled_state_with_temp_dir();
+        let (insp, installed, _pkg) = install_test_plugin(&state, "tamper-target", true).await;
+
+        fs::write(
+            PathBuf::from(&installed.install_dir).join(file),
+            replacement,
+        )
+        .unwrap();
+
+        let payload = r#"{"command_name":"x","parameters":{}}"#;
+        let err = state
+            .start_execution("tamper-target", "on_custom_command", payload, "exec-t1")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_PACKAGE_DIGEST_MISMATCH");
+
+        // In memory and on disk
+        assert_quarantined(&entry(&state, "tamper-target").await);
+        let persisted = install::load_persisted_registry(state.app_data_dir().unwrap());
+        assert_quarantined(persisted.get("tamper-target").unwrap());
+
+        // Quarantine sticks: no re-enable, no re-consent to the changed files, no run.
+        let err = state
+            .set_plugin_enabled("tamper-target", true)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_CONSENT_REQUIRED");
+        let err = state
+            .grant_consent(
+                "tamper-target",
+                &insp.package_digest,
+                &TWO_HOOK_MANIFEST_PERMS,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_PACKAGE_DIGEST_MISMATCH");
+        let err = state
+            .start_execution("tamper-target", "on_custom_command", payload, "exec-t2")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_CONSENT_REQUIRED");
+
+        // Uninstall still cleans it up.
+        state.uninstall_plugin("tamper-target").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_script_changed_after_consent_quarantines_plugin() {
+        assert_tamper_quarantines_on_execution(
+            "main.rhai",
+            "fn on_custom_command(p) { return \"tampered\"; }",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_manifest_changed_after_consent_quarantines_plugin() {
+        // Same id/version, one more permission: still a different package.
+        let tampered = make_valid_manifest_json("tamper-target")
+            .replace(r#""ui:notification""#, r#""ui:notification", "plugin:log""#);
+        assert_tamper_quarantines_on_execution("manifest.json", &tampered).await;
+    }
+
+    #[tokio::test]
+    async fn test_change_after_precheck_is_quarantined_after_worker_failure() {
+        // The worker revalidates digests itself; when it fails, the host re-hashes and
+        // quarantines a package that changed after the pre-check.
+        let (state, _dir) = setup_enabled_state_with_temp_dir();
+        let (_insp, installed, _pkg) = install_test_plugin(&state, "race-target", true).await;
+        let app_dir = state.app_data_dir().unwrap().to_path_buf();
+
+        // Unchanged files: a worker failure alone does not quarantine.
+        quarantine_if_tampered(&app_dir, &state.installed_plugins, "race-target").await;
+        assert!(entry(&state, "race-target").await.enabled);
+
+        fs::write(
+            PathBuf::from(&installed.install_dir).join("main.rhai"),
+            "fn on_custom_command(p) { 1 }",
+        )
+        .unwrap();
+        quarantine_if_tampered(&app_dir, &state.installed_plugins, "race-target").await;
+        assert_quarantined(&entry(&state, "race-target").await);
+        let persisted = install::load_persisted_registry(&app_dir);
+        assert_quarantined(persisted.get("race-target").unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_undeclared_hook_rejected() {
+        let (state, _dir) = setup_enabled_state_with_temp_dir();
+        install_test_plugin(&state, "hook-target", true).await;
+
+        // Known hook, not in this manifest
+        let err = state
+            .start_execution(
+                "hook-target",
+                "on_export_complete",
+                r#"{"export_format":"png","success":true}"#,
+                "exec-h1",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_HOOK_NOT_DECLARED");
+
+        // Not a hook at all
+        let err = state
+            .start_execution("hook-target", "on_anything", "{}", "exec-h2")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_HOOK_UNKNOWN");
+
+        // Nothing was registered or left busy
+        assert!(!state.execution_registry.is_plugin_busy("hook-target").await);
+        assert_eq!(
+            state
+                .get_execution_status("exec-h1")
+                .await
+                .unwrap_err()
+                .code,
+            "PLUGIN_EXECUTION_NOT_FOUND"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unconsented_plugin_cannot_be_enabled_or_executed() {
+        let (state, _dir) = setup_enabled_state_with_temp_dir();
+        install_test_plugin(&state, "no-consent", false).await;
+        let payload = r#"{"command_name":"x","parameters":{}}"#;
+
+        let err = state
+            .set_plugin_enabled("no-consent", true)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_CONSENT_REQUIRED");
+        let err = state
+            .start_execution("no-consent", "on_custom_command", payload, "exec-c1")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_CONSENT_REQUIRED");
+
+        // A registry file edited to say enabled=true without consent still cannot run.
+        let app_dir = state.app_data_dir().unwrap().to_path_buf();
+        let mut registry = install::load_persisted_registry(&app_dir);
+        registry.get_mut("no-consent").unwrap().enabled = true;
+        install::save_persisted_registry(&app_dir, &registry).unwrap();
+        let reloaded = PluginState::with_app_data_dir(app_dir);
+        reloaded.set_feature_enabled(true).await;
+        assert!(entry(&reloaded, "no-consent").await.enabled);
+        let err = reloaded
+            .start_execution("no-consent", "on_custom_command", payload, "exec-c2")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_CONSENT_REQUIRED");
+
+        // Consent for a stale policy version is not consent either.
+        let (state2, _dir2) = setup_enabled_state_with_temp_dir();
+        install_test_plugin(&state2, "old-policy", true).await;
+        {
+            let mut lock = state2.installed_plugins.write().await;
+            lock.get_mut("old-policy").unwrap().consent_policy_version =
+                CURRENT_PLUGIN_CONSENT_POLICY_VERSION + 1;
+        }
+        let err = state2
+            .start_execution("old-policy", "on_custom_command", payload, "exec-c3")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_CONSENT_REQUIRED");
+    }
+
+    #[tokio::test]
+    async fn test_disabled_plugin_execution_rejected() {
+        let (state, _dir) = setup_enabled_state_with_temp_dir();
+        install_test_plugin(&state, "off-target", true).await;
+        state.set_plugin_enabled("off-target", false).await.unwrap();
+        let err = state
+            .start_execution(
+                "off-target",
+                "on_custom_command",
+                r#"{"command_name":"x","parameters":{}}"#,
+                "exec-d1",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_NOT_ENABLED");
+    }
+
+    #[tokio::test]
+    async fn test_gate_closed_after_install_allows_only_restrictive_commands() {
+        let (state, _dir) = setup_enabled_state_with_temp_dir();
+        let (insp, _installed, pkg) = install_test_plugin(&state, "gate-target", true).await;
+        let pkg_path = pkg.path().to_string_lossy().to_string();
+
+        state.set_feature_enabled(false).await;
+
+        // Privilege-increasing commands: all rejected by the gate
+        let disabled = "PLUGIN_FEATURE_DISABLED";
+        assert_eq!(
+            state.inspect_package(&pkg_path).await.unwrap_err().code,
+            disabled
+        );
+        assert_eq!(
+            state
+                .install_package(&pkg_path, &insp.package_digest)
+                .await
+                .unwrap_err()
+                .code,
+            disabled
+        );
+        assert_eq!(
+            state
+                .grant_consent(
+                    "gate-target",
+                    &insp.package_digest,
+                    &TWO_HOOK_MANIFEST_PERMS
+                )
+                .await
+                .unwrap_err()
+                .code,
+            disabled
+        );
+        assert_eq!(
+            state
+                .set_plugin_enabled("gate-target", true)
+                .await
+                .unwrap_err()
+                .code,
+            disabled
+        );
+        assert_eq!(
+            state
+                .start_execution(
+                    "gate-target",
+                    "on_custom_command",
+                    r#"{"command_name":"x","parameters":{}}"#,
+                    "exec-g1"
+                )
+                .await
+                .unwrap_err()
+                .code,
+            disabled
+        );
+
+        // Restrictive / observing commands: still work on a real installed plugin
+        assert_eq!(state.list_installed_plugins().await.len(), 1);
+        assert!(!state.feature_status().enabled);
+        assert_eq!(
+            state
+                .get_execution_status("exec-g1")
+                .await
+                .unwrap_err()
+                .code,
+            "PLUGIN_EXECUTION_NOT_FOUND"
+        );
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        state
+            .execution_registry
+            .register_execution(
+                "exec-live".to_string(),
+                "other".to_string(),
+                "on_custom_command".to_string(),
+                tx,
+            )
+            .await;
+        state.cancel_execution("exec-live").await.unwrap();
+        let disabled_entry = state
+            .set_plugin_enabled("gate-target", false)
+            .await
+            .unwrap();
+        assert!(!disabled_entry.enabled);
+        state.uninstall_plugin("gate-target").await.unwrap();
+        assert!(state.list_installed_plugins().await.is_empty());
     }
 }

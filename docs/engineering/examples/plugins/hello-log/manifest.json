@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "id": "hello-log",
+  "name": "Hello Log",
+  "version": "1.0.0",
+  "description": "Örnek eklenti: yalnız günlük yazar ve bildirim gösterir. Belgeye, dosya yoluna veya içeriğe erişimi yoktur.",
+  "main_script": "main.rhai",
+  "permissions": ["plugin:log", "ui:notification"],
+  "hooks": ["on_custom_command", "on_document_open", "on_export_complete"]
+}

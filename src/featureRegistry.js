@@ -18,6 +18,13 @@ const REQUIRED_FIELDS = Object.freeze([
   "documentation",
 ]);
 
+// Optional record field. When present, the feature is runnable only in the listed
+// build profiles ("development" | "production"); the runtime build comes from
+// getRuntimeFeatureContext(). Used for features whose backend gate is tied to the
+// Rust build profile (plugin_system: debug_assertions).
+export const BUILD_PROFILES = Object.freeze(["development", "production"]);
+const OPTIONAL_FIELDS = Object.freeze(["buildProfiles"]);
+
 const RAW_FEATURES = [
   {
     id: "command_palette",
@@ -266,8 +273,9 @@ const RAW_FEATURES = [
     id: "plugin_system",
     label: "Plugin system",
     status: "experimental",
-    enabled: false,
-    warning: "Eklenti manifest izinleri tam olarak uygulanmamıştır; eklenti yükleme ve script çalıştırma kapalıdır.",
+    enabled: true,
+    buildProfiles: ["development"],
+    warning: "Yalnız geliştirme derlemesinde açıktır; üretim derlemesinde arka uç kapısı kapalıdır. Eklentiler belgeye, dosya yollarına, parolalara veya içeriğe erişemez; yalnız günlük yazabilir (plugin:log) ve bildirim gösterebilir (ui:notification). Kancalar henüz uygulama olaylarına bağlı değildir, yalnız elle çalıştırılır.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#plugins",
   },
@@ -397,6 +405,22 @@ export function validateFeatureRegistryRecords(records) {
     if (!isNonEmptyString(record.documentation)) {
       throw new TypeError(`Feature ${record.id} has invalid documentation metadata.`);
     }
+    if (
+      Object.prototype.hasOwnProperty.call(record, "buildProfiles") &&
+      (
+        !Array.isArray(record.buildProfiles) ||
+        record.buildProfiles.length === 0 ||
+        record.buildProfiles.some((profile) => !BUILD_PROFILES.includes(profile)) ||
+        new Set(record.buildProfiles).size !== record.buildProfiles.length
+      )
+    ) {
+      throw new TypeError(`Feature ${record.id} has an invalid buildProfiles list.`);
+    }
+    for (const field of Object.keys(record)) {
+      if (!REQUIRED_FIELDS.includes(field) && !OPTIONAL_FIELDS.includes(field)) {
+        throw new TypeError(`Feature ${record.id} has an unknown field: ${field}`);
+      }
+    }
   }
 
   return true;
@@ -406,7 +430,12 @@ function freezeRecord(record) {
   return Object.freeze({
     ...record,
     platform: Object.freeze([...record.platform]),
+    ...(record.buildProfiles ? { buildProfiles: Object.freeze([...record.buildProfiles]) } : {}),
   });
+}
+
+function buildAllowed(feature, build) {
+  return !Array.isArray(feature.buildProfiles) || feature.buildProfiles.includes(build);
 }
 
 validateFeatureRegistryRecords(RAW_FEATURES);
@@ -467,6 +496,11 @@ function unavailableReason(feature, context) {
   if (feature.status === "mock") return feature.warning || "Bu özellik yalnız bir mock taslaktır.";
   if (feature.status === "disabled") return feature.warning || "Bu özellik devre dışıdır.";
   if (!feature.enabled) return feature.warning || "Bu özellik ürün seviyesinde kapalıdır.";
+  if (!buildAllowed(feature, context.build)) {
+    return feature.buildProfiles.includes("development")
+      ? `${feature.label} yalnız geliştirme derlemesinde çalışır.`
+      : `${feature.label} bu derlemede çalışmaz.`;
+  }
   if (context.platform === "unknown") return "Çalışma platformu güvenli biçimde belirlenemedi.";
   if (!feature.platform.includes(context.platform)) {
     return `${feature.label} bu platformda kullanılamaz.`;
@@ -489,6 +523,7 @@ export function isFeatureRecordRunnable(feature, context = {}) {
     feature.enabled &&
     feature.status !== "mock" &&
     feature.status !== "disabled" &&
+    buildAllowed(feature, runtimeContext.build) &&
     runtimeContext.platform !== "unknown" &&
     feature.platform.includes(runtimeContext.platform),
   );

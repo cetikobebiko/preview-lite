@@ -20,7 +20,7 @@ describe("feature registry metadata", () => {
     expect(new Set(ids).size).toBe(ids.length);
 
     for (const feature of Object.values(featureRegistry)) {
-      expect(Object.keys(feature).sort()).toEqual([
+      expect(Object.keys(feature).filter((key) => key !== "buildProfiles").sort()).toEqual([
         "documentation",
         "enabled",
         "id",
@@ -31,6 +31,7 @@ describe("feature registry metadata", () => {
       ]);
       expect(Object.isFrozen(feature)).toBe(true);
       expect(Object.isFrozen(feature.platform)).toBe(true);
+      if (feature.buildProfiles) expect(Object.isFrozen(feature.buildProfiles)).toBe(true);
     }
   });
 
@@ -51,6 +52,13 @@ describe("feature registry metadata", () => {
     expect(() => validateFeatureRegistryRecords([{ ...valid, enabled: "yes" }])).toThrow();
     const { documentation: _removed, ...missingDocumentation } = valid;
     expect(() => validateFeatureRegistryRecords([missingDocumentation])).toThrow(/documentation/);
+    expect(() => validateFeatureRegistryRecords([{ ...valid, buildProfiles: [] }])).toThrow(/buildProfiles/);
+    expect(() => validateFeatureRegistryRecords([{ ...valid, buildProfiles: ["debug"] }])).toThrow(/buildProfiles/);
+    expect(() =>
+      validateFeatureRegistryRecords([{ ...valid, buildProfiles: ["development", "development"] }]),
+    ).toThrow(/buildProfiles/);
+    expect(() => validateFeatureRegistryRecords([{ ...valid, devOnly: true }])).toThrow(/unknown field/);
+    expect(validateFeatureRegistryRecords([{ ...valid, buildProfiles: ["development"] }])).toBe(true);
   });
 });
 
@@ -208,5 +216,47 @@ describe("feature policy", () => {
     expect(visualMask.enabled).toBe(false);
     expect(isFeatureVisible("visual_redaction_mask", productionMac)).toBe(false);
     expect(isFeatureRunnable("visual_redaction_mask", developmentMac)).toBe(false);
+  });
+});
+
+describe("build-profile gated features", () => {
+  it("runs plugin_system only in development builds and hides it in production", () => {
+    const plugin = getFeature("plugin_system");
+    expect(plugin.status).toBe("experimental");
+    expect(plugin.enabled).toBe(true);
+    expect(plugin.buildProfiles).toEqual(["development"]);
+
+    expect(isFeatureRunnable("plugin_system", developmentMac)).toBe(true);
+    expect(isFeatureVisible("plugin_system", developmentMac)).toBe(true);
+
+    expect(isFeatureRunnable("plugin_system", productionMac)).toBe(false);
+    expect(isFeatureVisible("plugin_system", productionMac)).toBe(false);
+    const production = getFeaturePresentation("plugin_system", productionMac);
+    expect(production.runnable).toBe(false);
+    expect(production.reason).toMatch(/yalnız geliştirme derlemesinde/);
+  });
+
+  it("states the real plugin boundary in the warning", () => {
+    const { warning } = getFeature("plugin_system");
+    expect(warning).toMatch(/geliştirme derlemesinde/);
+    expect(warning).toMatch(/belgeye/);
+    expect(warning).toMatch(/plugin:log/);
+    expect(warning).toMatch(/ui:notification/);
+    expect(warning).not.toMatch(/tam olarak uygulanmamıştır/);
+  });
+
+  it("leaves features without buildProfiles independent of the build", () => {
+    const record = {
+      id: "always",
+      label: "Always",
+      status: "experimental",
+      enabled: true,
+      warning: "",
+      platform: ["macos"],
+      documentation: "docs/x.md",
+    };
+    expect(isFeatureRecordRunnable(record, productionMac)).toBe(true);
+    expect(isFeatureRecordRunnable(record, developmentMac)).toBe(true);
+    expect(isFeatureRecordRunnable({ ...record, buildProfiles: ["development"] }, productionMac)).toBe(false);
   });
 });

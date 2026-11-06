@@ -212,6 +212,30 @@
       "notes": "Default cargo test runs 1 noop; --features plugin-test-support runs 12 adversarial + 1 noop envelope. Zero-test risk if feature filtered."
     },
     {
+      "id": "rust:plugin_hello_log_example",
+      "target": "src-tauri/tests/plugin_hello_log_example.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [],
+      "syntheticInputs": [
+        "synthetic_tempdir",
+        "synthetic_rhai_script",
+        "example_plugin_package"
+      ],
+      "nativeRequirements": [
+        "plugin_worker_executable"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 5,
+      "expectedTestPresence": "exact",
+      "notes": "Plugin V1 end-to-end through PluginState and the app binary's --run-plugin-worker entrypoint (same binary as plugin_worker_process; no PDFium, so realWorker=false in this registry's PDFium sense). Installs docs/engineering/examples/plugins/hello-log, consents, enables, runs on_custom_command and checks exact log/notification/text; plus permission-denied, log/notification limit, disable and tamper-quarantine statuses."
+    },
+    {
       "id": "rust:redaction_fixtures_and_capabilities",
       "target": "src-tauri/tests/redaction_fixtures_and_capabilities.rs",
       "language": "rust",
@@ -775,9 +799,9 @@
     }
   ],
   "summary": {
-    "totalTargets": 27,
+    "totalTargets": 28,
     "byExecutionClass": {
-      "FAST_LOCAL": 10,
+      "FAST_LOCAL": 11,
       "NATIVE_PLATFORM": 14,
       "EXACT_ARTIFACT": 3
     },
