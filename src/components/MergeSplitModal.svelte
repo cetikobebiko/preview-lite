@@ -14,6 +14,7 @@
     publishWithOverwriteConfirmation,
   } from "../services/app/outputConflict.js";
   import { exportErrorMessage } from "../services/app/exportErrorMessage.js";
+  import { mergeTargetConflict } from "../services/app/mergeTargetGuard.js";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { parsePageRanges, toPhysicalRanges } from "../utils/pageRanges.js";
   import { bookmarkRangesText, everyNPagesRangesText } from "../services/splitRanges.js";
@@ -139,7 +140,12 @@
         defaultPath: "birlestirilmis.pdf",
         filters: [{ name: 'PDF', extensions: ['pdf'] }]
       });
-      if (savePath) {
+      const conflict = savePath
+        ? mergeTargetConflict(savePath, { documentPath: currentFilePath, inputPaths: $state.snapshot(filesToMerge), platform: featureContext.platform })
+        : null;
+      if (conflict) {
+        errorMsg = "Birleştirme hatası: " + conflict;
+      } else if (savePath) {
         if (!sessionId) throw new Error("Aktif document session bulunamadı.");
         const extraFiles = filesToMerge.filter(f => f !== currentFilePath);
         await mergeSessionPdfs(sessionId, contentGeneration, extraFiles, savePath);

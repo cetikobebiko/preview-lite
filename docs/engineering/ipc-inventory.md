@@ -18,6 +18,15 @@
 > with the `burnAnnotationsToPdf` contract/wrapper. Their rows in the historical
 > Prompt 0 tables below are retained only as evidence of the old surface.
 
+> Current-state note — 2026-11-06: `merge_pdfs` has no frontend caller and is
+> not registered in `generate_handler!`. The `mergePdfs` contract, backend
+> wrapper/barrel export, `pdfState.mergePdfs` facade and `mergePdfsDirectAction`
+> were removed; the command palette "Başka Bir PDF ile Birleştir" and the
+> merge/split modal both call `merge_session_pdfs` via `pdfState.mergeSessionPdfs`.
+> `manipulation::merge_pdfs` stays in Rust only for `tests/b4_integration_gaps.rs`
+> and `manipulation::tests`. `architecture.test.js` asserts both the missing
+> handler registration and the missing frontend contract/command string.
+
 Current path exceptions are deliberate: session-open/encryption preflight,
 external operands such as merge inputs/images/batch inputs, and user-selected
 output targets. Active PDF sharing remains
@@ -101,7 +110,7 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `rotate_page` | `file_path: String; page_index: u32; degrees: i32` | `src-tauri/src/manipulation.rs:14`, pub sync | evet | `src/pdfState.js:27` |
 | `delete_pages` | `file_path: String; page_indices: Vec<u32>` | `src-tauri/src/manipulation.rs:37`, pub sync | evet | `src/pdfState.js:31` |
 | `insert_blank_page` | `_file_path: String; _at_index: u32; _width: f32; _height: f32` | `src-tauri/src/manipulation.rs:64`, pub sync | evet | `src/pdfState.js:39` |
-| `merge_pdfs` | `file_paths: Vec<String>; output_path: String` | `src-tauri/src/manipulation.rs:69`, pub sync | evet | `src/App.svelte:1810`; `src/pdfState.js:43` |
+| `merge_pdfs` | `file_paths: Vec<String>; output_path: String` | `src-tauri/src/manipulation.rs:69`, pub sync | ~~evet~~ hayır (2026-11-06: frontend çağıranı yok, Tauri'ye kayıtsız; yalnız Rust testleri (`tests/b4_integration_gaps.rs`, `manipulation::tests`) kullanır. Birleştirme `merge_session_pdfs` ile yapılır.) | ~~`src/App.svelte:1810`; `src/pdfState.js:43`~~ yok |
 | `split_pdf` | `file_path: String; ranges: Vec<(u32,u32)>; output_dir: String` | `src-tauri/src/manipulation.rs:90`, pub sync | evet | `src/pdfState.js:47` |
 | `get_form_fields` | `_file_path: String` | `src-tauri/src/manipulation.rs:130`, pub sync | evet | `src/pdfState.js:51` |
 | `update_form_field` | `_file_path: String; _field_id: String; _value: String` | `src-tauri/src/manipulation.rs:135`, pub sync | evet | `src/pdfState.js:55` |
@@ -188,7 +197,7 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/App.svelte:1220` | `perform_ocr_on_page` | `{ path, pageIndex }` |
 | `src/App.svelte:1428` | `extract_pages` | `{ sourcePath, pageIndices, targetPath }` |
 | `src/App.svelte:1468` | `stop_speaking` | — |
-| `src/App.svelte:1810` | `merge_pdfs` | `{ pdfPaths, targetPath }` |
+| ~~`src/App.svelte:1810`~~ | `merge_pdfs` | `{ pdfPaths, targetPath }` — tarihsel; 2026-11-06: frontend çağıranı yok, Tauri'ye kayıtsız; yalnız Rust testleri (`tests/b4_integration_gaps.rs`, `manipulation::tests`) kullanır. Birleştirme `merge_session_pdfs` ile yapılır. |
 | `src/App.svelte:1834` | `reorder_pdf_pages` | `{ sourcePath, pageOrder, targetPath }` |
 | `src/App.svelte:1917` | `convert_and_save_image` | `{ sourcePath, targetPath, format, rotation, flipH, flipV }` |
 | `src/components/A11yPanel.svelte` | `audit_session_accessibility` | `{ sessionId, expectedContentGeneration }` |
@@ -210,7 +219,7 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/pdfState.js:31` | `delete_pages` | `{ filePath, pageIndices }` |
 | `src/pdfState.js:35` | `reorder_pages` | `{ filePath, newOrder }` |
 | `src/pdfState.js:39` | `insert_blank_page` | `{ filePath, atIndex, width, height }` |
-| `src/pdfState.js:43` | `merge_pdfs` | `{ filePaths, outputPath }` |
+| ~~`src/pdfState.js:43`~~ | `merge_pdfs` | `{ filePaths, outputPath }` — tarihsel; 2026-11-06: frontend çağıranı yok, Tauri'ye kayıtsız; yalnız Rust testleri (`tests/b4_integration_gaps.rs`, `manipulation::tests`) kullanır. Birleştirme `merge_session_pdfs` ile yapılır. |
 | `src/pdfState.js:47` | `split_pdf` | `{ filePath, ranges, outputDir }` |
 | `src/pdfState.js:51` | `get_form_fields` | `{ filePath }` |
 | `src/pdfState.js:55` | `update_form_field` | `{ filePath, fieldId, value }` |
@@ -259,7 +268,7 @@ bulunmadığı için üretebileceği command kümesi **unknown** kabul edildi.
 |---|---|---|---|
 | `src/pdfState.js:14` `burn_annotations_to_pdf` | yalnız `{ filePath }` | `sourcePath`, `annotationsJson`, `targetPath` | Wrapper çağrısı deserialize edilemez; annotation burn yolu erişilemez. |
 | `src/pdfState.js:154` `get_pdf_metadata` | `{ filePath }` | `{ path }` | Wrapper hatalıdır. `src/App.svelte:883` aynı command'ı doğru `{ path }` ile çağırır. |
-| `src/App.svelte:1810` `merge_pdfs` | `{ pdfPaths, targetPath }` | `{ filePaths, outputPath }` | Bu doğrudan UI yolu deserialize edilemez. `src/pdfState.js:43` wrapper payload'ı doğrudur. |
+| `src/App.svelte:1810` `merge_pdfs` | `{ pdfPaths, targetPath }` | `{ filePaths, outputPath }` | Bu doğrudan UI yolu deserialize edilemez. `src/pdfState.js:43` wrapper payload'ı doğrudur. **Kapandı (2026-11-06):** 2026-11-06: frontend çağıranı yok, Tauri'ye kayıtsız; yalnız Rust testleri (`tests/b4_integration_gaps.rs`, `manipulation::tests`) kullanır. Birleştirme `merge_session_pdfs` ile yapılır. |
 
 Güncel durum:
 - `plan_secure_redaction` ve `execute_secure_redaction` production frontend'de yalnız canonical `secureRedactionController` üzerinden çağrılır; `redaction` feature `experimental` ve enabled'dır (macOS arm64, Linux x86_64, Windows x86_64 runtime sertifikasyonu sonrası). Frontend `applyRedactionsAction` wrapper'ı feature durumundan bağımsız olarak backend'e ulaşmadan `FEATURE_UNAVAILABLE` ile reddeder.

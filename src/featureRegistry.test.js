@@ -83,7 +83,7 @@ describe("feature policy", () => {
     expect(presentation.runnable).toBe(false);
   });
 
-  it("runs blank page insert as experimental and keeps direct merge disabled", () => {
+  it("runs blank page insert and direct merge as experimental", () => {
     const blank = getFeaturePresentation("page_insert_blank", productionMac);
     expect(blank.status).toBe("experimental");
     expect(blank.feature.enabled).toBe(true);
@@ -92,8 +92,17 @@ describe("feature policy", () => {
     expect(blank.badge).toBe("EXPERIMENTAL");
     expect(blank.warning).toContain("geri alınabilir");
     expect(blank.warning).toContain("imzadan sonra");
-    expect(getFeature("page_merge_direct").status).toBe("disabled");
-    expect(isFeatureRunnable("page_merge_direct", developmentMac)).toBe(false);
+
+    const merge = getFeaturePresentation("page_merge_direct", productionMac);
+    expect(merge.status).toBe("experimental");
+    expect(merge.feature.enabled).toBe(true);
+    expect(merge.runnable).toBe(true);
+    expect(merge.badge).toBe("EXPERIMENTAL");
+    expect(merge.warning).toContain("kaydedilmemiş hali");
+    expect(merge.warning).toContain("otomatik açılır");
+    expect(merge.warning).toContain("Kullanıcı parolasıyla şifreli ek PDF'ler açılamaz");
+    expect(merge.warning).toContain("şifresiz");
+    expect(isFeatureRunnable("page_merge_direct", developmentMac)).toBe(true);
   });
 
   it("keeps all four signature features disabled and not runnable", () => {

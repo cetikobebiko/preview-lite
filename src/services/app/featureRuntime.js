@@ -8,10 +8,9 @@ import {
   getRuntimeFeatureContext,
 } from "../../featureRegistry.js";
 import { stopSpeaking } from "../../ttsActions.js";
-import { insertBlankPage } from "../../pdfState.js";
+import { insertBlankPage, mergeSessionPdfs } from "../../pdfState.js";
 import { isSignatureLossDeclined } from "../signatureLossGuard.js";
 import {
-  mergePdfsDirectAction,
   performOcrOnPageAction,
   shareExternalFileMacosAction,
   shareFileMacosAction,
@@ -233,11 +232,12 @@ export function createFeatureRuntime({
     getContext: () => ({
       sessionId: documentSession.activeSessionId,
       contentGeneration: documentSession.contentGeneration,
-      path: documentRuntime.activeDisplayPath,
     }),
+    // Only used to refuse the open document's own file as the merge target.
+    getDocumentPath: () => documentRuntime.activeDisplayPath,
     openFile: open,
     saveFile: save,
-    merge: mergePdfsDirectAction,
+    merge: mergeSessionPdfs,
     openDocument: documentRuntime.openFile,
     guard: guardFeatureAction,
     featureContext,

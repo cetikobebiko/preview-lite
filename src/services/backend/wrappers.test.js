@@ -99,7 +99,6 @@ const cases = [
   ["readImageFile", () => document.readImageFile("/a.png", 90, true, false), "read_image_file", { path: "/a.png", rotation: 90, flipH: true, flipV: false }],
   ["convertAndSaveImage", () => document.convertAndSaveImage("/a.png", "/b.webp", "webp", 90, true, false), "convert_and_save_image", { sourcePath: "/a.png", targetPath: "/b.webp", format: "webp", rotation: 90, flipH: true, flipV: false }],
 
-  ["mergePdfs", () => manipulation.mergePdfs(["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_pdfs", { filePaths: ["/a.pdf", "/b.pdf"], outputPath: "/out.pdf" }],
   ["mergeSessionPdfs", () => manipulation.mergeSessionPdfs("sid", 1, ["/a.pdf", "/b.pdf"], "/out.pdf"), "merge_session_pdfs", { sessionId: "sid", expectedContentGeneration: 1, additionalPaths: ["/a.pdf", "/b.pdf"], targetPath: "/out.pdf" }],
   ["splitSessionPdf", () => manipulation.splitSessionPdf("sid", 1, [[0, 2], [3, 4]], "/tmp"), "split_session_pdf", { sessionId: "sid", expectedContentGeneration: 1, ranges: [[0, 2], [3, 4]], outputDir: "/tmp", overwrite: false }],
   ["startDocumentCompare", () => manipulation.startDocumentCompare("sid", 1, "/v1.pdf", true).promise, "compare_session_pdf", { sessionId: "sid", expectedContentGeneration: 1, otherPath: "/v1.pdf", currentIsOld: true }],

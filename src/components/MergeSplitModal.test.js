@@ -182,4 +182,21 @@ describe("MergeSplitModal merge feedback", () => {
     expect(onclose).toHaveBeenCalled();
     expect(window.alert).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["the open document", "/doc.pdf", "açık belgenin kendi dosyasına"],
+    ["an added PDF", "/other.pdf", "birleştirilen PDF dosyalarından birinin"],
+  ])("refuses %s as the merge target", async (_label, target, message) => {
+    dialogMocks.open.mockResolvedValue(["/other.pdf"]);
+    dialogMocks.save.mockResolvedValue(target);
+    const { onclose, onsuccess } = renderMerge();
+
+    await fireEvent.click(screen.getByText("+ Dosya Ekle", { selector: "button" }));
+    await waitFor(() => expect(screen.getByText("other.pdf")).toBeTruthy());
+    await fireEvent.click(screen.getByText("Birleştir ve Kaydet", { selector: "button" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(message));
+    expect(pdfStateMocks.mergeSessionPdfs).not.toHaveBeenCalled();
+    expect(onsuccess).not.toHaveBeenCalled();
+    expect(onclose).not.toHaveBeenCalled();
+  });
 });

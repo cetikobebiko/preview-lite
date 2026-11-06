@@ -65,10 +65,6 @@ export async function insertBlankPage(sessionId, generation, atIndex, width = 59
   );
 }
 
-export async function mergePdfs(filePaths, outputPath) {
-  return await manipulationBackend.mergePdfs(filePaths, outputPath);
-}
-
 export async function mergeSessionPdfs(sessionId, expectedContentGeneration, additionalPaths, targetPath) {
   return await manipulationBackend.mergeSessionPdfs(sessionId, expectedContentGeneration, additionalPaths, targetPath);
 }

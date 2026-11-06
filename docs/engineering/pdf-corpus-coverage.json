@@ -2317,6 +2317,34 @@
         "verificationType": "job_worker_test",
         "notes": "Rejects negative, zero, 1e30 and 1200.5 DPI with SESSION_JOB_INVALID_EXPORT_DPI and out-of-range or u16-overflowing pages with SESSION_JOB_INVALID_PAGE on release-smoke.pdf"
       }
+    },
+    {
+      "featureId": "page_merge_direct",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:document_session::encrypted_active_session_merge_uses_snapshot_credential",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "merge_session_pdfs (the backend of the merge-pdf palette command) merges the session snapshot with minimal.pdf copied as an additional input and writes the target atomically"
+      }
+    },
+    {
+      "featureId": "page_merge_direct",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:document_session::encrypted_active_session_merge_uses_snapshot_credential",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/document_session.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Encrypted active session (encrypted.pdf via open_encrypted_test_session) merges with the snapshot credential; user-password additional inputs are not covered"
+      }
     }
   ],
   "features": [
@@ -2483,14 +2511,19 @@
     {
       "id": "page_merge_direct",
       "name": "Page Merge Direct",
-      "statusObservation": "disabled",
-      "fixtureIds": [],
-      "testIds": [],
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-minimal",
+        "core-encrypted"
+      ],
+      "testIds": [
+        "rust_unit:document_session::encrypted_active_session_merge_uses_snapshot_credential"
+      ],
       "dimensions": {
-        "positive": "planned",
+        "positive": "partial",
         "negative": "not_covered",
         "malformed": "not_applicable",
-        "encrypted": "planned",
+        "encrypted": "partial",
         "unicode": "not_applicable",
         "persistence": "planned",
         "worker": "planned"
@@ -4257,6 +4290,18 @@
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/sanitization_publication_acceptance.rs"
+    },
+    {
+      "id": "rust_unit:document_session::encrypted_active_session_merge_uses_snapshot_credential",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/document_session.rs"
+    },
+    {
+      "id": "js:src/services/app/documentTransformController.test.js::merges the session snapshot through mergeSessionPdfs and opens the output",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src/services/app/documentTransformController.test.js"
     }
   ],
   "gaps": [
@@ -4288,7 +4333,7 @@
       "requiredLayer": "integration",
       "plannedPrompt": "11I-B",
       "releaseBlocking": false,
-      "description": "Implement and verify direct page merge UI flow"
+      "description": "Palette merge-pdf runs through merge_session_pdfs. Backend positive and encrypted-active-document paths have Rust evidence and the controller flow (session snapshot args, cancel, stale generation, target-path refusal, missing session) is covered by js:src/services/app/documentTransformController.test.js with a mocked backend (no fixture, so no traceability edge). Remaining: a worker-dimension edge (job_worker_process.rs merge test exists but the validator's basename heuristic maps that file to the sanitization folder), automated native UI evidence for the palette flow, persistence assertions on the merged output, and a user-password additional-input negative test."
     },
     {
       "id": "gap-insert-blank-page",

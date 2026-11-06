@@ -16,10 +16,6 @@ export {
 } from "./document.js";
 
 export {
-  mergePdfs,
-} from "./manipulation.js";
-
-export {
   detectScannedPages,
   getAvailableOcrLanguages,
   runOcrOnPage,

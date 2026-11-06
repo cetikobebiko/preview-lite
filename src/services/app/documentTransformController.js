@@ -1,6 +1,9 @@
+import { exportErrorMessage } from "./exportErrorMessage.js";
+import { mergeTargetConflict } from "./mergeTargetGuard.js";
+
 /** Coordinates guarded document transformations that create an output and may reopen it. */
 export function createDocumentTransformController({
-  getContext, openFile, saveFile, merge, openDocument,
+  getContext, getDocumentPath = () => "", openFile, saveFile, merge, openDocument,
   guard, featureContext, reportUnavailable, onToast, onError,
 }) {
   function isCurrent(context) {
@@ -15,6 +18,11 @@ export function createDocumentTransformController({
 
   async function executeMerge() {
     try {
+      // Kaynak, oturumun kaydedilmemiş halidir; diskteki dosya değil.
+      if (!getContext().sessionId) {
+        onError("Birleştirme başarısız: Aktif belge oturumu bulunamadı.");
+        return;
+      }
       const selected = await openFile({
         title: "Birleştirilecek İkinci PDF Belgesini Seçin", multiple: false,
         filters: [{ name: "PDF Belgesi", extensions: ["pdf"] }],
@@ -26,15 +34,27 @@ export function createDocumentTransformController({
         filters: [{ name: "PDF Belgesi (*.pdf)", extensions: ["pdf"] }],
       });
       if (!targetPath) return;
+      const conflict = mergeTargetConflict(targetPath, {
+        documentPath: getDocumentPath(),
+        inputPaths: [secondPdfPath],
+        platform: featureContext?.platform,
+      });
+      if (conflict) {
+        onError(`Birleştirme başarısız: ${conflict}`);
+        return;
+      }
       const context = getContext();
-      if (!context.path) return;
-      await merge([context.path, secondPdfPath], targetPath, featureContext);
+      if (!context.sessionId) {
+        onError("Birleştirme başarısız: Aktif belge oturumu bulunamadı.");
+        return;
+      }
+      await merge(context.sessionId, context.contentGeneration, [secondPdfPath], targetPath);
       if (!isCurrent(context)) return;
       onToast("PDF belgeleri başarıyla birleştirildi!");
       await openDocument(targetPath);
     } catch (error) {
       console.error("PDF birleştirme hatası:", error);
-      onError("Birleştirme başarısız: " + error.toString());
+      onError("Birleştirme başarısız: " + exportErrorMessage(error));
     }
   }
 
