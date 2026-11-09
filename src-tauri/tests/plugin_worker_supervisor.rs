@@ -31,7 +31,7 @@ mod supervisor_adversarial_tests {
             execution_id: exec_id.to_string(),
             plugin_id: "test-plugin".to_string(),
             hook: PluginHook::OnCustomCommand,
-            payload: serde_json::json!({ "command_name": "cmd", "parameters": {} }),
+            payload: serde_json::json!({ "schema_version": 1 }),
         }
     }
 

@@ -25,6 +25,11 @@ export const inspectionCandidate = writable(null);
 // Aktif yürütmelerin durum haritası: { [executionId]: PluginExecutionStatus }
 export const activeExecutions = writable({});
 
+// Son kanca yürütmeleri (en yeni başta), pluginHookDispatcher yazar, PluginManagerModal
+// gösterir: { execution_id, plugin_id, plugin_name, hook_name, origin: "auto"|"manual",
+// state, result, error, started_at }. state ayrıca "DISCARDED" olabilir (belge değişti).
+export const pluginExecutionHistory = writable([]);
+
 // Dinamik Slotlar (Eklentilerin UI enjeksiyonları)
 export const dynamicSlots = writable({
   toolbar: [],

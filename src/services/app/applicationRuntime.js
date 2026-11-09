@@ -3,6 +3,7 @@ import { aiController } from "./aiController.js";
 import { createApplicationLifecycleController } from "./applicationLifecycleController.js";
 import { createKeyboardController } from "./keyboardController.js";
 import { parsePageInput } from "./viewerNavigationModel.js";
+import { configurePluginHookDispatcher, primePluginCommands } from "./pluginHookDispatcher.js";
 import { createWindowLifecycleController } from "./windowLifecycleController.js";
 
 /** Owns global startup, input routing and deterministic mount/unmount ordering. */
@@ -22,7 +23,17 @@ export function createApplicationRuntime({
   createLifecycleController = createApplicationLifecycleController,
   createWindowController = createWindowLifecycleController,
   createKeyboard = createKeyboardController,
+  pluginHookBindings = Object.freeze({ configure: configurePluginHookDispatcher, prime: primePluginCommands }),
 }) {
+  // Plugin hooks: on_document_open results are kept only while this document identity is
+  // current; plugin notifications go through the dispatcher's toast limiter.
+  pluginHookBindings.configure({
+    getDocumentContext: () => ({
+      sessionId: documentSession.activeSessionId,
+      contentGeneration: documentSession.contentGeneration,
+    }),
+    showToast: presentationController.showToast,
+  });
   aiController.init({
     getGuard: ({ targetSessionId } = {}) => {
       return {
@@ -105,6 +116,7 @@ export function createApplicationRuntime({
   function mount() {
     setMounted(true);
     featureRuntime.start();
+    void pluginHookBindings.prime();
     void aiController.fetchEndpointStatus().catch(() => {});
     void lifecycleController.start()
       .catch((error) => console.error("Uygulama yaşam döngüsü başlatılamadı:", error));

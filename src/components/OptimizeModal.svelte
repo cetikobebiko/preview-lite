@@ -13,8 +13,9 @@
     optimizeSummary,
     presetSettings,
   } from "../services/pdfOptimizer.js";
+  import { notifyPluginExportCompleted } from "../services/app/pluginHookDispatcher.js";
 
-  let { sessionId = "", contentGeneration = 0, fileName = "", onsaved, onclose } = $props();
+  let { sessionId = "", contentGeneration = 0, fileName = "", pageCount = 0, onsaved, onclose } = $props();
 
   const selectClass = "h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
   const IMAGE_GROUPS = Object.freeze([
@@ -66,6 +67,7 @@
     saving = true;
     try {
       report = await saveSessionOptimizedCopy(sessionId, contentGeneration, $state.snapshot(settings), target);
+      notifyPluginExportCompleted("pdf", pageCount);
       onsaved?.(optimizeSummary(report));
     } catch (e) {
       error = e?.message ?? String(e);

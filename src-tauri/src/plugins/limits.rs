@@ -86,4 +86,6 @@ pub const CURRENT_PLUGIN_PROTOCOL_VERSION: u32 = 1;
 pub const CURRENT_PLUGIN_RESOURCE_PROFILE_VERSION: u32 = 1;
 pub const CURRENT_PLUGIN_REGISTRY_SCHEMA_VERSION: u32 = 1;
 pub const CURRENT_PLUGIN_HOOK_SCHEMA_VERSION: u32 = 1;
+/// Hook payload schema version (`schema_version` inside every hook payload, see `payload.rs`).
+pub const CURRENT_PLUGIN_HOOK_PAYLOAD_SCHEMA_VERSION: u32 = 1;
 pub const CURRENT_PLUGIN_RESULT_SCHEMA_VERSION: u32 = 1;

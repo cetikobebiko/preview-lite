@@ -17,6 +17,7 @@
     publishWithOverwriteConfirmation,
   } from "../services/app/outputConflict.js";
   import { parsePageRanges, toPhysicalPages } from "../utils/pageRanges.js";
+  import { notifyPluginExportCompleted } from "../services/app/pluginHookDispatcher.js";
 
   let {
     sessionId = "",
@@ -145,6 +146,7 @@
                       errorMsg = "Dışa aktarma iptal edildi; mevcut dosyalara dokunulmadı.";
                       return;
                   }
+                  notifyPluginExportCompleted(imgSource === "embedded" ? "png" : imgFormat, selectedPages.length);
                   onsuccess?.("Görseller başarıyla dışa aktarıldı!");
                   onclose?.();
               }
@@ -163,6 +165,7 @@
                     txtFormat,
                     savePath,
                   );
+                  notifyPluginExportCompleted(txtFormat === "markdown" ? "md" : "txt", selectedPages.length);
                   onsuccess?.("Metin başarıyla dışa aktarıldı!");
                   onclose?.();
               }
@@ -182,6 +185,7 @@
                     docFormat,
                     savePath,
                   );
+                  notifyPluginExportCompleted(docFormat, selectedPages.length);
                   onsuccess?.("Belge başarıyla dışa aktarıldı!");
                   onclose?.();
               }

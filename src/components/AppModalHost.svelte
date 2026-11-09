@@ -4,6 +4,7 @@
   import AiSettingsModal from "./AiSettingsModal.svelte";
   import PluginManagerModal from "./PluginManagerModal.svelte";
   import SanitizationPanel from "./SanitizationPanel.svelte";
+  import { pluginPaletteCommands } from "../services/app/pluginCommands.js";
 
   let {
     ui, featureUi, displayPath, sanitizationState,
@@ -13,7 +14,7 @@
 
 
 {#if featureUi("command_palette").visible}
-  <CommandPalette isOpen={ui.isModalOpen("command_palette")} onselect={onCommandSelect} onclose={() => ui.closeModal("command_palette")} />
+  <CommandPalette isOpen={ui.isModalOpen("command_palette")} extraCommands={$pluginPaletteCommands} onselect={onCommandSelect} onclose={() => ui.closeModal("command_palette")} />
 {/if}
 
 {#if ui.isModalOpen("ai_settings") && featureUi("local_ai").visible}

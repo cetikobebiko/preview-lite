@@ -3,6 +3,7 @@
 use super::error::{PluginError, PluginErrorCode};
 use super::limits::*;
 use super::manifest::{PluginHook, PluginPermission};
+use super::payload::PluginHookPayloadV1;
 use super::registry::PluginHookResultV1;
 use rhai::packages::Package;
 use rhai::packages::{
@@ -147,11 +148,13 @@ pub fn build_sandboxed_rhai_engine(context: HostApiContext) -> Engine {
     engine
 }
 
-/// Validates payload JSON structure, limits, and hook-specific schemas.
+/// Validates payload size/depth limits, then parses it against the hook's typed
+/// schema V1 (`payload.rs`, `deny_unknown_fields`). Used by the worker before the
+/// script runs; the host runs the same schema in `start_execution`.
 pub fn validate_hook_payload(
     hook: PluginHook,
     payload: &serde_json::Value,
-) -> Result<(), PluginError> {
+) -> Result<PluginHookPayloadV1, PluginError> {
     let raw_payload_str = payload.to_string();
     if raw_payload_str.len() > MAX_PLUGIN_HOOK_PAYLOAD_BYTES {
         return Err(PluginError::new(
@@ -166,82 +169,7 @@ pub fn validate_hook_payload(
 
     validate_json_depth_and_strings(payload, 1)?;
 
-    match hook {
-        PluginHook::OnDocumentOpen => {
-            let obj = payload.as_object().ok_or_else(|| {
-                PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    "OnDocumentOpen yükü JSON nesnesi olmalıdır.",
-                )
-            })?;
-            for k in obj.keys() {
-                if k != "page_count" {
-                    return Err(PluginError::new(
-                        PluginErrorCode::PluginManifestInvalid,
-                        format!("OnDocumentOpen beklenmeyen alan içeriyor: '{}'", k),
-                    ));
-                }
-            }
-            if !obj.contains_key("page_count") || !obj["page_count"].is_u64() {
-                return Err(PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    "OnDocumentOpen yükü geçerli bir 'page_count' (u32) alanı içermelidir.",
-                ));
-            }
-        }
-        PluginHook::OnCustomCommand => {
-            let obj = payload.as_object().ok_or_else(|| {
-                PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    "OnCustomCommand yükü JSON nesnesi olmalıdır.",
-                )
-            })?;
-            for k in obj.keys() {
-                if k != "command_name" && k != "parameters" {
-                    return Err(PluginError::new(
-                        PluginErrorCode::PluginManifestInvalid,
-                        format!("OnCustomCommand beklenmeyen alan içeriyor: '{}'", k),
-                    ));
-                }
-            }
-            if !obj.contains_key("command_name") || !obj["command_name"].is_string() {
-                return Err(PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    "OnCustomCommand geçerli bir 'command_name' dizesi içermelidir.",
-                ));
-            }
-        }
-        PluginHook::OnExportComplete => {
-            let obj = payload.as_object().ok_or_else(|| {
-                PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    "OnExportComplete yükü JSON nesnesi olmalıdır.",
-                )
-            })?;
-            for k in obj.keys() {
-                if k != "export_format" && k != "success" && k != "page_count" {
-                    return Err(PluginError::new(
-                        PluginErrorCode::PluginManifestInvalid,
-                        format!("OnExportComplete beklenmeyen alan içeriyor: '{}'", k),
-                    ));
-                }
-            }
-            if !obj.contains_key("export_format") || !obj["export_format"].is_string() {
-                return Err(PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    "OnExportComplete geçerli bir 'export_format' dizesi içermelidir.",
-                ));
-            }
-            if !obj.contains_key("success") || !obj["success"].is_boolean() {
-                return Err(PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    "OnExportComplete geçerli bir 'success' boolean alanı içermelidir.",
-                ));
-            }
-        }
-    }
-
-    Ok(())
+    PluginHookPayloadV1::parse_value(hook, payload)
 }
 
 fn validate_json_depth_and_strings(
@@ -295,9 +223,8 @@ pub fn execute_plugin_script(
     execution_id: &str,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<PluginHookResultV1, PluginError> {
-    validate_hook_payload(hook, payload)?;
-
-    let payload_str = payload.to_string();
+    let typed_payload = validate_hook_payload(hook, payload)?;
+    let payload_map = typed_payload.to_rhai_map();
     let perms_set: HashSet<PluginPermission> = permissions.iter().copied().collect();
     let logs = Arc::new(Mutex::new(Vec::new()));
     let notifications = Arc::new(Mutex::new(Vec::new()));
@@ -330,21 +257,20 @@ pub fn execute_plugin_script(
     })?;
 
     let mut scope = Scope::new();
-    scope.push("payload_json", payload_str.clone());
 
+    // The hook receives the validated payload as an object map (`payload.page_count`).
+    // A hook declared without a parameter is called without it. The arity is read from
+    // the AST so a missing function *inside* the hook is reported, not retried.
     let hook_fn_name = hook.as_str();
-    let res: Dynamic =
-        match engine.call_fn::<Dynamic>(&mut scope, &ast, hook_fn_name, (payload_str,)) {
-            Ok(val) => Ok(val),
-            Err(err) => {
-                if matches!(*err, EvalAltResult::ErrorFunctionNotFound(..)) {
-                    engine.call_fn::<Dynamic>(&mut scope, &ast, hook_fn_name, ())
-                } else {
-                    Err(err)
-                }
-            }
-        }
-        .map_err(map_eval_alt_result_to_plugin_error)?;
+    let takes_payload = ast
+        .iter_functions()
+        .any(|f| f.name == hook_fn_name && f.params.len() == 1);
+    let res: Dynamic = if takes_payload {
+        engine.call_fn::<Dynamic>(&mut scope, &ast, hook_fn_name, (payload_map,))
+    } else {
+        engine.call_fn::<Dynamic>(&mut scope, &ast, hook_fn_name, ())
+    }
+    .map_err(map_eval_alt_result_to_plugin_error)?;
 
     // Script Return Restriction:
     // Only () or String (<= 1MB) is allowed. Complex structures, maps, arrays, fn pointers return PluginResultInvalid.
@@ -557,7 +483,7 @@ mod tests {
     #[test]
     fn test_rhai_return_type_contract() {
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
 
         // () is accepted
         let unit_script = "fn on_custom_command(p) {}";
@@ -634,7 +560,7 @@ mod tests {
     #[test]
     fn test_host_api_ui_notify_requires_notification_permission() {
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
         let script = r#"
             fn on_custom_command(p) {
                 ui_notify("merhaba");
@@ -681,7 +607,7 @@ mod tests {
     #[test]
     fn test_script_runtime_error_has_its_own_code() {
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
         let err = execute_plugin_script(
             r#"fn on_custom_command(p) { throw "boom"; }"#,
             PluginHook::OnCustomCommand,
@@ -697,7 +623,7 @@ mod tests {
     #[test]
     fn test_host_api_log_byte_flood_rejected() {
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
 
         // Log flood exceeding 64 KB total
         let flood_script = r#"
@@ -727,7 +653,7 @@ mod tests {
     #[test]
     fn test_host_api_notification_count_and_string_limit() {
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
 
         // Notification string > 4 KB
         let large_notif_script = r#"
@@ -787,5 +713,69 @@ mod tests {
             debug("hello debug");
         "#;
         assert!(engine.eval::<()>(script).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod payload_argument_tests {
+    use super::*;
+
+    fn run(
+        script: &str,
+        hook: PluginHook,
+        payload: serde_json::Value,
+    ) -> Result<PluginHookResultV1, PluginError> {
+        execute_plugin_script(
+            script,
+            hook,
+            &payload,
+            &[],
+            "exec-arg",
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    #[test]
+    fn hook_receives_validated_payload_as_map() {
+        let result = run(
+            r#"fn on_export_complete(p) { p.format + ":" + p.page_count.to_string() + ":" + p.schema_version.to_string() }"#,
+            PluginHook::OnExportComplete,
+            serde_json::json!({ "schema_version": 1, "format": "pptx", "page_count": 9 }),
+        )
+        .unwrap();
+        assert_eq!(result.text.as_deref(), Some("pptx:9:1"));
+    }
+
+    #[test]
+    fn hook_without_parameter_still_runs() {
+        let result = run(
+            r#"fn on_document_open() { "no-arg" }"#,
+            PluginHook::OnDocumentOpen,
+            serde_json::json!({ "schema_version": 1, "page_count": 2 }),
+        )
+        .unwrap();
+        assert_eq!(result.text.as_deref(), Some("no-arg"));
+    }
+
+    #[test]
+    fn missing_function_inside_hook_is_a_runtime_error_not_a_retry() {
+        let err = run(
+            r#"fn on_custom_command(p) { undefined_helper(p) }"#,
+            PluginHook::OnCustomCommand,
+            serde_json::json!({ "schema_version": 1 }),
+        )
+        .unwrap_err();
+        assert!(err.message.contains("undefined_helper"), "{err}");
+    }
+
+    #[test]
+    fn worker_side_schema_check_runs_before_script() {
+        let err = run(
+            r#"fn on_custom_command(p) { "ran" }"#,
+            PluginHook::OnCustomCommand,
+            serde_json::json!({ "schema_version": 1, "text": "belge" }),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, PluginErrorCode::PluginPayloadInvalid);
     }
 }

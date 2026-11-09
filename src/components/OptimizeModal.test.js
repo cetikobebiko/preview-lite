@@ -6,6 +6,8 @@ const dialogMocks = vi.hoisted(() => ({ save: vi.fn() }));
 
 vi.mock("../services/backend/session.js", () => sessionMocks);
 vi.mock("@tauri-apps/plugin-dialog", () => dialogMocks);
+const pluginHookMocks = vi.hoisted(() => ({ notifyPluginExportCompleted: vi.fn() }));
+vi.mock("../services/app/pluginHookDispatcher.js", () => pluginHookMocks);
 
 import OptimizeModal from "./OptimizeModal.svelte";
 
@@ -31,6 +33,7 @@ describe("OptimizeModal", () => {
     Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
     sessionMocks.saveSessionOptimizedCopy.mockReset();
     dialogMocks.save.mockReset();
+    pluginHookMocks.notifyPluginExportCompleted.mockReset();
   });
 
   afterEach(() => {
@@ -54,6 +57,15 @@ describe("OptimizeModal", () => {
     expect(settings.color).toEqual({ downsample: true, targetPpi: 96, abovePpi: 144, compression: { kind: "jpeg", quality: 80 } });
     expect(screen.getByText("1 kullanılmayan görüntü/form atıldı.")).toBeTruthy();
     expect(onsaved).toHaveBeenCalledWith(expect.stringMatching(/4,0 MB → 1,0 MB/));
+  });
+
+  it("reports a saved optimized copy to plugins as pdf with the page count", async () => {
+    dialogMocks.save.mockResolvedValue("/tmp/out.pdf");
+    sessionMocks.saveSessionOptimizedCopy.mockResolvedValueOnce(REPORT);
+    render(OptimizeModal, { props: { sessionId: "s", contentGeneration: 3, fileName: "rapor.pdf", pageCount: 14, onsaved: vi.fn() } });
+    await fireEvent.click(screen.getByRole("button", { name: "Kopyayı kaydet…" }));
+    expect(await screen.findByText(/%75 daha küçük/)).toBeTruthy();
+    expect(pluginHookMocks.notifyPluginExportCompleted).toHaveBeenCalledWith("pdf", 14);
   });
 
   it("refuses invalid resolutions and switches to custom settings when edited", async () => {

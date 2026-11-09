@@ -34,6 +34,8 @@ export const PLUGIN_ERROR_MESSAGES = Object.freeze({
   PLUGIN_REGISTRY_CORRUPT: "Eklenti kayıt dosyası bozuk.",
   PLUGIN_HOOK_NOT_DECLARED: "Bu kanca eklenti manifestinde bildirilmemiş; çalıştırma reddedildi.",
   PLUGIN_PAYLOAD_TOO_LARGE: "Kanca yükü izin verilen sınırı aşıyor.",
+  PLUGIN_PAYLOAD_INVALID:
+    "Kanca yükü kancanın V1 şemasına uymuyor (bilinmeyen alan, başka kancanın yükü veya yanlış schema_version); yürütme başlatılmadı.",
   PLUGIN_WORKER_START_FAILED: "Eklenti çalışma süreci başlatılamadı.",
   PLUGIN_WORKER_PROTOCOL_ERROR: "Eklenti çalışma süreciyle iletişim protokolü bozuldu.",
   PLUGIN_EXECUTION_TIMEOUT: "Eklenti zaman sınırını (10 sn) aştı ve durduruldu.",

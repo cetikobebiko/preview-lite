@@ -20,6 +20,7 @@
   import { bookmarkRangesText, everyNPagesRangesText } from "../services/splitRanges.js";
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
+  import { notifyPluginExportCompleted } from "../services/app/pluginHookDispatcher.js";
 
   // pageOrder is the display order (viewer.pageOrder); typed numbers are display positions.
   // outline: top-level bookmarks (viewer.outlineList) for splitting at bookmarks.
@@ -149,6 +150,8 @@
         if (!sessionId) throw new Error("Aktif document session bulunamadı.");
         const extraFiles = filesToMerge.filter(f => f !== currentFilePath);
         await mergeSessionPdfs(sessionId, contentGeneration, extraFiles, savePath);
+        // page_count: pages of the open document in the output (other files are not counted here).
+        notifyPluginExportCompleted("pdf", maxPages);
         onsuccess?.("Dosyalar başarıyla birleştirildi!");
         onclose?.();
       }
@@ -196,6 +199,7 @@
         if (result.status === "declined") {
           errorMsg = "Bölme iptal edildi; mevcut dosyalara dokunulmadı.";
         } else if (result.status === "completed") {
+          notifyPluginExportCompleted("pdf", ranges.reduce((sum, [start, end]) => sum + Math.abs(end - start) + 1, 0));
           onsuccess?.("PDF başarıyla bölündü ve klasöre kaydedildi!");
           onclose?.();
         }

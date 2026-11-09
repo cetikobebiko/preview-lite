@@ -2,8 +2,9 @@
 //! app binary's `--run-plugin-worker` entrypoint (no fake helper).
 //!
 //! Covers the shipped example package `docs/engineering/examples/plugins/hello-log`
-//! (install → consent → enable → on_custom_command) plus permission, limit,
-//! disable and tamper outcomes as they reach the execution status.
+//! (install → consent → enable → all three hooks with schema-V1 payloads) plus
+//! payload-schema rejection, permission, limit, disable and tamper outcomes as they
+//! reach the execution status.
 
 use preview_alternative_lib::plugins::manifest::{PluginHook, PluginPermission};
 use preview_alternative_lib::plugins::registry::{ExecutionState, PluginExecutionStatus};
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-const CUSTOM_COMMAND_PAYLOAD: &str = r#"{"command_name":"hello","parameters":{"n":1}}"#;
+const CUSTOM_COMMAND_PAYLOAD: &str = r#"{"schema_version":1}"#;
 
 fn app_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_preview-alternative"))
@@ -159,10 +160,7 @@ async fn hello_log_example_runs_on_custom_command_through_real_worker() {
     assert_eq!(result.text.as_deref(), Some("hello-log tamam"));
     assert_eq!(
         result.logs,
-        vec![format!(
-            "hello-log: on_custom_command {}",
-            r#"{"command_name":"hello","parameters":{"n":1}}"#
-        )]
+        vec!["hello-log: on_custom_command schema_version=1".to_string()]
     );
     assert_eq!(
         result.notifications,
@@ -170,12 +168,12 @@ async fn hello_log_example_runs_on_custom_command_through_real_worker() {
     );
     assert!(result.warnings.is_empty());
 
-    // The other declared hooks run too (log only, no notification).
+    // on_document_open: page_count from the payload reaches the notification.
     let status = run_to_terminal(
         &state,
         &id,
         "on_document_open",
-        r#"{"page_count":3}"#,
+        r#"{"schema_version":1,"page_count":3}"#,
         "exec-hello-2",
     )
     .await;
@@ -183,10 +181,79 @@ async fn hello_log_example_runs_on_custom_command_through_real_worker() {
     let result = status.result.unwrap();
     assert_eq!(
         result.logs,
-        vec![r#"hello-log: on_document_open {"page_count":3}"#.to_string()]
+        vec!["hello-log: on_document_open page_count=3".to_string()]
     );
-    assert!(result.notifications.is_empty());
+    assert_eq!(
+        result.notifications,
+        vec!["hello-log: belge açıldı, 3 sayfa.".to_string()]
+    );
     assert_eq!(result.text, None);
+
+    // on_export_complete: format and page_count reach the notification.
+    let status = run_to_terminal(
+        &state,
+        &id,
+        "on_export_complete",
+        r#"{"schema_version":1,"format":"docx","page_count":7}"#,
+        "exec-hello-3",
+    )
+    .await;
+    assert_eq!(status.state, ExecutionState::Completed, "{status:?}");
+    let result = status.result.unwrap();
+    assert_eq!(
+        result.logs,
+        vec!["hello-log: on_export_complete format=docx page_count=7".to_string()]
+    );
+    assert_eq!(
+        result.notifications,
+        vec!["hello-log: dışa aktarma tamamlandı (docx, 7 sayfa).".to_string()]
+    );
+    assert_eq!(result.text, None);
+}
+
+/// Schema V1 is enforced on the real path: a payload with an unknown field, the
+/// payload of another hook, or a wrong schema_version never reaches the worker.
+#[tokio::test]
+async fn hello_log_rejects_payloads_outside_schema_v1() {
+    let (state, _app_data) = open_state().await;
+    let id = install_consent_enable(&state, &hello_log_package()).await;
+    let cases = [
+        (
+            "on_document_open",
+            r#"{"schema_version":1,"page_count":3,"path":"/tmp/a.pdf"}"#,
+        ),
+        (
+            "on_export_complete",
+            r#"{"schema_version":1,"page_count":3}"#,
+        ),
+        (
+            "on_export_complete",
+            r#"{"schema_version":1,"format":"exe","page_count":3}"#,
+        ),
+        ("on_custom_command", r#"{"schema_version":2}"#),
+    ];
+    for (i, (hook, payload)) in cases.iter().enumerate() {
+        let exec_id = format!("exec-bad-{i}");
+        let err = state
+            .start_execution(&id, hook, payload, &exec_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "PLUGIN_PAYLOAD_INVALID", "{hook} {payload}");
+        assert_eq!(
+            state.get_execution_status(&exec_id).await.unwrap_err().code,
+            "PLUGIN_EXECUTION_NOT_FOUND"
+        );
+    }
+    // Still usable afterwards.
+    let status = run_to_terminal(
+        &state,
+        &id,
+        "on_custom_command",
+        CUSTOM_COMMAND_PAYLOAD,
+        "exec-ok",
+    )
+    .await;
+    assert_eq!(status.state, ExecutionState::Completed, "{status:?}");
 }
 
 #[tokio::test]

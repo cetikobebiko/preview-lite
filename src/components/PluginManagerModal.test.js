@@ -57,6 +57,7 @@ describe('PluginManagerModal Svelte 5 component', () => {
     pluginStore.installedPlugins.set([]);
     pluginStore.inspectionCandidate.set(null);
     pluginStore.activeExecutions.set({});
+    pluginStore.pluginExecutionHistory.set([]);
     pluginStore.pluginBackendGate.set({ checked: false, enabled: false, buildProfile: null });
     vi.stubEnv('DEV', true);
     pluginBackend.getPluginFeatureStatus.mockResolvedValue({ enabled: true, build_profile: 'development' });
@@ -118,62 +119,109 @@ describe('PluginManagerModal Svelte 5 component', () => {
     expect(screen.getByText('Kaldır').hasAttribute('disabled')).toBe(false);
   });
 
-  it('offers one run button per declared hook and sends a schema-valid sample payload', async () => {
-    currentPlugins = [basePlugin];
+  it('runs the selected hook with a payload generated from its schema', async () => {
+    currentPlugins = [{ ...basePlugin, hooks: ['on_custom_command', 'on_document_open', 'on_export_complete'] }];
     pluginBackend.startPluginExecution.mockResolvedValue({ execution_id: 'x', plugin_id: 'hello-log', state: 'RUNNING' });
+    pluginBackend.getPluginExecutionStatus.mockResolvedValue({ state: 'COMPLETED', result: { notifications: [], logs: [], warnings: [], text: null }, error: null });
     render(PluginManagerModal, { props: { onclose: vi.fn() } });
 
     const runCustom = await screen.findByText('Çalıştır (on_custom_command)');
-    expect(screen.getByText('Çalıştır (on_document_open)')).toBeTruthy();
     await waitFor(() => expect(runCustom.hasAttribute('disabled')).toBe(false));
     await fireEvent.click(runCustom);
-    await waitFor(() => expect(pluginBackend.startPluginExecution).toHaveBeenCalled());
-    const [pluginId, hook, payload] = pluginBackend.startPluginExecution.mock.calls[0];
+    await waitFor(() => expect(pluginBackend.startPluginExecution).toHaveBeenCalledTimes(1));
+    let [pluginId, hook, payload] = pluginBackend.startPluginExecution.mock.calls[0];
     expect(pluginId).toBe('hello-log');
     expect(hook).toBe('on_custom_command');
-    expect(JSON.parse(payload)).toEqual({ command_name: 'manual_run', parameters: {} });
+    expect(JSON.parse(payload)).toEqual({ schema_version: 1 });
+
+    // Switch to on_export_complete: fields come from the schema and are editable.
+    await fireEvent.change(screen.getByLabelText('Kanca'), { target: { value: 'on_export_complete' } });
+    await fireEvent.change(screen.getByLabelText('format'), { target: { value: 'docx' } });
+    await fireEvent.input(screen.getByLabelText('page_count'), { target: { value: '12' } });
+    await fireEvent.click(screen.getByText('Çalıştır (on_export_complete)'));
+    await waitFor(() => expect(pluginBackend.startPluginExecution).toHaveBeenCalledTimes(2));
+    [pluginId, hook, payload] = pluginBackend.startPluginExecution.mock.calls[1];
+    expect(hook).toBe('on_export_complete');
+    expect(JSON.parse(payload)).toEqual({ schema_version: 1, format: 'docx', page_count: 12 });
   });
 
-  it('shows notifications, logs and text of a completed execution', async () => {
+  it('refuses an edited payload that fails the schema without calling the backend', async () => {
     currentPlugins = [basePlugin];
-    pluginStore.activeExecutions.set({
-      e1: {
+    render(PluginManagerModal, { props: { onclose: vi.fn() } });
+    await screen.findByText('Çalıştır (on_custom_command)');
+    await fireEvent.change(screen.getByLabelText('Kanca'), { target: { value: 'on_document_open' } });
+    await fireEvent.input(screen.getByLabelText('page_count'), { target: { value: '0' } });
+    const run = screen.getByText('Çalıştır (on_document_open)');
+    await waitFor(() => expect(run.hasAttribute('disabled')).toBe(false));
+    await fireEvent.click(run);
+    expect(await screen.findByText(/Kanca yükü geçersiz: 'page_count'/)).toBeTruthy();
+    expect(pluginBackend.startPluginExecution).not.toHaveBeenCalled();
+  });
+
+  it('shows a rejected manual run error in the modal', async () => {
+    currentPlugins = [basePlugin];
+    pluginBackend.startPluginExecution.mockRejectedValue({ code: 'PLUGIN_PAYLOAD_INVALID', message: 'bilinmeyen alan' });
+    render(PluginManagerModal, { props: { onclose: vi.fn() } });
+    const run = await screen.findByText('Çalıştır (on_custom_command)');
+    await waitFor(() => expect(run.hasAttribute('disabled')).toBe(false));
+    await fireEvent.click(run);
+    expect((await screen.findAllByText(/Kanca yükü kancanın V1 şemasına uymuyor/)).length).toBeGreaterThan(0);
+  });
+
+  it('lists recent executions with notifications, warnings, logs and text', async () => {
+    currentPlugins = [basePlugin];
+    pluginStore.pluginExecutionHistory.set([{
+      execution_id: 'e1',
+      plugin_id: 'hello-log',
+      plugin_name: 'Hello Log',
+      hook_name: 'on_document_open',
+      origin: 'auto',
+      state: 'COMPLETED',
+      result: {
+        schema_version: 1,
         execution_id: 'e1',
-        plugin_id: 'hello-log',
-        hook_name: 'on_custom_command',
-        state: 'COMPLETED',
-        result: {
-          schema_version: 1,
-          execution_id: 'e1',
-          text: 'hello-log tamam',
-          logs: ['hello-log: on_custom_command {}'],
-          notifications: ['Merhaba! hello-log eklentisi çalıştı.'],
-          warnings: [],
-        },
-        error: null,
+        text: 'hello-log tamam',
+        logs: ['hello-log: on_document_open page_count=3'],
+        notifications: ['hello-log: belge açıldı, 3 sayfa.'],
+        warnings: ['dikkat'],
       },
-    });
+      error: null,
+    }]);
     render(PluginManagerModal, { props: { onclose: vi.fn() } });
 
-    expect(await screen.findByText('Merhaba! hello-log eklentisi çalıştı.')).toBeTruthy();
-    expect(screen.getByText('hello-log: on_custom_command {}')).toBeTruthy();
+    expect(await screen.findByText('Son yürütmeler')).toBeTruthy();
+    expect(screen.getByText('hello-log: belge açıldı, 3 sayfa.')).toBeTruthy();
+    expect(screen.getByText('hello-log: on_document_open page_count=3')).toBeTruthy();
+    expect(screen.getByText('dikkat')).toBeTruthy();
     expect(screen.getByText('hello-log tamam')).toBeTruthy();
+    expect(screen.getByText(/Otomatik/)).toBeTruthy();
+    expect(screen.getByText('Tamamlandı')).toBeTruthy();
   });
 
-  it('maps a failed execution error code to a Turkish message', async () => {
+  it('maps a failed execution error code to a Turkish message in the list', async () => {
     currentPlugins = [basePlugin];
-    pluginStore.activeExecutions.set({
-      e2: {
-        execution_id: 'e2',
-        plugin_id: 'hello-log',
-        hook_name: 'on_custom_command',
-        state: 'FAILED',
-        result: null,
-        error: { code: 'PLUGIN_PERMISSION_DENIED', message: "'ui_notify' çağrısı için izin gerekli" },
-      },
-    });
+    pluginStore.pluginExecutionHistory.set([{
+      execution_id: 'e2',
+      plugin_id: 'hello-log',
+      plugin_name: 'Hello Log',
+      hook_name: 'on_custom_command',
+      origin: 'auto',
+      state: 'FAILED',
+      result: null,
+      error: { code: 'PLUGIN_PERMISSION_DENIED', message: "'ui_notify' çağrısı için izin gerekli" },
+    }, {
+      execution_id: 'e3',
+      plugin_id: 'hello-log',
+      plugin_name: 'Hello Log',
+      hook_name: 'on_document_open',
+      origin: 'auto',
+      state: 'DISCARDED',
+      result: null,
+      error: null,
+    }]);
     render(PluginManagerModal, { props: { onclose: vi.fn() } });
     expect(await screen.findByText(/İzin reddedildi: eklenti onaylanmamış bir host API'ı çağırdı/)).toBeTruthy();
+    expect(screen.getByText('Atıldı (belge değişti)')).toBeTruthy();
   });
 
   it('marks a quarantined plugin and does not offer enable', async () => {

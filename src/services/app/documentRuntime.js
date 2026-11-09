@@ -28,6 +28,7 @@ import {
 } from "../backend/index.js";
 import { createDocumentLifecycleController } from "./documentLifecycleController.js";
 import { createDocumentOpenController } from "./documentOpenController.js";
+import { notifyPluginDocumentOpened } from "./pluginHookDispatcher.js";
 import { createDocumentPositionMemory } from "./documentPositionMemory.js";
 import { createMutationHistoryController } from "./mutationHistoryController.js";
 import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
@@ -57,6 +58,8 @@ export function createDocumentRuntime({
   onError,
   passwordPresentation,
   applyPageScopedMutation = () => {},
+  // Plugin on_document_open; fire-and-forget, never awaited by the open flow.
+  onDocumentOpened = notifyPluginDocumentOpened,
   // viewerRuntime.navigation.scrollToPhysicalPage; also reaches pages that are not mounted.
   scrollToPhysicalPage = (physicalIndex, options) => {
     globalThis.document?.getElementById(`page-${physicalIndex}`)?.scrollIntoView(options);
@@ -196,6 +199,7 @@ export function createDocumentRuntime({
     }),
     setError: onError,
     onToast,
+    onDocumentOpened,
   });
 
   async function loadPageLabels(sessionId, contentGeneration, pageCount) {

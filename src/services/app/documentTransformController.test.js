@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDocumentTransformController } from "./documentTransformController.js";
 
 function setup(overrides = {}) {
-  const context = { sessionId: "session-a", contentGeneration: 3 };
+  const context = { sessionId: "session-a", contentGeneration: 3, pageCount: 6 };
   const guard = vi.fn(async (_feature, _runtime, action) => action());
   const merge = vi.fn(async () => undefined);
   const openDocument = vi.fn(async () => undefined);
@@ -124,5 +124,21 @@ describe("documentTransformController", () => {
   it("does not own sanitization policy or output lifecycle", () => {
     const { controller } = setup();
     expect(controller.sanitizeDocument).toBeUndefined();
+  });
+});
+
+describe("documentTransformController plugin on_export_complete", () => {
+  it("reports a palette merge as pdf with the open document's page count", async () => {
+    const onExportComplete = vi.fn();
+    const { controller } = setup({ onExportComplete });
+    await controller.mergePdf();
+    expect(onExportComplete).toHaveBeenCalledWith("pdf", 6);
+  });
+
+  it("does not report a failed merge", async () => {
+    const onExportComplete = vi.fn();
+    const { controller } = setup({ onExportComplete, merge: vi.fn(async () => { throw new Error("disk"); }) });
+    await controller.mergePdf();
+    expect(onExportComplete).not.toHaveBeenCalled();
   });
 });

@@ -1,11 +1,11 @@
 <script>
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
   import AppDialog from "./AppDialog.svelte";
   import {
     installedPlugins,
     inspectionCandidate,
-    activeExecutions,
     pluginBackendGate,
+    pluginExecutionHistory,
     checkPluginBackendGate,
     refreshInstalledPlugins,
     inspectPlugin,
@@ -13,10 +13,14 @@
     grantConsent,
     uninstallPlugin,
     togglePluginEnabled,
-    startPluginHook,
     cancelPlugin,
-    pollExecutionStatus,
   } from "../pluginStore.js";
+  import { pluginHookDispatcher } from "../services/app/pluginHookDispatcher.js";
+  import {
+    PLUGIN_HOOK_PAYLOAD_SCHEMAS,
+    defaultHookPayload,
+    validateHookPayload,
+  } from "../services/app/pluginHookPayloads.js";
   import { open } from "@tauri-apps/plugin-dialog";
   import FeatureNotice from "./FeatureNotice.svelte";
   import { guardFeatureAction } from "../featureActionGuard.js";
@@ -50,13 +54,24 @@
     "ui:notification": "Kullanıcı arayüzünde bilgilendirme bildirimi gösterir. Dosya, ağ veya belge metni erişimi sağlamaz.",
   };
 
-  // Hooks are not wired to app events yet; manual runs send a fixed sample payload
-  // that passes the backend schema for each hook. None carries document data.
-  const SAMPLE_HOOK_PAYLOADS = {
-    on_custom_command: JSON.stringify({ command_name: "manual_run", parameters: {} }),
-    on_document_open: JSON.stringify({ page_count: 1 }),
-    on_export_complete: JSON.stringify({ export_format: "pdf", success: true, page_count: 1 }),
+  // Developer tool: run a declared hook by hand with a payload generated from the hook's
+  // schema V1 (pluginHookPayloads.js). The values are editable; the payload goes through
+  // the same validation as app events (here, then start_execution, then the worker).
+  let manualForms = $state({}); // { [pluginId]: { hook, values } }
+  const hookOf = (plugin) => manualForms[plugin.id]?.hook ?? plugin.hooks[0];
+  const valuesOf = (plugin) => manualForms[plugin.id]?.values ?? defaultHookPayload(hookOf(plugin)) ?? {};
+  const fieldsOf = (plugin) => PLUGIN_HOOK_PAYLOAD_SCHEMAS[hookOf(plugin)]?.fields ?? [];
+
+  const STATE_LABELS = {
+    RUNNING: "Çalışıyor",
+    PENDING: "Bekliyor",
+    COMPLETED: "Tamamlandı",
+    FAILED: "Başarısız",
+    TIMED_OUT: "Zaman aşımı",
+    CANCELLED: "İptal edildi",
+    DISCARDED: "Atıldı (belge değişti)",
   };
+  const ORIGIN_LABELS = { auto: "Otomatik", manual: "Elle" };
 
   const LIFECYCLE_LABELS = {
     enabled: "Etkin",
@@ -65,17 +80,9 @@
     consent_required: "Onay Bekliyor",
   };
 
-  const TERMINAL_STATES = ["COMPLETED", "CANCELLED", "FAILED", "TIMED_OUT"];
-  const pollTimers = new Set();
-
   onMount(() => {
     checkPluginBackendGate().catch(() => {});
     refreshInstalledPlugins().catch(() => {});
-  });
-
-  onDestroy(() => {
-    for (const timer of pollTimers) clearInterval(timer);
-    pollTimers.clear();
   });
 
   function showError(error) {
@@ -162,33 +169,35 @@
     }
   }
 
-  async function handleRunHook(plugin, hookName) {
-    errorMessage = "";
-    try {
-      await guardFeatureAction("plugin_system", featureContext, async () => {
-        const payload = SAMPLE_HOOK_PAYLOADS[hookName] ?? "{}";
-        const startResult = await startPluginHook(plugin.id, hookName, payload);
-        const executionId = startResult.execution_id;
+  function selectManualHook(plugin, hook) {
+    manualForms[plugin.id] = { hook, values: defaultHookPayload(hook) ?? {} };
+  }
 
-        const pollInterval = setInterval(async () => {
-          try {
-            const status = await pollExecutionStatus(executionId);
-            if (TERMINAL_STATES.includes(status.state)) {
-              clearInterval(pollInterval);
-              pollTimers.delete(pollInterval);
-              if (status.state !== "COMPLETED") refreshInstalledPlugins().catch(() => {});
-            }
-          } catch {
-            clearInterval(pollInterval);
-            pollTimers.delete(pollInterval);
-          }
-        }, 300);
-        pollTimers.add(pollInterval);
+  function setManualField(plugin, field, raw) {
+    const values = { ...valuesOf(plugin) };
+    values[field.name] = field.type === "integer" ? (raw === "" ? undefined : Number(raw)) : raw;
+    manualForms[plugin.id] = { hook: hookOf(plugin), values };
+  }
+
+  async function handleRunHook(plugin) {
+    errorMessage = "";
+    const hookName = hookOf(plugin);
+    const checked = validateHookPayload(hookName, valuesOf(plugin));
+    if (!checked.ok) {
+      errorMessage = `Kanca yükü geçersiz: ${checked.error}`;
+      return;
+    }
+    try {
+      await guardFeatureAction("plugin_system", featureContext, () => {
+        // Not awaited: the run is queued with app events; results land in the list below.
+        void pluginHookDispatcher.dispatch(hookName, checked.payload, {
+          origin: "manual",
+          pluginIds: [plugin.id],
+          onError: showError,
+        });
       });
     } catch (error) {
       showError(error);
-      // A rejected run may have quarantined the plugin; show the new state.
-      refreshInstalledPlugins().catch(() => {});
     }
   }
 
@@ -333,15 +342,6 @@
                 >
                   Kapat
                 </button>
-                {#each plugin.hooks as hook (hook)}
-                  <button
-                    class="tech-button run"
-                    onclick={() => handleRunHook(plugin, hook)}
-                    disabled={!canIncreasePrivilege}
-                  >
-                    Çalıştır ({hook})
-                  </button>
-                {/each}
               {:else}
                 <button
                   class="tech-button primary"
@@ -361,45 +361,113 @@
               </button>
             </div>
 
-            <!-- Active Execution Card for this plugin -->
-            {#each Object.values($activeExecutions).filter(e => e.plugin_id === plugin.id) as exec (exec.execution_id)}
-              <div class="execution-box state-{exec.state.toLowerCase()}">
-                <div class="exec-info">
-                  <span>Yürütme: <code>{exec.hook_name}</code></span>
-                  <span class="badge status-{exec.state.toLowerCase()}">{exec.state}</span>
+            {#if plugin.enabled && plugin.hooks.length > 0}
+              <div class="manual-run" data-testid="plugin-manual-run-{plugin.id}">
+                <div class="manual-run-title">Geliştirici: kancayı elle çalıştır</div>
+                <div class="manual-run-row">
+                  <label class="manual-field">
+                    <span>Kanca</span>
+                    <select
+                      aria-label="Kanca"
+                      value={hookOf(plugin)}
+                      onchange={(event) => selectManualHook(plugin, event.currentTarget.value)}
+                    >
+                      {#each plugin.hooks as hook (hook)}
+                        <option value={hook}>{hook}</option>
+                      {/each}
+                    </select>
+                  </label>
+                  {#each fieldsOf(plugin) as field (field.name)}
+                    <label class="manual-field">
+                      <span>{field.label}</span>
+                      {#if field.type === "enum"}
+                        <select
+                          aria-label={field.name}
+                          value={valuesOf(plugin)[field.name]}
+                          onchange={(event) => setManualField(plugin, field, event.currentTarget.value)}
+                        >
+                          {#each field.values as value (value)}
+                            <option {value}>{value}</option>
+                          {/each}
+                        </select>
+                      {:else}
+                        <input
+                          type="number"
+                          step="1"
+                          aria-label={field.name}
+                          value={valuesOf(plugin)[field.name] ?? ""}
+                          oninput={(event) => setManualField(plugin, field, event.currentTarget.value)}
+                        />
+                      {/if}
+                    </label>
+                  {/each}
+                  <button
+                    class="tech-button run"
+                    onclick={() => handleRunHook(plugin)}
+                    disabled={!canIncreasePrivilege}
+                  >
+                    Çalıştır ({hookOf(plugin)})
+                  </button>
                 </div>
-                {#if exec.state === "RUNNING"}
-                  <button class="tech-button small danger" onclick={() => handleCancelExecution(exec.execution_id)}>İptal Et</button>
-                {/if}
-                {#if exec.result}
-                  {#if exec.result.notifications?.length}
-                    <div class="result-section">
-                      <strong>Bildirimler</strong>
-                      <ul class="notification-list">
-                        {#each exec.result.notifications as note, i (i)}
-                          <li class="plugin-notification" role="status">{note}</li>
-                        {/each}
-                      </ul>
-                    </div>
-                  {/if}
-                  {#if exec.result.logs?.length}
-                    <div class="result-section">
-                      <strong>Günlük</strong>
-                      <pre class="result-box">{exec.result.logs.join("\n")}</pre>
-                    </div>
-                  {/if}
-                  {#if exec.result.text}
-                    <div class="result-section">
-                      <strong>Sonuç</strong>
-                      <pre class="result-box">{exec.result.text}</pre>
-                    </div>
-                  {/if}
-                {/if}
-                {#if exec.error}
-                  <p class="error-box">{describePluginError(exec.error)}</p>
-                {/if}
+                <code class="payload-preview">{JSON.stringify(valuesOf(plugin))}</code>
               </div>
-            {/each}
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      <!-- Recent hook executions (automatic and manual), newest first -->
+      <div class="history" data-testid="plugin-execution-history">
+        <h4>Son yürütmeler</h4>
+        {#if $pluginExecutionHistory.length === 0}
+          <div class="dim">Henüz kanca yürütmesi yok.</div>
+        {/if}
+        {#each $pluginExecutionHistory as exec (exec.execution_id)}
+          <div class="execution-box state-{exec.state.toLowerCase()}">
+            <div class="exec-info">
+              <span><strong>{exec.plugin_name}</strong> · <code>{exec.hook_name}</code> · {ORIGIN_LABELS[exec.origin] ?? exec.origin}</span>
+              <span class="badge status-{exec.state.toLowerCase()}">{STATE_LABELS[exec.state] ?? exec.state}</span>
+            </div>
+            {#if exec.state === "RUNNING"}
+              <button class="tech-button small danger" onclick={() => handleCancelExecution(exec.execution_id)}>İptal Et</button>
+            {/if}
+            {#if exec.result}
+              {#if exec.result.notifications?.length}
+                <div class="result-section">
+                  <strong>Bildirimler</strong>
+                  <ul class="notification-list">
+                    {#each exec.result.notifications as note, i (i)}
+                      <li class="plugin-notification">{note}</li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+              {#if exec.result.warnings?.length}
+                <div class="result-section">
+                  <strong>Uyarılar</strong>
+                  <ul class="notification-list">
+                    {#each exec.result.warnings as warning, i (i)}
+                      <li class="plugin-warning-line">{warning}</li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+              {#if exec.result.logs?.length}
+                <div class="result-section">
+                  <strong>Günlük</strong>
+                  <pre class="result-box">{exec.result.logs.join("\n")}</pre>
+                </div>
+              {/if}
+              {#if exec.result.text}
+                <div class="result-section">
+                  <strong>Sonuç</strong>
+                  <pre class="result-box">{exec.result.text}</pre>
+                </div>
+              {/if}
+            {/if}
+            {#if exec.error}
+              <p class="error-box">{describePluginError(exec.error)}</p>
+            {/if}
           </div>
         {/each}
       </div>
@@ -473,4 +541,13 @@
   .tech-button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--destructive) 18%, transparent); }
   .tech-button.run { background: color-mix(in srgb, var(--success) 14%, transparent); border-color: transparent; color: var(--success); }
   .tech-button.small { padding: 2px 6px; font-size: 11px; }
+  .manual-run { border-top: 1px dashed var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  .manual-run-title { color: var(--muted-foreground); font-size: 11px; }
+  .manual-run-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+  .manual-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted-foreground); }
+  .manual-field select, .manual-field input { background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: calc(var(--radius) * 0.6); padding: 2px 6px; font-size: 12px; min-width: 90px; }
+  .payload-preview { font-family: var(--font-code); font-size: 11px; color: var(--muted-foreground); word-break: break-all; }
+  .history { display: flex; flex-direction: column; gap: 6px; }
+  .history h4 { margin: 0; font-size: 13px; font-weight: 600; }
+  .plugin-warning-line { color: var(--warning-foreground); }
 </style>

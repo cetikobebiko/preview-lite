@@ -118,7 +118,7 @@ fn test_worker_process_normal_execution_success() {
             execution_id: "exec-norm-1".to_string(),
             plugin_id: fixture.plugin_id.clone(),
             hook: PluginHook::OnCustomCommand,
-            payload: serde_json::json!({ "command_name": "cmd", "parameters": {} }),
+            payload: serde_json::json!({ "schema_version": 1 }),
         },
         granted_permissions: vec![],
         resource_profile_version: 1,
@@ -172,7 +172,7 @@ fn test_worker_process_syntax_error_returns_failure() {
             execution_id: "exec-syntax-err".to_string(),
             plugin_id: fixture.plugin_id.clone(),
             hook: PluginHook::OnCustomCommand,
-            payload: serde_json::json!({ "command_name": "cmd", "parameters": {} }),
+            payload: serde_json::json!({ "schema_version": 1 }),
         },
         granted_permissions: vec![],
         resource_profile_version: 1,
@@ -187,6 +187,62 @@ fn test_worker_process_syntax_error_returns_failure() {
     assert!(resp.error.is_some());
 
     let _ = child.wait();
+}
+
+/// The worker validates the hook payload schema itself (the host already did): a
+/// payload that skips the host check is refused before the script runs.
+#[test]
+fn test_worker_process_rejects_invalid_hook_payload() {
+    let fixture = create_test_plugin(
+        "payload-check",
+        "1.0.0",
+        "fn on_custom_command(p) { return \"ran\"; }",
+        &[],
+    );
+    let payloads = [
+        serde_json::json!({ "schema_version": 1, "file_name": "secret.pdf" }),
+        serde_json::json!({ "schema_version": 2 }),
+        serde_json::json!({ "schema_version": 1, "page_count": 3 }),
+    ];
+    for (i, payload) in payloads.into_iter().enumerate() {
+        let mut child = Command::new(preview_alternative_bin())
+            .arg("--run-plugin-worker")
+            .env("ANTIGRAVITY_PLUGIN_ROOT", &fixture.root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn plugin worker process");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let exec_id = format!("exec-payload-{i}");
+        let req = WorkerExecuteRequest {
+            protocol_version: CURRENT_PLUGIN_PROTOCOL_VERSION,
+            request_id: format!("req-payload-{i}"),
+            execution_id: exec_id.clone(),
+            plugin_id: fixture.plugin_id.clone(),
+            plugin_version: fixture.plugin_version.clone(),
+            expected_package_digest: fixture.package_digest.clone(),
+            expected_manifest_digest: fixture.manifest_digest.clone(),
+            expected_script_digest: fixture.script_digest.clone(),
+            hook_request: PluginHookRequestV1 {
+                schema_version: CURRENT_PLUGIN_HOOK_SCHEMA_VERSION,
+                execution_id: exec_id,
+                plugin_id: fixture.plugin_id.clone(),
+                hook: PluginHook::OnCustomCommand,
+                payload,
+            },
+            granted_permissions: vec![],
+            resource_profile_version: 1,
+        };
+        write_framed(&mut stdin, &serde_json::to_vec(&req).unwrap());
+        let resp_bytes = read_framed(&mut stdout).expect("Failed to read response");
+        let resp: WorkerExecuteResponse = serde_json::from_slice(&resp_bytes).unwrap();
+        assert_eq!(resp.status, WorkerTerminalStatus::Failed);
+        assert!(resp.result.is_none());
+        assert_eq!(resp.error.unwrap().code, "PLUGIN_PAYLOAD_INVALID");
+        let _ = child.wait();
+    }
 }
 
 #[test]
@@ -224,7 +280,7 @@ fn test_worker_process_infinite_loop_hits_op_limit() {
             execution_id: "exec-inf-loop".to_string(),
             plugin_id: fixture.plugin_id.clone(),
             hook: PluginHook::OnCustomCommand,
-            payload: serde_json::json!({ "command_name": "cmd", "parameters": {} }),
+            payload: serde_json::json!({ "schema_version": 1 }),
         },
         granted_permissions: vec![],
         resource_profile_version: 1,
@@ -284,7 +340,7 @@ fn test_worker_process_ui_notify_and_logs_captured() {
             execution_id: "exec-log-notif".to_string(),
             plugin_id: fixture.plugin_id.clone(),
             hook: PluginHook::OnCustomCommand,
-            payload: serde_json::json!({ "command_name": "cmd", "parameters": {} }),
+            payload: serde_json::json!({ "schema_version": 1 }),
         },
         granted_permissions: vec![
             PluginPermission::PluginLog,
@@ -360,7 +416,7 @@ fn run_worker_for_identity(
             execution_id: "exec-identity".to_string(),
             plugin_id: plugin_id.to_string(),
             hook: PluginHook::OnCustomCommand,
-            payload: serde_json::json!({ "command_name": "cmd", "parameters": {} }),
+            payload: serde_json::json!({ "schema_version": 1 }),
         },
         granted_permissions: vec![],
         resource_profile_version: 1,

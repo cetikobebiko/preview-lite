@@ -182,7 +182,7 @@
         "plugin_worker_executable"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 7,
+      "expectedTestCount": 8,
       "expectedTestPresence": "exact"
     },
     {
@@ -231,9 +231,9 @@
         "plugin_worker_executable"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 5,
+      "expectedTestCount": 6,
       "expectedTestPresence": "exact",
-      "notes": "Plugin V1 end-to-end through PluginState and the app binary's --run-plugin-worker entrypoint (same binary as plugin_worker_process; no PDFium, so realWorker=false in this registry's PDFium sense). Installs docs/engineering/examples/plugins/hello-log, consents, enables, runs on_custom_command and checks exact log/notification/text; plus permission-denied, log/notification limit, disable and tamper-quarantine statuses."
+      "notes": "Plugin V1 end-to-end through PluginState and the app binary's --run-plugin-worker entrypoint (same binary as plugin_worker_process; no PDFium, so realWorker=false in this registry's PDFium sense). Installs docs/engineering/examples/plugins/hello-log, consents, enables, runs all three hooks with schema-V1 payloads (on_custom_command, on_document_open page_count, on_export_complete format + page_count) and checks exact log/notification/text; rejects payloads outside schema V1 before any worker starts (PLUGIN_PAYLOAD_INVALID); plus permission-denied, log/notification limit, disable and tamper-quarantine statuses."
     },
     {
       "id": "rust:redaction_fixtures_and_capabilities",
@@ -670,9 +670,9 @@
       ],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 129,
+      "expectedTestCount": 156,
       "expectedTestPresence": "at_least_one",
-      "notes": "Aggregate of 129 test files (127 *.test.* under src + scripts/worker-metrics-report.test.mjs + scripts/provision-pdfium-runtime.test.mjs) (vitest jsdom, vi.mock tauri). Invocation: npm run test. Sub-target js:cross-platform is alias for src/crossPlatformBuildArchitecture.test.js."
+      "notes": "Aggregate of 156 test files (154 *.test.* under src + scripts/worker-metrics-report.test.mjs + scripts/provision-pdfium-runtime.test.mjs) (vitest jsdom, vi.mock tauri). Invocation: npm run test. Sub-target js:cross-platform is alias for src/crossPlatformBuildArchitecture.test.js."
     },
     {
       "id": "rust:b4_integration_gaps",
