@@ -424,7 +424,7 @@ fn map_eval_alt_result_to_plugin_error(err: Box<EvalAltResult>) -> PluginError {
                 if msg.contains("PLUGIN_RESOURCE_LIMIT_EXCEEDED") {
                     return PluginError::new(PluginErrorCode::PluginResourceLimitExceeded, msg);
                 }
-                return PluginError::new(PluginErrorCode::PluginExecutionNotFound, msg);
+                return PluginError::new(PluginErrorCode::PluginScriptRuntimeError, msg);
             }
             EvalAltResult::ErrorTooManyOperations(_)
             | EvalAltResult::ErrorTooManyVariables(_)
@@ -465,7 +465,7 @@ fn map_eval_alt_result_to_plugin_error(err: Box<EvalAltResult>) -> PluginError {
                 {
                     return PluginError::new(PluginErrorCode::PluginResourceLimitExceeded, msg);
                 }
-                return PluginError::new(PluginErrorCode::PluginExecutionNotFound, msg);
+                return PluginError::new(PluginErrorCode::PluginScriptRuntimeError, msg);
             }
         }
     }
@@ -629,6 +629,69 @@ mod tests {
             fn_res.unwrap_err().code,
             PluginErrorCode::PluginResultInvalid
         );
+    }
+
+    #[test]
+    fn test_host_api_ui_notify_requires_notification_permission() {
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let script = r#"
+            fn on_custom_command(p) {
+                ui_notify("merhaba");
+            }
+        "#;
+
+        // plugin:log alone does not grant ui_notify
+        let err = execute_plugin_script(
+            script,
+            PluginHook::OnCustomCommand,
+            &payload,
+            &[PluginPermission::PluginLog],
+            "exec-notify-perm",
+            cancel_flag.clone(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, PluginErrorCode::PluginPermissionDenied);
+
+        // No permissions at all
+        let err = execute_plugin_script(
+            script,
+            PluginHook::OnCustomCommand,
+            &payload,
+            &[],
+            "exec-notify-perm",
+            cancel_flag.clone(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, PluginErrorCode::PluginPermissionDenied);
+
+        let ok = execute_plugin_script(
+            script,
+            PluginHook::OnCustomCommand,
+            &payload,
+            &[PluginPermission::UiNotification],
+            "exec-notify-perm",
+            cancel_flag,
+        )
+        .unwrap();
+        assert_eq!(ok.notifications, vec!["merhaba".to_string()]);
+        assert!(ok.logs.is_empty());
+    }
+
+    #[test]
+    fn test_script_runtime_error_has_its_own_code() {
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let err = execute_plugin_script(
+            r#"fn on_custom_command(p) { throw "boom"; }"#,
+            PluginHook::OnCustomCommand,
+            &payload,
+            &[],
+            "exec-throw",
+            cancel_flag,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, PluginErrorCode::PluginScriptRuntimeError);
     }
 
     #[test]

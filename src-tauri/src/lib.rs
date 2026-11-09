@@ -1376,6 +1376,12 @@ pub fn run() {
             #[cfg(debug_assertions)]
             let log_guard = None;
             app.manage(LogGuard(parking_lot::Mutex::new(log_guard)));
+            // Plugin root is the Tauri app data dir (<app_data_dir>/plugins); the gate
+            // comes from the build profile (open in debug, closed in release). An
+            // unresolved dir leaves `None`, and every plugin write fails closed.
+            app.manage(plugins::PluginState::for_app(
+                app.path().app_data_dir().ok(),
+            ));
 
             if let Some(error) = startup_failure {
                 show_startup_failure_and_exit(app, &error);
@@ -1415,8 +1421,7 @@ pub fn run() {
         .manage(TextLayoutCache(parking_lot::Mutex::new(
             lru::LruCache::new(std::num::NonZeroUsize::new(50).unwrap()),
         )))
-        .manage(RenderService::new())
-        .manage(plugins::PluginState::new());
+        .manage(RenderService::new());
     let builder = match document_sessions {
         Some(store) => builder.manage(store.worker_broker()).manage(store),
         None => builder,
@@ -1512,6 +1517,7 @@ pub fn run() {
             plugins::uninstall_plugin,
             plugins::set_plugin_enabled,
             plugins::list_installed_plugins,
+            plugins::get_plugin_feature_status,
             plugins::start_plugin_execution,
             plugins::cancel_plugin_execution,
             plugins::get_plugin_execution_status,

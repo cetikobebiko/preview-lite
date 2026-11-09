@@ -1,10 +1,12 @@
 <script>
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import AppDialog from "./AppDialog.svelte";
   import {
     installedPlugins,
     inspectionCandidate,
     activeExecutions,
+    pluginBackendGate,
+    checkPluginBackendGate,
     refreshInstalledPlugins,
     inspectPlugin,
     installPlugin,
@@ -17,8 +19,13 @@
   } from "../pluginStore.js";
   import { open } from "@tauri-apps/plugin-dialog";
   import FeatureNotice from "./FeatureNotice.svelte";
-  import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
+  import { guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
+  import {
+    PLUGIN_BACKEND_GATE_MISMATCH_MESSAGE,
+    describePluginError,
+    pluginLifecycleState,
+  } from "../pluginErrors.js";
 
   let { onclose } = $props();
 
@@ -28,17 +35,52 @@
   let isLoading = $state(false);
   let errorMessage = $state("");
   let statusMessage = $state("");
-  let selectedHookPayload = $state("{}");
   let consentAcknowledged = $state(false);
+
+  // Privilege-increasing actions need both gates; disable/uninstall only the frontend one.
+  const canIncreasePrivilege = $derived(
+    featurePresentation.runnable && $pluginBackendGate.checked && $pluginBackendGate.enabled,
+  );
+  const backendGateMismatch = $derived(
+    featurePresentation.runnable && $pluginBackendGate.checked && !$pluginBackendGate.enabled,
+  );
 
   const PERMISSION_EXPLANATIONS = {
     "plugin:log": "Eklenti yürütme günlüklerini ana uygulamaya iletir. Dosya, ağ veya belge metni erişimi sağlamaz.",
     "ui:notification": "Kullanıcı arayüzünde bilgilendirme bildirimi gösterir. Dosya, ağ veya belge metni erişimi sağlamaz.",
   };
 
+  // Hooks are not wired to app events yet; manual runs send a fixed sample payload
+  // that passes the backend schema for each hook. None carries document data.
+  const SAMPLE_HOOK_PAYLOADS = {
+    on_custom_command: JSON.stringify({ command_name: "manual_run", parameters: {} }),
+    on_document_open: JSON.stringify({ page_count: 1 }),
+    on_export_complete: JSON.stringify({ export_format: "pdf", success: true, page_count: 1 }),
+  };
+
+  const LIFECYCLE_LABELS = {
+    enabled: "Etkin",
+    disabled: "Devre Dışı",
+    quarantined: "Karantinada",
+    consent_required: "Onay Bekliyor",
+  };
+
+  const TERMINAL_STATES = ["COMPLETED", "CANCELLED", "FAILED", "TIMED_OUT"];
+  const pollTimers = new Set();
+
   onMount(() => {
+    checkPluginBackendGate().catch(() => {});
     refreshInstalledPlugins().catch(() => {});
   });
+
+  onDestroy(() => {
+    for (const timer of pollTimers) clearInterval(timer);
+    pollTimers.clear();
+  });
+
+  function showError(error) {
+    errorMessage = describePluginError(error);
+  }
 
   async function handlePickPackage() {
     errorMessage = "";
@@ -62,11 +104,7 @@
         }
       });
     } catch (error) {
-      if (error instanceof FeatureUnavailableError) {
-        errorMessage = error.presentation?.warning || error.message;
-        return;
-      }
-      errorMessage = error?.message || String(error);
+      showError(error);
     }
   }
 
@@ -79,10 +117,10 @@
       await guardFeatureAction("plugin_system", featureContext, async () => {
         const candidate = $inspectionCandidate;
         const targetPath = candidate.package_path || candidate.manifest.id;
-        
+
         // 1. Install & Stage
         await installPlugin(targetPath, candidate.package_digest);
-        
+
         // 2. Grant explicit consent
         await grantConsent(
           candidate.manifest.id,
@@ -93,11 +131,7 @@
         statusMessage = `Eklenti başarıyla yüklendi ve yetkilendirildi: ${candidate.manifest.name}`;
       });
     } catch (error) {
-      if (error instanceof FeatureUnavailableError) {
-        errorMessage = error.presentation?.warning || error.message;
-      } else {
-        errorMessage = error?.message || String(error);
-      }
+      showError(error);
     } finally {
       isLoading = false;
     }
@@ -110,11 +144,9 @@
         await togglePluginEnabled(plugin.id, !plugin.enabled);
       });
     } catch (error) {
-      if (error instanceof FeatureUnavailableError) {
-        errorMessage = error.presentation?.warning || error.message;
-      } else {
-        errorMessage = error?.message || String(error);
-      }
+      showError(error);
+      // A failed enable may have quarantined the plugin; show the new state.
+      refreshInstalledPlugins().catch(() => {});
     }
   }
 
@@ -126,11 +158,7 @@
         statusMessage = "Eklenti başarıyla kaldırıldı.";
       });
     } catch (error) {
-      if (error instanceof FeatureUnavailableError) {
-        errorMessage = error.presentation?.warning || error.message;
-      } else {
-        errorMessage = error?.message || String(error);
-      }
+      showError(error);
     }
   }
 
@@ -138,27 +166,29 @@
     errorMessage = "";
     try {
       await guardFeatureAction("plugin_system", featureContext, async () => {
-        const startResult = await startPluginHook(plugin.id, hookName, selectedHookPayload);
+        const payload = SAMPLE_HOOK_PAYLOADS[hookName] ?? "{}";
+        const startResult = await startPluginHook(plugin.id, hookName, payload);
         const executionId = startResult.execution_id;
 
-        // Poll execution status
         const pollInterval = setInterval(async () => {
           try {
             const status = await pollExecutionStatus(executionId);
-            if (["COMPLETED", "CANCELLED", "FAILED", "TIMED_OUT"].includes(status.state)) {
+            if (TERMINAL_STATES.includes(status.state)) {
               clearInterval(pollInterval);
+              pollTimers.delete(pollInterval);
+              if (status.state !== "COMPLETED") refreshInstalledPlugins().catch(() => {});
             }
           } catch {
             clearInterval(pollInterval);
+            pollTimers.delete(pollInterval);
           }
         }, 300);
+        pollTimers.add(pollInterval);
       });
     } catch (error) {
-      if (error instanceof FeatureUnavailableError) {
-        errorMessage = error.presentation?.warning || error.message;
-      } else {
-        errorMessage = error?.message || String(error);
-      }
+      showError(error);
+      // A rejected run may have quarantined the plugin; show the new state.
+      refreshInstalledPlugins().catch(() => {});
     }
   }
 
@@ -166,7 +196,7 @@
     try {
       await cancelPlugin(executionId);
     } catch (error) {
-      errorMessage = error?.message || String(error);
+      showError(error);
     }
   }
 </script>
@@ -174,6 +204,10 @@
 <AppDialog title="Eklenti Yöneticisi (Plugin Manager)" size="lg" onclose={() => onclose?.()}>
     <div class="plugin-manager-body">
       <FeatureNotice featureId="plugin_system" />
+
+      {#if backendGateMismatch}
+        <p class="plugin-warning" role="alert" data-testid="plugin-backend-gate-mismatch">{PLUGIN_BACKEND_GATE_MISMATCH_MESSAGE}</p>
+      {/if}
 
       {#if errorMessage}
         <p class="plugin-warning" role="status">{errorMessage}</p>
@@ -248,7 +282,7 @@
             <button
               class="tech-button primary"
               onclick={handleConfirmInstall}
-              disabled={isLoading || !consentAcknowledged}
+              disabled={isLoading || !consentAcknowledged || !canIncreasePrivilege}
             >
               {isLoading ? "Yükleniyor..." : "İzinleri Onayla ve Yükle"}
             </button>
@@ -263,18 +297,20 @@
         {/if}
 
         {#each $installedPlugins as plugin (plugin.id)}
-          <div class="plugin-card {plugin.enabled ? 'enabled' : 'disabled'}">
+          {@const lifecycle = pluginLifecycleState(plugin)}
+          <div class="plugin-card {lifecycle}">
             <div class="plugin-info">
               <div class="plugin-title-row">
                 <strong>{plugin.name}</strong>
                 <span class="badge">v{plugin.version}</span>
-                <span class="badge {plugin.enabled ? 'active-badge' : 'inactive-badge'}">
-                  {plugin.enabled ? "Etkin" : "Devre Dışı"}
-                </span>
+                <span class="badge lifecycle-{lifecycle}">{LIFECYCLE_LABELS[lifecycle]}</span>
               </div>
               <div class="plugin-id">{plugin.id}</div>
               {#if plugin.description}
                 <p class="plugin-desc">{plugin.description}</p>
+              {/if}
+              {#if lifecycle === "quarantined"}
+                <p class="error-box">Eklenti dosyaları onaydan sonra değişti; onay geri alındı. Kaldırıp yeniden kurun.</p>
               {/if}
               <div class="meta-row">
                 <span class="badge-list">
@@ -289,21 +325,30 @@
             </div>
 
             <div class="plugin-actions">
-              <button
-                class="tech-button {plugin.enabled ? 'secondary' : 'primary'}"
-                onclick={() => handleToggleEnabled(plugin)}
-                disabled={!featurePresentation.runnable}
-              >
-                {plugin.enabled ? "Kapat" : "Etkinleştir"}
-              </button>
-              
-              {#if plugin.enabled && plugin.hooks.length > 0}
+              {#if plugin.enabled}
                 <button
-                  class="tech-button run"
-                  onclick={() => handleRunHook(plugin, plugin.hooks[0])}
+                  class="tech-button secondary"
+                  onclick={() => handleToggleEnabled(plugin)}
                   disabled={!featurePresentation.runnable}
                 >
-                  Çalıştır ({plugin.hooks[0]})
+                  Kapat
+                </button>
+                {#each plugin.hooks as hook (hook)}
+                  <button
+                    class="tech-button run"
+                    onclick={() => handleRunHook(plugin, hook)}
+                    disabled={!canIncreasePrivilege}
+                  >
+                    Çalıştır ({hook})
+                  </button>
+                {/each}
+              {:else}
+                <button
+                  class="tech-button primary"
+                  onclick={() => handleToggleEnabled(plugin)}
+                  disabled={!canIncreasePrivilege || lifecycle !== "disabled"}
+                >
+                  Etkinleştir
                 </button>
               {/if}
 
@@ -326,11 +371,32 @@
                 {#if exec.state === "RUNNING"}
                   <button class="tech-button small danger" onclick={() => handleCancelExecution(exec.execution_id)}>İptal Et</button>
                 {/if}
-                {#if exec.result_json}
-                  <pre class="result-box">{exec.result_json}</pre>
+                {#if exec.result}
+                  {#if exec.result.notifications?.length}
+                    <div class="result-section">
+                      <strong>Bildirimler</strong>
+                      <ul class="notification-list">
+                        {#each exec.result.notifications as note, i (i)}
+                          <li class="plugin-notification" role="status">{note}</li>
+                        {/each}
+                      </ul>
+                    </div>
+                  {/if}
+                  {#if exec.result.logs?.length}
+                    <div class="result-section">
+                      <strong>Günlük</strong>
+                      <pre class="result-box">{exec.result.logs.join("\n")}</pre>
+                    </div>
+                  {/if}
+                  {#if exec.result.text}
+                    <div class="result-section">
+                      <strong>Sonuç</strong>
+                      <pre class="result-box">{exec.result.text}</pre>
+                    </div>
+                  {/if}
                 {/if}
                 {#if exec.error}
-                  <p class="error-box">[{exec.error.code}] {exec.error.message}</p>
+                  <p class="error-box">{describePluginError(exec.error)}</p>
                 {/if}
               </div>
             {/each}
@@ -343,7 +409,7 @@
       <button
         class="tech-button primary"
         onclick={handlePickPackage}
-        disabled={isLoading || !featurePresentation.runnable}
+        disabled={isLoading || !canIncreasePrivilege}
       >
         {isLoading ? "İnceleniyor..." : "Yeni Eklenti Paketi Seç..."}
       </button>
@@ -376,7 +442,12 @@
   .badge.permission { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
   .badge.hook { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
   .badge.warning { background: var(--warning); color: var(--warning-foreground); }
-  .badge.active-badge { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+  .badge.lifecycle-enabled { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+  .badge.lifecycle-quarantined { background: color-mix(in srgb, var(--destructive) 14%, transparent); color: var(--destructive); }
+  .badge.lifecycle-consent_required { background: var(--warning); color: var(--warning-foreground); }
+  .result-section { display: flex; flex-direction: column; gap: 2px; }
+  .notification-list { margin: 0; padding-left: 18px; }
+  .plugin-actions { flex-wrap: wrap; }
   .badge.small { font-size: 10px; padding: 0 4px; }
   .inspection-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
   .plugin-list { display: flex; flex-direction: column; gap: 8px; }

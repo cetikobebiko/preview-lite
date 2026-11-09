@@ -43,9 +43,15 @@ pub enum PluginErrorCode {
     PluginResultInvalid,
     PluginWorkerCrashed,
     PluginUninstallBusy,
+    PluginScriptRuntimeError,
 }
 
 impl PluginErrorCode {
+    /// Parses a wire code (`"PLUGIN_..."`) back into a known code.
+    pub fn from_wire(code: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(code.to_string())).ok()
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::PluginFeatureDisabled => "PLUGIN_FEATURE_DISABLED",
@@ -86,6 +92,7 @@ impl PluginErrorCode {
             Self::PluginResultInvalid => "PLUGIN_RESULT_INVALID",
             Self::PluginWorkerCrashed => "PLUGIN_WORKER_CRASHED",
             Self::PluginUninstallBusy => "PLUGIN_UNINSTALL_BUSY",
+            Self::PluginScriptRuntimeError => "PLUGIN_SCRIPT_RUNTIME_ERROR",
         }
     }
 }
@@ -107,7 +114,7 @@ impl PluginError {
     pub fn feature_disabled() -> Self {
         Self::new(
             PluginErrorCode::PluginFeatureDisabled,
-            "Eklenti sistemi bu sürümde özellik bayrağıyla devre dışıdır.",
+            "Eklenti sistemi bu derlemede kapalıdır; yalnız geliştirme derlemesinde açılır.",
         )
     }
 

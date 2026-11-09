@@ -4302,6 +4302,90 @@
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src/services/app/documentTransformController.test.js"
+    },
+    {
+      "id": "rust:plugin_hello_log_example::hello_log_example_runs_on_custom_command_through_real_worker",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/plugin_hello_log_example.rs"
+    },
+    {
+      "id": "rust:plugin_hello_log_example::hello_log_disabled_then_tampered_is_rejected_and_quarantined",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/plugin_hello_log_example.rs"
+    },
+    {
+      "id": "rust:plugin_hello_log_example::ungranted_host_api_call_ends_in_permission_denied_status",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/plugin_hello_log_example.rs"
+    },
+    {
+      "id": "rust:plugin_hello_log_example::log_byte_limit_ends_in_resource_limit_status",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/plugin_hello_log_example.rs"
+    },
+    {
+      "id": "rust:plugin_hello_log_example::notification_limits_end_in_resource_limit_status",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/plugin_hello_log_example.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_gate_decision_closed_for_production_profile",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_debug_build_gate_is_open",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_script_changed_after_consent_quarantines_plugin",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_manifest_changed_after_consent_quarantines_plugin",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_change_after_precheck_is_quarantined_after_worker_failure",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_undeclared_hook_rejected",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_unconsented_plugin_cannot_be_enabled_or_executed",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::tests::test_gate_closed_after_install_allows_only_restrictive_commands",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/mod.rs"
+    },
+    {
+      "id": "rust_unit:plugins::host_api::tests::test_host_api_ui_notify_requires_notification_permission",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/plugins/host_api.rs"
     }
   ],
   "gaps": [

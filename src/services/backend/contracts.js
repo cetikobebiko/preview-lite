@@ -1010,6 +1010,7 @@ export const CONTRACTS = Object.freeze({
     enabled: booleanType,
   }),
   listInstalledPlugins: commandWithoutPayload("list_installed_plugins"),
+  getPluginFeatureStatus: commandWithoutPayload("get_plugin_feature_status"),
   startPluginExecution: command("start_plugin_execution", {
     pluginId: stringType,
     hookName: stringType,
@@ -1127,6 +1128,7 @@ export const PROTECTED_CONTRACT_IDS = Object.freeze([
   "uninstallPlugin",
   "setPluginEnabled",
   "listInstalledPlugins",
+  "getPluginFeatureStatus",
   "startPluginExecution",
   "cancelPluginExecution",
   "getPluginExecutionStatus",
