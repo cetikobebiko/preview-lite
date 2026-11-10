@@ -13283,13 +13283,19 @@ fn cleanup_orphan_instances(root: &Path) -> Result<(), DocumentSessionError> {
         else {
             continue;
         };
+        let instance = root.join(format!("instance-{nonce}"));
+        // A starting instance creates and secures its lock file before it can lock it, and creates
+        // its instance directory only after that. Until then the file looks like an orphan; leave
+        // it alone (and do not even open it) while it is recent.
+        if !instance.exists() && lock_file_is_recent(&path) {
+            continue;
+        }
         let Ok(file) = OpenOptions::new().read(true).write(true).open(&path) else {
             continue;
         };
         if file.try_lock().is_err() {
             continue;
         }
-        let instance = root.join(format!("instance-{nonce}"));
         if instance.exists() {
             ensure_safe_tree_root(&instance)?;
             let quarantine = root.join(format!("cleanup-{nonce}"));
@@ -13305,6 +13311,27 @@ fn cleanup_orphan_instances(root: &Path) -> Result<(), DocumentSessionError> {
         let _ = fs::remove_file(&path);
     }
     Ok(())
+}
+
+/// How long a lock file without an instance directory is treated as a starting instance's.
+///
+/// `initialize` creates the lock file, secures it (Windows: DACL set and then verified by path) and
+/// only then locks it. Removing it in that window broke the starting instance: on Windows its
+/// `GetNamedSecurityInfoW` failed with ERROR_FILE_NOT_FOUND, on unix it kept a lock on an unlinked
+/// file and its instance directory could never be cleaned up. An empty lock file left by a crash
+/// before the instance directory existed is harmless until a later startup removes it.
+const ORPHAN_LOCK_GRACE: Duration = Duration::from_secs(5 * 60);
+
+/// True unless the lock file is provably older than [`ORPHAN_LOCK_GRACE`]; unreadable times and
+/// times in the future (clock changes) count as recent, so cleanup errs on keeping the file.
+fn lock_file_is_recent(path: &Path) -> bool {
+    let Ok(modified) = fs::metadata(path).and_then(|metadata| metadata.modified()) else {
+        return true;
+    };
+    match SystemTime::now().duration_since(modified) {
+        Ok(age) => age < ORPHAN_LOCK_GRACE,
+        Err(_) => true,
+    }
 }
 
 fn ensure_safe_tree_root(path: &Path) -> Result<(), DocumentSessionError> {
@@ -14692,6 +14719,63 @@ mod tests {
         assert!(!store.instance_lock_path.starts_with(&store.instance_dir));
         assert!(store.instance_dir.join("sessions").is_dir());
         assert!(store.instance_dir.join("jobs").is_dir());
+    }
+
+    #[test]
+    fn parallel_initialization_never_loses_a_live_lock_file() {
+        let lost = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let lost = lost.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..40 {
+                        let store = DocumentSessionStore::initialize().unwrap();
+                        if !store.instance_lock_path.exists() {
+                            lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(
+            lost.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "another store's startup cleanup removed a live store's lock file"
+        );
+    }
+
+    #[test]
+    fn startup_cleanup_keeps_recent_bare_lock_files_and_removes_stale_ones() {
+        let root = std::env::temp_dir().join(format!("lock-grace-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let bare = root.join(format!("instance-{}.lock", Uuid::new_v4()));
+        let file = File::create(&bare).unwrap();
+
+        // Unlocked, no instance directory, just created: a starting instance's lock file.
+        cleanup_orphan_instances(&root).unwrap();
+        assert!(bare.exists());
+
+        // Same file once it is older than the grace period: a crash leftover.
+        file.set_modified(std::time::SystemTime::now() - ORPHAN_LOCK_GRACE * 2)
+            .unwrap();
+        drop(file);
+        cleanup_orphan_instances(&root).unwrap();
+        assert!(!bare.exists());
+
+        // An orphaned instance directory is still removed at once, however recent its lock file.
+        let nonce = Uuid::new_v4();
+        let lock = root.join(format!("instance-{nonce}.lock"));
+        let instance = root.join(format!("instance-{nonce}"));
+        File::create(&lock).unwrap();
+        fs::create_dir(&instance).unwrap();
+        fs::write(instance.join("working.pdf"), b"orphan").unwrap();
+        cleanup_orphan_instances(&root).unwrap();
+        assert!(!instance.exists() && !lock.exists());
+
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
