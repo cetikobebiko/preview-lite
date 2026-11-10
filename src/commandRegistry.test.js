@@ -25,7 +25,9 @@ describe("Command Palette policy", () => {
   });
 
   it("filters by query and hides production mock or disabled commands", () => {
-    expect(filterCommands("markdown", productionMac)).toEqual([]);
+    expect(filterCommands("Süreklilik", productionMac)).toEqual([]);
+    // Notes export is a real backend job now (experimental), so production lists it.
+    expect(filterCommands("markdown", productionMac).map((command) => command.id)).toEqual(["export-notes-md"]);
     const ocrCommands = filterCommands("OCR", productionMac);
     expect(ocrCommands.map((command) => command.id)).toContain("run-ocr-page");
   });

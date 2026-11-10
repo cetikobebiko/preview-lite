@@ -9073,6 +9073,69 @@ pub async fn export_session_document(
         .await
 }
 
+/// Belgedeki PDF açıklamalarından üretilen not dosyasını (Markdown) `target_path`'e yazar.
+/// Açıklamalar job worker'da PDFium ile okunur; oturumun kaydedilmemiş hali (snapshot) kullanılır.
+/// Belgede not yoksa `NOTES_EXPORT_EMPTY` döner ve hiçbir dosya yazılmaz.
+#[tauri::command]
+pub async fn export_session_notes_markdown(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    target_path: String,
+    options: crate::notes_export::NotesExportOptions,
+    store: State<'_, DocumentSessionStore>,
+) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+    let target = PathBuf::from(target_path);
+    reject_private_target(&target, &store.temp_root)?;
+    validate_text_export_target(&target)?;
+    options.validate().map_err(|message| {
+        DocumentSessionError::new(crate::notes_export::NOTES_EXPORT_INVALID, message)
+    })?;
+    let header = crate::notes_export::NotesHeader {
+        title: session_document_title(&store, &session_id).await,
+        created_at_unix_ms: i64::try_from(now_ms()).unwrap_or(i64::MAX),
+        utc_offset_minutes: options.utc_offset_minutes.unwrap_or(0),
+    };
+    store
+        .run_snapshot_job(
+            &job_id,
+            &session_id,
+            expected_content_generation,
+            move |context| run_notes_export_job(&context, header, &target),
+        )
+        .await
+}
+
+/// [`export_session_notes_markdown`]'ın job gövdesi: worker not dosyasını iş dizinine yazar,
+/// ana process onu metin çıktısı olarak doğrular ve hedefe atomik olarak yayımlar.
+pub(crate) fn run_notes_export_job(
+    context: &SessionJobContext,
+    header: crate::notes_export::NotesHeader,
+    target: &Path,
+) -> Result<(), SessionJobOperationError> {
+    context.cancellation.check_cancelled()?;
+    let result = crate::job_worker::run_job(
+        context,
+        JobCommand::ExportNotesMarkdown {
+            header,
+            output_name: crate::notes_export::NOTES_OUTPUT_NAME.to_string(),
+        },
+        Duration::from_secs(300),
+    )?;
+    let JobResult::File(source) = result else {
+        return Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+            "Not dışa aktarma worker'ı beklenmeyen sonuç döndürdü",
+        ));
+    };
+    let source = validate_job_text_output(
+        context,
+        &source,
+        crate::notes_export::MAX_NOTES_OUTPUT_BYTES,
+    )?;
+    accept_job_output_file(context, &source, target)
+}
+
 #[tauri::command]
 pub async fn export_session_text_content(
     job_id: String,
@@ -13023,6 +13086,30 @@ async fn session_output_name_stem(store: &DocumentSessionStore, session_id: &str
     crate::output_names::output_name_stem(&file_name)
 }
 
+/// The document's name for a heading: the last component of the session's display path
+/// (never the full path), or `belge` when the session is missing.
+async fn session_document_title(store: &DocumentSessionStore, session_id: &str) -> String {
+    let display_path = store
+        .session_snapshot(session_id)
+        .await
+        .map(|snapshot| snapshot.display_path)
+        .unwrap_or_default();
+    document_title_from_display_path(&display_path)
+}
+
+fn document_title_from_display_path(display_path: &str) -> String {
+    let name = display_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if name.is_empty() {
+        "belge".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Split outputs in range order: the worker's `split_{index}_{start}.pdf` is
 /// published as `{stem}_sayfa_{start}-{end}.pdf`. The same range twice would
 /// publish two files under one name, so it is rejected before any work.
@@ -13111,6 +13198,50 @@ fn accept_job_output_set(
         .into_iter()
         .map(|entry| entry.target.to_string_lossy().into_owned())
         .collect())
+}
+
+/// A text job output: inside the job directory, not empty, at most `max_bytes`, valid UTF-8.
+/// [`validate_job_pdf_output`] reopens PDFs with PDFium and does not apply to text.
+pub(crate) fn validate_job_text_output(
+    context: &SessionJobContext,
+    source: &Path,
+    max_bytes: u64,
+) -> Result<PathBuf, SessionJobOperationError> {
+    let canonical_source = crate::job_worker::validate_output_file(context, source)?;
+    let read_failed = |error: std::io::Error| {
+        SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_OUTPUT_READ_FAILED",
+            format!("Metin job çıktısı okunamadı: {error}"),
+        )
+    };
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(
+            File::open(&canonical_source).map_err(read_failed)?,
+            max_bytes + 1,
+        ),
+        &mut bytes,
+    )
+    .map_err(read_failed)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_OUTPUT_LIMIT_EXCEEDED",
+            format!("Metin job çıktısı {max_bytes} bayt sınırını aşıyor"),
+        ));
+    }
+    if bytes.is_empty() {
+        return Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_OUTPUT_INVALID",
+            "Metin job çıktısı boş",
+        ));
+    }
+    if std::str::from_utf8(&bytes).is_err() {
+        return Err(SessionJobOperationError::failed_with_code(
+            "SESSION_JOB_OUTPUT_INVALID",
+            "Metin job çıktısı geçerli UTF-8 değil",
+        ));
+    }
+    Ok(canonical_source)
 }
 
 fn validate_job_pdf_output(
@@ -13748,6 +13879,20 @@ mod tests {
     use super::*;
     use crate::document_io::DocumentIoStage;
     use tauri::Manager;
+
+    #[test]
+    fn notes_title_is_the_display_path_file_name_only() {
+        assert_eq!(
+            document_title_from_display_path("/Volumes/Arsiv/Belgeler/rapor.pdf"),
+            "rapor.pdf"
+        );
+        assert_eq!(
+            document_title_from_display_path("D:\\Arsiv\\tez.pdf"),
+            "tez.pdf"
+        );
+        assert_eq!(document_title_from_display_path(""), "belge");
+        assert_eq!(document_title_from_display_path("/tmp/"), "belge");
+    }
 
     #[test]
     fn worker_quarantine_codes_survive_render_error_strings() {

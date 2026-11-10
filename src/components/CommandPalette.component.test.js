@@ -84,7 +84,7 @@ describeComponent("CommandPalette component behavior", () => {
 
   it("does not emit a disabled command on Enter and explains why inline", async () => {
     const { onselect } = renderPalette(developmentMac);
-    filterBy("Markdown");
+    filterBy("Süreklilik");
 
     const item = document.querySelector(".cmd-item");
     expect(item?.getAttribute("aria-disabled")).toBe("true");
@@ -94,7 +94,7 @@ describeComponent("CommandPalette component behavior", () => {
 
     expect(onselect).not.toHaveBeenCalled();
     const warning = document.getElementById(item.getAttribute("aria-describedby"));
-    expect(warning?.textContent).toContain("gerçek işlem yapılmaz");
+    expect(warning?.textContent).toContain("geçici olarak devre dışıdır");
   });
 
   it("closes on Escape", async () => {

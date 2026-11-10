@@ -225,7 +225,7 @@ fn hex_to_rgb(hex: &str) -> (u8, u8, u8) {
     }
 }
 
-fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {
+pub(crate) fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {
     format!("#{:02X}{:02X}{:02X}", r, g, b)
 }
 
@@ -570,7 +570,7 @@ fn pdf_date_utc(time: SystemTime) -> String {
 
 /// 1970-01-01'den itibaren gün sayısını proleptik Gregoryen takvim tarihine çevirir
 /// (Howard Hinnant, "chrono-Compatible Low-Level Date Algorithms", `civil_from_days`).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let day_of_era = z.rem_euclid(146_097);
@@ -697,7 +697,7 @@ fn last_annotation_has_appearance_objects(
 /// pdfium-render 0.8.37 bu durumda annotation handle'ını page object handle'ı gibi
 /// `FPDFPageObj_Get*Color`'a geçirir. O yola girmemek için AP nesnesi varsa renk
 /// görünüm akışındaki ilk path nesnesinden okunur.
-fn annotation_display_color(annotation: &PdfPageAnnotation<'_>) -> PdfColor {
+pub(crate) fn annotation_display_color(annotation: &PdfPageAnnotation<'_>) -> PdfColor {
     const FALLBACK: PdfColor = PdfColor::new(0, 0, 0, 255);
     if let Some(object) = annotation.objects().iter().next() {
         return object
