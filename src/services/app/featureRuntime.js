@@ -18,6 +18,7 @@ import {
   startSensitiveDataScanAction,
 } from "../actions.js";
 import {
+  exportSessionNotesMarkdown,
   exportSessionPageToImage,
   exportSessionTextContent,
   extractSessionPages,
@@ -27,7 +28,6 @@ import { convertAndSaveImage } from "../backend/document.js";
 import { selectViewportHighlights } from "../../utils/pdfGeometry.js";
 import { open, save } from "../platform/dialogs.js";
 import { listen } from "../platform/events.js";
-import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
 import { resolveBlankPageSize } from "./blankPageSize.js";
 import { pageMappingAfterImport } from "./pageIndexMapping.js";
 import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
@@ -36,6 +36,7 @@ import { pluginIdFromCommandId } from "./pluginCommands.js";
 import { notifyPluginExportCompleted, runPluginCustomCommand } from "./pluginHookDispatcher.js";
 import { describePluginError } from "../../pluginErrors.js";
 import { createDocumentExportController } from "./documentExportController.js";
+import { createNotesExportController } from "./notesExportController.js";
 import { createDocumentTransformController } from "./documentTransformController.js";
 import { createOcrActionController } from "./ocrActionController.js";
 import { createReadingPresentationController } from "./readingPresentationController.js";
@@ -76,6 +77,7 @@ export function createFeatureRuntime({
   onError,
   exportActions = defaultExportActions,
   blankPageActions = defaultBlankPageActions,
+  exportNotes = exportSessionNotesMarkdown,
   createExportController = createDocumentExportController,
   createSearchController: createSearch = createSearchController,
   createSensitiveDataScanController: createSensitiveScan = createSensitiveDataScanController,
@@ -181,6 +183,7 @@ export function createFeatureRuntime({
     secureRedactionController.destroy();
     sanitizationController.destroy();
     tts.destroy();
+    notesExport.destroy();
   }
 
   const featureRequestContext = () => ({
@@ -273,6 +276,24 @@ export function createFeatureRuntime({
     ...exportActions,
   });
 
+  // Notes come from the document's PDF annotations (Rust job worker, session snapshot). The
+  // canvas drawing layer (annotation.annotationsMap) is only drawn on image documents, so it is
+  // never part of a PDF's notes.
+  const notesExport = createNotesExportController({
+    getContext: () => ({
+      isPdf: documentRuntime.isPdf,
+      sessionId: documentSession.activeSessionId,
+      contentGeneration: documentSession.contentGeneration,
+      fileName: documentRuntime.fileName,
+      pageCount: viewer.pageOrder.length,
+    }),
+    saveFile: save,
+    exportNotes,
+    onToast,
+    onError,
+    onExportComplete: pluginHooks.exportCompleted,
+  });
+
   // Inserts a blank page after the viewer's current page, sized like it (blankPageSize.js).
   async function insertBlankPageAfterCurrent() {
     const sessionId = documentSession.activeSessionId;
@@ -313,20 +334,7 @@ export function createFeatureRuntime({
 
   async function exportNotesMarkdown() {
     try {
-      return await guardFeatureAction("markdown_notes_export", featureContext, async () => {
-        const { totalNotes } = buildAnnotationMarkdown({
-          fileName: documentRuntime.fileName,
-          annotationsMap: annotation.annotationsMap,
-        });
-        if (totalNotes === 0) { onToast("Dışa aktarılacak henüz not veya vurgu yok!"); return; }
-        const baseName = documentRuntime.fileName.replace(/\.[^.]+$/, "");
-        const savePath = await save({
-          title: "Notları Markdown (.md) Olarak Kaydet",
-          defaultPath: `${baseName}_Notlar.md`,
-          filters: [{ name: "Markdown Belgesi (*.md)", extensions: ["md"] }],
-        });
-        if (savePath) onToast("Notlar Markdown belgesi olarak aktarıldı!");
-      });
+      return await guardFeatureAction("markdown_notes_export", featureContext, notesExport.exportNotesMarkdown);
     } catch (error) { if (!reportUnavailable(error)) throw error; }
   }
 

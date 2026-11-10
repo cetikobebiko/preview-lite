@@ -209,6 +209,12 @@ pub enum JobCommand {
         pages: Vec<u32>,
         output_name: String,
     },
+    /// Read-only: the snapshot's annotations as a Markdown notes file in the job directory;
+    /// see `notes_export`. Cancelled cooperatively, checked before every page.
+    ExportNotesMarkdown {
+        header: crate::notes_export::NotesHeader,
+        output_name: String,
+    },
     DetectScannedPages,
     RenderOcrPage {
         page_index: u32,
@@ -450,11 +456,14 @@ pub fn run_job(
     }
     #[cfg(not(test))]
     {
+        // These commands poll the cancellation marker themselves, so a cancel lets them stop
+        // between steps before the worker is killed.
         let cooperative_prepress = matches!(
             &command,
             JobCommand::InspectPrintResources { .. }
                 | JobCommand::GenerateRgbDerivedCoveragePreview { .. }
                 | JobCommand::GenerateRgbDerivedProcessPreview { .. }
+                | JobCommand::ExportNotesMarkdown { .. }
         );
         let exchange_id = NEXT_JOB_WORKER_EXCHANGE_ID.fetch_add(1, Ordering::Relaxed);
         let request_path = job_dir.join(format!("worker-request-{exchange_id}.json"));
@@ -888,6 +897,32 @@ fn execute_command(
                 job_failed(
                     "SESSION_JOB_OUTPUT_WRITE_FAILED",
                     format!("Dışa aktarılan belge yazılamadı: {error}"),
+                )
+            })?;
+            Ok(JobResult::File(output_path))
+        }
+        JobCommand::ExportNotesMarkdown {
+            header,
+            output_name,
+        } => {
+            let output_path = checked_output_path(job_dir, &output_name)?;
+            let marker = job_dir.join(PREPRESS_CANCELLATION_MARKER);
+            let markdown =
+                crate::notes_export::export_snapshot(snapshot_path, credential, &header, || {
+                    if marker.exists() {
+                        Err(job_failed(
+                            "SESSION_JOB_WORKER_CANCELLED",
+                            "Not dışa aktarma iptal edildi",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                })?;
+            // Empty documents fail above, so no file is ever written for them.
+            fs::write(&output_path, markdown).map_err(|error| {
+                job_failed(
+                    "SESSION_JOB_OUTPUT_WRITE_FAILED",
+                    format!("Not dosyası yazılamadı: {error}"),
                 )
             })?;
             Ok(JobResult::File(output_path))
@@ -2998,6 +3033,160 @@ mod tests {
         assert_eq!(
             serde_json::to_value(DocumentExportFormat::Pptx).unwrap(),
             serde_json::json!("pptx")
+        );
+    }
+
+    fn notes_header() -> crate::notes_export::NotesHeader {
+        crate::notes_export::NotesHeader {
+            title: "notlar.pdf".to_string(),
+            created_at_unix_ms: 1_794_308_580_000,
+            utc_offset_minutes: 180,
+        }
+    }
+
+    fn export_notes(directory: &Path, snapshot: &Path) -> Result<JobResult, JobFailure> {
+        let command = JobCommand::ExportNotesMarkdown {
+            header: notes_header(),
+            output_name: crate::notes_export::NOTES_OUTPUT_NAME.to_string(),
+        };
+        // The job IPC carries commands as JSON.
+        let command = serde_json::from_str(&serde_json::to_string(&command).unwrap()).unwrap();
+        execute_command(
+            directory,
+            snapshot,
+            None,
+            "notes-job",
+            "notes-session",
+            command,
+        )
+    }
+
+    #[test]
+    fn export_notes_job_writes_markdown_and_refuses_empty_or_cancelled_jobs() {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        let output = directory.path().join(crate::notes_export::NOTES_OUTPUT_NAME);
+        fs::write(&snapshot, crate::notes_export::notes_fixture_pdf()).unwrap();
+
+        let result = export_notes(directory.path(), &snapshot).unwrap();
+        assert!(matches!(result, JobResult::File(ref path) if path == &output));
+        let markdown = fs::read_to_string(&output).unwrap();
+        assert!(markdown.starts_with("# Notlar: notlar.pdf\n\n*Oluşturulma tarihi: 2026-11-10 14:03 (UTC+03:00)*"));
+        assert!(markdown.contains("\n## Sayfa i (1)\n"));
+        assert!(markdown.contains("> Highlighted passage"));
+        assert!(markdown.contains("\n## Sayfa 1 (2)\n"));
+
+        // A document without annotations: typed error, no file.
+        fs::remove_file(&output).unwrap();
+        fs::write(&snapshot, crate::document_export::sample_pdf(0)).unwrap();
+        assert_eq!(
+            export_notes(directory.path(), &snapshot).unwrap_err().code,
+            crate::notes_export::NOTES_EXPORT_EMPTY
+        );
+        assert!(!output.exists());
+
+        // The cooperative cancellation marker stops the worker before any page; no file.
+        fs::write(&snapshot, crate::notes_export::notes_fixture_pdf()).unwrap();
+        fs::write(directory.path().join(PREPRESS_CANCELLATION_MARKER), b"").unwrap();
+        assert_eq!(
+            export_notes(directory.path(), &snapshot).unwrap_err().code,
+            "SESSION_JOB_WORKER_CANCELLED"
+        );
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn notes_export_job_reads_the_corpus_annotation_fixture_and_rejects_annotation_free_pdfs() {
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf");
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        let output = directory.path().join(crate::notes_export::NOTES_OUTPUT_NAME);
+
+        fs::copy(fixtures.join("annotations.pdf"), &snapshot).unwrap();
+        assert!(matches!(
+            export_notes(directory.path(), &snapshot).unwrap(),
+            JobResult::File(ref path) if path == &output
+        ));
+        let markdown = fs::read_to_string(&output).unwrap();
+        assert!(markdown.contains("1 açıklama, 1 sayfa."));
+        assert!(markdown.contains("\n## Sayfa 1\n\n**1. Metin notu**"));
+        assert!(markdown.contains("\nFixture note\n"));
+
+        fs::remove_file(&output).unwrap();
+        fs::copy(fixtures.join("minimal.pdf"), &snapshot).unwrap();
+        assert_eq!(
+            export_notes(directory.path(), &snapshot).unwrap_err().code,
+            crate::notes_export::NOTES_EXPORT_EMPTY
+        );
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn notes_export_job_publishes_the_validated_file_atomically_and_honours_cancellation() {
+        use crate::document_session::{run_notes_export_job, SessionJobContext};
+        let job_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+        let snapshot = job_dir.path().join("snapshot.pdf");
+        fs::write(&snapshot, crate::notes_export::notes_fixture_pdf()).unwrap();
+        let target = target_dir.path().join("Notlar.md");
+
+        let context = SessionJobContext::detached(snapshot.clone(), None, "notes-session");
+        run_notes_export_job(&context, notes_header(), &target).unwrap();
+        let published = fs::read_to_string(&target).unwrap();
+        assert_eq!(
+            published,
+            fs::read_to_string(job_dir.path().join(crate::notes_export::NOTES_OUTPUT_NAME))
+                .unwrap()
+        );
+        assert!(published.contains("Highlighted passage"));
+
+        // An annotation-free document leaves an existing target untouched.
+        fs::write(&target, "eski").unwrap();
+        fs::write(&snapshot, crate::document_export::sample_pdf(0)).unwrap();
+        let empty = run_notes_export_job(&context, notes_header(), &target).unwrap_err();
+        assert!(matches!(
+            empty,
+            SessionJobOperationError::Failed(ref failure)
+                if failure.code == crate::notes_export::NOTES_EXPORT_EMPTY
+        ));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "eski");
+
+        // A cancelled job never publishes.
+        fs::write(&snapshot, crate::notes_export::notes_fixture_pdf()).unwrap();
+        let cancelled_target = target_dir.path().join("iptal.md");
+        let cancelled = SessionJobContext::detached(snapshot, None, "notes-session");
+        cancelled.cancellation.token().cancel();
+        assert!(matches!(
+            run_notes_export_job(&cancelled, notes_header(), &cancelled_target),
+            Err(SessionJobOperationError::Cancelled(_))
+        ));
+        assert!(!cancelled_target.exists());
+    }
+
+    #[test]
+    fn text_job_output_validation_rejects_invalid_utf8_empty_and_oversized_files() {
+        use crate::document_session::{validate_job_text_output, SessionJobContext};
+        let job_dir = tempfile::tempdir().unwrap();
+        let context =
+            SessionJobContext::detached(job_dir.path().join("snapshot.pdf"), None, "notes");
+        let check = |name: &str, bytes: &[u8], max: u64| {
+            let path = job_dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            validate_job_text_output(&context, &path, max).map(drop)
+        };
+        let code = |result: Result<(), SessionJobOperationError>| match result {
+            Err(SessionJobOperationError::Failed(failure)) => failure.code,
+            other => panic!("expected a failure, got {other:?}"),
+        };
+        assert!(check("ok.md", "# Notlar\n".as_bytes(), 64).is_ok());
+        assert_eq!(code(check("bad.md", &[b'#', 0xff, 0xfe], 64)), "SESSION_JOB_OUTPUT_INVALID");
+        assert_eq!(code(check("empty.md", b"", 64)), "SESSION_JOB_OUTPUT_INVALID");
+        assert_eq!(code(check("big.md", &[b'a'; 65], 64)), "SESSION_JOB_OUTPUT_LIMIT_EXCEEDED");
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(outside.path(), "x").unwrap();
+        assert_eq!(
+            code(validate_job_text_output(&context, outside.path(), 64).map(drop)),
+            "SESSION_JOB_WORKER_PATH_REJECTED"
         );
     }
 

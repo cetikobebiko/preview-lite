@@ -42,8 +42,9 @@ session mutations (`ImportPages`, `ImportXfdf`); a source PDF chosen by the user
 is copied into the job directory by the mutation engine, never passed to the
 worker as a path. Password-protected copies (`save_session_security_copy`), optimized
 copies (`save_session_optimized_copy`), XFDF
-exports and embedded-image exports are snapshot jobs that publish files outside
-the session; `create_pdf_from_images` writes a new PDF from images without
+exports, embedded-image exports and Markdown notes (`export_session_notes_markdown`,
+built in Rust from the snapshot's PDF annotations; the webview sends no note text)
+are snapshot jobs that publish files outside the session; `create_pdf_from_images` writes a new PDF from images without
 opening any PDF.
 
 Bu envanter `src-tauri/src/**/*.rs` altındaki bütün `#[tauri::command]`
@@ -148,6 +149,7 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `inspect_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy_schema_version: String` | `src-tauri/src/sanitization.rs`, immutable session snapshot + ephemeral `InspectDocumentSanitization` worker | `sanitizationController` (feature `experimental`/enabled; Belge menüsü ve `open-sanitization` komutu) | Read-only typed `SessionJobOutcome<SanitizationInspectionReport>`; input digest + registry version bağlıdır; raw input/working/snapshot path, credential, output ve target kabul etmez. |
 | `execute_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy: SanitizationPolicy; target_path: String` | `src-tauri/src/sanitization_publication.rs` | `sanitizationController` (feature `experimental`/enabled) | Versioned supported-control policy ve explicit target alır; raw input/working/snapshot path veya legacy boolean option kabul etmez. Actual immutable snapshot üzerinde inspection/policy revalidation → private transform worker → independent verifier worker → mandatory digest gate → target TOCTOU preflight → atomic publication uygular. Typed commit/recovery metadata `SessionJobOutcome` failure surface'ında korunur. |
 | `scan_sensitive_data` | `job_id: String; session_id: String; expected_content_generation: u64; patterns: Vec<ScanPatternSpec>` (`{kind: "regex" \| "builtin", value}`; built-in ids: `phone`, `email`, `credit-card`, `ssn`, `date`) | `src-tauri/src/redaction.rs`, `src-tauri/src/redaction/patterns.rs`, session-job (Job-Worker Protocol v3) | evet | `src/services/backend/redaction.js` (`startSensitiveDataScanAction` → cancellable handle → job worker protocol v3) |
+| `export_session_notes_markdown` | `job_id: String; session_id: String; expected_content_generation: u64; target_path: String; options: NotesExportOptions` (`{ utcOffsetMinutes?: -720…840 }`, bilinmeyen alan reddedilir) | `src-tauri/src/document_session.rs`, session-job: `reject_private_target` + `.md`/`.txt` hedef → job worker `ExportNotesMarkdown` (`notes_export.rs`, PDFium) → `validate_job_text_output` (UTF-8, ≤ 16 MiB) → `accept_job_output_file` (atomik). Not yoksa `NOTES_EXPORT_EMPTY`, dosya yazılmaz | evet | `src/services/app/notesExportController.js` through `session.js` (`exportSessionNotesMarkdown`, iptal edilebilir handle) |
 
 ## Eşleşme sınıfları
 

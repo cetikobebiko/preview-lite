@@ -30,6 +30,7 @@ pub mod lopdf_compat;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod macos_helper;
 pub mod manipulation;
+pub mod notes_export;
 pub mod ocr;
 pub(crate) mod output_names;
 pub mod page_marks;
@@ -1511,6 +1512,7 @@ pub fn run() {
             document_session::merge_session_pdfs,
             document_session::compare_session_pdf,
             document_session::export_session_document,
+            document_session::export_session_notes_markdown,
             plugins::inspect_plugin_package,
             plugins::install_plugin_package,
             plugins::grant_plugin_consent,

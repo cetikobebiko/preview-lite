@@ -2345,6 +2345,36 @@
         "verificationType": "session_job_assertion",
         "notes": "Encrypted active session (encrypted.pdf via open_encrypted_test_session) merges with the snapshot credential; user-password additional inputs are not covered"
       }
+    },
+    {
+      "featureId": "markdown_notes_export",
+      "fixtureId": "core-annotations",
+      "testId": "rust_unit:job_worker::notes_export_job_reads_the_corpus_annotation_fixture_and_rejects_annotation_free_pdfs",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/job_worker.rs",
+        "verificationType": "job_worker_notes_markdown",
+        "notes": "ExportNotesMarkdown job command (in-process test executor, real PDFium) writes notes-output.md with the fixture's Text annotation under its page heading"
+      }
+    },
+    {
+      "featureId": "markdown_notes_export",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:job_worker::notes_export_job_reads_the_corpus_annotation_fixture_and_rejects_annotation_free_pdfs",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/job_worker.rs",
+        "verificationType": "job_worker_notes_markdown_empty",
+        "notes": "An annotation-free PDF returns NOTES_EXPORT_EMPTY and writes no output file"
+      }
     }
   ],
   "features": [
@@ -3239,22 +3269,27 @@
     {
       "id": "markdown_notes_export",
       "name": "Markdown Notes Export",
-      "statusObservation": "mock",
-      "fixtureIds": [],
-      "testIds": [],
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-annotations",
+        "core-minimal"
+      ],
+      "testIds": [
+        "rust_unit:job_worker::notes_export_job_reads_the_corpus_annotation_fixture_and_rejects_annotation_free_pdfs"
+      ],
       "dimensions": {
-        "positive": "planned",
-        "negative": "not_covered",
+        "positive": "covered",
+        "negative": "covered",
         "malformed": "not_applicable",
-        "encrypted": "not_applicable",
-        "unicode": "not_applicable",
+        "encrypted": "not_covered",
+        "unicode": "not_covered",
         "persistence": "not_applicable",
-        "worker": "not_covered"
+        "worker": "partial"
       },
       "platformEvidence": {
-        "macos": "not_run",
-        "linux": "not_run",
-        "windows": "not_run"
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
       }
     },
     {
@@ -4142,12 +4177,6 @@
       "plannedPrompt": "11V-B"
     },
     {
-      "id": "planned:markdown_notes_export::test_markdown_notes_extraction_pipeline",
-      "kind": "integration_test",
-      "state": "planned",
-      "plannedPrompt": "11I-B"
-    },
-    {
       "id": "planned:atomic_save::test_atomic_save_in_place_roundtrip",
       "kind": "integration_test",
       "state": "planned",
@@ -4386,6 +4415,12 @@
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/plugins/host_api.rs"
+    },
+    {
+      "id": "rust_unit:job_worker::notes_export_job_reads_the_corpus_annotation_fixture_and_rejects_annotation_free_pdfs",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/job_worker.rs"
     }
   ],
   "gaps": [
@@ -4468,16 +4503,6 @@
       "plannedPrompt": "11I-B",
       "releaseBlocking": false,
       "description": "Implement searchable PDF export with invisible text layer"
-    },
-    {
-      "id": "gap-markdown-notes-export",
-      "featureId": "markdown_notes_export",
-      "dimension": "positive",
-      "severity": "low",
-      "requiredLayer": "integration",
-      "plannedPrompt": "11I-B",
-      "releaseBlocking": false,
-      "description": "Implement markdown notes export from annotations"
     },
     {
       "id": "gap-macos-vision-ocr-runtime",

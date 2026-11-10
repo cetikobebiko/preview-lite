@@ -557,6 +557,18 @@ export const CONTRACTS = Object.freeze({
     format: Object.freeze({ type: "string", enum: Object.freeze(["docx", "pptx", "html", "rtf", "md"]) }),
     targetPath: stringType,
   }),
+  // Notes from the document's PDF annotations, read with PDFium in the job worker; the target
+  // (.md/.txt) is published atomically. Options carry no free text: only the time zone offset
+  // of the "created at" line.
+  exportSessionNotesMarkdown: command("export_session_notes_markdown", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    targetPath: stringType,
+    options: objectOf({}, {
+      utcOffsetMinutes: Object.freeze({ type: "number", integer: true, min: -720, max: 840 }),
+    }),
+  }),
   saveSessionSecurityCopy: command("save_session_security_copy", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,

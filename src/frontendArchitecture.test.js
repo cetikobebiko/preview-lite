@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -128,9 +128,13 @@ describe("frontend architecture acceptance gates", () => {
     const featureRuntime = read("src/services/app/featureRuntime.js");
     const documentLifecycle = read("src/services/app/documentLifecycleController.js");
     const presentation = read("src/services/app/presentationController.js");
-    expect(documentRuntime).not.toMatch(/exportSessionPageToImage|extractSessionPages|convertAndSaveImage|burnAnnotationsToPdf|buildAnnotationMarkdown/);
+    expect(documentRuntime).not.toMatch(/exportSessionPageToImage|extractSessionPages|convertAndSaveImage|burnAnnotationsToPdf|exportSessionNotesMarkdown/);
     expect(featureRuntime).toMatch(/exportSessionPageToImage/);
-    expect(featureRuntime).toMatch(/buildAnnotationMarkdown/);
+    // Notes are built in Rust from the PDF's annotations; the frontend builds no Markdown.
+    expect(featureRuntime).toMatch(/exportSessionNotesMarkdown/);
+    expect(featureRuntime).toMatch(/createNotesExportController/);
+    expect(featureRuntime).not.toMatch(/buildAnnotationMarkdown|annotationMarkdown/);
+    expect(existsSync(new URL("./services/app/annotationMarkdown.js", import.meta.url))).toBe(false);
     expect(documentLifecycle).toContain("let passwordAttempt = null");
     expect(documentLifecycle).toContain("passwordAttempt.attemptId !== attemptId");
     expect(presentation).not.toMatch(/let\s+attemptId|attemptId\s*\+\+|\+\+attemptId|attemptSequence/);
