@@ -275,7 +275,7 @@ const RAW_FEATURES = [
     status: "experimental",
     enabled: true,
     buildProfiles: ["development"],
-    warning: "Yalnız geliştirme derlemesinde açıktır; üretim derlemesinde arka uç kapısı kapalıdır. Eklentiler belgeye, dosya yollarına, parolalara veya içeriğe erişemez; yalnız günlük yazabilir (plugin:log) ve bildirim gösterebilir (ui:notification). Kancalar henüz uygulama olaylarına bağlı değildir, yalnız elle çalıştırılır.",
+    warning: "Yalnız geliştirme derlemesinde açıktır; üretim derlemesinde arka uç kapısı kapalıdır. Eklentiler belgeye, dosya yollarına, parolalara veya içeriğe erişemez; yalnız günlük yazabilir (plugin:log) ve bildirim gösterebilir (ui:notification). Kancalar belge açma, dışa aktarma/bölme/birleştirme/küçültme ve komut paleti olaylarında çalışır; yük yalnız sayfa sayısı ve biçim içerir.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#plugins",
   },

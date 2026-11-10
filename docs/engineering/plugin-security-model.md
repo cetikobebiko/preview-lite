@@ -117,17 +117,18 @@ The Rhai engine is instantiated using raw minimal constructor `Engine::new_raw()
   - `plugin_log(msg)`: Requires `plugin:log` permission. Max 64 KB total accumulated across calls.
   - `ui_notify(msg)`: Requires `ui:notification` permission. Max 4 KB per call, max 32 notifications total.
 - **Structured Output**: Result is wrapped in canonical `PluginHookResultV1 { schema_version: 1, text, logs, notifications, warnings }`.
+- **Hook argument (5b)**: the hook function receives the validated payload as a Rhai object map (`payload.page_count`, `payload.format`), not a JSON string. A hook declared without a parameter is called without it; the arity is read from the AST, so a function missing *inside* the hook is reported as a script error instead of silently retrying with no argument. Numbers are turned into text with `.to_string()` (string `+` integer is not in the sandbox's packages, and no package was added).
 
 ---
 
 ## 6. Development-Build Usage, Example Package & Proof (5a)
 
 ### Scope
-- Open only in development builds. Hooks are **not** wired to application events yet (that is 5b); the Plugin Manager runs a declared hook manually with a fixed, schema-valid sample payload (`on_custom_command` → `{"command_name":"manual_run","parameters":{}}`, `on_document_open` → `{"page_count":1}`, `on_export_complete` → `{"export_format":"pdf","success":true,"page_count":1}`). No payload carries document content, paths or credentials.
+- Open only in development builds. Since 5b the hooks run on application events (§7); the Plugin Manager's manual run remains a developer tool. No payload carries document content, paths or credentials.
 - Host APIs remain exactly `plugin_log` and `ui_notify`. Execution results (text, log lines, notifications) are shown in the Plugin Manager's execution box.
 
 ### Example package
-`docs/engineering/examples/plugins/hello-log/` (`manifest.json` + `main.rhai`) uses both permissions and declares all three hooks. `on_custom_command` writes one log line (`hello-log: on_custom_command <payload>`), one notification (`Merhaba! hello-log eklentisi çalıştı.`) and returns `hello-log tamam`. A `.DS_Store` created by Finder inside that folder makes the package invalid (exactly-two-files rule); delete it before installing.
+`docs/engineering/examples/plugins/hello-log/` (`manifest.json` + `main.rhai`) uses both permissions and declares all three hooks. `on_custom_command` writes one log line (`hello-log: on_custom_command schema_version=1`), one notification (`Merhaba! hello-log eklentisi çalıştı.`) and returns `hello-log tamam`; `on_document_open` notifies `hello-log: belge açıldı, N sayfa.`; `on_export_complete` notifies `hello-log: dışa aktarma tamamlandı (FORMAT, N sayfa).` A `.DS_Store` created by Finder inside that folder makes the package invalid (exactly-two-files rule); delete it before installing.
 
 ### Permission proof (scenario → test)
 | Scenario | Tests |
@@ -139,4 +140,59 @@ The Rhai engine is instantiated using raw minimal constructor `Engine::new_raw()
 | Unconsented plugin cannot be enabled or run | `plugins::tests::test_unconsented_plugin_cannot_be_enabled_or_executed` (incl. hand-edited `enabled=true` registry and stale policy version), `plugins::tests::test_plugin_installation_consent_and_persistence_lifecycle` |
 | Gate closed → only restrictive commands | `plugins::tests::test_gate_closed_after_install_allows_only_restrictive_commands` (real installed plugin), `plugins::tests::test_disabled_*` (11 tests) |
 | Gate per build profile | `plugins::tests::test_gate_decision_closed_for_production_profile`, `plugins::tests::test_gate_constant_follows_debug_assertions`, `plugins::tests::test_debug_build_gate_is_open` / `plugins::tests::test_release_build_gate_is_closed` (cfg branches), `src/pluginGateParity.test.js` |
-| Example end-to-end | `plugin_hello_log_example::hello_log_example_runs_on_custom_command_through_real_worker` |
+| Example end-to-end (all three hooks) | `plugin_hello_log_example::hello_log_example_runs_on_custom_command_through_real_worker` |
+| Payload outside schema V1 rejected (host, before worker) | `plugins::payload::tests::*` (7), `plugins::tests::test_invalid_payload_rejected_before_worker_start`, `plugin_hello_log_example::hello_log_rejects_payloads_outside_schema_v1` |
+| Payload outside schema V1 rejected (worker) | `plugins::host_api::payload_argument_tests::worker_side_schema_check_runs_before_script`, `plugin_worker_process::test_worker_process_rejects_invalid_hook_payload` |
+
+---
+
+## 7. Hook Payload Schema V1 & Application Event Wiring (5b)
+
+### Payload schema V1 (`src-tauri/src/plugins/payload.rs`)
+Every hook has one typed struct with `#[serde(deny_unknown_fields)]`:
+
+| Hook | Payload | Rules |
+|---|---|---|
+| `on_document_open` | `{"schema_version":1,"page_count":N}` | `N` u32 ≥ 1 |
+| `on_export_complete` | `{"schema_version":1,"format":F,"page_count":N}` | `F` ∈ `PluginExportFormatV1` = `pdf, docx, pptx, html, rtf, md, txt, png, jpeg, svg, webp`; `N` u32 ≥ 1 |
+| `on_custom_command` | `{"schema_version":1}` | — |
+
+- `schema_version` must be exactly `CURRENT_PLUGIN_HOOK_PAYLOAD_SCHEMA_VERSION` (1).
+- Unknown field, missing field, wrong type, the payload of another hook (e.g. the export payload sent to `on_document_open` has the unknown field `format`), duplicate keys, a non-object payload or a wrong `schema_version` → `PLUGIN_PAYLOAD_INVALID` (new code; previously payload errors reused `PLUGIN_MANIFEST_INVALID`).
+- **Host**: `PluginState::start_execution` parses the raw JSON text into the struct right after the hook name is resolved — before the plugin lookup, registration and any worker spawn. The worker receives the canonical re-serialization.
+- **Worker**: `host_api::execute_plugin_script` (run by `--run-plugin-worker`) applies the size/depth limits and the same typed parse before compiling the script.
+- **Frontend mirror**: `src/services/app/pluginHookPayloads.js` (same fields, same enum; `pluginHookPayloads.test.js` compares the enum and the hook list with the Rust sources).
+- `page_count` meaning for `on_export_complete`: pages of the open document written to the output (selected pages for export/split; the whole open document for merge and optimize — the other merged files are not counted, their page count is not known to the frontend).
+- No payload carries a path, file name, text, password or other document content. Payloads are not signed or bound to a session; the plugin cannot tell a real event from a manual run.
+
+### Dispatcher (`src/services/app/pluginHookDispatcher.js`)
+- Targets: `list_installed_plugins` at dispatch time, filtered to `enabled && consent_granted && hooks ∋ hook`.
+- Sequential: one global FIFO queue; at most one active execution overall, hence at most one per plugin. Queue bounded (32); a newer `on_document_open` replaces queued ones for the same plugin.
+- Fire-and-forget: app flows call `notifyPluginDocumentOpened` / `notifyPluginExportCompleted`, which return synchronously, defer all work to a microtask and swallow every error. No flow awaits a plugin.
+- Stale results: `on_document_open` captures `{sessionId, contentGeneration}`. A queued run for a document that is no longer current is skipped; a running one is cancelled (best effort) and its result recorded as `DISCARDED` (no toast).
+- Gate: frontend `plugin_system` not runnable, or `get_plugin_feature_status` closed / failing → nothing runs, nothing is shown.
+- Results: `notifications` → toast, prefixed `Eklenti (<ad>): …`, through a plugin-only limiter (one toast per 1.5 s, at most 4 waiting, the rest dropped; they stay in the list). The app's toast had no rate limit of its own. `logs`, `warnings`, `text` and errors → Plugin Manager "Son yürütmeler" list (last 25, in memory). Errors of automatic hooks appear only in that list; manual runs (Plugin Manager, palette command) also report them (modal message / toast).
+
+### Event wiring
+| Hook | Flow | Where | format / page_count |
+|---|---|---|---|
+| `on_document_open` | PDF opened and committed, page count known | `documentOpenController` `afterPdfCommit` (via `documentRuntime` `onDocumentOpened`) | — / probe page count |
+| `on_export_complete` | Export dialog → Görsel (pages / embedded images) | `ExportModal.svelte` | `png`/`jpeg` (embedded → `png`) / selected pages |
+| | Export dialog → Metin | `ExportModal.svelte` | `md`/`txt` / selected pages |
+| | Export dialog → Belge | `ExportModal.svelte` | `docx`/`pptx`/`html`/`rtf`/`md` / selected pages |
+| | Palette "Aktif sayfayı … aktar" | `documentExportController.exportCurrentPageImage` | `svg`/`png`/`jpeg`/`webp` / 1 |
+| | Edited-PDF export (`featureRuntime.exportPdfStructure`; no UI entry calls it today) | `documentExportController.exportPdfStructure` | `pdf` / page order length |
+| | Toolbar "Görseli dönüştür" (image file open) | `documentExportController.exportImage` | `webp`/`png`/`jpeg`/`pdf` / 1 |
+| | Palette split (`split-pdf`) | `documentExportController.splitPdf` | `pdf` / extracted pages |
+| | Belge Araçları → Böl | `MergeSplitModal.svelte` | `pdf` / pages in the ranges |
+| | Belge Araçları → Birleştir | `MergeSplitModal.svelte` | `pdf` / open document pages |
+| | Palette merge (`merge-pdf`) | `documentTransformController.mergePdf` | `pdf` / open document pages |
+| | Dosya boyutunu küçült | `OptimizeModal.svelte` | `pdf` / open document pages |
+| `on_custom_command` | Command palette "Eklenti: <ad>" (featureId `plugin_system`) | `pluginCommands.js` + `featureRuntime` command router | — |
+
+Not wired (deliberately, outside "export, split, merge, optimize"): printing, Görsellerden PDF, XFDF export, security copy, sanitization, secure redaction, Markdown notes export (that flow does not write a file today), image-file open (no PDF page count).
+
+Palette commands are derived from `installedPlugins` + `pluginBackendGate`; enabling/disabling in the Plugin Manager refreshes `installedPlugins`, so the command appears/disappears at once. `App.svelte` loads both once at mount when the feature is runnable (`primePluginCommands`).
+
+### Plugin Manager (developer tool)
+The manual run builds the payload from the selected hook's schema (number inputs, format select, `schema_version` editable), shows the JSON, validates it with the frontend mirror and sends it through the dispatcher (`origin: "manual"`), so it passes the same host and worker validation.

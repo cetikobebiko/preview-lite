@@ -32,6 +32,9 @@ import { resolveBlankPageSize } from "./blankPageSize.js";
 import { pageMappingAfterImport } from "./pageIndexMapping.js";
 import { toPhysicalPageIndex } from "./viewerNavigationModel.js";
 import { createCommandActionRouter } from "./commandActionRouter.js";
+import { pluginIdFromCommandId } from "./pluginCommands.js";
+import { notifyPluginExportCompleted, runPluginCustomCommand } from "./pluginHookDispatcher.js";
+import { describePluginError } from "../../pluginErrors.js";
 import { createDocumentExportController } from "./documentExportController.js";
 import { createDocumentTransformController } from "./documentTransformController.js";
 import { createOcrActionController } from "./ocrActionController.js";
@@ -79,6 +82,7 @@ export function createFeatureRuntime({
   createSecureRedactionController: createSecureRedaction = createSecureRedactionController,
   createSanitizationController: createSanitization = createSanitizationController,
   listenToEvent = listen,
+  pluginHooks = Object.freeze({ runCustomCommand: runPluginCustomCommand, exportCompleted: notifyPluginExportCompleted }),
 }) {
   const featureContext = getRuntimeFeatureContext();
   const featureUi = (featureId) => getFeaturePresentation(featureId, featureContext);
@@ -232,6 +236,7 @@ export function createFeatureRuntime({
     getContext: () => ({
       sessionId: documentSession.activeSessionId,
       contentGeneration: documentSession.contentGeneration,
+      pageCount: viewer.pageOrder.length,
     }),
     // Only used to refuse the open document's own file as the merge target.
     getDocumentPath: () => documentRuntime.activeDisplayPath,
@@ -244,6 +249,7 @@ export function createFeatureRuntime({
     reportUnavailable,
     onToast,
     onError,
+    onExportComplete: pluginHooks.exportCompleted,
   });
   const documentExportController = createExportController({
     getContext: () => ({
@@ -263,6 +269,7 @@ export function createFeatureRuntime({
     requestInput: (options) => asyncPrompt.request(options),
     onToast,
     onError,
+    onExportComplete: pluginHooks.exportCompleted,
     ...exportActions,
   });
 
@@ -323,7 +330,7 @@ export function createFeatureRuntime({
     } catch (error) { if (!reportUnavailable(error)) throw error; }
   }
 
-  const commandRouter = createCommandActionRouter({
+  const baseCommandRouter = createCommandActionRouter({
     getCommand: getCommandById,
     guard: guardFeatureAction,
     featureContext,
@@ -361,6 +368,30 @@ export function createFeatureRuntime({
       "merge-pdf": transform.mergePdf,
       "reset-zoom": viewerRuntime.navigation.resetZoom,
     },
+  });
+
+  // "Eklenti: <ad>" palette commands run the plugin's on_custom_command. User-started,
+  // so a failure is shown as a toast (automatic hooks only log to the Plugin Manager).
+  async function dispatchCommand(commandId) {
+    const pluginId = pluginIdFromCommandId(commandId);
+    if (!pluginId) return await baseCommandRouter.dispatch(commandId);
+    try {
+      await guardFeatureAction("plugin_system", featureContext, () => {
+        pluginHooks.runCustomCommand(pluginId, {
+          onError: (error) => onToast(`Eklenti komutu başarısız: ${describePluginError(error)}`),
+        });
+      });
+      return { status: "handled" };
+    } catch (error) {
+      if (!reportUnavailable(error)) throw error;
+      return { status: "unavailable" };
+    }
+  }
+
+  const commandRouter = Object.freeze({
+    dispatch: dispatchCommand,
+    handleEvent: (event) => dispatchCommand(event?.detail),
+    commandIds: baseCommandRouter.commandIds,
   });
 
   const secureRedaction = Object.freeze({

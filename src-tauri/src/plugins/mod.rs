@@ -6,6 +6,7 @@ pub mod install;
 pub mod limits;
 pub mod manifest;
 pub mod path_security;
+pub mod payload;
 pub mod registry;
 pub mod worker;
 
@@ -366,15 +367,6 @@ impl PluginState {
             .to_wire());
         }
 
-        let parsed_payload: serde_json::Value =
-            serde_json::from_str(payload_json).map_err(|e| {
-                PluginError::new(
-                    PluginErrorCode::PluginManifestInvalid,
-                    format!("Kanca yükü geçerli JSON değil: {}", e),
-                )
-                .to_wire()
-            })?;
-
         let hook = match hook_name {
             "on_document_open" => PluginHook::OnDocumentOpen,
             "on_custom_command" => PluginHook::OnCustomCommand,
@@ -387,6 +379,13 @@ impl PluginState {
                 .to_wire());
             }
         };
+
+        // Payload schema V1: typed per hook, unknown fields / wrong hook / wrong
+        // schema_version rejected here, before any worker starts. The worker gets the
+        // canonical re-serialization and validates it again.
+        let parsed_payload = payload::PluginHookPayloadV1::parse_json(hook, payload_json)
+            .map_err(|e| e.to_wire())?
+            .to_value();
 
         // Check if plugin is installed, consented, and enabled
         let plugin = {
@@ -1138,7 +1137,7 @@ mod tests {
 
         // Without plugin:log permission -> Error
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
         let err = host_api::execute_plugin_script(
             script,
             PluginHook::OnCustomCommand,
@@ -1274,24 +1273,26 @@ mod tests {
     #[test]
     fn test_hook_document_open_has_no_file_name_leak() {
         // Valid payload
-        let valid_payload = serde_json::json!({ "page_count": 5 });
+        let valid_payload = serde_json::json!({ "schema_version": 1, "page_count": 5 });
         assert!(
             host_api::validate_hook_payload(PluginHook::OnDocumentOpen, &valid_payload).is_ok()
         );
 
         // Forbidden fields like file_name, file_path, session_id must be rejected
-        let leaked_payload = serde_json::json!({ "page_count": 5, "file_name": "secret.pdf" });
+        let leaked_payload =
+            serde_json::json!({ "schema_version": 1, "page_count": 5, "file_name": "secret.pdf" });
         let err = host_api::validate_hook_payload(PluginHook::OnDocumentOpen, &leaked_payload)
             .unwrap_err();
-        assert_eq!(err.code, PluginErrorCode::PluginManifestInvalid);
+        assert_eq!(err.code, PluginErrorCode::PluginPayloadInvalid);
     }
 
     #[test]
     fn test_hook_document_open_rejects_unexpected_fields() {
-        let bad_payload = serde_json::json!({ "page_count": 5, "credential": "password" });
+        let bad_payload =
+            serde_json::json!({ "schema_version": 1, "page_count": 5, "credential": "password" });
         let err =
             host_api::validate_hook_payload(PluginHook::OnDocumentOpen, &bad_payload).unwrap_err();
-        assert_eq!(err.code, PluginErrorCode::PluginManifestInvalid);
+        assert_eq!(err.code, PluginErrorCode::PluginPayloadInvalid);
     }
 
     #[test]
@@ -1359,7 +1360,7 @@ mod tests {
             }
         "#;
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
         let ok = host_api::execute_plugin_script(
             script,
             PluginHook::OnCustomCommand,
@@ -1380,7 +1381,7 @@ mod tests {
             }
         "#;
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
         let ok = host_api::execute_plugin_script(
             script,
             PluginHook::OnCustomCommand,
@@ -1401,7 +1402,7 @@ mod tests {
             }
         "#;
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        let payload = serde_json::json!({ "command_name": "test", "parameters": {} });
+        let payload = serde_json::json!({ "schema_version": 1 });
         let err = host_api::execute_plugin_script(
             script,
             PluginHook::OnCustomCommand,
@@ -1722,7 +1723,7 @@ mod tests {
         )
         .unwrap();
 
-        let payload = r#"{"command_name":"x","parameters":{}}"#;
+        let payload = r#"{"schema_version":1}"#;
         let err = state
             .start_execution("tamper-target", "on_custom_command", payload, "exec-t1")
             .await
@@ -1800,6 +1801,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_invalid_payload_rejected_before_worker_start() {
+        let (state, _dir) = setup_enabled_state_with_temp_dir();
+        install_test_plugin(&state, "payload-target", true).await;
+
+        let cases = [
+            // unknown field
+            (
+                "on_document_open",
+                r#"{"schema_version":1,"page_count":2,"file_name":"a.pdf"}"#,
+            ),
+            // payload of another hook
+            ("on_document_open", r#"{"schema_version":1}"#),
+            (
+                "on_custom_command",
+                r#"{"schema_version":1,"page_count":2}"#,
+            ),
+            // wrong schema_version
+            ("on_custom_command", r#"{"schema_version":2}"#),
+            ("on_document_open", r#"{"schema_version":0,"page_count":2}"#),
+            // old 5a sample shape
+            (
+                "on_custom_command",
+                r#"{"command_name":"x","parameters":{}}"#,
+            ),
+            // not JSON / not an object
+            ("on_custom_command", "{]}"),
+            ("on_custom_command", "[]"),
+        ];
+        for (i, (hook, payload)) in cases.iter().enumerate() {
+            let exec_id = format!("exec-p{i}");
+            let err = state
+                .start_execution("payload-target", hook, payload, &exec_id)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                err.code, "PLUGIN_PAYLOAD_INVALID",
+                "{hook} {payload}: {err:?}"
+            );
+            // Rejected before registration: no status, plugin not busy.
+            assert_eq!(
+                state.get_execution_status(&exec_id).await.unwrap_err().code,
+                "PLUGIN_EXECUTION_NOT_FOUND"
+            );
+        }
+        assert!(
+            !state
+                .execution_registry
+                .is_plugin_busy("payload-target")
+                .await
+        );
+        // An invalid payload is a caller error, not tampering: plugin stays enabled.
+        assert!(entry(&state, "payload-target").await.enabled);
+    }
+
+    #[tokio::test]
     async fn test_undeclared_hook_rejected() {
         let (state, _dir) = setup_enabled_state_with_temp_dir();
         install_test_plugin(&state, "hook-target", true).await;
@@ -1809,7 +1865,7 @@ mod tests {
             .start_execution(
                 "hook-target",
                 "on_export_complete",
-                r#"{"export_format":"png","success":true}"#,
+                r#"{"schema_version":1,"format":"png","page_count":1}"#,
                 "exec-h1",
             )
             .await
@@ -1839,7 +1895,7 @@ mod tests {
     async fn test_unconsented_plugin_cannot_be_enabled_or_executed() {
         let (state, _dir) = setup_enabled_state_with_temp_dir();
         install_test_plugin(&state, "no-consent", false).await;
-        let payload = r#"{"command_name":"x","parameters":{}}"#;
+        let payload = r#"{"schema_version":1}"#;
 
         let err = state
             .set_plugin_enabled("no-consent", true)
@@ -1890,7 +1946,7 @@ mod tests {
             .start_execution(
                 "off-target",
                 "on_custom_command",
-                r#"{"command_name":"x","parameters":{}}"#,
+                r#"{"schema_version":1}"#,
                 "exec-d1",
             )
             .await
@@ -1945,7 +2001,7 @@ mod tests {
                 .start_execution(
                     "gate-target",
                     "on_custom_command",
-                    r#"{"command_name":"x","parameters":{}}"#,
+                    r#"{"schema_version":1}"#,
                     "exec-g1"
                 )
                 .await

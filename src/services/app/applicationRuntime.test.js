@@ -24,6 +24,7 @@ describe("applicationRuntime", () => {
     const asyncPrompt = { request: vi.fn(), cancel: vi.fn(() => calls.push("prompt-cancel")) };
     const presentationController = { showToast: vi.fn(), setError: vi.fn(), destroy: vi.fn(() => calls.push("presentation-stop")) };
     const mounted = [];
+    const pluginHookBindings = { configure: vi.fn(), prime: vi.fn(async () => {}) };
 
     const runtime = createApplicationRuntime({
       viewer: { pageOrder: [], activeImageSourcePath: "" },
@@ -35,9 +36,18 @@ describe("applicationRuntime", () => {
       createLifecycleController: () => lifecycle,
       createWindowController: () => windowLifecycle,
       createKeyboard: () => keyboard,
+      pluginHookBindings,
     });
 
+    // Plugin hooks get the live document identity and the app toast; commands load on mount.
+    expect(pluginHookBindings.configure).toHaveBeenCalledOnce();
+    const binding = pluginHookBindings.configure.mock.calls[0][0];
+    expect(binding.getDocumentContext()).toEqual({ sessionId: null, contentGeneration: 5 });
+    expect(binding.showToast).toBe(presentationController.showToast);
+    expect(pluginHookBindings.prime).not.toHaveBeenCalled();
+
     const cleanup = runtime.mount();
+    expect(pluginHookBindings.prime).toHaveBeenCalledOnce();
     expect(typeof cleanup).toBe("function");
     cleanup();
     await vi.waitFor(() => expect(viewerRuntime.deactivatePdf).toHaveBeenCalledOnce());

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
 const dialogMocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -15,6 +15,8 @@ const backendMocks = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => dialogMocks);
 vi.mock("../services/backend/index.js", () => backendMocks);
+const pluginHookMocks = vi.hoisted(() => ({ notifyPluginExportCompleted: vi.fn() }));
+vi.mock("../services/app/pluginHookDispatcher.js", () => pluginHookMocks);
 
 import ExportModal from "./ExportModal.svelte";
 
@@ -322,5 +324,65 @@ describe("ExportModal print layout", () => {
     await waitFor(() => expect(backendMocks.printSessionPdf).toHaveBeenCalled());
     const layout = backendMocks.printSessionPdf.mock.calls[0][3];
     expect(layout.mode).toEqual({ kind: "poster", percent: 200, overlapPoints: 72, cutMarks: true });
+  });
+});
+
+describe("ExportModal plugin on_export_complete", () => {
+  const originalAnimate = Element.prototype.animate;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
+  });
+
+  afterEach(() => {
+    Element.prototype.animate = originalAnimate;
+  });
+
+  async function exportAs(tab, select, value, range = "1-2") {
+    render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 3, onsuccess: vi.fn(), onclose: vi.fn() } });
+    await fireEvent.click(screen.getByText(tab));
+    if (select) await fireEvent.change(screen.getByLabelText(select), { target: { value } });
+    await fireEvent.input(screen.getByLabelText(/Sayfa Aralığı/), { target: { value: range } });
+    await fireEvent.click(screen.getByText("Dışa Aktar", { selector: "button" }));
+  }
+
+  it.each(["docx", "pptx", "html", "rtf", "md"])("reports a %s document export with its page count", async (format) => {
+    dialogMocks.save.mockResolvedValue(`/out/x.${format}`);
+    backendMocks.exportSessionDocument.mockResolvedValue(null);
+    await exportAs("Belge", "Belge Formatı", format);
+    await waitFor(() => expect(pluginHookMocks.notifyPluginExportCompleted).toHaveBeenCalledWith(format, 2));
+  });
+
+  it("reports text exports as md or txt", async () => {
+    dialogMocks.save.mockResolvedValue("/out/x.md");
+    backendMocks.exportSessionTextToFile.mockResolvedValue(null);
+    await exportAs("Metin (StExt)", null, null, "1");
+    await waitFor(() => expect(pluginHookMocks.notifyPluginExportCompleted).toHaveBeenCalledWith("md", 1));
+  });
+
+  it("reports image exports with the chosen image format", async () => {
+    dialogMocks.open.mockResolvedValue("/out");
+    backendMocks.exportSessionPagesAsImages.mockResolvedValue(null);
+    await exportAs("Resim (Görsel)", "Format", "jpeg", "1-3");
+    await waitFor(() => expect(pluginHookMocks.notifyPluginExportCompleted).toHaveBeenCalledWith("jpeg", 3));
+  });
+
+  it("does not report a failed or cancelled export, nor printing", async () => {
+    dialogMocks.save.mockResolvedValueOnce(null);
+    await exportAs("Belge", "Belge Formatı", "docx");
+    await waitFor(() => expect(dialogMocks.save).toHaveBeenCalled());
+    cleanup();
+    dialogMocks.save.mockResolvedValue("/out/x.docx");
+    backendMocks.exportSessionDocument.mockRejectedValue(new Error("disk dolu"));
+    await exportAs("Belge", "Belge Formatı", "docx");
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    cleanup();
+    backendMocks.printSessionPdf.mockResolvedValue(null);
+    render(ExportModal, { props: { sessionId: "session-1", contentGeneration: 7, maxPages: 3, onsuccess: vi.fn(), onclose: vi.fn() } });
+    await fireEvent.click(screen.getByText("Yazdır", { selector: "[role=group] button" }));
+    await fireEvent.click(screen.getByText("Yazdır", { selector: "button:not([aria-pressed])" }));
+    await waitFor(() => expect(backendMocks.printSessionPdf).toHaveBeenCalled());
+    expect(pluginHookMocks.notifyPluginExportCompleted).not.toHaveBeenCalled();
   });
 });

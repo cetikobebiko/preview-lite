@@ -5,6 +5,8 @@ import { mergeTargetConflict } from "./mergeTargetGuard.js";
 export function createDocumentTransformController({
   getContext, getDocumentPath = () => "", openFile, saveFile, merge, openDocument,
   guard, featureContext, reportUnavailable, onToast, onError,
+  // Plugin on_export_complete (fire-and-forget): (format, pageCount) after a written output.
+  onExportComplete = () => {},
 }) {
   function isCurrent(context) {
     const current = getContext();
@@ -49,6 +51,8 @@ export function createDocumentTransformController({
         return;
       }
       await merge(context.sessionId, context.contentGeneration, [secondPdfPath], targetPath);
+      // page_count: pages of the open document in the output (the other file's count is not known here).
+      if (Number.isInteger(context.pageCount)) onExportComplete("pdf", context.pageCount);
       if (!isCurrent(context)) return;
       onToast("PDF belgeleri başarıyla birleştirildi!");
       await openDocument(targetPath);

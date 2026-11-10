@@ -12,6 +12,8 @@ export function createDocumentOpenController({
   chooseTransition, chooseTransitionSaveRecovery, invalidateSearch, restoreDocumentPosition,
   addRecentFile, getOutline, getMetadata, getPageLabels = async () => [], setError, chooseFile,
   onWarning = console.warn, onToast = () => {},
+  // Plugin on_document_open (fire-and-forget): { sessionId, contentGeneration, pageCount }.
+  onDocumentOpened = () => {},
 }) {
   let automaticCommitRetryAttemptId = null;
   let automaticRecoveryRetryAttemptId = null;
@@ -57,6 +59,11 @@ export function createDocumentOpenController({
       viewer.outlineList = [];
       viewer.pageLabels = [];
       viewer.pdfMetadata = { title: "", author: "", subject: "", keywords: "", creator: "" };
+      try {
+        onDocumentOpened({ sessionId: snapshot.id, contentGeneration: snapshot.contentGeneration, pageCount });
+      } catch (error) {
+        onWarning("Eklenti belge açma kancası başlatılamadı:", error);
+      }
       void getPageLabels(snapshot.id, snapshot.contentGeneration, pageCount)
         .then((labels) => { if (getIsMounted() && isCurrentDocumentSnapshot(documentSession, snapshot)) viewer.pageLabels = labels; })
         .catch((error) => onWarning("Sayfa etiketleri yüklenemedi:", error));

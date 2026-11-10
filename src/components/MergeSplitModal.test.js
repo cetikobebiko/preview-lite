@@ -13,6 +13,8 @@ const pdfStateMocks = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => dialogMocks);
 vi.mock("../pdfState.js", () => pdfStateMocks);
+const pluginHookMocks = vi.hoisted(() => ({ notifyPluginExportCompleted: vi.fn() }));
+vi.mock("../services/app/pluginHookDispatcher.js", () => pluginHookMocks);
 vi.mock("../featureRegistry.js", async (importOriginal) => {
   const original = await importOriginal();
   return {
@@ -198,5 +200,46 @@ describe("MergeSplitModal merge feedback", () => {
     expect(pdfStateMocks.mergeSessionPdfs).not.toHaveBeenCalled();
     expect(onsuccess).not.toHaveBeenCalled();
     expect(onclose).not.toHaveBeenCalled();
+  });
+});
+
+describe("MergeSplitModal plugin on_export_complete", () => {
+  const originalAnimate = Element.prototype.animate;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
+  });
+
+  afterEach(() => {
+    Element.prototype.animate = originalAnimate;
+  });
+
+  it("reports a merge as pdf with the open document's page count", async () => {
+    dialogMocks.open.mockResolvedValue(["/other.pdf"]);
+    dialogMocks.save.mockResolvedValue("/merged.pdf");
+    pdfStateMocks.mergeSessionPdfs.mockResolvedValue(undefined);
+    const onsuccess = vi.fn();
+    render(MergeSplitModal, { props: { currentFilePath: "/doc.pdf", maxPages: 10, sessionId: "session-1", contentGeneration: 4, onclose: vi.fn(), onsuccess } });
+    await fireEvent.click(screen.getByText("+ Dosya Ekle", { selector: "button" }));
+    await waitFor(() => expect(screen.getByText("other.pdf")).toBeTruthy());
+    await fireEvent.click(screen.getByText("Birleştir ve Kaydet", { selector: "button" }));
+    await waitFor(() => expect(onsuccess).toHaveBeenCalled());
+    expect(pluginHookMocks.notifyPluginExportCompleted).toHaveBeenCalledWith("pdf", 10);
+  });
+
+  it("reports a split as pdf with the number of pages written, not on failure", async () => {
+    dialogMocks.open.mockResolvedValue("/out");
+    pdfStateMocks.splitSessionPdf.mockRejectedValueOnce(new Error("disk dolu")).mockResolvedValueOnce(["/out/a.pdf"]);
+    const onsuccess = vi.fn();
+    render(MergeSplitModal, { props: { currentFilePath: "/doc.pdf", maxPages: 10, sessionId: "session-1", contentGeneration: 4, onclose: vi.fn(), onsuccess } });
+    await fireEvent.click(screen.getByText("Böl", { selector: "button" }));
+    await fireEvent.input(screen.getByLabelText(/Bölünecek Aralıklar/), { target: { value: "1-3, 8" } });
+    await fireEvent.click(screen.getByText("Böl ve Kaydet", { selector: "button" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(pluginHookMocks.notifyPluginExportCompleted).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByText("Böl ve Kaydet", { selector: "button" }));
+    await waitFor(() => expect(onsuccess).toHaveBeenCalled());
+    expect(pluginHookMocks.notifyPluginExportCompleted).toHaveBeenCalledWith("pdf", 4);
   });
 });

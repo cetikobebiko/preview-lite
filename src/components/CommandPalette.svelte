@@ -1,7 +1,7 @@
 <script>
   import * as Command from "$lib/components/ui/command";
   import * as Dialog from "$lib/components/ui/dialog";
-  import { filterCommands, selectCommand } from "../commandRegistry.js";
+  import { COMMANDS, filterCommands, selectCommand } from "../commandRegistry.js";
   import { FeatureUnavailableError } from "../featureActionGuard.js";
   import { getRuntimeFeatureContext } from "../featureRegistry.js";
   import { badgeLabel } from "../services/app/toolbarMenu.js";
@@ -11,6 +11,8 @@
     context = null,
     onselect = () => {},
     onclose = () => {},
+    // Runtime commands (plugin commands); same shape and feature guard as COMMANDS.
+    extraCommands = [],
   } = $props();
 
   const runtimeFeatureContext = getRuntimeFeatureContext();
@@ -22,7 +24,7 @@
   let featureContext = $derived(context || runtimeFeatureContext);
   // Filtering stays in the registry (Turkish casing, feature visibility), so
   // bits-ui only handles focus and keyboard selection.
-  let filteredCommands = $derived(filterCommands(searchQuery, featureContext));
+  let filteredCommands = $derived(filterCommands(searchQuery, featureContext, [...COMMANDS, ...extraCommands]));
 
   $effect.pre(() => {
     if (isOpen) {

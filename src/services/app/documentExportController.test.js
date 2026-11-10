@@ -76,3 +76,28 @@ describe("documentExportController", () => {
     expect(extractPages).not.toHaveBeenCalled();
   });
 });
+
+describe("documentExportController plugin on_export_complete", () => {
+  it("reports page image, PDF structure and split exports with format and page count", async () => {
+    const onExportComplete = vi.fn();
+    const saveFile = vi.fn(async () => "/tmp/page.jpg");
+    const { controller } = setup({ onExportComplete, saveFile });
+    await controller.exportCurrentPageImage();
+    expect(onExportComplete).toHaveBeenLastCalledWith("jpg", 1);
+    saveFile.mockResolvedValue("/tmp/out.pdf");
+    await controller.exportPdfStructure();
+    expect(onExportComplete).toHaveBeenLastCalledWith("pdf", 3);
+    await controller.splitPdf();
+    expect(onExportComplete).toHaveBeenLastCalledWith("pdf", 3);
+  });
+
+  it("does not report a failed or cancelled export", async () => {
+    const onExportComplete = vi.fn();
+    const { controller } = setup({ onExportComplete, extractPages: vi.fn(async () => { throw new Error("disk"); }) });
+    await controller.splitPdf();
+    await controller.exportPdfStructure();
+    const cancelled = setup({ onExportComplete, saveFile: vi.fn(async () => null) }).controller;
+    await cancelled.exportCurrentPageImage();
+    expect(onExportComplete).not.toHaveBeenCalled();
+  });
+});

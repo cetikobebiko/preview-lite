@@ -3,6 +3,8 @@ import { parsePageRanges, toPhysicalPages } from "../../utils/pageRanges.js";
 /** Coordinates output-file dialogs, native exports, and stale session-result protection. */
 export function createDocumentExportController({
   getContext, saveFile, requestInput, exportPage, extractPages, convertImage, onToast, onError,
+  // Plugin on_export_complete (fire-and-forget): (format, pageCount) after a written output.
+  onExportComplete = () => {},
 }) {
   function isCurrent(context) {
     const current = getContext();
@@ -27,6 +29,7 @@ export function createDocumentExportController({
       if (!savePath) return;
       const extension = savePath.split(".").pop()?.toLowerCase() || "svg";
       await exportPage(context.sessionId, context.contentGeneration, context.pageIndex, savePath, extension);
+      onExportComplete(extension, 1);
       if (isCurrent(context)) onToast(`Sayfa ${pageNumber} ${extension.toUpperCase()} olarak aktarıldı!`);
     } catch (error) {
       console.error("Dışa aktarma hatası:", error);
@@ -45,6 +48,7 @@ export function createDocumentExportController({
       });
       if (!savePath) return;
       await extractPages(context.sessionId, context.contentGeneration, context.pageOrder, savePath);
+      onExportComplete("pdf", context.pageOrder.length);
       if (isCurrent(context)) onToast("Yeni PDF belgesi başarıyla dışa aktarıldı!");
     } catch (error) {
       console.error("Dışa aktarma hatası:", error);
@@ -63,6 +67,7 @@ export function createDocumentExportController({
       if (!savePath) return;
       const extension = savePath.split(".").pop()?.toLowerCase() || "png";
       await convertImage(context.imagePath, savePath, extension, context.rotation, context.flipH, context.flipV);
+      onExportComplete(extension, 1);
       if (isCurrent(context)) onToast(`Dosya başarıyla ${extension.toUpperCase()} formatında kaydedildi!`);
     } catch (error) {
       console.error("Dönüştürme hatası:", error);
@@ -87,6 +92,7 @@ export function createDocumentExportController({
       });
       if (!savePath) return;
       await extractPages(context.sessionId, context.contentGeneration, pageIndices, savePath);
+      onExportComplete("pdf", pageIndices.length);
       if (isCurrent(context)) onToast(`${pageIndices.length} sayfa yeni PDF belgesine bölündü!`);
     } catch (error) {
       console.error("Bölme hatası:", error);

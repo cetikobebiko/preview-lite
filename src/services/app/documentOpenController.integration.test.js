@@ -135,6 +135,7 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
   };
   const setError = vi.fn();
   const onToast = vi.fn();
+  const onDocumentOpened = vi.fn();
   const chooseTransition = vi.fn(async () => decision);
   const getOutline = vi.fn(async () => []);
   const getMetadata = vi.fn(async () => ({ title: "", author: "", subject: "", keywords: "", creator: "" }));
@@ -169,10 +170,12 @@ function createHarness({ initialActive = null, decision = { action: "discard" } 
     chooseFile: vi.fn(),
     onWarning: vi.fn(),
     onToast,
+    onDocumentOpened,
   });
 
   return {
     controller,
+    onDocumentOpened,
     backend,
     candidates,
     documentSession,
@@ -227,6 +230,27 @@ describe("createDocumentOpenController integration boundary", () => {
     await expect(harness.controller.requestFile("/plain.pdf")).resolves.toMatchObject({ status: "committed" });
 
     expect(harness.onToast).not.toHaveBeenCalled();
+  });
+
+  it("hands the committed document identity and page count to the plugin hook, once", async () => {
+    const harness = createHarness();
+    await expect(harness.controller.requestFile("/plain.pdf")).resolves.toMatchObject({ status: "committed" });
+    await flush();
+    expect(harness.onDocumentOpened).toHaveBeenCalledTimes(1);
+    expect(harness.onDocumentOpened).toHaveBeenCalledWith({
+      sessionId: harness.documentSession.activeSessionId,
+      contentGeneration: harness.documentSession.contentGeneration,
+      pageCount: 2,
+    });
+    // Only the page count crosses this boundary: no path, file name or text.
+    expect(Object.keys(harness.onDocumentOpened.mock.calls[0][0]).sort()).toEqual(["contentGeneration", "pageCount", "sessionId"]);
+  });
+
+  it("does not run the plugin hook when the open is cancelled", async () => {
+    const harness = createHarness({ initialActive: snapshot("dirty", "open", { dirty: true }), decision: { action: "cancel" } });
+    await harness.controller.requestFile("/cancelled.pdf");
+    await flush();
+    expect(harness.onDocumentOpened).not.toHaveBeenCalled();
   });
 
   it("opens dirty PDF → save → new PDF", async () => {
