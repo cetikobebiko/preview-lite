@@ -209,9 +209,8 @@ pub fn export_snapshot(
     let mut total = 0usize;
     for (index, page) in document.pages().iter().enumerate() {
         check_cancelled()?;
-        let page_index = u32::try_from(index).map_err(|_| {
-            JobFailure::new(NOTES_EXPORT_TOO_LARGE, "Sayfa sayısı sınırı aşıldı")
-        })?;
+        let page_index = u32::try_from(index)
+            .map_err(|_| JobFailure::new(NOTES_EXPORT_TOO_LARGE, "Sayfa sayısı sınırı aşıldı"))?;
         let notes = read_page_notes(&page);
         if notes.is_empty() {
             continue;
@@ -463,7 +462,10 @@ pub(crate) fn notes_fixture_pdf() -> Vec<u8> {
             Operation::new("Td", vec![72.into(), y.into()]),
             Operation::new(
                 "Tj",
-                vec![Object::String(value.as_bytes().to_vec(), StringFormat::Literal)],
+                vec![Object::String(
+                    value.as_bytes().to_vec(),
+                    StringFormat::Literal,
+                )],
             ),
             Operation::new("ET", vec![]),
         ]
@@ -500,21 +502,22 @@ pub(crate) fn notes_fixture_pdf() -> Vec<u8> {
     let quad = |[left, bottom, right, top]: [f32; 4]| {
         vec![left, top, right, top, left, bottom, right, bottom]
     };
-    let markup = |subtype: &str, rect: [f32; 4], quads: Option<Vec<f32>>, contents: Option<&str>| {
-        let mut annotation = dictionary! {
-            "Type" => "Annot",
-            "Subtype" => subtype.to_string(),
-            "Rect" => numbers(&rect),
-            "C" => numbers(&[1.0, 1.0, 0.0]),
+    let markup =
+        |subtype: &str, rect: [f32; 4], quads: Option<Vec<f32>>, contents: Option<&str>| {
+            let mut annotation = dictionary! {
+                "Type" => "Annot",
+                "Subtype" => subtype.to_string(),
+                "Rect" => numbers(&rect),
+                "C" => numbers(&[1.0, 1.0, 0.0]),
+            };
+            if let Some(quads) = quads {
+                annotation.set("QuadPoints", numbers(&quads));
+            }
+            if let Some(contents) = contents {
+                annotation.set("Contents", literal(contents));
+            }
+            annotation
         };
-        if let Some(quads) = quads {
-            annotation.set("QuadPoints", numbers(&quads));
-        }
-        if let Some(contents) = contents {
-            annotation.set("Contents", literal(contents));
-        }
-        annotation
-    };
     let mut both_lines = quad(first_line);
     both_lines.extend(quad(second_line));
     let first = page(
@@ -524,7 +527,12 @@ pub(crate) fn notes_fixture_pdf() -> Vec<u8> {
             (600, "Outside the quads"),
         ],
         vec![
-            markup("Highlight", first_line, Some(quad(first_line)), Some("Ilk not")),
+            markup(
+                "Highlight",
+                first_line,
+                Some(quad(first_line)),
+                Some("Ilk not"),
+            ),
             markup("Highlight", second_line, None, None),
             markup(
                 "StrikeOut",
@@ -616,12 +624,22 @@ mod tests {
         // Popup ve Link atlanır.
         let summary: Vec<_> = notes
             .iter()
-            .map(|note| (note.kind, note.quoted_text.as_deref(), note.contents.as_deref()))
+            .map(|note| {
+                (
+                    note.kind,
+                    note.quoted_text.as_deref(),
+                    note.contents.as_deref(),
+                )
+            })
             .collect();
         assert_eq!(
             summary,
             vec![
-                (NoteKind::Highlight, Some("Highlighted passage"), Some("Ilk not")),
+                (
+                    NoteKind::Highlight,
+                    Some("Highlighted passage"),
+                    Some("Ilk not")
+                ),
                 (NoteKind::Highlight, Some("Second line text"), None),
                 (
                     NoteKind::StrikeOut,
@@ -684,8 +702,16 @@ mod tests {
                 page_index: 4,
                 label: Some("iv".to_string()),
                 notes: vec![
-                    note(NoteKind::Highlight, Some("Vurgulanan  metin\n"), Some("Önemli")),
-                    note(NoteKind::Text, None, Some("satır 1\r\nsatır 2\r\rparagraf 2")),
+                    note(
+                        NoteKind::Highlight,
+                        Some("Vurgulanan  metin\n"),
+                        Some("Önemli"),
+                    ),
+                    note(
+                        NoteKind::Text,
+                        None,
+                        Some("satır 1\r\nsatır 2\r\rparagraf 2"),
+                    ),
                 ],
             },
             NotesPage {
@@ -762,7 +788,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(empty.code, NOTES_EXPORT_EMPTY);
-        assert_eq!(render_markdown(&header(), &[]).unwrap_err().code, NOTES_EXPORT_EMPTY);
+        assert_eq!(
+            render_markdown(&header(), &[]).unwrap_err().code,
+            NOTES_EXPORT_EMPTY
+        );
 
         let mut odd = note(NoteKind::Text, None, Some("x"));
         odd.color = "red](javascript:x)".to_string();
@@ -862,11 +891,17 @@ mod tests {
         for annotation_type in SKIPPED_ANNOTATION_TYPES {
             assert_eq!(NoteKind::from_annotation_type(*annotation_type), None);
         }
-        let markup: Vec<_> = [T::Highlight, T::Underline, T::Strikeout, T::Squiggly, T::Text]
-            .into_iter()
-            .filter_map(NoteKind::from_annotation_type)
-            .filter(|kind| kind.is_text_markup())
-            .collect();
+        let markup: Vec<_> = [
+            T::Highlight,
+            T::Underline,
+            T::Strikeout,
+            T::Squiggly,
+            T::Text,
+        ]
+        .into_iter()
+        .filter_map(NoteKind::from_annotation_type)
+        .filter(|kind| kind.is_text_markup())
+        .collect();
         assert_eq!(markup.len(), 4);
     }
 }

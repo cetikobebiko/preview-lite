@@ -3065,13 +3065,17 @@ mod tests {
     fn export_notes_job_writes_markdown_and_refuses_empty_or_cancelled_jobs() {
         let directory = tempfile::tempdir().unwrap();
         let snapshot = directory.path().join("snapshot.pdf");
-        let output = directory.path().join(crate::notes_export::NOTES_OUTPUT_NAME);
+        let output = directory
+            .path()
+            .join(crate::notes_export::NOTES_OUTPUT_NAME);
         fs::write(&snapshot, crate::notes_export::notes_fixture_pdf()).unwrap();
 
         let result = export_notes(directory.path(), &snapshot).unwrap();
         assert!(matches!(result, JobResult::File(ref path) if path == &output));
         let markdown = fs::read_to_string(&output).unwrap();
-        assert!(markdown.starts_with("# Notlar: notlar.pdf\n\n*Oluşturulma tarihi: 2026-11-10 14:03 (UTC+03:00)*"));
+        assert!(markdown.starts_with(
+            "# Notlar: notlar.pdf\n\n*Oluşturulma tarihi: 2026-11-10 14:03 (UTC+03:00)*"
+        ));
         assert!(markdown.contains("\n## Sayfa i (1)\n"));
         assert!(markdown.contains("> Highlighted passage"));
         assert!(markdown.contains("\n## Sayfa 1 (2)\n"));
@@ -3100,7 +3104,9 @@ mod tests {
         let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf");
         let directory = tempfile::tempdir().unwrap();
         let snapshot = directory.path().join("snapshot.pdf");
-        let output = directory.path().join(crate::notes_export::NOTES_OUTPUT_NAME);
+        let output = directory
+            .path()
+            .join(crate::notes_export::NOTES_OUTPUT_NAME);
 
         fs::copy(fixtures.join("annotations.pdf"), &snapshot).unwrap();
         assert!(matches!(
@@ -3179,9 +3185,18 @@ mod tests {
             other => panic!("expected a failure, got {other:?}"),
         };
         assert!(check("ok.md", "# Notlar\n".as_bytes(), 64).is_ok());
-        assert_eq!(code(check("bad.md", &[b'#', 0xff, 0xfe], 64)), "SESSION_JOB_OUTPUT_INVALID");
-        assert_eq!(code(check("empty.md", b"", 64)), "SESSION_JOB_OUTPUT_INVALID");
-        assert_eq!(code(check("big.md", &[b'a'; 65], 64)), "SESSION_JOB_OUTPUT_LIMIT_EXCEEDED");
+        assert_eq!(
+            code(check("bad.md", &[b'#', 0xff, 0xfe], 64)),
+            "SESSION_JOB_OUTPUT_INVALID"
+        );
+        assert_eq!(
+            code(check("empty.md", b"", 64)),
+            "SESSION_JOB_OUTPUT_INVALID"
+        );
+        assert_eq!(
+            code(check("big.md", &[b'a'; 65], 64)),
+            "SESSION_JOB_OUTPUT_LIMIT_EXCEEDED"
+        );
         let outside = tempfile::NamedTempFile::new().unwrap();
         fs::write(outside.path(), "x").unwrap();
         assert_eq!(

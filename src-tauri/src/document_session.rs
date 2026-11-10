@@ -13216,7 +13216,10 @@ pub(crate) fn validate_job_text_output(
     };
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(
-        &mut std::io::Read::take(File::open(&canonical_source).map_err(read_failed)?, max_bytes + 1),
+        &mut std::io::Read::take(
+            File::open(&canonical_source).map_err(read_failed)?,
+            max_bytes + 1,
+        ),
         &mut bytes,
     )
     .map_err(read_failed)?;
