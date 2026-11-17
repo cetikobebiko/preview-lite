@@ -2,7 +2,8 @@
 // Licensed under the MIT License; see src-tauri/licenses/pdfcraft.txt.
 //
 // Ported from PdfCraft 0.16.1, crates/export/src/as_markdown.rs (MIT OR Apache-2.0, used under MIT).
-// Changes from the original: imports point at the sibling `writers` module.
+// Changes from the original: imports point at the sibling `writers` module; `md_text` and
+// `block_start` are crate-visible so `notes_export` escapes text the same way.
 
 //! Markdown (CommonMark with GitHub pipe tables) writer for the same page model as [`super::writers`].
 
@@ -13,7 +14,7 @@ const MAX_HEADING: u8 = 6;
 
 /// `s` as Markdown text on one line: line breaks become spaces, control characters are dropped,
 /// and every character Markdown would read as markup is escaped with a backslash.
-fn md_text(s: &str) -> String {
+pub(crate) fn md_text(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars().filter(|c| allowed(*c)) {
         match c {
@@ -30,7 +31,7 @@ fn md_text(s: &str) -> String {
 
 /// `line` with its start escaped where Markdown would read a list item there (`- `, `+ `,
 /// `1. `, `1) `); the other block markers (`#`, `>`) are escaped by [`md_text`] already.
-fn block_start(line: String) -> String {
+pub(crate) fn block_start(line: String) -> String {
     let digits = line.bytes().take_while(u8::is_ascii_digit).count();
     match line.as_bytes().get(digits) {
         Some(b'.' | b')') if digits > 0 => format!(

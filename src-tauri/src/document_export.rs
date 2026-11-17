@@ -10,7 +10,7 @@
 //! Sınırlar: form XObject içindeki görüntüler ve sayfa arka plan rengi alınmaz; metin
 //! katmanı olmayan (taranmış) sayfalar yalnız görüntüleriyle çıkar. Markdown görselleri almaz.
 
-mod markdown;
+pub(crate) mod markdown;
 mod pptx;
 mod writers;
 mod zip;
