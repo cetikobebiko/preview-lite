@@ -66,3 +66,40 @@ export function passwordStrength(password) {
   if (password.length >= 8 && classes >= 2) return "orta";
   return "zayıf";
 }
+
+/** Editable state of the protect/remove form (passwords stay in memory only). */
+export function emptySecurityFields() {
+  return {
+    mode: "protect",
+    userPassword: "",
+    userConfirm: "",
+    ownerPassword: "",
+    ownerConfirm: "",
+    method: "aes256",
+    permissions: { ...ALL_PERMISSIONS },
+    encryptMetadata: true,
+  };
+}
+
+function fieldSettings(fields) {
+  return {
+    userPassword: fields.userPassword,
+    ownerPassword: fields.ownerPassword,
+    method: fields.method,
+    permissions: { ...fields.permissions },
+    encryptMetadata: fields.method === "rc4_128" ? true : fields.encryptMetadata,
+  };
+}
+
+/** Why the form cannot be submitted yet, or null. */
+export function securityFieldsError(fields) {
+  if (fields.mode !== "protect") return null;
+  return protectionSettingsError(fieldSettings(fields))
+    ?? (fields.userPassword !== fields.userConfirm ? "Açma parolaları uyuşmuyor."
+      : fields.ownerPassword !== fields.ownerConfirm ? "İzin parolaları uyuşmuyor." : null);
+}
+
+/** The `SecurityOp` wire value for the form. */
+export function securityOpFromFields(fields) {
+  return fields.mode === "protect" ? { op: "protect", settings: fieldSettings(fields) } : { op: "remove" };
+}

@@ -79,7 +79,8 @@ only with a canonical backend service and inventory entry; the current authority
 | `annotations.js` | 4 | `get_page_annotations`, `add_annotation`, `delete_annotation`, `save_pdf_with_annotations` |
 | `ocr.js` | 4 | `detect_scanned_page`, `get_available_ocr_languages`, `run_ocr_on_page`, `export_as_searchable_pdf` |
 | `ai.js` | 9 | `configure_ai_endpoint`, `preview_ai_endpoint`, `get_ai_endpoint_status`, `clear_ai_endpoint_config`, `cancel_ai_request`, `build_semantic_index`, `semantic_search`, `query_document_rag`, `summarize_selection_or_page` |
-| `plugins.js` | 10 | `inspect_plugin_package`, `install_plugin_package`, `grant_plugin_consent`, `uninstall_plugin`, `set_plugin_enabled`, `list_installed_plugins`, `start_plugin_execution`, `cancel_plugin_execution`, `get_plugin_execution_status`, `add_batch_job` |
+| `plugins.js` | 9 | `inspect_plugin_package`, `install_plugin_package`, `grant_plugin_consent`, `uninstall_plugin`, `set_plugin_enabled`, `list_installed_plugins`, `start_plugin_execution`, `cancel_plugin_execution`, `get_plugin_execution_status` |
+| `batch.js` | 5 | `scan_batch_inputs`, `start_batch`, `cancel_batch`, `get_batch_status`, `reveal_batch_output_dir` |
 | `redaction.js` | 3 | `apply_redactions`, `sanitize_pdf_document`, `scan_sensitive_data` |
 | `session.js` accessibility reads | 2 | `get_session_structure_tree`, `audit_session_accessibility` |
 | `prepress.js` | 4 | `analyze_color_spaces`, `calculate_ink_coverage`, `render_separation_channels`, `export_pdf_x` |

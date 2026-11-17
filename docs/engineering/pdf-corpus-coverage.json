@@ -2375,6 +2375,110 @@
         "verificationType": "job_worker_notes_markdown_empty",
         "notes": "An annotation-free PDF returns NOTES_EXPORT_EMPTY and writes no output file"
       }
+    },
+    {
+      "featureId": "batch_processing",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:batch::tests::password_and_broken_files_do_not_stop_the_valid_one",
+      "relation": "direct",
+      "dimensions": [
+        "encrypted",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/batch/tests.rs",
+        "verificationType": "batch_runner_assertion",
+        "notes": "A user-password PDF is skipped with BATCH_INPUT_PASSWORD_REQUIRED (typed by the InspectBatchInput job command); the batch continues and the input bytes are unchanged"
+      }
+    },
+    {
+      "featureId": "batch_processing",
+      "fixtureId": "core-malformed",
+      "testId": "rust_unit:batch::tests::password_and_broken_files_do_not_stop_the_valid_one",
+      "relation": "direct",
+      "dimensions": [
+        "malformed",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/batch/tests.rs",
+        "verificationType": "batch_runner_assertion",
+        "notes": "A malformed PDF fails on its own row; the next file is still processed"
+      }
+    },
+    {
+      "featureId": "batch_processing",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust_unit:batch::tests::password_and_broken_files_do_not_stop_the_valid_one",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/batch/tests.rs",
+        "verificationType": "batch_runner_assertion",
+        "notes": "The valid input is optimized from a private snapshot and published atomically as rapor_küçültülmüş.pdf; the output reopens in PDFium; private batch directories are removed; events are gap-free with one terminal event last"
+      }
+    },
+    {
+      "featureId": "batch_processing",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust_unit:batch::tests::page_images_are_published_as_one_set",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/batch/tests.rs",
+        "verificationType": "batch_runner_assertion",
+        "notes": "Page images of one input are published as one set (r_sayfa_1..3.png)"
+      }
+    },
+    {
+      "featureId": "batch_processing",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:batch::tests::cancel_keeps_finished_outputs_and_leaves_nothing_of_the_running_file",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/batch/tests.rs",
+        "verificationType": "batch_runner_assertion",
+        "notes": "Cancelling when the second file starts keeps the first file's output, publishes nothing for the cancelled files and removes the private batch directory"
+      }
+    },
+    {
+      "featureId": "batch_processing",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:batch::tests::outputs_in_the_input_folder_never_replace_an_input_even_with_overwrite",
+      "relation": "direct",
+      "dimensions": [
+        "unicode",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/batch/tests.rs",
+        "verificationType": "batch_runner_assertion",
+        "notes": "Outputs written into the input folder under the overwrite policy never replace an input (rapor_küçültülmüş.pdf is numbered); Turkish file names round-trip"
+      }
+    },
+    {
+      "featureId": "batch_processing",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:batch::tests::the_active_session_does_not_change_while_a_batch_runs",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/batch/tests.rs",
+        "verificationType": "batch_runner_assertion",
+        "notes": "A batch over files including the open document leaves the active session id, identity epoch, generation, revision, dirty flag and lifecycle unchanged"
+      }
     }
   ],
   "features": [
@@ -3138,16 +3242,27 @@
     {
       "id": "batch_processing",
       "name": "Batch Processing",
-      "statusObservation": "disabled",
-      "fixtureIds": [],
-      "testIds": [],
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-malformed",
+        "core-three-distinct-pages",
+        "core-minimal"
+      ],
+      "testIds": [
+        "rust_unit:batch::tests::password_and_broken_files_do_not_stop_the_valid_one",
+        "rust_unit:batch::tests::page_images_are_published_as_one_set",
+        "rust_unit:batch::tests::cancel_keeps_finished_outputs_and_leaves_nothing_of_the_running_file",
+        "rust_unit:batch::tests::outputs_in_the_input_folder_never_replace_an_input_even_with_overwrite",
+        "rust_unit:batch::tests::the_active_session_does_not_change_while_a_batch_runs"
+      ],
       "dimensions": {
-        "positive": "planned",
-        "negative": "not_covered",
-        "malformed": "not_applicable",
-        "encrypted": "not_applicable",
-        "unicode": "not_applicable",
-        "persistence": "planned",
+        "positive": "partial",
+        "negative": "partial",
+        "malformed": "partial",
+        "encrypted": "partial",
+        "unicode": "partial",
+        "persistence": "partial",
         "worker": "planned"
       },
       "platformEvidence": {
@@ -4141,12 +4256,6 @@
       "plannedPrompt": "11I-B"
     },
     {
-      "id": "planned:batch_processing::test_batch_processing_queue_execution",
-      "kind": "integration_test",
-      "state": "planned",
-      "plannedPrompt": "11I-B"
-    },
-    {
       "id": "planned:form_editing::test_acroform_value_editing_and_flattening",
       "kind": "integration_test",
       "state": "planned",
@@ -4421,6 +4530,36 @@
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/job_worker.rs"
+    },
+    {
+      "id": "rust_unit:batch::tests::password_and_broken_files_do_not_stop_the_valid_one",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/batch/tests.rs"
+    },
+    {
+      "id": "rust_unit:batch::tests::page_images_are_published_as_one_set",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/batch/tests.rs"
+    },
+    {
+      "id": "rust_unit:batch::tests::cancel_keeps_finished_outputs_and_leaves_nothing_of_the_running_file",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/batch/tests.rs"
+    },
+    {
+      "id": "rust_unit:batch::tests::outputs_in_the_input_folder_never_replace_an_input_even_with_overwrite",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/batch/tests.rs"
+    },
+    {
+      "id": "rust_unit:batch::tests::the_active_session_does_not_change_while_a_batch_runs",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/batch/tests.rs"
     }
   ],
   "gaps": [
@@ -4473,16 +4612,6 @@
       "plannedPrompt": "11I-B",
       "releaseBlocking": false,
       "description": "Expand OCR fixture corpus with scanned image fixtures"
-    },
-    {
-      "id": "gap-batch-processing-queue",
-      "featureId": "batch_processing",
-      "dimension": "positive",
-      "severity": "low",
-      "requiredLayer": "integration",
-      "plannedPrompt": "11I-B",
-      "releaseBlocking": false,
-      "description": "Implement and verify batch processing execution queue"
     },
     {
       "id": "gap-form-editing-support",
@@ -4693,6 +4822,16 @@
       "plannedPrompt": "11R",
       "releaseBlocking": true,
       "description": "Execute full platform release certification for sanitization"
+    },
+    {
+      "id": "gap-batch-processing-real-worker-cancel",
+      "featureId": "batch_processing",
+      "dimension": "worker",
+      "severity": "low",
+      "requiredLayer": "integration",
+      "plannedPrompt": "11I-B",
+      "releaseBlocking": false,
+      "description": "Batch runner tests run the job worker in-process (cfg(test)); killing a running job worker on batch cancel is covered only by the shared run_job_worker_with_timeout path and in-app verification, not by a real-process batch test"
     }
   ]
 }

@@ -10,6 +10,8 @@ export function createWindowLifecycleController({
   cancelTransition,
   closeSession,
   closeAllDocumentSessions,
+  // Resolves false to keep the window open (a running batch the user wants to keep).
+  confirmBatchStop = async () => true,
   onError = () => {},
 }) {
   let closePromise = null;
@@ -18,6 +20,13 @@ export function createWindowLifecycleController({
   let destroyed = false;
 
   async function close() {
+    // Asked before the document coordinator stops, so declining changes nothing.
+    try {
+      if (!(await confirmBatchStop())) return;
+    } catch (error) {
+      onError(error);
+      return;
+    }
     let windowDestroyed = false;
     try {
       const stopResult = await documentOpenCoordinator.stop();

@@ -159,6 +159,10 @@ impl MutationRecipe {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum JobCommand {
     ValidateSnapshot,
+    /// Read-only, for a batch input copied into the job directory: page count and
+    /// whether the file is encrypted. A file that needs a user password fails with
+    /// [`BATCH_INPUT_PASSWORD_REQUIRED`] instead of a generic open failure.
+    InspectBatchInput,
     MutatePdf {
         recipe: MutationRecipe,
         output_name: String,
@@ -350,6 +354,11 @@ impl std::fmt::Debug for JobRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum JobResult {
     SnapshotValid,
+    BatchInputInspection {
+        page_count: u32,
+        /// Encrypted but opened without a password: only an owner password restricts it.
+        protected: bool,
+    },
     MutationValidated,
     ScannedPages(Vec<bool>),
     File(PathBuf),
@@ -702,6 +711,7 @@ fn execute_command(
             }
             Ok(JobResult::SnapshotValid)
         }
+        JobCommand::InspectBatchInput => inspect_batch_input(snapshot_path, credential),
         JobCommand::MutatePdf {
             recipe,
             output_name,
@@ -2360,6 +2370,50 @@ fn operation_failure(error: SessionJobOperationError) -> JobFailure {
 
 fn pdfium_unavailable(message: String) -> JobFailure {
     JobFailure::new("SESSION_JOB_PDF_ENGINE_UNAVAILABLE", message)
+}
+
+pub(crate) const BATCH_INPUT_PASSWORD_REQUIRED: &str = "BATCH_INPUT_PASSWORD_REQUIRED";
+pub(crate) const BATCH_INPUT_OPEN_FAILED: &str = "BATCH_INPUT_OPEN_FAILED";
+
+fn inspect_batch_input(
+    snapshot_path: &Path,
+    credential: Option<&str>,
+) -> Result<JobResult, JobFailure> {
+    let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+    let document = pdfium
+        .load_pdf_from_file(snapshot_path, credential)
+        .map_err(|error| match error {
+            PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
+                job_failed(
+                    BATCH_INPUT_PASSWORD_REQUIRED,
+                    "PDF parola korumalı; toplu işlemde parola istenmez",
+                )
+            }
+            error => job_failed(BATCH_INPUT_OPEN_FAILED, format!("PDF açılamadı: {error}")),
+        })?;
+    let page_count = u32::from(document.pages().len());
+    if page_count == 0 {
+        return Err(job_failed(
+            "SESSION_JOB_SNAPSHOT_INVALID",
+            "PDF en az bir sayfa içermelidir",
+        ));
+    }
+    // Same reading as the viewer worker: an unknown revision (AES-256 R5/R6 in
+    // pdfium-render 0.8.37) is encrypted; PDFium's "unprotected" is always known.
+    let protected = match document.permissions().security_handler_revision() {
+        Ok(PdfSecurityHandlerRevision::Unprotected) => false,
+        Ok(_) | Err(PdfiumError::UnknownPdfSecurityHandlerRevision) => true,
+        Err(_) => {
+            return Err(job_failed(
+                BATCH_INPUT_OPEN_FAILED,
+                "PDF güvenlik durumu belirlenemedi",
+            ))
+        }
+    };
+    Ok(JobResult::BatchInputInspection {
+        page_count,
+        protected,
+    })
 }
 
 fn pdf_open_failed(message: String) -> JobFailure {

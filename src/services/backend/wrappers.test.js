@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as ai from "./ai.js";
+import * as batch from "./batch.js";
 import { CONTRACTS } from "./contracts.js";
 import * as document from "./document.js";
 import * as manipulation from "./manipulation.js";
@@ -22,6 +23,12 @@ vi.mock("@tauri-apps/api/core", () => ({
 const rect = { x: 1, y: 2, width: 3, height: 4 };
 const redactions = [{ page_index: 0, ...rect }];
 const history = [{ role: "user", content: "Earlier question" }];
+const batchRequest = {
+  inputs: ["/a.pdf", "/b.pdf"],
+  operation: { kind: "export_text", format: "md" },
+  outputDir: "/çıktı",
+  conflictPolicy: "number",
+};
 const renderSession = {
   sessionId: "document-1",
   pageIndex: 2,
@@ -128,7 +135,11 @@ const cases = [
   ["startPluginExecution", () => plugins.startPluginExecution("plugin-1", "open", "{}", "exec-1"), "start_plugin_execution", { pluginId: "plugin-1", hookName: "open", payloadJson: "{}", executionId: "exec-1" }],
   ["cancelPluginExecution", () => plugins.cancelPluginExecution("exec-1"), "cancel_plugin_execution", { executionId: "exec-1" }],
   ["getPluginExecutionStatus", () => plugins.getPluginExecutionStatus("exec-1"), "get_plugin_execution_status", { executionId: "exec-1" }],
-  ["addBatchJob", () => plugins.addBatchJob("ocr", "/a.pdf", "{}"), "add_batch_job", { jobType: "ocr", filePath: "/a.pdf", parameters: "{}" }],
+  ["scanBatchInputs", () => batch.scanBatchInputs(["/klasör"], true), "scan_batch_inputs", { paths: ["/klasör"], recursive: true }],
+  ["startBatch", () => batch.startBatch(batchRequest), "start_batch", { request: batchRequest }],
+  ["cancelBatch", () => batch.cancelBatch("batch-1"), "cancel_batch", { batchId: "batch-1" }],
+  ["getBatchStatus", () => batch.getBatchStatus(), "get_batch_status", { batchId: null }],
+  ["revealBatchOutputDir", () => batch.revealBatchOutputDir("batch-1"), "reveal_batch_output_dir", { batchId: "batch-1" }],
 
 
   ["applyRedactions", () => redaction.applyRedactions("sid", 1, "/b.pdf", redactions), "apply_redactions", { sessionId: "sid", expectedContentGeneration: 1, outputPath: "/b.pdf", redactions }],

@@ -30,6 +30,3 @@ export const cancelPluginExecution = (executionId) =>
 
 export const getPluginExecutionStatus = (executionId) =>
   callBackend("getPluginExecutionStatus", { executionId });
-
-export const addBatchJob = (jobType, filePath, parameters = "{}") =>
-  callBackend("addBatchJob", { jobType, filePath, parameters });

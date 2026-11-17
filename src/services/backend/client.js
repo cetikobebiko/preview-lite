@@ -122,6 +122,9 @@ function validateValue(value, schema, path) {
     if (!Array.isArray(value)) {
       throw validationError(path, "expected array");
     }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      throw validationError(path, `expected at most ${schema.maxItems} items`);
+    }
     return value.map((item, index) =>
       validateValue(item, schema.items, `${path}[${index}]`),
     );
