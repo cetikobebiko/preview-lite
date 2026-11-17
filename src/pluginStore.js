@@ -2,7 +2,6 @@ import { writable } from 'svelte/store';
 import { guardFeatureAction } from './featureActionGuard.js';
 import { getRuntimeFeatureContext } from './featureRegistry.js';
 import {
-  addBatchJob as addBatchJobBackend,
   cancelPluginExecution as cancelPluginExecutionBackend,
   getPluginExecutionStatus as getPluginExecutionStatusBackend,
   getPluginFeatureStatus as getPluginFeatureStatusBackend,
@@ -190,13 +189,5 @@ export async function pollExecutionStatus(executionId) {
       }));
       return status;
     },
-  );
-}
-
-export async function addBatchJob(jobType, filePath, parameters = "{}") {
-  return await guardFeatureAction(
-    'batch_processing',
-    getRuntimeFeatureContext(),
-    () => addBatchJobBackend(jobType, filePath, parameters),
   );
 }
