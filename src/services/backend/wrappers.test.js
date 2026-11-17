@@ -106,7 +106,8 @@ const cases = [
   ["detectScannedPages", () => ocr.detectScannedPages("sid", 1), "detect_scanned_pages", { sessionId: "sid", expectedContentGeneration: 1 }],
   ["getAvailableOcrLanguages", () => ocr.getAvailableOcrLanguages(), "get_available_ocr_languages"],
   ["runOcrOnPage", () => ocr.runOcrOnPage("sid", 1, 1, "tur"), "run_ocr_on_page", { sessionId: "sid", expectedContentGeneration: 1, pageIndex: 1, lang: "tur" }],
-  ["exportAsSearchablePdf", () => ocr.exportAsSearchablePdf("sid", 1, "/b.pdf", "tur"), "export_as_searchable_pdf", { sessionId: "sid", expectedContentGeneration: 1, outputPath: "/b.pdf", lang: "tur" }],
+  ["startSearchablePdfExport", () => ocr.startSearchablePdfExport("sid", 1, "/b.pdf", "tur").promise, "export_as_searchable_pdf", { sessionId: "sid", expectedContentGeneration: 1, outputPath: "/b.pdf", lang: "tur", pages: null }],
+  ["startSearchablePdfExport pages", () => ocr.startSearchablePdfExport("sid", 1, "/b.pdf", "tur+eng", [0, 3]).promise, "export_as_searchable_pdf", { sessionId: "sid", expectedContentGeneration: 1, outputPath: "/b.pdf", lang: "tur+eng", pages: [0, 3] }],
 
   ["configureAiEndpoint", () => ai.configureAiEndpoint("http://127.0.0.1:11434", false, false), "configure_ai_endpoint", { url: "http://127.0.0.1:11434", remoteApproved: false, privateNetworkApproved: false }],
   ["previewAiEndpoint", () => ai.previewAiEndpoint("http://127.0.0.1:11434"), "preview_ai_endpoint", { url: "http://127.0.0.1:11434" }],

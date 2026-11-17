@@ -14,7 +14,9 @@ export const runOcrOnPage = (sessionId, expectedContentGeneration, pageIndex, la
     callBackend("runOcrOnPage", { jobId, sessionId, expectedContentGeneration, pageIndex, lang }),
   ).promise;
 
-export const exportAsSearchablePdf = (sessionId, expectedContentGeneration, outputPath, lang) =>
+// Uzun süren, iptal edilebilir job: `{ jobId, promise, cancel }` döner.
+// `pages` null ise bütün sayfalar değerlendirilir (metni olanlar her durumda atlanır).
+export const startSearchablePdfExport = (sessionId, expectedContentGeneration, outputPath, lang, pages = null) =>
   runSessionJob(sessionId, (jobId) =>
-    callBackend("exportAsSearchablePdf", { jobId, sessionId, expectedContentGeneration, outputPath, lang }),
-  ).promise;
+    callBackend("exportAsSearchablePdf", { jobId, sessionId, expectedContentGeneration, outputPath, lang, pages }),
+  );

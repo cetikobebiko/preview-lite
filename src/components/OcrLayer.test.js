@@ -339,3 +339,24 @@ describe("OcrLayer document-level detection", () => {
     consoleError.mockRestore();
   });
 });
+
+describe("OcrLayer searchable PDF entry", () => {
+  it("offers the searchable copy on a scanned page only when a handler is given", async () => {
+    const onOpenSearchablePdf = vi.fn();
+    const { container, unmount } = render(OcrLayer, {
+      props: { sessionId: "s", contentGeneration: 1, pageIndex: 0, pageWidth: 100, pageHeight: 100, onOpenSearchablePdf },
+    });
+    await flushAsync();
+    const button = within(container).getByRole("button", { name: "Aranabilir PDF olarak kaydet…" });
+    await fireEvent.click(button);
+    expect(onOpenSearchablePdf).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const without = render(OcrLayer, {
+      props: { sessionId: "s", contentGeneration: 1, pageIndex: 0, pageWidth: 100, pageHeight: 100 },
+    });
+    await flushAsync();
+    expect(within(without.container).getByRole("button", { name: "OCR Başlat" })).toBeTruthy();
+    expect(within(without.container).queryByRole("button", { name: "Aranabilir PDF olarak kaydet…" })).toBeNull();
+  });
+});

@@ -309,9 +309,9 @@ const RAW_FEATURES = [
   {
     id: "searchable_pdf_export",
     label: "Searchable PDF export",
-    status: "disabled",
-    enabled: false,
-    warning: "Aranabilir PDF dışa aktarma backend tarafından desteklenmemektedir.",
+    status: "experimental",
+    enabled: true,
+    warning: "Aranabilir PDF deneyseldir: kurulu Tesseract ve seçilen dilin verisi gerekir; doğruluk taramanın kalitesine bağlıdır. Kopya baştan yazılır, belgedeki dijital imzalar kopyada geçersiz olur. Açık belge değişmez.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#ocr",
   },

@@ -45,6 +45,7 @@ pub mod sanitization_inspection;
 pub mod sanitization_publication;
 pub mod sanitization_transform;
 pub mod sanitization_verifier;
+pub mod searchable_pdf;
 pub mod secure_redaction;
 pub mod secure_redaction_inspection;
 pub mod secure_redaction_raster;

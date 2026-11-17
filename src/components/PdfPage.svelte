@@ -104,6 +104,8 @@
     searchMatches = [],
     onsearchHighlightReady,
     onsessionSnapshot,
+    // Taranmış sayfa banner'ından aranabilir kopya penceresini açar; null ise düğme gösterilmez.
+    onOpenSearchablePdf = null,
   } = $props();
 
   // Plain `let`s are bookkeeping that no template, derived value or effect condition reads.
@@ -978,6 +980,7 @@
                     {pageIndex}
                     pageWidth={unscaledWidth}
                     pageHeight={unscaledHeight}
+                    {onOpenSearchablePdf}
                   />
                 {/if}
                 {#if annotationPresentation.runnable}

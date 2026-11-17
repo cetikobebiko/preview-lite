@@ -128,6 +128,7 @@
         "core-large-page-dimensions",
         "core-minimal",
         "core-release-smoke",
+        "core-scanned-turkish",
         "redaction-cropbox-mediabox-diff",
         "redaction-negative-origin",
         "redaction-rotations",
@@ -143,7 +144,7 @@
         "job_worker_executable"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 26,
+      "expectedTestCount": 27,
       "expectedTestPresence": "at_least_one"
     },
     {

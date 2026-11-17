@@ -61,6 +61,17 @@
       "networkRequirement": "none",
       "reproducibilityStatus": "deterministic_by_construction",
       "notes": "Pure Python standard library generator for heavy-page.pdf (worker timeout and page quarantine fixture)."
+    },
+    "py-scanned-turkish-generator": {
+      "kind": "committed_script",
+      "path": "src-tauri/tests/fixtures/pdf/generate_scanned_turkish.py",
+      "language": "python3",
+      "dependencies": [
+        "Pillow"
+      ],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "toolchain_unpinned",
+      "notes": "Turkish text is rasterized with Pillow and the system Arial TrueType font at 150 dpi; the PDF itself is written by hand with zlib (no font embedded). Same Pillow/FreeType/Arial versions give identical bytes; versions are not pinned by a repo lockfile."
     }
   },
   "fixtures": [
@@ -1790,6 +1801,40 @@
       ],
       "featureManifest": "src-tauri/tests/fixtures/sanitization/manifest.json",
       "notes": null,
+      "allowEmpty": false
+    },
+    {
+      "id": "core-scanned-turkish",
+      "path": "src-tauri/tests/fixtures/pdf/scanned-turkish.pdf",
+      "sha256": "753be123c9114454a3eae7da674260f9e387a2620e520d1cd3e7526216b474d1",
+      "byteLength": 105085,
+      "pdfVersion": "1.4",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated via src-tauri/tests/fixtures/pdf/generate_scanned_turkish.py",
+      "provenanceStatus": "complete",
+      "generatorId": "py-scanned-turkish-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "core",
+        "scanned"
+      ],
+      "expectedCapabilities": [
+        "has_text",
+        "has_unicode_text",
+        "multi_page"
+      ],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": null,
+      "notes": "Seven pages: 0-4 image-only scans of the same Turkish text (/Rotate 0, 90, 180, 270, and a CropBox offset); 5 has a Helvetica text layer (skipped as has_text); 6 is blank (skipped as no_image). has_text/has_unicode_text refer to page 5 and the raster text. Word boxes in display points are in scanned-turkish.words.json.",
       "allowEmpty": false
     }
   ]

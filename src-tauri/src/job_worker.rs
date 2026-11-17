@@ -210,6 +210,16 @@ pub enum JobCommand {
         output_name: String,
     },
     DetectScannedPages,
+    /// Read-only: classifies pages for a searchable copy; see `searchable_pdf::plan`.
+    PlanSearchableCopy {
+        pages: Option<Vec<u32>>,
+    },
+    /// Writes a copy with an invisible OCR text layer; the words are Tesseract TSV files
+    /// the main process wrote into the job directory. See `searchable_pdf`.
+    SearchableCopy {
+        pages: Vec<SearchablePageInput>,
+        output_name: String,
+    },
     RenderOcrPage {
         page_index: u32,
         output_name: String,
@@ -366,6 +376,21 @@ pub enum JobResult {
         path: PathBuf,
         report: crate::pdf_optimizer::OptimizeReport,
     },
+    SearchablePlan(crate::searchable_pdf::SearchablePlan),
+    SearchableCopy {
+        path: PathBuf,
+        report: crate::searchable_pdf::SearchableCopyReport,
+    },
+}
+
+/// One OCR'd page of a `SearchableCopy` request: the OCR bitmap size and the job-directory
+/// file holding Tesseract's TSV output for it.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SearchablePageInput {
+    pub page_index: u32,
+    pub bitmap_width: u32,
+    pub bitmap_height: u32,
+    pub tsv_name: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -912,6 +937,62 @@ fn execute_command(
             }
             Ok(JobResult::ScannedPages(flags))
         }),
+        JobCommand::PlanSearchableCopy { pages } => {
+            let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+            crate::searchable_pdf::plan(
+                pdfium.bindings(),
+                snapshot_path,
+                credential,
+                pages.as_deref(),
+            )
+            .map(JobResult::SearchablePlan)
+            .map_err(|failure| job_failed(failure.code, failure.message))
+        }
+        JobCommand::SearchableCopy { pages, output_name } => {
+            let output_path = checked_output_path(job_dir, &output_name)?;
+            if pages.len() > crate::searchable_pdf::MAX_SEARCHABLE_PAGES {
+                return Err(job_failed(
+                    "SESSION_JOB_OUTPUT_LIMIT_EXCEEDED",
+                    "Aranabilir kopya sayfa limiti aşıldı",
+                ));
+            }
+            let mut inputs = Vec::with_capacity(pages.len());
+            let mut total_words = 0usize;
+            for page in pages {
+                let tsv_path = checked_existing_output_path(job_dir, &page.tsv_name)?;
+                let words = crate::ocr::read_tsv_layout_words(&tsv_path)
+                    .map_err(|(code, message)| job_failed(code, message))?;
+                total_words += words.len();
+                if total_words > crate::searchable_pdf::MAX_SEARCHABLE_WORDS {
+                    return Err(job_failed(
+                        "OCR_OUTPUT_TOO_LARGE",
+                        format!(
+                            "OCR çıktısı toplam {} kelime sınırını aşıyor",
+                            crate::searchable_pdf::MAX_SEARCHABLE_WORDS
+                        ),
+                    ));
+                }
+                inputs.push(crate::searchable_pdf::PageWords {
+                    page_index: page.page_index,
+                    bitmap_width: page.bitmap_width,
+                    bitmap_height: page.bitmap_height,
+                    words,
+                });
+            }
+            let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
+            let report = crate::searchable_pdf::write_searchable_copy(
+                &pdfium,
+                snapshot_path,
+                credential,
+                &inputs,
+                &output_path,
+            )
+            .map_err(|failure| job_failed(failure.code, failure.message))?;
+            Ok(JobResult::SearchableCopy {
+                path: output_path,
+                report,
+            })
+        }
         JobCommand::RenderOcrPage {
             page_index,
             output_name,

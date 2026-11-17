@@ -13,8 +13,9 @@
   import SecurityModal from "./SecurityModal.svelte";
   import OptimizeModal from "./OptimizeModal.svelte";
   import XfdfModal from "./XfdfModal.svelte";
+  import SearchablePdfModal from "./SearchablePdfModal.svelte";
 
-  let { ui, viewer, documentSession, featureUi, activePdfDisplayPath, fileName, onToast, onSessionMutation } = $props();
+  let { ui, viewer, documentSession, featureUi, activePdfDisplayPath, fileName, onToast, onSessionMutation, onOpenFile = null } = $props();
 
   const editable = $derived(documentSession.active?.editable !== false);
   const physicalPageIndex = $derived(viewer.pageOrder[viewer.currentPageIndex] ?? viewer.currentPageIndex);
@@ -31,6 +32,7 @@
 {#if ui.isModalOpen("outline_editor") && documentSession.activeSessionId}<OutlineEditorModal sessionId={documentSession.activeSessionId} contentGeneration={documentSession.contentGeneration} currentPageIndex={physicalPageIndex} pageCount={viewer.pageOrder.length} {editable} onsaved={(snapshot) => { onToast("Yer imleri kaydedildi."); onSessionMutation(snapshot); }} onclose={() => ui.closeModal("outline_editor")} />{/if}
 {#if ui.isModalOpen("security") && documentSession.activeSessionId}<SecurityModal sessionId={documentSession.activeSessionId} contentGeneration={documentSession.contentGeneration} {fileName} onsaved={(message) => onToast(message)} onclose={() => ui.closeModal("security")} />{/if}
 {#if ui.isModalOpen("optimize") && documentSession.activeSessionId}<OptimizeModal sessionId={documentSession.activeSessionId} contentGeneration={documentSession.contentGeneration} {fileName} pageCount={viewer.pageOrder.length} onsaved={(message) => onToast(message)} onclose={() => ui.closeModal("optimize")} />{/if}
+{#if ui.isModalOpen("searchable_pdf") && documentSession.activeSessionId && featureUi("searchable_pdf_export").runnable}<SearchablePdfModal sessionId={documentSession.activeSessionId} contentGeneration={documentSession.contentGeneration} {fileName} pageCount={viewer.pageOrder.length} pageOrder={viewer.pageOrder} onsaved={(message) => onToast(message)} onopen={onOpenFile} onclose={() => ui.closeModal("searchable_pdf")} />{/if}
 {#if ui.isModalOpen("xfdf") && documentSession.activeSessionId}<XfdfModal sessionId={documentSession.activeSessionId} contentGeneration={documentSession.contentGeneration} {fileName} {editable} onexported={(message) => onToast(message)} onimported={(snapshot, message) => { onToast(message); onSessionMutation(snapshot); }} onclose={() => ui.closeModal("xfdf")} />{/if}
 <BionicReadingModal isOpen={ui.isModalOpen("bionic")} text={viewer.bionicText} source={viewer.bionicSource} onclose={() => ui.closeModal("bionic")} />
 <AnalyticsModal isOpen={ui.isModalOpen("analytics")} {fileName} totalPages={viewer.pageOrder.length} currentPage={viewer.currentPageIndex + 1} readingTimeSeconds={viewer.readingTimeSeconds} scale={viewer.scale} onclose={() => ui.closeModal("analytics")} />

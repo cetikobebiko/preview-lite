@@ -340,6 +340,7 @@ export function createFeatureRuntime({
       "open-metadata": () => ui.openModal("metadata"),
       "open-security": () => ui.openModal("security"),
       "open-optimize": () => ui.openModal("optimize"),
+      "open-searchable-pdf": () => ui.openModal("searchable_pdf"),
       "open-xfdf": () => ui.openModal("xfdf"),
       "open-sanitization": () => ui.openModal("sanitization"),
       "open-page-labels": () => ui.openModal("page_labels"),

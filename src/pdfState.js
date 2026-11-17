@@ -108,22 +108,10 @@ export async function runOcrOnPage(
   );
 }
 
-export async function exportAsSearchablePdf(
-  sessionId,
-  expectedContentGeneration,
-  outputPath,
-  lang,
-) {
-  return await guardFeatureAction(
-    "searchable_pdf_export",
-    getRuntimeFeatureContext(),
-    () => ocrBackend.exportAsSearchablePdf(
-      sessionId,
-      expectedContentGeneration,
-      outputPath,
-      lang,
-    ),
-  );
+// Job handle'ı (`{ jobId, promise, cancel }`) döner; özellik çalıştırılamıyorsa job başlamadan atar.
+export function startSearchablePdfExport(sessionId, expectedContentGeneration, outputPath, lang, pages = null) {
+  assertFeatureRunnable("searchable_pdf_export", getRuntimeFeatureContext());
+  return ocrBackend.startSearchablePdfExport(sessionId, expectedContentGeneration, outputPath, lang, pages);
 }
 
 

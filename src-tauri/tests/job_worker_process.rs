@@ -2251,3 +2251,99 @@ fn image_export_worker_keeps_near_limit_jpeg_within_two_bitmap_buffers() {
         "worker peak RSS {peak_rss} bytes exceeds {budget}"
     );
 }
+
+/// Searchable copy through real worker processes: plan, OCR render, then the text layer
+/// written from Tesseract-style TSV the main process would have produced.
+#[test]
+fn searchable_copy_worker_writes_an_invisible_turkish_text_layer() {
+    let fixture_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pdf");
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    fs::copy(format!("{fixture_dir}/scanned-turkish.pdf"), &snapshot).unwrap();
+    let request = |command: Value| {
+        json!({
+            "protocol_version": JOB_WORKER_PROTOCOL_VERSION,
+            "snapshot_path": snapshot,
+            "credential": null,
+            "command": command,
+        })
+    };
+
+    let plan = run_worker(
+        directory.path(),
+        70,
+        request(json!({ "PlanSearchableCopy": { "pages": [1, 5, 6] } })),
+    );
+    let pages = &plan["result"]["Ok"]["SearchablePlan"]["pages"];
+    assert_eq!(pages[0], json!({ "page_index": 1, "skip": null }));
+    assert_eq!(pages[1], json!({ "page_index": 5, "skip": "has_text" }));
+    assert_eq!(pages[2], json!({ "page_index": 6, "skip": "no_image" }));
+
+    let render = run_worker(
+        directory.path(),
+        71,
+        request(
+            json!({ "RenderOcrPage": { "page_index": 1, "output_name": "ocr-1.png", "scale": 2.0 } }),
+        ),
+    );
+    let png = PathBuf::from(render["result"]["Ok"]["File"].as_str().unwrap());
+    let decoded = image::open(&png).unwrap();
+    let (width, height) = (decoded.width(), decoded.height());
+
+    let words: Value = serde_json::from_slice(
+        &fs::read(format!("{fixture_dir}/scanned-turkish.words.json")).unwrap(),
+    )
+    .unwrap();
+    let mut tsv = String::from(
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n",
+    );
+    let mut expected = String::new();
+    for word in words["scannedPages"][1]["words"].as_array().unwrap() {
+        let b: Vec<f64> = word["box"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        let text = word["text"].as_str().unwrap();
+        tsv.push_str(&format!(
+            "5\t1\t1\t1\t1\t1\t{}\t{}\t{}\t{}\t95\t{text}\n",
+            (b[0] * 2.0).floor(),
+            (b[1] * 2.0).floor(),
+            ((b[2] - b[0]) * 2.0).ceil(),
+            ((b[3] - b[1]) * 2.0).ceil()
+        ));
+        expected.push_str(text);
+    }
+    fs::write(directory.path().join("ocr-1.tsv"), tsv).unwrap();
+
+    let copy = run_worker(
+        directory.path(),
+        72,
+        request(json!({ "SearchableCopy": {
+            "pages": [{ "page_index": 1, "bitmap_width": width, "bitmap_height": height, "tsv_name": "ocr-1.tsv" }],
+            "output_name": "searchable-copy.pdf",
+        } })),
+    );
+    let result = &copy["result"]["Ok"]["SearchableCopy"];
+    assert_eq!(result["report"]["pagesWritten"], 1);
+    assert_eq!(result["report"]["wordsSkipped"], 0);
+    let output = PathBuf::from(result["path"].as_str().unwrap());
+    assert!(output.starts_with(directory.path()));
+
+    preview_alternative_lib::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+        let document = pdfium.load_pdf_from_file(&output, None).unwrap();
+        let page = document.pages().get(1).unwrap();
+        let text = page.text().unwrap();
+        let chars = text.chars();
+        let extracted: String = chars
+            .iter()
+            .filter_map(|c| c.unicode_char())
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert_eq!(extracted, expected);
+        assert!(extracted.contains("Çalışma") && extracted.contains("öğüt"));
+        Ok(())
+    })
+    .unwrap();
+}

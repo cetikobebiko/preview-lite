@@ -930,6 +930,7 @@ export const CONTRACTS = Object.freeze({
     expectedContentGeneration: safeIntegerType,
     outputPath: stringType,
     lang: stringType,
+    pages: nullable(arrayOf(u32Type)),
   }),
 
   configureAiEndpoint: command("configure_ai_endpoint", {
