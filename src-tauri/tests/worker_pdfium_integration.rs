@@ -34,7 +34,10 @@ mod macos_arm64 {
             let document = pdfium
                 .load_pdf_from_file(&fixture(name), None)
                 .map_err(|error| error.to_string())?;
-            let page = document.pages().get(page_index).map_err(|error| error.to_string())?;
+            let page = document
+                .pages()
+                .get(page_index)
+                .map_err(|error| error.to_string())?;
             let text = page.text().map_err(|error| error.to_string())?;
             let chars = text.chars();
             let all: Vec<_> = chars.iter().collect();
@@ -53,8 +56,13 @@ mod macos_arm64 {
             let height = (width as f32 * page.height().value / page.width().value).round();
             let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
             for character in &all[start..start + needle.len()] {
-                let bounds = character.loose_bounds().map_err(|error| error.to_string())?;
-                for (x, y) in [(bounds.left(), bounds.top()), (bounds.right(), bounds.bottom())] {
+                let bounds = character
+                    .loose_bounds()
+                    .map_err(|error| error.to_string())?;
+                for (x, y) in [
+                    (bounds.left(), bounds.top()),
+                    (bounds.right(), bounds.bottom()),
+                ] {
                     let (px, py) = page
                         .points_to_pixels(x, y, &config)
                         .map_err(|error| error.to_string())?;
@@ -65,7 +73,12 @@ mod macos_arm64 {
                 }
             }
             let width = width as f32;
-            Ok([x0 / width, y0 / height, (x1 - x0) / width, (y1 - y0) / height])
+            Ok([
+                x0 / width,
+                y0 / height,
+                (x1 - x0) / width,
+                (y1 - y0) / height,
+            ])
         })
         .unwrap()
     }
@@ -1140,11 +1153,20 @@ mod macos_arm64 {
         // of the matched characters. (Before the fix they ignored /Rotate and fell outside the
         // page, y < 0.)
         let got = [r1.x, r1.y, r1.width, r1.height];
-        assert!(got.iter().all(|value| (0.0..=1.0).contains(value)), "{got:?}");
-        for (rect, page_index, needle) in [(got, 1, "page-two"), ([r0.x, r0.y, r0.width, r0.height], 0, "page-one")] {
+        assert!(
+            got.iter().all(|value| (0.0..=1.0).contains(value)),
+            "{got:?}"
+        );
+        for (rect, page_index, needle) in [
+            (got, 1, "page-two"),
+            ([r0.x, r0.y, r0.width, r0.height], 0, "page-one"),
+        ] {
             let expected = displayed_rect_by_pdfium("reorder-rich.pdf", page_index, needle);
             for (value, want) in rect.iter().zip(expected) {
-                assert!((value - want).abs() < 0.01, "page {page_index}: {rect:?} vs PDFium {expected:?}");
+                assert!(
+                    (value - want).abs() < 0.01,
+                    "page {page_index}: {rect:?} vs PDFium {expected:?}"
+                );
             }
         }
 
