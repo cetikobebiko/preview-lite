@@ -90,7 +90,11 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `add_annotation` | `file_path: String; page_index: u32; annot_type: String; rect: RectData; color: String; contents: Option<String>` | `src-tauri/src/annotations.rs:104`, pub sync | evet | `src/pdfState.js:119` |
 | `delete_annotation` | `file_path: String; page_index: u32; annot_id: String` | `src-tauri/src/annotations.rs:167`, pub sync | evet | `src/pdfState.js:128` |
 | `save_pdf_with_annotations` | `file_path: String; output_path: String` | `src-tauri/src/annotations.rs:199`, pub sync | evet | `src/pdfState.js:137` |
-| `add_batch_job` | `job_type: String; file_path: String; parameters: String` | `src-tauri/src/batch.rs:71`, pub async | evet | `src/pluginStore.js:43` |
+| `scan_batch_inputs` | `paths: Vec<String>; recursive: bool` | `src-tauri/src/batch.rs`, pub async | evet | `src/services/backend/batch.js` |
+| `start_batch` | `request: BatchRequest` (girdiler, tiplenmiş işlem, çıktı klasörü, çakışma politikası) | `src-tauri/src/batch.rs`, pub async | evet | `src/services/backend/batch.js` |
+| `cancel_batch` | `batch_id: String` | `src-tauri/src/batch.rs`, pub async | evet | `src/services/backend/batch.js` |
+| `get_batch_status` | `batch_id: Option<String>` | `src-tauri/src/batch.rs`, pub async | evet | `src/services/backend/batch.js` |
+| `reveal_batch_output_dir` | `batch_id: String` | `src-tauri/src/batch.rs`, pub async | evet | `src/services/backend/batch.js` |
 | `print_pdf` | `file_path: String; page_range: Option<Vec<u32>>` | `src-tauri/src/export.rs:9`, pub sync | evet | `src/pdfState.js:192` |
 | `export_pages_as_images` | `file_path: String; pages: Vec<u32>; output_dir: String; format: String; dpi: f32` | `src-tauri/src/export.rs:78`, pub sync | evet | `src/pdfState.js:201` |
 | `export_text_content` | `file_path: String; pages: Vec<u32>; format: String` | `src-tauri/src/export.rs:122`, pub sync | evet | `src/pdfState.js:210` |
@@ -253,7 +257,7 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/pluginStore.js` | `start_plugin_execution` | `{ pluginId, hookName, payloadJson, executionId }` |
 | `src/pluginStore.js` | `cancel_plugin_execution` | `{ executionId }` |
 | `src/pluginStore.js` | `get_plugin_execution_status` | `{ executionId }` |
-| `src/pluginStore.js` | `add_batch_job` | `{ jobType, filePath, parameters }` |
+| `src/services/backend/batch.js` | `scan_batch_inputs`, `start_batch`, `cancel_batch`, `get_batch_status`, `reveal_batch_output_dir` | `{ paths, recursive }`, `{ request }`, `{ batchId }` |
 
 `src/configManager.js` Tauri fs pluginini doğrudan kullanır, command invoke etmez.
 `src/ipc_profiler.js`
@@ -301,7 +305,7 @@ etmediği compile/macro expansion olmadan doğrulanamadı. Bunlar kesin hata yer
 | Wrapper | Bilinen consumer'lar | Not |
 |---|---|---|
 | `src/pdfState.js` | `App.svelte`, AI sidebar/context menu, OCR layer, export modal, page organizer, merge/split modal, annotation/form katmanları ve testler | Ana PDF/AI/OCR/export wrapper'ı; iki kesin payload hatası içerir. |
-| `src/pluginStore.js` | `App.svelte`, `DeveloperConsole.svelte`, `PluginManager.svelte` | Plugin command'ları bağlıdır; `addBatchJob` için UI consumer bulunmadı. |
+| `src/pluginStore.js` | `App.svelte`, `DeveloperConsole.svelte`, `PluginManager.svelte` | Plugin command'ları bağlıdır. |
 | `src/ipc_profiler.js` | Consumer bulunmadı | Command adı dinamik; statik olarak çözülemez ve normal UI'dan erişilebilirliği kanıtlanmadı. |
 
 Bir command'ın handler'da bulunması runtime erişilebilirliği tek başına kanıtlamaz.
@@ -315,7 +319,7 @@ Event'ler command sayılarına dahil edilmemiştir.
 | Event | Producer | Payload | Consumer | Eşleşme | Test |
 |---|---|---|---|---|---|
 | `ai_stream_event` | `src-tauri/src/ai/stream_parser.rs` | `AiStreamEvent` (schema v1) | `src/services/app/aiController.js` | Tam uyumlu (Canonical) | Security Acceptance suite (`security_acceptance_tests.rs`, `aiController.test.js`) |
-| `batch_job_status` | `src-tauri/src/batch.rs:40,49` | `JobStatus` object | Consumer bulunmadı | **backend-only** | Test yok / runtime çalışmadı |
+| `batch_progress` | `src-tauri/src/batch.rs` | `BatchProgressEvent` (sıra numaralı, tek terminal) | `src/services/app/batchController.js` | bağlı | Rust event sözleşmesi + Vitest tracker testleri |
 | `tauri://drag-enter`, `tauri://drag-over`, `tauri://drag-leave`, `tauri://drag-drop` | Tauri sistem event'leri (`dragDropEnabled: true`, webview hedefli) | `getCurrentWebview().onDragDropEvent` ile `{ type, paths?, position? }` | `src/services/platform/events.js` → `src/services/app/applicationLifecycleController.js` | Sistem producer'ı bekleniyor; DOM `drop` yolu kaldırıldı | `applicationLifecycleController.test.js` (mock event akışı); runtime doğrulaması ayrıca raporlanır |
 
 ### AI Streaming Event Sözleşmesi (`ai_stream_event`)

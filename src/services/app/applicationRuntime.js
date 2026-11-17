@@ -5,6 +5,7 @@ import { createKeyboardController } from "./keyboardController.js";
 import { parsePageInput } from "./viewerNavigationModel.js";
 import { configurePluginHookDispatcher, primePluginCommands } from "./pluginHookDispatcher.js";
 import { createWindowLifecycleController } from "./windowLifecycleController.js";
+import { confirmRunningBatchStop } from "./batchController.js";
 
 /** Owns global startup, input routing and deterministic mount/unmount ordering. */
 export function createApplicationRuntime({
@@ -22,6 +23,7 @@ export function createApplicationRuntime({
   windowApi = getCurrentWindow(),
   createLifecycleController = createApplicationLifecycleController,
   createWindowController = createWindowLifecycleController,
+  confirmBatchStop = confirmRunningBatchStop,
   createKeyboard = createKeyboardController,
   pluginHookBindings = Object.freeze({ configure: configurePluginHookDispatcher, prime: primePluginCommands }),
 }) {
@@ -72,6 +74,7 @@ export function createApplicationRuntime({
     cancelTransition: transitions.cancelTransition,
     closeSession: (sessionId) => documentSession.closeSession(sessionId),
     closeAllDocumentSessions: transitions.closeAllDocumentSessions,
+    confirmBatchStop: () => confirmBatchStop(),
     onError: (error) => presentationController.setError("Pencere kapatılamadı: " + error.toString()),
   });
 
