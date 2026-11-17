@@ -2641,6 +2641,80 @@
         "verificationType": "worker_process_assertion",
         "notes": "Real job worker processes: PlanSearchableCopy, RenderOcrPage and SearchableCopy; extracted Turkish text equals the placed words"
       }
+    },
+    {
+      "featureId": "search",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:worker::pdfium::tests::search_highlights_cover_the_word_on_rotated_and_cropped_pages",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Searchable copy of scanned-turkish.pdf (rotate 0/90/180/270, CropBox offset): each Turkish query matches all five pages, one rect per match, IoU > 0.8 with the image word in displayed-page space"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:worker::pdfium::tests::text_layer_words_sit_on_the_image_words_on_rotated_and_cropped_pages",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Text layer: one item per word in order on rotated and cropped pages, IoU > 0.8 with the image word"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust_unit:worker::pdfium::tests::sideways_text_on_a_rotated_page_still_splits_into_words",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "/Rotate 90 page with sideways text: layout items equal the page words and stay inside the page"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:worker::pdfium::tests::full_page_text_keeps_text_on_rotated_and_cropped_pages",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Full page text keeps every word on rotated and cropped pages (pdfium-render all() missed text there)"
+      }
+    },
+    {
+      "featureId": "ocr",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:job_worker::tests::scanned_page_detection_sees_text_on_rotated_and_cropped_pages",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/job_worker.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "DetectScannedPages no longer reports a /Rotate 270 page with a text layer as scanned"
+      }
     }
   ],
   "features": [
@@ -2676,7 +2750,8 @@
         "core-malformed",
         "core-minimal",
         "core-release-smoke",
-        "core-reorder-rich"
+        "core-reorder-rich",
+        "core-scanned-turkish"
       ],
       "testIds": [
         "rust:b4_integration_gaps::b4_viewer_unicode_extraction_preserves_turkish_tokens",
@@ -2686,7 +2761,10 @@
         "rust:worker_pdfium_integration::large_page_dimensions_document_opens_with_bounded_geometry",
         "rust:worker_pdfium_integration::largest_practical_allowed_render_survives_worker_resource_envelope",
         "rust:worker_pdfium_integration::test_intrinsic_rotation_characterization_in_viewer_worker",
-        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts"
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+        "rust_unit:worker::pdfium::tests::full_page_text_keeps_text_on_rotated_and_cropped_pages",
+        "rust_unit:worker::pdfium::tests::sideways_text_on_a_rotated_page_still_splits_into_words",
+        "rust_unit:worker::pdfium::tests::text_layer_words_sit_on_the_image_words_on_rotated_and_cropped_pages"
       ],
       "dimensions": {
         "positive": "partial",
@@ -2710,12 +2788,14 @@
       "fixtureIds": [
         "core-encrypted",
         "core-release-smoke",
-        "core-reorder-rich"
+        "core-reorder-rich",
+        "core-scanned-turkish"
       ],
       "testIds": [
         "rust:b4_integration_gaps::b4_search_encrypted_typed_errors_and_no_partial_document",
         "rust:b4_integration_gaps::b4_search_unicode_normalized_query_finds_turkish_tokens",
-        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts"
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+        "rust_unit:worker::pdfium::tests::search_highlights_cover_the_word_on_rotated_and_cropped_pages"
       ],
       "dimensions": {
         "positive": "covered",
@@ -2857,11 +2937,13 @@
       "statusObservation": "experimental",
       "fixtureIds": [
         "core-encrypted",
-        "core-minimal"
+        "core-minimal",
+        "core-scanned-turkish"
       ],
       "testIds": [
         "rust_unit:document_session::ocr_command_helper_rejects_stale_generation",
-        "rust_unit:document_session::ocr_detection_uses_snapshot_credential_for_encrypted_pdf"
+        "rust_unit:document_session::ocr_detection_uses_snapshot_credential_for_encrypted_pdf",
+        "rust_unit:job_worker::tests::scanned_page_detection_sees_text_on_rotated_and_cropped_pages"
       ],
       "dimensions": {
         "positive": "partial",
@@ -4826,6 +4908,36 @@
       "kind": "integration_test",
       "state": "current",
       "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::search_highlights_cover_the_word_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::text_layer_words_sit_on_the_image_words_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::sideways_text_on_a_rotated_page_still_splits_into_words",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::full_page_text_keeps_text_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:job_worker::tests::scanned_page_detection_sees_text_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/job_worker.rs"
     }
   ],
   "gaps": [

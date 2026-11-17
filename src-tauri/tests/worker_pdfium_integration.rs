@@ -25,6 +25,51 @@ mod macos_arm64 {
             .to_string()
     }
 
+    /// The box of `needle`'s characters on `page_index`, mapped by PDFium's page-to-device
+    /// transform (`FPDF_PageToDevice`, which applies the CropBox and /Rotate) and normalized
+    /// by the rendered size: an independent reference for the worker's search rects.
+    fn displayed_rect_by_pdfium(name: &str, page_index: u16, needle: &str) -> [f32; 4] {
+        use pdfium_render::prelude::*;
+        preview_alternative_lib::pdf_engine::with_pdfium(|pdfium| -> Result<[f32; 4], String> {
+            let document = pdfium
+                .load_pdf_from_file(&fixture(name), None)
+                .map_err(|error| error.to_string())?;
+            let page = document.pages().get(page_index).map_err(|error| error.to_string())?;
+            let text = page.text().map_err(|error| error.to_string())?;
+            let chars = text.chars();
+            let all: Vec<_> = chars.iter().collect();
+            // The worker matches case-insensitively; so does this reference (ASCII needles).
+            let values: Vec<char> = all
+                .iter()
+                .map(|c| c.unicode_char().unwrap_or(' ').to_ascii_lowercase())
+                .collect();
+            let needle: Vec<char> = needle.chars().map(|c| c.to_ascii_lowercase()).collect();
+            let start = values
+                .windows(needle.len())
+                .position(|window| window == needle.as_slice())
+                .ok_or("needle not on the page")?;
+            let width = 10_000i32;
+            let config = PdfRenderConfig::new().set_target_width(width);
+            let height = (width as f32 * page.height().value / page.width().value).round();
+            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+            for character in &all[start..start + needle.len()] {
+                let bounds = character.loose_bounds().map_err(|error| error.to_string())?;
+                for (x, y) in [(bounds.left(), bounds.top()), (bounds.right(), bounds.bottom())] {
+                    let (px, py) = page
+                        .points_to_pixels(x, y, &config)
+                        .map_err(|error| error.to_string())?;
+                    x0 = x0.min(px as f32);
+                    x1 = x1.max(px as f32);
+                    y0 = y0.min(py as f32);
+                    y1 = y1.max(py as f32);
+                }
+            }
+            let width = width as f32;
+            Ok([x0 / width, y0 / height, (x1 - x0) / width, (y1 - y0) / height])
+        })
+        .unwrap()
+    }
+
     fn key(session_id: &str) -> WorkerDocumentKey {
         WorkerDocumentKey {
             session_id: session_id.to_string(),
@@ -1090,11 +1135,18 @@ mod macos_arm64 {
         assert_eq!(m1.page_index, 1);
         assert!(!m1.rects.is_empty());
         let r1 = &m1.rects[0];
-        // Characterization proof: Page 1 has 90° intrinsic rotation.
-        // Worker search_rects calculates raw character bounds without applying intrinsic rotation transformation,
-        // producing unaligned coordinates (y < 0.0). This behavior is documented for 8A-5 alignment.
-        assert!(r1.width > 0.0 && r1.height > 0.0);
-        assert!(r1.y < 0.0 || r1.y > 1.0);
+        // Page 1 has a 90° intrinsic rotation. Search rects are normalized in the displayed
+        // page (CropBox, /Rotate applied), so they match PDFium's own page-to-device mapping
+        // of the matched characters. (Before the fix they ignored /Rotate and fell outside the
+        // page, y < 0.)
+        let got = [r1.x, r1.y, r1.width, r1.height];
+        assert!(got.iter().all(|value| (0.0..=1.0).contains(value)), "{got:?}");
+        for (rect, page_index, needle) in [(got, 1, "page-two"), ([r0.x, r0.y, r0.width, r0.height], 0, "page-one")] {
+            let expected = displayed_rect_by_pdfium("reorder-rich.pdf", page_index, needle);
+            for (value, want) in rect.iter().zip(expected) {
+                assert!((value - want).abs() < 0.01, "page {page_index}: {rect:?} vs PDFium {expected:?}");
+            }
+        }
 
         drop(admission);
         let exclusive = broker.admit_exclusive(&key.session_id).await.unwrap();

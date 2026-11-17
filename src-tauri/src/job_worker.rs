@@ -931,7 +931,7 @@ fn execute_command(
                 // fallback'i gibi "taranmamış" sayılır; tek sayfa tüm belgeyi düşürmez.
                 let scanned = page
                     .text()
-                    .map(|text| is_scanned_page_text(&text.all()))
+                    .map(|text| is_scanned_page_text(&crate::worker::pdfium::full_page_text(&text)))
                     .unwrap_or(false);
                 flags.push(scanned);
             }
@@ -1032,7 +1032,10 @@ fn execute_command(
                         "Semantic extraction sayfa limiti aşıldı",
                     ));
                 }
-                let text = page.text().map(|text| text.all()).unwrap_or_default();
+                let text = page
+                    .text()
+                    .map(|text| crate::worker::pdfium::full_page_text(&text))
+                    .unwrap_or_default();
                 page_texts.push(JobPageText {
                     page_index: page_index as u32,
                     text,
@@ -2059,7 +2062,10 @@ fn extract_text(
         let mut output = String::new();
         for page_index in pages {
             let page = get_page(document, page_index)?;
-            let page_text = page.text().map(|text| text.all()).unwrap_or_default();
+            let page_text = page
+                .text()
+                .map(|text| crate::worker::pdfium::full_page_text(&text))
+                .unwrap_or_default();
             if markdown {
                 output.push_str(&format!("\n## Sayfa {}\n\n", page_index + 1));
             } else {
@@ -2419,6 +2425,42 @@ fn job_failed(code: impl Into<String>, message: impl Into<String>) -> JobFailure
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Text on a `/Rotate` 270 page or outside a CropBox that does not start at the origin
+    /// used to be missed (pdfium-render's `all()` reads only the page-size rectangle from
+    /// (0, 0)), so such a page with a text layer was reported as scanned.
+    #[test]
+    fn scanned_page_detection_sees_text_on_rotated_and_cropped_pages() {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.pdf");
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+            let pages = crate::searchable_pdf::tests::fixture_page_words(pdfium);
+            crate::searchable_pdf::write_searchable_copy(
+                pdfium,
+                &crate::searchable_pdf::tests::fixture("scanned-turkish.pdf"),
+                None,
+                &pages,
+                &snapshot,
+            )
+            .map(drop)
+            .map_err(|failure| failure.message)
+        })
+        .unwrap();
+        let result = execute_command(
+            directory.path(),
+            &snapshot,
+            None,
+            "scan-detection-job",
+            "scan-detection-session",
+            JobCommand::DetectScannedPages,
+        )
+        .unwrap();
+        let JobResult::ScannedPages(flags) = result else {
+            panic!("unexpected result");
+        };
+        // Pages 0-4 now carry the OCR text layer (rotate 0/90/180/270, CropBox); 5 has text; 6 is blank.
+        assert_eq!(flags, vec![false, false, false, false, false, false, true]);
+    }
 
     #[test]
     fn import_pages_recipe_never_carries_the_user_path_to_the_worker() {

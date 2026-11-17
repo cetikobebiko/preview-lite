@@ -65,4 +65,4 @@ Viewport-Normalized Review Rect (Intrinsic + Viewer rotation birleşik rotasyon 
 ## 4. Bilinen Teknik Borç (Known Technical Debt)
 
 > [!NOTE]
-> Intrinsic rotation içeren sayfaların persistent search worker kutularındaki rotasyon uyumsuzluğu bilinen bir teknik borçtur ve ileriki sürümlerde ele alınacaktır. Prompt 8A-5 kapsamında hassas veri tespiti (sensitive-data scan) bu sorundan etkilenmez; çünkü arama worker geometri önbelleğini kullanmak yerine saf `buildLogicalHighlightsByPage` ve `selectViewportHighlights` dönüşüm yolunu kullanır.
+> Çözüldü (2026-11-16): persistent search worker kutuları ve metin katmanı artık görüntülenen sayfa uzayında (CropBox ∩ MediaBox, `/Rotate`) normalize edilir (`page_geometry::PageFrame`); `/Rotate`'li ve CropBox ofsetli sayfalarda kutular kelimeyle örtüşür. Önceden intrinsic rotation içeren sayfalarda kutular sayfa dışına düşüyordu. Hassas veri tespiti (sensitive-data scan) bu sorundan hiç etkilenmemişti; arama worker geometri önbelleğini kullanmak yerine saf `buildLogicalHighlightsByPage` ve `selectViewportHighlights` dönüşüm yolunu kullanır.

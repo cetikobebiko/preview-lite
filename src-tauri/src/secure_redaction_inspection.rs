@@ -1412,7 +1412,10 @@ fn inspect_page_facts(
 
     if !has_text {
         if let Ok(text_page) = pdfium_page.text() {
-            if !text_page.all().trim().is_empty() {
+            if !crate::worker::pdfium::full_page_text(&text_page)
+                .trim()
+                .is_empty()
+            {
                 has_text = true;
             }
         }

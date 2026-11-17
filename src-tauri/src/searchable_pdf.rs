@@ -15,6 +15,7 @@
 //! kez yüklenir ve bütün sayfalarda paylaşılır.
 
 use crate::incremental_save::{save_copy, RawDocument, RawPage, FPDF_FULL_REWRITE};
+pub(crate) use crate::page_geometry::PageFrame;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::os::raw::{c_int, c_ulong};
@@ -310,39 +311,6 @@ fn object_has_image(
     }
 }
 
-/// Sayfanın görüntü çerçevesi: PDFium'un render ettiği kutu (CropBox ∩ MediaBox) ve
-/// `/Rotate` (çeyrek tur, saat yönünde).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PageFrame {
-    pub(crate) rotation: u8,
-    /// `[x0, y0, x1, y1]`, kullanıcı uzayında.
-    pub(crate) bbox: [f64; 4],
-}
-
-impl PageFrame {
-    /// Döndürülmüş sayfanın ekrandaki genişliği ve yüksekliği (pt).
-    pub(crate) fn display_size(&self) -> (f64, f64) {
-        let width = self.bbox[2] - self.bbox[0];
-        let height = self.bbox[3] - self.bbox[1];
-        if self.rotation % 2 == 1 {
-            (height, width)
-        } else {
-            (width, height)
-        }
-    }
-
-    /// Ekran noktası (döndürülmüş sayfanın sol üst köşesinden, aşağı doğru pt) → kullanıcı uzayı.
-    pub(crate) fn to_user(self, u: f64, v: f64) -> (f64, f64) {
-        let [x0, y0, x1, y1] = self.bbox;
-        match self.rotation {
-            0 => (x0 + u, y1 - v),
-            1 => (x0 + v, y0 + u),
-            2 => (x1 - u, y0 + v),
-            _ => (x1 - v, y1 - u),
-        }
-    }
-}
-
 /// Font metrikleri, font boyutu 1 için (em).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FontMetrics {
@@ -509,49 +477,15 @@ fn page_frame(
     page: FPDF_PAGE,
     bitmap: (u32, u32),
 ) -> Result<PageFrame, SearchableFailure> {
-    let read_box = |getter: &dyn Fn(&mut f32, &mut f32, &mut f32, &mut f32) -> FPDF_BOOL| {
-        let (mut l, mut b, mut r, mut t) = (0f32, 0f32, 0f32, 0f32);
-        bindings
-            .is_true(getter(&mut l, &mut b, &mut r, &mut t))
-            .then(|| {
-                let (l, b, r, t) = (f64::from(l), f64::from(b), f64::from(r), f64::from(t));
-                [l.min(r), b.min(t), l.max(r), b.max(t)]
-            })
-    };
-    let media = read_box(&|l, b, r, t| bindings.FPDFPage_GetMediaBox(page, l, b, r, t))
-        .unwrap_or([0.0, 0.0, 612.0, 792.0]);
-    let bbox = match read_box(&|l, b, r, t| bindings.FPDFPage_GetCropBox(page, l, b, r, t)) {
-        Some(crop) => {
-            let clipped = [
-                crop[0].max(media[0]),
-                crop[1].max(media[1]),
-                crop[2].min(media[2]),
-                crop[3].min(media[3]),
-            ];
-            if clipped[2] > clipped[0] && clipped[3] > clipped[1] {
-                clipped
-            } else {
-                media
-            }
-        }
-        None => media,
-    };
-    let frame = PageFrame {
-        rotation: bindings.FPDFPage_GetRotation(page).rem_euclid(4) as u8,
-        bbox,
-    };
     let mismatch = || {
         SearchableFailure::new(
             "SEARCHABLE_PDF_GEOMETRY_MISMATCH",
             "Sayfa geometrisi PDFium'un render geometrisiyle uyuşmuyor",
         )
     };
+    let frame = PageFrame::of_page(bindings, page).ok_or_else(mismatch)?;
     let (display_width, display_height) = frame.display_size();
-    let page_width = f64::from(bindings.FPDF_GetPageWidthF(page));
-    let page_height = f64::from(bindings.FPDF_GetPageHeightF(page));
-    if (page_width - display_width).abs() > 0.01 || (page_height - display_height).abs() > 0.01 {
-        return Err(mismatch());
-    }
+    let (page_width, page_height) = (display_width, display_height);
     let (bitmap_width, bitmap_height) = (f64::from(bitmap.0), f64::from(bitmap.1));
     let expected_width = (page_width * f64::from(OCR_RENDER_SCALE)).round();
     if (bitmap_width - expected_width).abs() > 0.0

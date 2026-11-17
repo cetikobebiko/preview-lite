@@ -32,6 +32,7 @@ mod macos_helper;
 pub mod manipulation;
 pub mod ocr;
 pub(crate) mod output_names;
+pub mod page_geometry;
 pub mod page_marks;
 pub mod pdf_engine;
 pub mod pdf_optimizer;

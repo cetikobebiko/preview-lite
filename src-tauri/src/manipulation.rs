@@ -101,7 +101,7 @@ fn page_snapshots(document: &PdfDocument<'_>) -> Result<Vec<PageSnapshot>, Docum
                 width: page.width().value,
                 height: page.height().value,
                 rotation: format!("{rotation:?}"),
-                text: text.all(),
+                text: crate::worker::pdfium::full_page_text(&text),
                 annotations: annotation_snapshots,
             })
         })

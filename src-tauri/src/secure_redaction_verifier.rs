@@ -805,12 +805,13 @@ pub fn verify_secure_redaction(
                 let objects: Vec<_> = page.objects().iter().collect();
                 let types: Vec<_> = objects.iter().map(|o| o.object_type()).collect();
                 if types != vec![PdfPageObjectType::Image]
-                    || !page
-                        .text()
-                        .map_err(|_| verification_error("Affected page text inspection failed"))?
-                        .all()
-                        .trim()
-                        .is_empty()
+                    || !crate::worker::pdfium::full_page_text(
+                        &page.text().map_err(|_| {
+                            verification_error("Affected page text inspection failed")
+                        })?,
+                    )
+                    .trim()
+                    .is_empty()
                 {
                     return Err(verification_error(
                         "Affected page is not exactly one image with no extractable text",
@@ -1049,9 +1050,12 @@ pub fn verify_secure_redaction(
                     .pages()
                     .get(i as u16)
                     .map_err(|_| verification_error("Output page missing"))?;
-                if source_page.text().ok().map(|t| t.all())
-                    != output_page.text().ok().map(|t| t.all())
-                {
+                let full_text = |page: &PdfPage<'_>| {
+                    page.text()
+                        .ok()
+                        .map(|text| crate::worker::pdfium::full_page_text(&text))
+                };
+                if full_text(&source_page) != full_text(&output_page) {
                     return Err(verification_error(
                         "Unaffected page text differs from snapshot",
                     ));
