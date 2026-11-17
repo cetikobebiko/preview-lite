@@ -402,6 +402,50 @@ const optimizeSettings = objectOf({
   objectStreams: booleanType,
 });
 
+// Mirrors `batch::BatchOperation`: one tagged operation, typed settings only.
+const batchOperation = objectOf(
+  {
+    kind: Object.freeze({
+      type: "string",
+      enum: Object.freeze(["optimize", "export_document", "export_text", "export_images", "security"]),
+    }),
+  },
+  {
+    settings: optimizeSettings,
+    format: stringType,
+    dpi: Object.freeze({ type: "number", min: 1, max: 2400 }),
+    op: securityOp,
+  },
+  (operation) => {
+    const fields = {
+      optimize: ["settings"],
+      export_document: ["format"],
+      export_text: ["format"],
+      export_images: ["format", "dpi"],
+      security: ["op"],
+    }[operation.kind];
+    const formats = {
+      export_document: ["docx", "pptx", "html", "rtf", "md"],
+      export_text: ["txt", "md"],
+      export_images: ["png", "jpeg"],
+    }[operation.kind];
+    const present = ["settings", "format", "dpi", "op"].filter((key) => operation[key] !== undefined);
+    if (present.length !== fields.length || !fields.every((key) => present.includes(key))) {
+      return `batch operation ${operation.kind} must carry exactly: ${fields.join(", ")}`;
+    }
+    if (formats && !formats.includes(operation.format)) {
+      return `batch operation ${operation.kind} format must be one of: ${formats.join(", ")}`;
+    }
+    return null;
+  },
+);
+const batchRequest = objectOf({
+  inputs: Object.freeze({ type: "array", items: stringType, maxItems: 500 }),
+  operation: batchOperation,
+  outputDir: stringType,
+  conflictPolicy: Object.freeze({ type: "string", enum: Object.freeze(["number", "skip", "overwrite"]) }),
+});
+
 const formAuthorOp = objectOf(
   {
     op: Object.freeze({ type: "string", enum: Object.freeze(["add", "delete", "move", "set_props"]) }),
@@ -1024,11 +1068,14 @@ export const CONTRACTS = Object.freeze({
   getPluginExecutionStatus: command("get_plugin_execution_status", {
     executionId: stringType,
   }),
-  addBatchJob: command("add_batch_job", {
-    jobType: stringType,
-    filePath: stringType,
-    parameters: stringType,
+  scanBatchInputs: command("scan_batch_inputs", {
+    paths: Object.freeze({ type: "array", items: stringType, maxItems: 5000 }),
+    recursive: booleanType,
   }),
+  startBatch: command("start_batch", { request: batchRequest }),
+  cancelBatch: command("cancel_batch", { batchId: renderIdentifierType }),
+  getBatchStatus: command("get_batch_status", { batchId: nullable(renderIdentifierType) }),
+  revealBatchOutputDir: command("reveal_batch_output_dir", { batchId: renderIdentifierType }),
 
   applyRedactions: command("apply_redactions", {
     jobId: renderIdentifierType,
@@ -1133,7 +1180,10 @@ export const PROTECTED_CONTRACT_IDS = Object.freeze([
   "startPluginExecution",
   "cancelPluginExecution",
   "getPluginExecutionStatus",
-  "addBatchJob",
+  "scanBatchInputs",
+  "startBatch",
+  "cancelBatch",
+  "revealBatchOutputDir",
   "speakText",
   "stopSpeaking",
   "shareFileMacos",

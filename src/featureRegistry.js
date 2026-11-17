@@ -282,9 +282,9 @@ const RAW_FEATURES = [
   {
     id: "batch_processing",
     label: "Batch processing",
-    status: "disabled",
-    enabled: false,
-    warning: "Toplu iş işleme bu sürümde devre dışıdır; backend FEATURE_UNAVAILABLE döndürür.",
+    status: "experimental",
+    enabled: true,
+    warning: "Deneysel: seçilen PDF'lerin kopyalarını üretir; girdi dosyaları ve açık belge değişmez. Parola isteyen dosyalar atlanır, toplu işlemde parola sorulmaz. Yalnız sahip parolasıyla kısıtlanmış dosyalar küçültme ve güvenlik kopyasında atlanır.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#batch-processing",
   },

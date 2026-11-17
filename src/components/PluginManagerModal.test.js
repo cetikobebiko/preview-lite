@@ -15,7 +15,6 @@ vi.mock('../services/backend/plugins.js', () => ({
   cancelPluginExecution: vi.fn(),
   getPluginExecutionStatus: vi.fn(),
   getPluginFeatureStatus: vi.fn(),
-  addBatchJob: vi.fn(),
 }));
 
 const basePlugin = {

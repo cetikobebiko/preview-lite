@@ -39,6 +39,21 @@ async function requestClose(fixture, count = 1) {
 }
 
 describe("window lifecycle controller", () => {
+  it("keeps the window open, without touching documents, when a running batch is kept", async () => {
+    const fixture = createFixture({ confirmBatchStop: vi.fn(async () => false) });
+    await requestClose(fixture);
+    expect(fixture.dependencies.confirmBatchStop).toHaveBeenCalledOnce();
+    expect(fixture.dependencies.documentOpenCoordinator.stop).not.toHaveBeenCalled();
+    expect(fixture.dependencies.windowApi.destroy).not.toHaveBeenCalled();
+    expect(fixture.calls).toEqual(["prevent"]);
+  });
+
+  it("closes normally once the running batch may stop", async () => {
+    const fixture = createFixture({ confirmBatchStop: vi.fn(async () => true) });
+    await requestClose(fixture);
+    expect(fixture.calls).toEqual(["prevent", "discard", "close-session", "close-all", "destroy"]);
+  });
+
   it("prevents first, runs one close transaction, and destroys after discard cleanup", async () => {
     const fixture = createFixture();
     const event = await requestClose(fixture, 2);

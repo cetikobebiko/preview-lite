@@ -6,6 +6,7 @@ export const COMMANDS = Object.freeze([
   { id: "open-security", title: "Parola ile Koru / Güvenliği Kaldır (Kopya Kaydet)", icon: "🔒", category: "Güvenlik & Meta", featureId: null },
   { id: "open-optimize", title: "Dosya Boyutunu Küçült (Optimize Edilmiş Kopya Kaydet)", icon: "🗜️", category: "Dışa Aktar", featureId: null },
   { id: "open-sanitization", title: "Belgeyi Temizle (Gizli İçerik ve Metadata, Yeni Dosyaya Kaydet)", icon: "🧹", category: "Güvenlik & Meta", featureId: "sanitization", hideUnlessRunnable: true },
+  { id: "open-batch", title: "Toplu İşlem (Birden Çok PDF'e Aynı İşlemi Uygula)", icon: "🗂️", category: "Dışa Aktar", featureId: "batch_processing" },
   { id: "open-xfdf", title: "Açıklamaları ve Form Verisini Dışa / İçe Aktar (XFDF)", icon: "💬", category: "Dışa Aktar", featureId: null },
   { id: "open-page-labels", title: "Sayfa Etiketlerini Düzenle (i, ii, 1, 2…)", icon: "🔢", category: "Düzenleme", featureId: "page_manipulation" },
   { id: "open-outline-editor", title: "Yer İmlerini Düzenle", icon: "🔖", category: "Düzenleme", featureId: "page_manipulation" },

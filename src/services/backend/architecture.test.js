@@ -505,9 +505,43 @@ describe("backend service boundaries", () => {
         expect(body, `${functionName} must not call ${call}`).not.toContain(call);
       }
       expect(body, `${functionName} must dispatch an ephemeral job worker`).toMatch(
-        /job_worker::(?:run_job|JobCommand)/,
+        /job_worker::(?:run_job|JobCommand)|copy_jobs::produce_/,
       );
     }
+
+    // Shared copy-job steps (session commands and batch runner) only dispatch the job worker.
+    const copyJobs = readSource(resolve(rustSourceRoot, "copy_jobs.rs"));
+    for (const functionName of [
+      "produce_optimized_copy",
+      "produce_security_copy",
+      "produce_document_export",
+      "produce_text",
+      "produce_page_images",
+    ]) {
+      const body = rustFunctionBody(copyJobs, functionName);
+      for (const call of forbidden) {
+        expect(body, `${functionName} must not call ${call}`).not.toContain(call);
+      }
+      expect(body, `${functionName} must dispatch an ephemeral job worker`).toMatch(/run_job\(/);
+    }
+
+    // The batch runner never opens a user PDF in the Tauri process: inputs are
+    // copied to a private snapshot and only the job worker parses them.
+    for (const file of ["batch.rs", "batch/input.rs", "batch/output.rs"]) {
+      const source = readSource(resolve(rustSourceRoot, file));
+      for (const call of forbidden) {
+        expect(source, `${file} must not call ${call}`).not.toContain(call);
+      }
+    }
+    const batchFile = rustFunctionBody(
+      readSource(resolve(rustSourceRoot, "batch.rs")),
+      "try_process_file",
+    );
+    expect(batchFile).toMatch(/copy_source_consistent/);
+    expect(batchFile).toMatch(/JobCommand::InspectBatchInput/);
+    expect(batchFile).toMatch(/copy_jobs::produce_/);
+    expect(batchFile).toMatch(/accept_job_output_set/);
+    expect(batchFile).not.toMatch(/write_atomically/);
 
     const snapshotRunner = rustFunctionBody(
       sources.documentSession,

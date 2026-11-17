@@ -11,6 +11,7 @@ pub mod annotations;
 pub mod app_config;
 pub mod batch;
 pub mod compare;
+pub(crate) mod copy_jobs;
 pub mod document_export;
 pub mod document_io;
 pub mod document_security;
@@ -1423,7 +1424,8 @@ pub fn run() {
         .manage(TextLayoutCache(parking_lot::Mutex::new(
             lru::LruCache::new(std::num::NonZeroUsize::new(50).unwrap()),
         )))
-        .manage(RenderService::new());
+        .manage(RenderService::new())
+        .manage(batch::BatchRunner::default());
     let builder = match document_sessions {
         Some(store) => builder.manage(store.worker_broker()).manage(store),
         None => builder,
@@ -1523,7 +1525,11 @@ pub fn run() {
             plugins::start_plugin_execution,
             plugins::cancel_plugin_execution,
             plugins::get_plugin_execution_status,
-            batch::add_batch_job,
+            batch::scan_batch_inputs,
+            batch::start_batch,
+            batch::cancel_batch,
+            batch::get_batch_status,
+            batch::reveal_batch_output_dir,
             redaction::apply_redactions,
             redaction::plan_secure_redaction,
             redaction::execute_secure_redaction,
@@ -1555,6 +1561,12 @@ pub fn run() {
                     app_handle.state::<AppShutdownToken>().0.cancel();
                     let handle = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
+                        // A running batch is cancelled first, so its job worker is
+                        // stopped and its private directory removed before the store
+                        // shuts down.
+                        if let Some(runner) = handle.try_state::<batch::BatchRunner>() {
+                            runner.shutdown().await;
+                        }
                         // Store yoksa (açılış hatası) kapatılacak oturum ya da worker da yoktur.
                         if let Some(store) =
                             handle.try_state::<document_session::DocumentSessionStore>()

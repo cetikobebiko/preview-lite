@@ -39,7 +39,7 @@ use uuid::Uuid;
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const OPEN_ATTEMPTS: usize = 2;
-const TEMP_ROOT_NAME: &str = "antigravity-pdf-sessions";
+pub(crate) const TEMP_ROOT_NAME: &str = "antigravity-pdf-sessions";
 const TRANSITION_TTL_MS: u64 = 5 * 60 * 1000;
 const ACTIVATION_TTL_MS: u64 = 5 * 60 * 1000;
 const SESSION_JOB_PENDING_TTL_MS: u64 = 60 * 1000;
@@ -4122,6 +4122,7 @@ impl DocumentSessionStore {
             create_secure_dir(&instance_dir)?;
             create_secure_dir(&instance_dir.join("sessions"))?;
             create_secure_dir(&instance_dir.join("jobs"))?;
+            create_secure_dir(&instance_dir.join("batches"))?;
             write_manifest(
                 &instance_dir,
                 &InstanceManifest {
@@ -4380,6 +4381,12 @@ impl DocumentSessionStore {
 
     fn jobs_root(&self) -> PathBuf {
         self.instance_dir.join("jobs")
+    }
+
+    /// Private root of batch runs (`batch::`). It lives in this instance, so a
+    /// crashed run is removed with the orphaned instance on the next start.
+    pub(crate) fn batches_root(&self) -> PathBuf {
+        self.instance_dir.join("batches")
     }
 
     fn insert_candidate(
@@ -8675,21 +8682,7 @@ pub async fn export_session_pages_as_images(
                 let planned = crate::export::planned_export_image_outputs(&pages, &format, &stem);
                 // Çakışma render'dan önce raporlanır; yayın sırasında yeniden denetlenir.
                 preflight_job_output_set(&output_dir, &planned, overwrite)?;
-                let result = crate::job_worker::run_job(
-                    &context,
-                    crate::job_worker::JobCommand::ExportPagesAsImages { pages, format, dpi },
-                    Duration::from_secs(300),
-                )?;
-                let crate::job_worker::JobResult::Files(files) = result else {
-                    return Err(SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Image export worker beklenmeyen sonuç döndürdü",
-                    ));
-                };
-                let sources = files
-                    .iter()
-                    .map(|source| crate::job_worker::validate_output_file(&context, source))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let sources = crate::copy_jobs::produce_page_images(&context, pages, format, dpi)?;
                 accept_job_output_set(&context, sources, &planned, &output_dir, overwrite)
             },
         )
@@ -8967,21 +8960,7 @@ pub async fn save_session_security_copy(
             &session_id,
             expected_content_generation,
             move |context| {
-                context.cancellation.check_cancelled()?;
-                let result = crate::job_worker::run_job(
-                    &context,
-                    JobCommand::SecurityCopy {
-                        op,
-                        output_name: "security-copy.pdf".to_string(),
-                    },
-                    Duration::from_secs(300),
-                )?;
-                let JobResult::File(source) = result else {
-                    return Err(SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Güvenlik kopyası worker'ı beklenmeyen sonuç döndürdü",
-                    ));
-                };
+                let source = crate::copy_jobs::produce_security_copy(&context, op)?;
                 accept_job_output_file(&context, &source, Path::new(&target_path))
             },
         )
@@ -9008,21 +8987,7 @@ pub async fn save_session_optimized_copy(
             &session_id,
             expected_content_generation,
             move |context| {
-                context.cancellation.check_cancelled()?;
-                let result = crate::job_worker::run_job(
-                    &context,
-                    JobCommand::OptimizedCopy {
-                        settings,
-                        output_name: "optimized-copy.pdf".to_string(),
-                    },
-                    Duration::from_secs(600),
-                )?;
-                let JobResult::OptimizedCopy { path, report } = result else {
-                    return Err(SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Optimizasyon worker'ı beklenmeyen sonuç döndürdü",
-                    ));
-                };
+                let (path, report) = crate::copy_jobs::produce_optimized_copy(&context, settings)?;
                 accept_job_output_file(&context, &path, Path::new(&target_path))?;
                 Ok(report)
             },
@@ -9050,23 +9015,8 @@ pub async fn export_session_document(
             &session_id,
             expected_content_generation,
             move |context| {
-                context.cancellation.check_cancelled()?;
-                let result = crate::job_worker::run_job(
-                    &context,
-                    JobCommand::ExportDocument {
-                        format,
-                        title,
-                        pages,
-                        output_name: format!("document-export.{}", format.extension()),
-                    },
-                    Duration::from_secs(300),
-                )?;
-                let JobResult::File(source) = result else {
-                    return Err(SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Belge dışa aktarma worker'ı beklenmeyen sonuç döndürdü",
-                    ));
-                };
+                let source =
+                    crate::copy_jobs::produce_document_export(&context, format, title, pages)?;
                 accept_job_output_file(&context, &source, Path::new(&target_path))
             },
         )
@@ -9087,23 +9037,7 @@ pub async fn export_session_text_content(
             &job_id,
             &session_id,
             expected_content_generation,
-            move |context| {
-                context.cancellation.check_cancelled()?;
-                match crate::job_worker::run_job(
-                    &context,
-                    crate::job_worker::JobCommand::ExtractText {
-                        pages: Some(pages),
-                        format,
-                    },
-                    Duration::from_secs(180),
-                )? {
-                    crate::job_worker::JobResult::Text(text) => Ok(text),
-                    _ => Err(SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Text export worker beklenmeyen sonuç döndürdü",
-                    )),
-                }
-            },
+            move |context| crate::copy_jobs::produce_text(&context, Some(pages), format),
         )
         .await
 }
@@ -9132,21 +9066,7 @@ pub async fn export_session_text_to_file(
             &session_id,
             expected_content_generation,
             move |context| {
-                context.cancellation.check_cancelled()?;
-                let crate::job_worker::JobResult::Text(text) = crate::job_worker::run_job(
-                    &context,
-                    crate::job_worker::JobCommand::ExtractText {
-                        pages: Some(pages),
-                        format,
-                    },
-                    Duration::from_secs(180),
-                )?
-                else {
-                    return Err(SessionJobOperationError::failed_with_code(
-                        "SESSION_JOB_WORKER_PROTOCOL_ERROR",
-                        "Text export worker beklenmeyen sonuç döndürdü",
-                    ));
-                };
+                let text = crate::copy_jobs::produce_text(&context, Some(pages), format)?;
                 context.cancellation.check_cancelled()?;
                 crate::document_io::write_atomically(&target, |staged| {
                     std::io::Write::write_all(staged, text.as_bytes())
@@ -12676,7 +12596,10 @@ fn transition_expired(transition: &SessionTransition) -> bool {
     expirable && now_ms().saturating_sub(transition.created_at_ms) > TRANSITION_TTL_MS
 }
 
-fn copy_source_consistent(source: &Path, working: &Path) -> Result<String, DocumentSessionError> {
+pub(crate) fn copy_source_consistent(
+    source: &Path,
+    working: &Path,
+) -> Result<String, DocumentSessionError> {
     for attempt in 0..OPEN_ATTEMPTS {
         let before = source_stamp(source)?;
         let copied_digest = copy_with_digest(source, working)?;
@@ -12707,6 +12630,12 @@ struct SourceStamp {
     identity: String,
     len: u64,
     modified: Option<SystemTime>,
+}
+
+/// Stable file identity (device + inode, or the Windows file id) of an existing
+/// regular file, the same identity the open-copy consistency check uses.
+pub(crate) fn source_identity(path: &Path) -> Result<String, DocumentSessionError> {
+    source_stamp(path).map(|stamp| stamp.identity)
 }
 
 fn source_stamp(path: &Path) -> Result<SourceStamp, DocumentSessionError> {
@@ -13076,7 +13005,7 @@ fn preflight_job_output_set(
 /// Publishes validated job outputs into `output_dir` all-or-nothing under
 /// their planned target names (see [`crate::document_io::publish_output_set`]).
 /// The worker must have produced exactly the planned files, in order.
-fn accept_job_output_set(
+pub(crate) fn accept_job_output_set(
     context: &SessionJobContext,
     sources: Vec<PathBuf>,
     planned: &[crate::output_names::PlannedOutput],
@@ -13150,7 +13079,7 @@ fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-fn create_secure_dir(path: &Path) -> Result<(), DocumentSessionError> {
+pub(crate) fn create_secure_dir(path: &Path) -> Result<(), DocumentSessionError> {
     let created = match fs::create_dir(path) {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
@@ -13333,7 +13262,7 @@ fn ensure_safe_tree_root(path: &Path) -> Result<(), DocumentSessionError> {
     Ok(())
 }
 
-fn secure_remove_tree(path: &Path) -> Result<(), DocumentSessionError> {
+pub(crate) fn secure_remove_tree(path: &Path) -> Result<(), DocumentSessionError> {
     // Aynı `cleanup-*` ağacını başka bir store ya da ikinci bir uygulama örneği de siliyor olabilir.
     // Windows'ta onun bekleyen silmeleri hem link taramasında hem silmede "Access is denied" olarak
     // döner; ağaç kaybolana kadar G/Ç hataları kısa aralıklarla yeniden denenir. Link/reparse-point
@@ -13741,6 +13670,28 @@ pub(crate) fn open_test_session(
         session_id: result.session_id,
         content_generation: actual_generation,
     }
+}
+
+/// Opens `original` as the active, open session, as an activation would.
+#[cfg(test)]
+pub(crate) fn activate_test_session(
+    store: &DocumentSessionStore,
+    original: &std::path::Path,
+) -> TestDocumentSessionFixture {
+    let fixture = open_test_session(store, original);
+    *store.active_session_id.lock() = Some(fixture.session_id.clone());
+    fixture
+}
+
+/// The active session's identity as seen by the frontend: id, identity epoch,
+/// and its snapshot (generation, dirty, lifecycle).
+#[cfg(test)]
+pub(crate) fn active_identity_for_test(
+    store: &DocumentSessionStore,
+) -> (Option<String>, u64, Option<DocumentSessionSnapshot>) {
+    let active_id = store.active_session_id.lock().clone();
+    let epoch = store.active_identity_epoch.load(Ordering::SeqCst);
+    (active_id, epoch, store.active_session_snapshot().unwrap())
 }
 
 #[cfg(test)]

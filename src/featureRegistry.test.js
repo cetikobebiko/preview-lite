@@ -73,7 +73,7 @@ describe("feature policy", () => {
       enabled: true,
     }, developmentMac)).toBe(false);
     expect(isFeatureRecordRunnable({
-      ...getFeature("batch_processing"),
+      ...getFeature("pdf_x_export"),
       enabled: true,
     }, developmentMac)).toBe(false);
   });
@@ -86,9 +86,21 @@ describe("feature policy", () => {
   });
 
   it("does not make disabled features runnable", () => {
-    const presentation = getFeaturePresentation("batch_processing", developmentMac);
+    const presentation = getFeaturePresentation("pdf_x_export", developmentMac);
     expect(presentation.visible).toBe(true);
     expect(presentation.runnable).toBe(false);
+  });
+
+  it("runs batch processing as experimental on every desktop build", () => {
+    for (const context of [developmentMac, productionMac]) {
+      const batch = getFeaturePresentation("batch_processing", context);
+      expect(batch.status).toBe("experimental");
+      expect(batch.runnable).toBe(true);
+      expect(batch.visible).toBe(true);
+      expect(batch.badge).toBe("EXPERIMENTAL");
+    }
+    expect(getFeature("batch_processing").warning).toMatch(/girdi dosyaları ve açık belge değişmez/);
+    expect(getFeature("batch_processing").warning).toMatch(/Parola isteyen dosyalar atlanır/);
   });
 
   it("runs blank page insert and direct merge as experimental", () => {

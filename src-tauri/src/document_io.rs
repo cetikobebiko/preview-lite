@@ -588,6 +588,26 @@ fn resolve_target(path: &Path) -> Result<ResolvedPath, String> {
 
 /// Compares two persistence targets using the same canonical namespace and file
 /// identity rules used by the atomic path-lock authority.
+/// Hard-link count of an existing regular file (`1` when it has no other name).
+// The PDFium-free `document_io_fs` target has no batch caller.
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn regular_file_link_count(path: &Path) -> Result<u64, String> {
+    #[cfg(windows)]
+    {
+        windows_identity_and_link_count(path).map(|(_, links)| links)
+    }
+    #[cfg(unix)]
+    {
+        let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+        Ok(metadata_link_count(&metadata).unwrap_or(1))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Ok(1)
+    }
+}
+
 pub(crate) fn same_persistence_target(left: &Path, right: &Path) -> Result<bool, String> {
     let left = resolve_target(left)?;
     let right = resolve_target(right)?;

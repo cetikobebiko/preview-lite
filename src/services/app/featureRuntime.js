@@ -342,6 +342,7 @@ export function createFeatureRuntime({
       "open-optimize": () => ui.openModal("optimize"),
       "open-searchable-pdf": () => ui.openModal("searchable_pdf"),
       "open-xfdf": () => ui.openModal("xfdf"),
+      "open-batch": () => ui.openModal("batch"),
       "open-sanitization": () => ui.openModal("sanitization"),
       "open-page-labels": () => ui.openModal("page_labels"),
       "open-outline-editor": () => ui.openModal("outline_editor"),
