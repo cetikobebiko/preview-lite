@@ -2,8 +2,8 @@
 // Licensed under the MIT License; see src-tauri/licenses/pdfcraft.txt.
 //
 // Ported from PdfCraft 0.16.1, crates/forms/src/detect/raster.rs (MIT OR Apache-2.0, used under
-// MIT). Changes from the original: rewritten for Rust edition 2021 (no let chains,
-// `chunks_exact` for `as_chunks`); the picture comes from a PDFium render in the job worker
+// MIT). Changes from the original: rewritten for Rust edition 2021 (no let chains); the
+// picture comes from a PDFium render in the job worker
 // (`super::read_page`).
 
 //! Field detection on scanned pages: the [`Shapes`] that [`detect`](super::detect) needs, read
@@ -118,9 +118,10 @@ pub fn shapes(rgba: &[u8], width: u32, height: u32, px_per_pt: f64) -> Shapes {
 /// Luminance over white paper (a transparent pixel is paper).
 fn grey(rgba: &[u8], w: usize, h: usize) -> Grey {
     let v = rgba
-        .chunks_exact(4)
-        .map(|px| {
-            let [r, g, b, a] = [px[0], px[1], px[2], px[3]];
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&[r, g, b, a]| {
             let (r, g, b, a) = (u32::from(r), u32::from(g), u32::from(b), u32::from(a));
             // Premultiplied over white: c + (255 - a).
             let l = (r * 77 + g * 150 + b * 29) >> 8;
