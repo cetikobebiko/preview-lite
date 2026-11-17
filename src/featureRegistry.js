@@ -345,11 +345,11 @@ const RAW_FEATURES = [
   {
     id: "markdown_notes_export",
     label: "Markdown notes export",
-    status: "mock",
-    enabled: false,
-    warning: "Markdown dosyası yazılmamaktadır; geliştirici görünümünde de gerçek işlem yapılmaz.",
+    status: "experimental",
+    enabled: true,
+    warning: "Notlar belgedeki PDF açıklamalarından üretilir; kaydedilmemiş değişiklikler dahildir.",
     platform: ALL_DESKTOP_PLATFORMS,
-    documentation: "docs/engineering/feature-matrix.md#active-frontend-only-features",
+    documentation: "docs/engineering/feature-matrix.md#annotation",
   },
 ];
 

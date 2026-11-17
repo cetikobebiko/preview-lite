@@ -7,7 +7,9 @@
   let { coordinator } = $props();
 
   let value = $state("");
-  let inputRef = $state();
+  // null, not undefined: Input's bindable `ref` falls back to null, and binding undefined to a
+  // prop with a fallback throws props_invalid_value when the prompt opens.
+  let inputRef = $state(null);
 
   $effect(() => {
     const request = coordinator.active;

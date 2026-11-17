@@ -162,6 +162,20 @@ export const exportSessionDocument = (
     }),
   ).promise;
 
+// Markdown notes from the document's PDF annotations (the session's unsaved state); Rust writes
+// targetPath atomically. Returns the cancellable job handle `{ jobId, promise, cancel }`; the
+// promise rejects with code NOTES_EXPORT_EMPTY, and writes nothing, when there are no notes.
+export const exportSessionNotesMarkdown = (sessionId, expectedContentGeneration, targetPath, options = {}) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("exportSessionNotesMarkdown", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      targetPath,
+      options,
+    }),
+  );
+
 // Writes a smaller copy (see `pdf_optimizer`); resolves to the backend's report. The session's
 // file is not changed.
 export const saveSessionOptimizedCopy = (sessionId, expectedContentGeneration, settings, targetPath) =>

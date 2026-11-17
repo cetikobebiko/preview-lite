@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFeatureRuntime } from "./featureRuntime.js";
 import { createDocumentScopedStateReconciler } from "./documentScopedState.js";
-import { buildAnnotationMarkdown } from "./annotationMarkdown.js";
 import { createAnnotationState } from "../../stores/annotationState.svelte.js";
 import { SignatureLossDeclinedError } from "../signatureLossGuard.js";
+
+const dialogMocks = vi.hoisted(() => ({ save: vi.fn(), open: vi.fn(), ask: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => dialogMocks);
 
 describe("featureRuntime lifecycle & façade assertions", () => {
   function setupTestRuntime(overrides = {}) {
@@ -242,29 +244,36 @@ describe("featureRuntime lifecycle & façade assertions", () => {
     expect(typeof runtime.getSensitiveDataHighlightsForPage).toBe("function");
   });
 
-  it("never hands drawings from a previously open document to notes export", () => {
+  it("exports notes for the active PDF session from the backend, never from the drawing layer", async () => {
     const annotation = createAnnotationState();
     const viewer = { activeImageSourcePath: "", currentPageIndex: 0, pageOrder: [0], rotation: 0, flipH: false, flipV: false, documentTextContext: "", bionicText: "" };
     const documentSession = { activeSessionId: null, contentGeneration: 0 };
-    let exportContext;
-    setupTestRuntime({
-      annotation, viewer, documentSession,
-      createExportController: vi.fn(({ getContext }) => { exportContext = getContext; return { exportCurrentPageImage: vi.fn() }; }),
+    const exportNotes = vi.fn(() => ({ jobId: "job-1", promise: Promise.resolve(null), cancel: vi.fn() }));
+    dialogMocks.save.mockResolvedValue("/out/b_Notlar.md");
+    const onToast = vi.fn();
+    const { runtime } = setupTestRuntime({
+      annotation, viewer, documentSession, exportNotes, onToast,
+      documentRuntime: { isPdf: true, isLoadedPdfDocument: true, activeDisplayPath: "/b.pdf", fileName: "b.pdf", openFile: vi.fn() },
     });
     const reconciler = createDocumentScopedStateReconciler({ viewer, annotation });
 
+    // A drawing made on an image document stays out of the next PDF's notes.
     viewer.activeImageSourcePath = "/scan.png";
     reconciler.reconcile({ sessionId: null, contentGeneration: 0, imagePath: "/scan.png" });
     annotation.annotationsMap = { 0: [{ page_index: 0, tool_type: "text", text: "görsel notu", color: "#fff" }] };
-    expect(buildAnnotationMarkdown({ fileName: "scan.png", annotationsMap: annotation.annotationsMap }).totalNotes).toBe(1);
-
     viewer.activeImageSourcePath = "";
     documentSession.activeSessionId = "pdf-b";
-    documentSession.contentGeneration = 1;
-    reconciler.reconcile({ sessionId: "pdf-b", contentGeneration: 1, imagePath: "" });
+    documentSession.contentGeneration = 3;
+    reconciler.reconcile({ sessionId: "pdf-b", contentGeneration: 3, imagePath: "" });
+    expect(annotation.annotationsMap).toEqual({});
 
-    expect(exportContext().sessionId).toBe("pdf-b");
-    expect(buildAnnotationMarkdown({ fileName: "b.pdf", annotationsMap: annotation.annotationsMap }).totalNotes).toBe(0);
+    await runtime.commandRouter.dispatch("export-notes-md");
+    await vi.waitFor(() => expect(exportNotes).toHaveBeenCalled());
+    const [sessionId, contentGeneration, , options] = exportNotes.mock.calls[0];
+    expect([sessionId, contentGeneration]).toEqual(["pdf-b", 3]);
+    expect(Object.keys(options)).toEqual(["utcOffsetMinutes"]);
+    expect(JSON.stringify(exportNotes.mock.calls[0])).not.toContain("görsel notu");
+    await vi.waitFor(() => expect(onToast).toHaveBeenCalledWith("Notlar Markdown olarak dışa aktarıldı."));
   });
 
   it("passes the physical page to page-level backend exports while keeping the displayed number", () => {

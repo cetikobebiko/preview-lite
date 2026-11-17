@@ -320,3 +320,101 @@ pub(crate) fn page_pdf(content: &str, form: Option<(&str, [f64; 6])>) -> Vec<u8>
     doc.save_to(&mut bytes).unwrap();
     bytes
 }
+
+/// Tek sayfalık "taranmış" PDF: sayfayı kaplayan, `width` × `height` piksellik 8 bit gri bir
+/// resim (`grey`, satır satır, üstten). Sayfa `page` point boyunda; `rotate` sayfanın `/Rotate`'i,
+/// `text` resmin üstüne görünmez (`3 Tr`) yazılan metin satırları `(x, y, metin)` (OCR katmanı
+/// gibi).
+pub(crate) fn scan_pdf(
+    grey: &[u8],
+    size: [u32; 2],
+    page: [f64; 2],
+    rotate: i64,
+    text: &[(f64, f64, &str)],
+) -> Vec<u8> {
+    picture_pdf(grey, size, page, rotate, text, [0.0, 0.0, page[0], page[1]])
+}
+
+/// [`scan_pdf`], resim sayfada `at` = `[x, y, genişlik, yükseklik]` (point) yerinde.
+pub(crate) fn picture_pdf(
+    grey: &[u8],
+    [width, height]: [u32; 2],
+    page: [f64; 2],
+    rotate: i64,
+    text: &[(f64, f64, &str)],
+    at: [f64; 4],
+) -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let image = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => i64::from(width),
+            "Height" => i64::from(height), "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
+        },
+        grey.to_vec(),
+    ));
+    let mut content = format!("q {} 0 0 {} {} {} cm /Im Do Q", at[2], at[3], at[0], at[1]);
+    for (x, y, line) in text {
+        content.push_str(&format!(" BT 3 Tr /F1 10 Tf {x} {y} Td ({line}) Tj ET"));
+    }
+    let contents = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+    let pages = doc.new_object_id();
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), Object::Real(page[0] as f32), Object::Real(page[1] as f32)],
+        "Rotate" => rotate,
+        "Contents" => contents,
+        "Resources" => dictionary! {
+            "Font" => dictionary! { "F1" => font },
+            "XObject" => dictionary! { "Im" => image },
+        },
+    });
+    doc.objects.insert(
+        pages,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1,
+        }),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+/// 612 × 792 pt sayfanın 2 px/pt gri resmi: bir etiket boşluğu çizgisi, boş bir kutu ve bir
+/// onay kutusu, hafif gürültülü kâğıt üzerinde. Koordinatlar point, y yukarı.
+pub(crate) fn scanned_form() -> (Vec<u8>, [u32; 2]) {
+    let (w, h) = (1224usize, 1584usize);
+    let mut px = vec![245u8; w * h];
+    let mut seed: u32 = 7;
+    for v in px.iter_mut() {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+        *v -= ((seed >> 16) % 12) as u8;
+    }
+    let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64| {
+        let (px0, px1) = ((x0 * 2.0) as usize, (x1 * 2.0) as usize);
+        let (py0, py1) = (h - (y1 * 2.0) as usize, h - (y0 * 2.0) as usize);
+        for y in py0..py1 {
+            for x in px0..px1 {
+                px[y * w + x] = 20;
+            }
+        }
+    };
+    // Çizgi: 120..400 pt, y 700.
+    fill(120.0, 699.5, 400.0, 700.5);
+    // Boş kutu: 60..400 × 560..620, 1 pt kenar.
+    fill(60.0, 560.0, 400.0, 561.0);
+    fill(60.0, 619.0, 400.0, 620.0);
+    fill(60.0, 560.0, 61.0, 620.0);
+    fill(399.0, 560.0, 400.0, 620.0);
+    // Onay kutusu: 60..72 × 500..512.
+    fill(60.0, 500.0, 72.0, 501.0);
+    fill(60.0, 511.0, 72.0, 512.0);
+    fill(60.0, 500.0, 61.0, 512.0);
+    fill(71.0, 500.0, 72.0, 512.0);
+    (px, [w as u32, h as u32])
+}
