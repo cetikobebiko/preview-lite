@@ -26,6 +26,18 @@ pub(crate) const SHARE_PICKER_IDLE_TIMEOUT: Duration = Duration::from_secs(2 * 6
 pub(crate) const SHARE_PROCESS_TIMEOUT: Duration =
     Duration::from_secs(SHARE_PICKER_IDLE_TIMEOUT.as_secs() + SHARE_SERVICE_TIMEOUT.as_secs() + 30);
 
+/// Continuity Camera menüsünde eylem seçildikten sonra içeriğin gelmesi için
+/// yardımcının bekleyeceği üst süre: iPhone'da çok sayfalı tarama zaman alır.
+pub(crate) const SCAN_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// Yardımcının menüyü seçimsiz açık tuttuğu üst süre (`scanMenuIdleTimeout`).
+pub(crate) const SCAN_MENU_IDLE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+
+/// Rust tarafındaki kesin üst sınır: menü bekleme + içerik bekleme + pay.
+/// Yardımcının kendi süreleri her zaman bundan önce dolar.
+pub(crate) const SCAN_PROCESS_TIMEOUT: Duration =
+    Duration::from_secs(SCAN_MENU_IDLE_TIMEOUT.as_secs() + SCAN_WAIT_TIMEOUT.as_secs() + 30);
+
 const SHARE_DEFAULT_STEM: &str = "document";
 const SHARE_PDF_EXTENSION: &str = ".pdf";
 /// APFS dosya adı sınırı 255 UTF-8 bayttır; pay bırakılır.
@@ -137,6 +149,39 @@ pub(crate) fn share_command_args(
         args.extend([anchor.x, anchor.y, anchor.width, anchor.height].map(coordinate_argument));
     }
     Ok(args)
+}
+
+/// Continuity Camera tarama argümanları:
+/// `scan <çıktı dizini> <bekleme üst süresi sn> [<x> <y> <genişlik> <yükseklik>]`.
+/// Çıktı dizini oturum temp alanındaki özel tarama dizinidir; yardımcı yalnız oraya yazar.
+pub(crate) fn scan_command_args(
+    output_directory: &Path,
+    anchor: Option<ShareAnchor>,
+) -> Result<Vec<OsString>, String> {
+    let mut args = vec![
+        OsString::from("scan"),
+        absolute_path_argument(output_directory)?,
+        OsString::from(SCAN_WAIT_TIMEOUT.as_secs().to_string()),
+    ];
+    if let Some(anchor) = anchor {
+        args.extend([anchor.x, anchor.y, anchor.width, anchor.height].map(coordinate_argument));
+    }
+    Ok(args)
+}
+
+/// Cihazsız sınama: `normalize-pasteboard <girdi> <uti> <çıktı dizini>`.
+#[cfg(test)]
+pub(crate) fn normalize_pasteboard_args(
+    input: &Path,
+    type_identifier: &str,
+    output_directory: &Path,
+) -> Result<Vec<OsString>, String> {
+    Ok(vec![
+        OsString::from("normalize-pasteboard"),
+        absolute_path_argument(input)?,
+        OsString::from(type_identifier),
+        absolute_path_argument(output_directory)?,
+    ])
 }
 
 fn is_bidi_control(character: char) -> bool {
@@ -309,11 +354,59 @@ mod tests {
         assert!(ocr_command_args(Path::new("-e")).is_err());
         assert!(ocr_command_args(Path::new("relative/image.png")).is_err());
         assert!(share_command_args(Path::new("--help"), None).is_err());
+        assert!(scan_command_args(Path::new("--help"), None).is_err());
+        assert!(scan_command_args(Path::new("scans/scan-1"), None).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_args_pass_directory_wait_timeout_and_anchor_as_separate_arguments() {
+        for hostile in HOSTILE_PATHS {
+            let path = PathBuf::from(hostile);
+            assert_eq!(
+                scan_command_args(&path, None).unwrap(),
+                vec![
+                    OsString::from("scan"),
+                    path.clone().into_os_string(),
+                    OsString::from("600")
+                ]
+            );
+        }
+        let anchor = ShareAnchor {
+            x: -1440.0,
+            y: 25.5,
+            width: 1280.0,
+            height: 774.25,
+        };
+        assert_eq!(
+            scan_command_args(Path::new(HOSTILE_PATHS[1]), Some(anchor)).unwrap(),
+            [
+                "scan",
+                HOSTILE_PATHS[1],
+                "600",
+                "-1440.00",
+                "25.50",
+                "1280.00",
+                "774.25"
+            ]
+            .map(OsString::from)
+            .to_vec()
+        );
     }
 
     #[test]
     fn share_process_timeout_outlasts_helper_service_timeout() {
         assert!(SHARE_PROCESS_TIMEOUT > SHARE_SERVICE_TIMEOUT + SHARE_PICKER_IDLE_TIMEOUT);
+    }
+
+    #[test]
+    fn scan_process_timeout_outlasts_helper_menu_and_wait_timeouts() {
+        assert!(SCAN_PROCESS_TIMEOUT > SCAN_WAIT_TIMEOUT + SCAN_MENU_IDLE_TIMEOUT);
+        let source = include_str!("../macos-helper/main.swift");
+        assert!(source.contains(&format!(
+            "let scanMenuIdleTimeout: Double = {}",
+            SCAN_MENU_IDLE_TIMEOUT.as_secs()
+        )));
     }
 
     #[test]
@@ -339,6 +432,17 @@ mod tests {
             "runShare(filePath: arguments[2], serviceTimeout: serviceTimeout, anchor: anchor)"
         ));
         assert!(source.contains("parseAnchor(Array(arguments[4...]))"));
+        assert!(source.contains(
+            "runScan(outputDirectory: arguments[2], waitTimeout: waitTimeout, anchor: anchor)"
+        ));
+        assert!(source.contains(
+            "inputPath: arguments[2], typeIdentifier: arguments[3], outputDirectory: arguments[4])"
+        ));
+        // Tarama çıktısı yalnız yeni dosya olarak, symlink izlenmeden yazılır.
+        assert!(source.contains("O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW"));
+        assert!(source.contains("lstat(path, &info)"));
+        assert!(source.contains("NSMenuItem.importFromDeviceIdentifier"));
+        assert!(source.contains("guard #available(macOS 10.14, *) else"));
         assert!(source.contains("try handler.perform([request])"));
         assert!(!source.contains("try?"));
         assert!(source.contains("delegateFor sharingService"));
@@ -411,6 +515,169 @@ mod tests {
             let output = run_helper(args.into_iter().map(OsString::from).collect());
             assert_eq!(output.status.code(), Some(64), "{output:?}");
             assert!(String::from_utf8_lossy(&output.stderr).contains("Kullanım"));
+        }
+    }
+
+    /// Sıkıştırmasız, küçük-endian, çok sayfalı RGB TIFF (image crate TIFF yazmaz).
+    #[cfg(target_os = "macos")]
+    fn tiny_tiff(pages: usize, width: u16, height: u16) -> Vec<u8> {
+        let mut bytes = b"II*\0\0\0\0\0".to_vec();
+        let mut previous_next_offset = 4usize;
+        for page in 0..pages {
+            let bits_offset = bytes.len() as u32;
+            bytes.extend([8u8, 0, 8, 0, 8, 0]);
+            let data_offset = bytes.len() as u32;
+            let data_len = u32::from(width) * u32::from(height) * 3;
+            bytes.extend((0..data_len).map(|index| (index as usize * 7 + page * 50) as u8));
+            if bytes.len() % 2 == 1 {
+                bytes.push(0);
+            }
+            let ifd_offset = bytes.len() as u32;
+            bytes[previous_next_offset..previous_next_offset + 4]
+                .copy_from_slice(&ifd_offset.to_le_bytes());
+            let entries: [(u16, u16, u32, u32); 9] = [
+                (256, 3, 1, u32::from(width)),
+                (257, 3, 1, u32::from(height)),
+                (258, 3, 3, bits_offset),
+                (259, 3, 1, 1),
+                (262, 3, 1, 2),
+                (273, 4, 1, data_offset),
+                (277, 3, 1, 3),
+                (278, 3, 1, u32::from(height)),
+                (279, 4, 1, data_len),
+            ];
+            bytes.extend((entries.len() as u16).to_le_bytes());
+            for (tag, kind, count, value) in entries {
+                bytes.extend(tag.to_le_bytes());
+                bytes.extend(kind.to_le_bytes());
+                bytes.extend(count.to_le_bytes());
+                bytes.extend(value.to_le_bytes());
+            }
+            previous_next_offset = bytes.len();
+            bytes.extend([0u8; 4]);
+        }
+        bytes
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_normalize(input: &Path, type_identifier: &str) -> (std::process::Output, PathBuf, tempfile::TempDir) {
+        let root = tempfile::tempdir().unwrap();
+        let output_dir = root.path().join("scan-out");
+        std::fs::create_dir(&output_dir).unwrap();
+        let output = run_helper(
+            normalize_pasteboard_args(input, type_identifier, &output_dir).unwrap(),
+        );
+        (output, output_dir, root)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn directory_names(directory: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn compiled_helper_normalizes_scan_pasteboard_content_without_a_device() {
+        let inputs = tempfile::tempdir().unwrap();
+        // PDF olduğu gibi `scan.pdf` olur.
+        let pdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf/minimal.pdf");
+        let (output, directory, _root) = run_normalize(&pdf, "com.adobe.pdf");
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            r#"{"kind":"pdf","files":["scan.pdf"]}"#
+        );
+        assert_eq!(std::fs::read(directory.join("scan.pdf")).unwrap(), std::fs::read(&pdf).unwrap());
+
+        // Opak görsel JPEG'e, saydam görsel PNG'ye yeniden kodlanır.
+        let opaque = inputs.path().join("photo.png");
+        image::RgbImage::from_pixel(64, 48, image::Rgb([10, 200, 30])).save(&opaque).unwrap();
+        let (output, directory, _root) = run_normalize(&opaque, "public.png");
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            r#"{"kind":"images","files":["scan-001.jpg"]}"#
+        );
+        let decoded = image::open(directory.join("scan-001.jpg")).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (64, 48));
+
+        let sketch = inputs.path().join("sketch.png");
+        image::RgbaImage::from_pixel(20, 30, image::Rgba([0, 0, 0, 0])).save(&sketch).unwrap();
+        let (output, directory, _root) = run_normalize(&sketch, "public.png");
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(directory_names(&directory), ["scan-001.png"]);
+
+        // Çok sayfalı TIFF her sayfası için bir dosya üretir.
+        let tiff = inputs.path().join("pages.tiff");
+        std::fs::write(&tiff, tiny_tiff(2, 8, 6)).unwrap();
+        let (output, directory, _root) = run_normalize(&tiff, "public.tiff");
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            r#"{"kind":"images","files":["scan-001.jpg","scan-002.jpg"]}"#
+        );
+        assert_eq!(directory_names(&directory), ["scan-001.jpg", "scan-002.jpg"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn compiled_helper_rejects_unsupported_scan_content_and_unsafe_directories() {
+        let inputs = tempfile::tempdir().unwrap();
+        let text = inputs.path().join("note.txt");
+        std::fs::write(&text, b"merhaba").unwrap();
+        let (output, directory, _root) = run_normalize(&text, "public.utf8-plain-text");
+        assert_eq!(output.status.code(), Some(66), "{output:?}");
+        assert!(directory_names(&directory).is_empty());
+
+        // PDF tipi ama PDF başlığı yok.
+        let (output, directory, _root) = run_normalize(&text, "com.adobe.pdf");
+        assert_eq!(output.status.code(), Some(66), "{output:?}");
+        assert!(directory_names(&directory).is_empty());
+
+        // Bozuk görsel.
+        let (output, _directory, _root) = run_normalize(&text, "public.jpeg");
+        assert_eq!(output.status.code(), Some(66), "{output:?}");
+
+        let pdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf/minimal.pdf");
+        let root = tempfile::tempdir().unwrap();
+        // Boş olmayan dizin, symlink, olmayan dizin ve dosya reddedilir; hiçbir şey yazılmaz.
+        let occupied = root.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("other.txt"), b"x").unwrap();
+        let target = root.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"x").unwrap();
+        for directory in [&occupied, &link, &root.path().join("missing"), &file] {
+            let output = run_helper(
+                normalize_pasteboard_args(&pdf, "com.adobe.pdf", directory).unwrap(),
+            );
+            assert_eq!(output.status.code(), Some(65), "{directory:?}: {output:?}");
+        }
+        assert_eq!(directory_names(&occupied), ["other.txt"]);
+        assert!(directory_names(&target).is_empty());
+
+        // `scan` de dizini menü açılmadan doğrular.
+        let output = run_helper(scan_command_args(&link, None).unwrap());
+        assert_eq!(output.status.code(), Some(65), "{output:?}");
+        for args in [
+            vec!["scan"],
+            vec!["scan", "/tmp/x"],
+            vec!["scan", "/tmp/x", "0"],
+            vec!["scan", "/tmp/x", "nan"],
+            vec!["scan", "/tmp/x", "600", "1", "2", "3"],
+            vec!["scan", "/tmp/x", "600", "1", "2", "0", "4"],
+            vec!["normalize-pasteboard", "/tmp/a", "public.png"],
+        ] {
+            let output = run_helper(args.into_iter().map(OsString::from).collect());
+            assert_eq!(output.status.code(), Some(64), "{output:?}");
         }
     }
 

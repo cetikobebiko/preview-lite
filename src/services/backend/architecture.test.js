@@ -279,6 +279,7 @@ describe("backend service boundaries", () => {
       "runOcrOnPage",
       "performOcrOnPage",
       "shareFileMacos",
+      "scanWithContinuityCamera",
     ]) {
       const required = Object.keys(CONTRACTS[key].payload.required);
       expect(required).toContain("sessionId");
@@ -335,12 +336,26 @@ describe("backend service boundaries", () => {
     expect(handlerRegistry).not.toMatch(/\bshare_session_macos\b/);
   });
 
+  it("replaces the path-based Continuity Camera stub with a session job command", () => {
+    const handlerRegistry = readSource(rustLibPath);
+    expect(handlerRegistry).toMatch(/\bscan_with_continuity_camera_into_session\b/);
+    expect(handlerRegistry).toMatch(/async fn scan_with_continuity_camera_into_session\(/);
+    // The old command took the user's PDF path; neither it nor its payload may come back.
+    expect(handlerRegistry).not.toMatch(/\btrigger_continuity_camera_scan\b/);
+    const frontendSource = sourceFiles(sourceRoot)
+      .filter((path) => !path.endsWith(".test.js"))
+      .map((path) => readSource(path))
+      .join("\n");
+    expect(frontendSource).not.toMatch(/\btrigger_continuity_camera_scan\b|\bsourcePdfPath\b/);
+    const required = Object.keys(CONTRACTS.scanWithContinuityCamera.payload.required);
+    expect(required).toEqual(["jobId", "sessionId", "expectedContentGeneration", "atIndex", "pageFit"]);
+    expect(PROTECTED_CONTRACT_IDS).toContain("scanWithContinuityCamera");
+  });
+
   it("keeps synchronous Tauri commands to an audited, non-blocking allowlist", () => {
     // Senkron Tauri komutları ana (UI) thread'de çalışır. Yeni komutlar async olmalı;
     // senkron kalanlar yalnız hızlı, bloklamayan işler yapar ve burada gerekçelendirilir.
     const syncCommandAllowlist = {
-      // Anında FEATURE_UNAVAILABLE döndürür.
-      trigger_continuity_camera_scan: "lib.rs",
       // Yalnız bellek içi mutex/LRU işlemleri; generate_handler! içinde kayıtlı değiller.
       set_active_render_document: "pdf_engine/mod.rs",
       cancel_render_request: "pdf_engine/mod.rs",

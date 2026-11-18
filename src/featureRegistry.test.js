@@ -141,11 +141,25 @@ describe("feature policy", () => {
   });
 
   it("evaluates enabled separately from runtime platform for disabled features", () => {
+    // Platform matches, but the feature is disabled: not runnable.
+    const disabled = getFeature("pades_signing");
+    expect(disabled).toMatchObject({ status: "disabled", enabled: false });
+    expect(disabled.platform).toContain("macos");
+    expect(isFeatureRunnable(disabled.id, productionMac)).toBe(false);
+  });
+
+  it("ships Continuity Camera scan as an experimental macOS-only feature", () => {
+    // Session-native scan + insert (continuity_scan.rs) ships as experimental, macOS only.
     const continuityCamera = getFeature("macos_continuity_camera");
-    expect(continuityCamera.enabled).toBe(false);
-    expect(continuityCamera.status).toBe("disabled");
+    expect(continuityCamera.enabled).toBe(true);
+    expect(continuityCamera.status).toBe("experimental");
     expect(continuityCamera.platform).toEqual(["macos"]);
-    expect(isFeatureRunnable(continuityCamera.id, productionMac)).toBe(false);
+    expect(isFeatureRunnable(continuityCamera.id, productionMac)).toBe(true);
+    expect(isFeatureRunnable(continuityCamera.id, { build: "production", platform: "windows" })).toBe(false);
+    expect(isFeatureRunnable(continuityCamera.id, { build: "production", platform: "linux" })).toBe(false);
+    for (const requirement of ["Apple hesabı", "Wi-Fi", "Bluetooth", "geri alınabilir"]) {
+      expect(continuityCamera.warning).toContain(requirement);
+    }
   });
 
   it("shows and runs a macOS feature only on macOS", () => {

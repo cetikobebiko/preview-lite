@@ -84,7 +84,7 @@ only with a canonical backend service and inventory entry; the current authority
 | `redaction.js` | 3 | `apply_redactions`, `sanitize_pdf_document`, `scan_sensitive_data` |
 | `session.js` accessibility reads | 2 | `get_session_structure_tree`, `audit_session_accessibility` |
 | `prepress.js` | 4 | `analyze_color_spaces`, `calculate_ink_coverage`, `render_separation_channels`, `export_pdf_x` |
-| `platform.js` | 5 | `trigger_continuity_camera_scan`, `speak_text`, `stop_speaking`, `share_file_macos`, `perform_ocr_on_page` |
+| `platform.js` | 5 | `scan_with_continuity_camera_into_session` (2026-11-18'e kadar `trigger_continuity_camera_scan`), `speak_text`, `stop_speaking`, `share_file_macos`, `perform_ocr_on_page` |
 | `signatures.js` *(kaldırıldı)* | 0 | *Gate 1 / Prompt 10A kapsamında mock komutlar ve wrapper silindi* |
 
 8C.2 adds `sanitization.js` with the single

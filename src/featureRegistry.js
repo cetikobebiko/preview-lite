@@ -318,9 +318,9 @@ const RAW_FEATURES = [
   {
     id: "macos_continuity_camera",
     label: "macOS Continuity Camera",
-    status: "disabled",
-    enabled: false,
-    warning: "macOS Continuity Camera eylemi geçici olarak devre dışıdır.",
+    status: "experimental",
+    enabled: true,
+    warning: "iPhone/iPad ile tarama deneyseldir: macOS 10.14 veya üstü; cihaz aynı Apple hesabıyla oturum açmış, Wi-Fi ve Bluetooth açık ve Mac'e yakın olmalıdır. Gelen sayfalar tek, geri alınabilir bir adımda eklenir.",
     platform: ["macos"],
     documentation: "docs/engineering/feature-matrix.md#platform-specific-features",
   },

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import CommandPalette from "./CommandPalette.svelte";
+import { getFeature } from "../featureRegistry.js";
 
 const productionMac = { build: "production", platform: "macos" };
 const developmentMac = { build: "development", platform: "macos" };
@@ -18,7 +19,7 @@ describeComponent("CommandPalette component behavior", () => {
     document.body.replaceChildren();
   });
 
-  function renderPalette(context = productionMac) {
+  function renderPalette(context = productionMac, extraCommands = []) {
     const onselect = vi.fn();
     const onclose = vi.fn();
     component = mount(CommandPalette, {
@@ -28,6 +29,7 @@ describeComponent("CommandPalette component behavior", () => {
         context,
         onselect,
         onclose,
+        extraCommands,
       },
     });
     flushSync();
@@ -83,7 +85,9 @@ describeComponent("CommandPalette component behavior", () => {
   });
 
   it("does not emit a disabled command on Enter and explains why inline", async () => {
-    const { onselect } = renderPalette(developmentMac);
+    // No built-in command maps to a disabled feature today; probe one (pades_signing is disabled).
+    const probe = { id: "probe-disabled", title: "Süreklilik probe", category: "x", featureId: "pades_signing" };
+    const { onselect } = renderPalette(developmentMac, [probe]);
     filterBy("Süreklilik");
 
     const item = document.querySelector(".cmd-item");
@@ -94,7 +98,8 @@ describeComponent("CommandPalette component behavior", () => {
 
     expect(onselect).not.toHaveBeenCalled();
     const warning = document.getElementById(item.getAttribute("aria-describedby"));
-    expect(warning?.textContent).toContain("geçici olarak devre dışıdır");
+    expect(getFeature("pades_signing").enabled).toBe(false);
+    expect(warning?.textContent).toContain(getFeature("pades_signing").warning);
   });
 
   it("closes on Escape", async () => {

@@ -151,6 +151,7 @@ const cases = [
   ["readAppConfig", () => platform.readAppConfig(), "read_app_config"],
   ["writeAppConfig", () => platform.writeAppConfig("{}"), "write_app_config", { contents: "{}" }],
   ["shareFileMacos", () => platform.shareFileMacos("sid", 1), "share_file_macos", { sessionId: "sid", expectedContentGeneration: 1 }],
+  ["scanWithContinuityCamera", () => platform.startContinuityCameraScan("sid", 1, 2, { width: 595, height: 842 }).promise, "scan_with_continuity_camera_into_session", { sessionId: "sid", expectedContentGeneration: 1, atIndex: 2, pageFit: { width: 595, height: 842 } }],
   ["shareExternalFileMacos", () => platform.shareExternalFileMacos("/a.png"), "share_external_file_macos", { path: "/a.png" }],
   ["performOcrOnPage", () => platform.performOcrOnPage("sid", 1, 2), "perform_ocr_on_page", { sessionId: "sid", expectedContentGeneration: 1, pageIndex: 2 }],
 ];
