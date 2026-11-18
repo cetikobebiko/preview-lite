@@ -702,7 +702,6 @@ describe("backend service boundaries", () => {
       [redactionSource, "sanitize_pdf_document"],
       [redactionSource, "apply_redactions_unavailable"],
       [redactionSource, "sanitize_pdf_document_unavailable"],
-      [readSource(resolve(rustSourceRoot, "ocr.rs")), "export_as_searchable_pdf"],
     ];
     for (const [source, functionName] of cases) {
       const body = rustFunctionBody(source, functionName);
@@ -718,6 +717,21 @@ describe("backend service boundaries", () => {
       expect(body, `${functionName} must not perform filesystem or worker operations`).not.toMatch(
         /std::fs|File::|OpenOptions::|job_worker::/,
       );
+    }
+
+    // Searchable PDF export runs as a session snapshot job: the command and its job body never
+    // open the user's PDF in the main process; PDF work happens in job worker commands.
+    const ocrSource = readSource(resolve(rustSourceRoot, "ocr.rs"));
+    const searchableCommand = rustFunctionBody(ocrSource, "export_as_searchable_pdf");
+    const searchableJob = rustFunctionBody(ocrSource, "searchable_export_job");
+    const searchablePage = rustFunctionBody(ocrSource, "ocr_searchable_page");
+    expect(searchableCommand).toContain("run_snapshot_job");
+    expect(searchableJob).toContain("JobCommand::PlanSearchableCopy");
+    expect(searchableJob).toContain("JobCommand::SearchableCopy");
+    expect(searchableJob).toContain("accept_job_output_file");
+    expect(searchablePage).toContain("JobCommand::RenderOcrPage");
+    for (const body of [searchableCommand, searchableJob, searchablePage]) {
+      expect(body).not.toMatch(/with_pdfium\(|get_pdfium\(|load_pdf_from_file\(|Document::load\(|FPDF_LoadDocument/);
     }
 
     const handlerRegistry = readSource(rustLibPath);

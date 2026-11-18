@@ -1,3 +1,4 @@
+use crate::page_geometry::{text_axis_box, PageFrame};
 use crate::pdf_engine::render_service::{checked_rgba_len, MAX_PIXEL_DIMENSION, MAX_SCALE};
 use crate::worker::ipc::{
     decode_request, encode_response, read_payload, write_frame, WorkerCapability, WorkerCommand,
@@ -612,18 +613,12 @@ fn extract_text_layout(
     page_index: u32,
 ) -> Result<Vec<TextLayoutData>, WorkerFailure> {
     let page = get_page(document, page_index)?;
-    let page_width = page.width().value;
-    let page_height = page.height().value;
-    if !page_width.is_finite()
-        || !page_height.is_finite()
-        || page_width <= 0.0
-        || page_height <= 0.0
-    {
+    let Some(normalizer) = PageNormalizer::of(&page) else {
         return Err(WorkerFailure::new(
             WorkerFailureKind::Internal,
             "PDF page dimensions are invalid for text layout",
         ));
-    }
+    };
     let text_page = page.text().map_err(|_| {
         WorkerFailure::new(
             WorkerFailureKind::PdfiumLoadError,
@@ -633,9 +628,58 @@ fn extract_text_layout(
 
     let mut layouts = Vec::new();
     for_each_word(&text_page, |text, bounds| {
-        push_layout(&mut layouts, text, bounds, [page_width, page_height])
+        push_layout(&mut layouts, text, bounds, normalizer)
     })?;
     Ok(layouts)
+}
+
+/// Every character of the page in PDFium's order, generated spaces and line breaks
+/// included. Unlike pdfium-render's `PdfPageText::all()`, which returns only the text inside
+/// the page-size rectangle measured from (0, 0), this does not lose text on pages with a
+/// `/Rotate` or a CropBox that does not start at the origin.
+pub(crate) fn full_page_text(text_page: &PdfPageText<'_>) -> String {
+    text_page
+        .chars()
+        .iter()
+        .filter_map(|character| character.unicode_char())
+        .filter(|character| *character != '\0')
+        .collect()
+}
+
+/// Maps user-space boxes to page-normalized rectangles in the displayed page's space
+/// (CropBox, `/Rotate`; top-left origin), which the frontend text layer and search
+/// highlights use. Falls back to the page size alone when PDFium's page box is unusable.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PageNormalizer {
+    Displayed(PageFrame),
+    PageSizeOnly { width: f32, height: f32 },
+}
+
+impl PageNormalizer {
+    pub(crate) fn of(page: &PdfPage<'_>) -> Option<Self> {
+        if let Some(frame) = PageFrame::of(page.bindings(), page) {
+            return Some(Self::Displayed(frame));
+        }
+        let (width, height) = (page.width().value, page.height().value);
+        (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
+            .then_some(Self::PageSizeOnly { width, height })
+    }
+
+    /// `[min_x, min_y, max_x, max_y]` in user space → `[x, y, width, height]`, normalized.
+    pub(crate) fn rect(self, [min_x, min_y, max_x, max_y]: [f32; 4]) -> Option<[f32; 4]> {
+        let rect = match self {
+            Self::Displayed(frame) => frame
+                .normalized_rect([min_x, min_y, max_x, max_y].map(f64::from))?
+                .map(|value| value as f32),
+            Self::PageSizeOnly { width, height } => [
+                min_x / width,
+                (height - max_y) / height,
+                (max_x - min_x) / width,
+                (max_y - min_y) / height,
+            ],
+        };
+        rect.iter().all(|value| value.is_finite()).then_some(rect)
+    }
 }
 
 /// Splits a page's text into words: at whitespace, and where the next character is
@@ -662,8 +706,12 @@ pub(crate) fn for_each_word_breaking<E>(
     let mut min_y = f32::MAX;
     let mut max_x = f32::MIN;
     let mut max_y = f32::MIN;
+    // Gaps are measured along each character's own reading direction (its angle, rounded to
+    // a quarter turn), so text running along user-space y — such as upright text on a
+    // `/Rotate` 90 page — splits into words like horizontal text does.
     let mut prev_char_max_x = f32::MIN;
     let mut prev_char_min_y = f32::MAX;
+    let mut prev_turn = 0u8;
 
     for character in text_page.chars().iter() {
         let character_value = match character.unicode_char().unwrap_or(' ') {
@@ -690,14 +738,22 @@ pub(crate) fn for_each_word_breaking<E>(
         {
             continue;
         }
+        let turn = character
+            .angle_radians()
+            .map(crate::page_geometry::quarter_turn)
+            .unwrap_or(0);
+        let [text_min_x, text_min_y, text_max_x, text_max_y] =
+            text_axis_box([ch_min_x, ch_min_y, ch_max_x, ch_max_y], turn);
+        let text_height = text_max_y - text_min_y;
 
         let mut starts_new_word = false;
         if !current_word_text.is_empty() {
-            let gap_x = ch_min_x - prev_char_max_x;
-            let gap_y = (ch_min_y - prev_char_min_y).abs();
+            let gap_x = text_min_x - prev_char_max_x;
+            let gap_y = (text_min_y - prev_char_min_y).abs();
             starts_new_word = character_value.is_whitespace()
-                || gap_x > ch_height * 0.35
-                || gap_y > ch_height * 0.5
+                || turn != prev_turn
+                || gap_x > text_height * 0.35
+                || gap_y > text_height * 0.5
                 || breaks(prev_char, character_value);
         }
         if starts_new_word {
@@ -715,8 +771,9 @@ pub(crate) fn for_each_word_breaking<E>(
             max_x = max_x.max(ch_max_x);
             max_y = max_y.max(ch_max_y);
         }
-        prev_char_max_x = ch_max_x;
-        prev_char_min_y = ch_min_y;
+        prev_char_max_x = text_max_x;
+        prev_char_min_y = text_min_y;
+        prev_turn = turn;
         prev_char = character_value;
     }
     visit(&current_word_text, [min_x, min_y, max_x, max_y])
@@ -726,7 +783,7 @@ fn push_layout(
     layouts: &mut Vec<TextLayoutData>,
     text: &str,
     [min_x, min_y, max_x, max_y]: [f32; 4],
-    [page_width, page_height]: [f32; 2],
+    normalizer: PageNormalizer,
 ) -> Result<(), WorkerFailure> {
     if text.trim().is_empty() || min_x >= max_x || min_y >= max_y {
         return Ok(());
@@ -737,18 +794,14 @@ fn push_layout(
             "Text layout item limit was exceeded",
         ));
     }
-    let layout = TextLayoutData {
-        x: min_x / page_width,
-        y: (page_height - max_y) / page_height,
-        width: (max_x - min_x) / page_width,
-        height: (max_y - min_y) / page_height,
-        text: text.to_string(),
-    };
-    if [layout.x, layout.y, layout.width, layout.height]
-        .iter()
-        .all(|value| value.is_finite())
-    {
-        layouts.push(layout);
+    if let Some([x, y, width, height]) = normalizer.rect([min_x, min_y, max_x, max_y]) {
+        layouts.push(TextLayoutData {
+            x,
+            y,
+            width,
+            height,
+            text: text.to_string(),
+        });
     }
     Ok(())
 }
@@ -870,15 +923,9 @@ fn search_page(
     let Ok(text_page) = page.text() else {
         return Ok(());
     };
-    let page_width = page.width().value;
-    let page_height = page.height().value;
-    if !page_width.is_finite()
-        || !page_height.is_finite()
-        || page_width <= 0.0
-        || page_height <= 0.0
-    {
+    let Some(normalizer) = PageNormalizer::of(&page) else {
         return Ok(());
-    }
+    };
     let characters = text_page.chars();
     let original: Vec<_> = characters.iter().collect();
     if original.is_empty() {
@@ -915,13 +962,7 @@ fn search_page(
             .collect::<String>()
             .replace('\n', " ")
             .replace('\r', "");
-        let rects = search_rects(
-            &original,
-            original_start,
-            original_end,
-            page_width,
-            page_height,
-        );
+        let rects = search_rects(&original, original_start, original_end, normalizer);
         matches.push(SearchMatch {
             global_match_index: first_match_index.saturating_add(*total_matches - 1),
             page_index,
@@ -959,15 +1000,31 @@ fn normalize_search_characters(characters: &[char]) -> (Vec<char>, Vec<(usize, u
     (normalized, mapping)
 }
 
+/// One rectangle per line of the match, in the displayed page's normalized space. Lines are
+/// told apart along each character's own reading direction (see [`for_each_word_breaking`]).
 fn search_rects(
     characters: &[PdfPageTextChar<'_>],
     start: usize,
     end: usize,
-    page_width: f32,
-    page_height: f32,
+    normalizer: PageNormalizer,
 ) -> Vec<BoundingBox> {
+    struct Line {
+        bounds: [f32; 4],
+        turn: u8,
+        center: f32,
+    }
     let mut rects = Vec::new();
-    let mut line_bounds: Option<(f32, f32, f32, f32, f32)> = None;
+    let mut push = |line: Line| {
+        if let Some([x, y, width, height]) = normalizer.rect(line.bounds) {
+            rects.push(BoundingBox {
+                x,
+                y,
+                width,
+                height,
+            });
+        }
+    };
+    let mut current: Option<Line> = None;
     for character in &characters[start..=end] {
         let Ok(bounds) = character.loose_bounds() else {
             continue;
@@ -982,51 +1039,37 @@ fn search_rects(
         {
             continue;
         }
-        let center = (min_y + max_y) / 2.0;
-        match line_bounds {
-            Some((line_min_x, line_min_y, line_max_x, line_max_y, line_center))
-                if (center - line_center).abs() <= 5.0 =>
-            {
-                line_bounds = Some((
-                    line_min_x.min(min_x),
-                    line_min_y.min(min_y),
-                    line_max_x.max(max_x),
-                    line_max_y.max(max_y),
-                    line_center,
-                ));
+        let turn = character
+            .angle_radians()
+            .map(crate::page_geometry::quarter_turn)
+            .unwrap_or(0);
+        let [_, text_min_y, _, text_max_y] = text_axis_box([min_x, min_y, max_x, max_y], turn);
+        let center = (text_min_y + text_max_y) / 2.0;
+        match current.as_mut() {
+            Some(line) if line.turn == turn && (center - line.center).abs() <= 5.0 => {
+                line.bounds = [
+                    line.bounds[0].min(min_x),
+                    line.bounds[1].min(min_y),
+                    line.bounds[2].max(max_x),
+                    line.bounds[3].max(max_y),
+                ];
             }
-            Some(previous) => {
-                push_search_rect(&mut rects, previous, page_width, page_height);
-                line_bounds = Some((min_x, min_y, max_x, max_y, center));
+            _ => {
+                if let Some(previous) = current.take() {
+                    push(previous);
+                }
+                current = Some(Line {
+                    bounds: [min_x, min_y, max_x, max_y],
+                    turn,
+                    center,
+                });
             }
-            None => line_bounds = Some((min_x, min_y, max_x, max_y, center)),
         }
     }
-    if let Some(bounds) = line_bounds {
-        push_search_rect(&mut rects, bounds, page_width, page_height);
+    if let Some(line) = current {
+        push(line);
     }
     rects
-}
-
-fn push_search_rect(
-    rects: &mut Vec<BoundingBox>,
-    bounds: (f32, f32, f32, f32, f32),
-    page_width: f32,
-    page_height: f32,
-) {
-    let (min_x, min_y, max_x, max_y, _) = bounds;
-    let rect = BoundingBox {
-        x: min_x / page_width,
-        y: (page_height - max_y) / page_height,
-        width: (max_x - min_x) / page_width,
-        height: (max_y - min_y) / page_height,
-    };
-    if [rect.x, rect.y, rect.width, rect.height]
-        .iter()
-        .all(|value| value.is_finite())
-    {
-        rects.push(rect);
-    }
 }
 
 fn get_document<'documents, 'pdfium>(
@@ -1273,6 +1316,156 @@ mod tests {
             normalize("FIRST\nSECOND"),
             vec!['f', 'i', 'r', 's', 't', '\n', 's', 'e', 'c', 'o', 'n', 'd']
         );
+    }
+
+    /// `scanned-turkish.pdf` with its searchable text layer: the same Turkish text on pages
+    /// with `/Rotate` 0, 90, 180, 270 and a CropBox that does not start at the origin.
+    fn searchable_fixture(pdfium: &Pdfium, directory: &std::path::Path) -> std::path::PathBuf {
+        let output = directory.join("searchable.pdf");
+        let pages = crate::searchable_pdf::tests::fixture_page_words(pdfium);
+        crate::searchable_pdf::write_searchable_copy(
+            pdfium,
+            &crate::searchable_pdf::tests::fixture("scanned-turkish.pdf"),
+            None,
+            &pages,
+            &output,
+        )
+        .unwrap();
+        output
+    }
+
+    /// The fixture's words on `page_index` as normalized `[x, y, width, height]` in the
+    /// displayed page (A4 portrait; page 4 is cropped to 525 x 758 pt).
+    fn expected_words(page_index: u32) -> Vec<(String, [f32; 4])> {
+        let (width, height) = if page_index == 4 {
+            (525.0, 758.0)
+        } else {
+            (595.0, 842.0)
+        };
+        crate::searchable_pdf::tests::fixture_words()
+            .into_iter()
+            .find(|(index, _)| *index == page_index)
+            .unwrap()
+            .1
+            .into_iter()
+            .map(|(text, [l, t, r, b])| {
+                let rect = [l / width, t / height, (r - l) / width, (b - t) / height];
+                (text, rect.map(|value| value as f32))
+            })
+            .collect()
+    }
+
+    fn overlap([ax, ay, aw, ah]: [f32; 4], [bx, by, bw, bh]: [f32; 4]) -> f32 {
+        let ix = ((ax + aw).min(bx + bw) - ax.max(bx)).max(0.0);
+        let iy = ((ay + ah).min(by + bh) - ay.max(by)).max(0.0);
+        ix * iy / (aw * ah + bw * bh - ix * iy)
+    }
+
+    #[test]
+    fn search_highlights_cover_the_word_on_rotated_and_cropped_pages() {
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+            let directory = tempfile::tempdir().unwrap();
+            let document = pdfium
+                .load_pdf_from_file(&searchable_fixture(pdfium, directory.path()), None)
+                .unwrap();
+            for query in ["Muğla", "öğüt", "Çalışma", "şubelerinden"] {
+                let result = search_document(&document, query, 100).unwrap();
+                assert_eq!(result.total_matches, 5, "{query}");
+                let pages: Vec<u32> = result.matches.iter().map(|m| m.page_index).collect();
+                assert_eq!(pages, vec![0, 1, 2, 3, 4], "{query}");
+                for found in &result.matches {
+                    assert_eq!(
+                        found.rects.len(),
+                        1,
+                        "{query} page {}: one line",
+                        found.page_index
+                    );
+                    let rect = &found.rects[0];
+                    let (_, expected) = expected_words(found.page_index)
+                        .into_iter()
+                        .find(|(word, _)| word == query)
+                        .unwrap();
+                    let iou = overlap([rect.x, rect.y, rect.width, rect.height], expected);
+                    assert!(iou > 0.8, "{query} page {}: IoU {iou:.3}", found.page_index);
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn text_layer_words_sit_on_the_image_words_on_rotated_and_cropped_pages() {
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+            let directory = tempfile::tempdir().unwrap();
+            let document = pdfium
+                .load_pdf_from_file(&searchable_fixture(pdfium, directory.path()), None)
+                .unwrap();
+            for page_index in 0..5u32 {
+                let layouts = extract_text_layout(&document, page_index).unwrap();
+                let expected = expected_words(page_index);
+                let texts: Vec<&str> = layouts.iter().map(|item| item.text.as_str()).collect();
+                let words: Vec<&str> = expected.iter().map(|(word, _)| word.as_str()).collect();
+                assert_eq!(
+                    texts, words,
+                    "page {page_index}: one layout item per word, in order"
+                );
+                for (item, (word, rect)) in layouts.iter().zip(&expected) {
+                    let iou = overlap([item.x, item.y, item.width, item.height], *rect);
+                    assert!(iou > 0.8, "page {page_index} {word}: IoU {iou:.3}");
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn sideways_text_on_a_rotated_page_still_splits_into_words() {
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/pdf/reorder-rich.pdf");
+            let document = pdfium.load_pdf_from_file(&fixture, None).unwrap();
+            let page = document.pages().get(1).unwrap();
+            assert_eq!(page.rotation().unwrap(), PdfPageRenderRotation::Degrees90);
+            let full = full_page_text(&page.text().unwrap());
+            let words: Vec<&str> = full.split_whitespace().collect();
+            assert!(!words.is_empty());
+            let layouts = extract_text_layout(&document, 1).unwrap();
+            let texts: Vec<&str> = layouts.iter().map(|item| item.text.as_str()).collect();
+            assert_eq!(texts, words);
+            for item in &layouts {
+                let values = [item.x, item.y, item.x + item.width, item.y + item.height];
+                assert!(
+                    values.iter().all(|v| (-0.001..=1.001).contains(v)),
+                    "{item:?} inside the page"
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn full_page_text_keeps_text_on_rotated_and_cropped_pages() {
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+            let directory = tempfile::tempdir().unwrap();
+            let document = pdfium
+                .load_pdf_from_file(&searchable_fixture(pdfium, directory.path()), None)
+                .unwrap();
+            for page_index in 0..5u16 {
+                let text =
+                    full_page_text(&document.pages().get(page_index).unwrap().text().unwrap());
+                let squashed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+                let expected: String = expected_words(u32::from(page_index))
+                    .into_iter()
+                    .map(|(word, _)| word)
+                    .collect();
+                assert_eq!(squashed, expected, "page {page_index}");
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 
     /// Writes an A4 text page with a few filled and stroked vector paths, the

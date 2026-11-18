@@ -203,6 +203,7 @@
   fileName={documentRuntime.fileName}
   onToast={presentation.showToast}
   onSessionMutation={(snapshot, options) => void documentRuntime.applyMutationSnapshot(snapshot, options)}
+  onOpenFile={(path) => void documentRuntime.openFile(path)}
 />
 
 <AppModalHost
@@ -282,6 +283,7 @@
         secureRedaction={featureRuntime.secureRedaction}
         onSelectFile={documentRuntime.selectFile}
         onReopenDocument={() => void documentRuntime.openFile(documentRuntime.activeDisplayPath)}
+        onOpenSearchablePdf={() => ui.openModal("searchable_pdf")}
         onPageIntersect={viewerRuntime.navigation.handlePageIntersect}
         onSearchHighlightReady={featureRuntime.handleSearchHighlight}
         onSessionSnapshot={(snapshot) => void documentRuntime.applyMutationSnapshot(snapshot)}

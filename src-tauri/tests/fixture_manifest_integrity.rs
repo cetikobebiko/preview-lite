@@ -772,9 +772,13 @@ fn test_canonical_corpus_manifest_parses_and_validates() {
     assert!(!manifest.description.is_empty());
 
     // Prompt 11I-A3 baseline: 5 canonical generators, plus the heavy-page
-    // generator added for the worker page-quarantine policy.
-    assert_eq!(manifest.generators.len(), 6);
+    // generator added for the worker page-quarantine policy and the scanned
+    // Turkish generator for the searchable-PDF export.
+    assert_eq!(manifest.generators.len(), 7);
     assert!(manifest.generators.contains_key("py-heavy-page-generator"));
+    assert!(manifest
+        .generators
+        .contains_key("py-scanned-turkish-generator"));
     assert!(manifest.generators.contains_key("py-reorder-generator"));
     assert!(manifest.generators.contains_key("py-redaction-generator"));
     assert!(manifest
@@ -785,11 +789,12 @@ fn test_canonical_corpus_manifest_parses_and_validates() {
         .contains_key("py-release-smoke-generator"));
     assert!(manifest.generators.contains_key("pypdf-historical-method"));
 
-    // Prompt 11I-A3: 56 fixtures, plus core-heavy-page (page quarantine).
+    // Prompt 11I-A3: 56 fixtures, plus core-heavy-page (page quarantine) and
+    // core-scanned-turkish (searchable-PDF export).
     assert_eq!(
         manifest.fixtures.len(),
-        57,
-        "Canonical corpus-manifest.json must contain exactly 57 fixtures"
+        58,
+        "Canonical corpus-manifest.json must contain exactly 58 fixtures"
     );
 
     // Exactly one fixture carrying release_smoke category
@@ -2249,8 +2254,8 @@ fn test_corpus_roots_enumeration_and_no_unmanifested_pdf() {
 
     assert_eq!(
         declared_paths.len(),
-        57,
-        "Expected 57 unique declared fixture paths in canonical manifest"
+        58,
+        "Expected 58 unique declared fixture paths in canonical manifest"
     );
 
     let corpus_roots = [
@@ -2303,8 +2308,8 @@ fn test_corpus_roots_enumeration_and_no_unmanifested_pdf() {
 
     assert_eq!(
         disk_paths.len(),
-        57,
-        "Found {} PDF files on disk across corpus roots, expected 57",
+        58,
+        "Found {} PDF files on disk across corpus roots, expected 58",
         disk_paths.len()
     );
 

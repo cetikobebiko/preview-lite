@@ -21,6 +21,7 @@ export const COMMANDS = Object.freeze([
   { id: "share-macos", title: "macOS Paylaşım Menüsü (Share Sheet)", icon: "📤", category: "Paylaşım", featureId: "macos_share" },
   { id: "open-ai-assistant", title: "Yapay Zeka Asistanı / Belge Özetle", icon: "🤖", category: "Yapay Zeka", featureId: "local_ai" },
   { id: "run-ocr-page", title: "Taranmış Sayfaya OCR Uygula (Apple Vision)", icon: "👁️", category: "OCR", featureId: "macos_vision_ocr" },
+  { id: "open-searchable-pdf", title: "Aranabilir PDF Olarak Kaydet (OCR Metin Katmanı)", icon: "🔎", category: "OCR", featureId: "searchable_pdf_export" },
   { id: "toggle-dark-mode", title: "Akıllı Gece Modu (Smart Dark Mode)", icon: "🌙", category: "Görünüm", featureId: "pdf_viewer" },
   { id: "toggle-book-mode", title: "Kitap Modu (Çift Sayfa)", icon: "📖", category: "Görünüm", featureId: "pdf_viewer" },
   { id: "toggle-split-view", title: "Çift Görünüm / Split View", icon: "📑", category: "Görünüm", featureId: "pdf_viewer" },

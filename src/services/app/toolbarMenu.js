@@ -87,6 +87,7 @@ export function buildToolbarMenu({ isPdf, hasDocument, viewer, ui, featureUi, on
       feature("page_manipulation", "Birleştir / Böl…", () => ui.openModal("merge_split"), { id: "merge_split" }),
       isPdf ? item("security", "Güvenlik (parola)…", () => ui.openModal("security")) : null,
       isPdf ? item("optimize", "Dosya boyutunu küçült…", () => ui.openModal("optimize")) : null,
+      isPdf ? feature("searchable_pdf_export", "Aranabilir PDF olarak kaydet…", () => ui.openModal("searchable_pdf"), { id: "searchable_pdf" }) : null,
       feature("batch_processing", "Toplu işlem…", () => ui.openModal("batch"), { id: "batch" }),
       isPdf ? item("xfdf", "Açıklamalar ve form verisi (XFDF)…", () => ui.openModal("xfdf")) : null,
       // Destructive export: listed only while the feature can actually run, never as a disabled preview.

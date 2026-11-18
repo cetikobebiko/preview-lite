@@ -2479,6 +2479,376 @@
         "verificationType": "batch_runner_assertion",
         "notes": "A batch over files including the open document leaves the active session id, identity epoch, generation, revision, dirty flag and lifecycle unchanged"
       }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:searchable_pdf::tests::copy_has_invisible_turkish_text_where_the_scanned_words_are",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/searchable_pdf.rs",
+        "verificationType": "pdfium_render_text_geometry_assertion",
+        "notes": "Five scanned pages (rotate 0/90/180/270, CropBox offset): extracted text equals the placed Turkish words, render is pixel-identical, char boxes cover the image words (IoU > 0.85, ink under each box)"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:searchable_pdf::tests::copy_keeps_the_original_content_stream_and_adds_its_own",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/searchable_pdf.rs",
+        "verificationType": "structural_assertion",
+        "notes": "Original page content stream bytes unchanged; text layer in its own stream with render mode 3 (test-only lopdf inspection)"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:searchable_pdf::tests::plan_classifies_scanned_text_and_blank_pages",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/searchable_pdf.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Scanned pages planned for OCR; text page skipped as has_text, blank page as no_image"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:searchable_pdf::tests::page_frame_matches_pdfium_on_every_fixture_page",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/searchable_pdf.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Closed-form display-to-user mapping cross-checked against FPDF_DeviceToPage on every rotation and the CropBox page; wrong bitmap size refused"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:searchable_pdf::tests::failed_write_leaves_no_output",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/searchable_pdf.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Geometry mismatch fails the write and leaves no output file"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:searchable_pdf::tests::unwritable_words_are_counted_not_written",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/searchable_pdf.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Non-BMP and out-of-bitmap words are counted as skipped, not written"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:searchable_pdf::tests::plan_and_write_reject_encrypted_documents",
+      "relation": "direct",
+      "dimensions": [
+        "encrypted",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/searchable_pdf.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Encrypted input (opened with its password) is rejected by plan and write; no output"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::scanned_pages_become_searchable_and_the_rest_is_reported",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Fake Tesseract (TSV from the words file): job OCRs only scanned pages with the chosen language, publishes the target atomically, removes OCR images, leaves the snapshot unchanged"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::page_range_limits_the_ocr_to_the_selected_pages",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Page range OCRs only the selected scanned pages"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::selection_without_scanned_pages_fails_before_ocr",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Selection with no scanned pages fails before Tesseract runs; no target"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-encrypted",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::encrypted_snapshot_is_rejected_before_ocr",
+      "relation": "direct",
+      "dimensions": [
+        "encrypted",
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Encrypted snapshot rejected before Tesseract runs; no target"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::a_failing_page_is_skipped_and_reported",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "A page whose OCR fails is skipped and reported with the Tesseract message"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::every_page_failing_writes_nothing",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "All pages failing: SEARCHABLE_PDF_OCR_FAILED, no target, no OCR images left"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::pages_without_words_write_nothing",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "No recognized words: SEARCHABLE_PDF_NO_TEXT_FOUND, no target"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::mismatched_tsv_image_size_skips_the_page",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "TSV image size differing from the render skips the page"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::missing_tesseract_fails_the_job",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Missing Tesseract: OCR_ENGINE_NOT_FOUND, no target"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::exhausted_total_time_fails_without_ocr",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Exhausted total time: SEARCHABLE_PDF_TIMEOUT, no target"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::page_timeout_kills_tesseract_and_writes_nothing",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Per-page timeout kills Tesseract and fails the job; no target"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:ocr::tests::fake_tesseract::searchable_job::cancellation_kills_tesseract_and_writes_nothing",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/ocr.rs",
+        "verificationType": "session_job_assertion",
+        "notes": "Cancellation kills Tesseract; no target"
+      }
+    },
+    {
+      "featureId": "searchable_pdf_export",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust:job_worker_process::searchable_copy_worker_writes_an_invisible_turkish_text_layer",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "worker_process_assertion",
+        "notes": "Real job worker processes: PlanSearchableCopy, RenderOcrPage and SearchableCopy; extracted Turkish text equals the placed words"
+      }
+    },
+    {
+      "featureId": "search",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:worker::pdfium::tests::search_highlights_cover_the_word_on_rotated_and_cropped_pages",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Searchable copy of scanned-turkish.pdf (rotate 0/90/180/270, CropBox offset): each Turkish query matches all five pages, one rect per match, IoU > 0.8 with the image word in displayed-page space"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:worker::pdfium::tests::text_layer_words_sit_on_the_image_words_on_rotated_and_cropped_pages",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Text layer: one item per word in order on rotated and cropped pages, IoU > 0.8 with the image word"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-reorder-rich",
+      "testId": "rust_unit:worker::pdfium::tests::sideways_text_on_a_rotated_page_still_splits_into_words",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "/Rotate 90 page with sideways text: layout items equal the page words and stay inside the page"
+      }
+    },
+    {
+      "featureId": "pdf_viewer",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:worker::pdfium::tests::full_page_text_keeps_text_on_rotated_and_cropped_pages",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/worker/pdfium.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "Full page text keeps every word on rotated and cropped pages (pdfium-render all() missed text there)"
+      }
+    },
+    {
+      "featureId": "ocr",
+      "fixtureId": "core-scanned-turkish",
+      "testId": "rust_unit:job_worker::tests::scanned_page_detection_sees_text_on_rotated_and_cropped_pages",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "unicode"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/job_worker.rs",
+        "verificationType": "pdfium_assertion",
+        "notes": "DetectScannedPages no longer reports a /Rotate 270 page with a text layer as scanned"
+      }
     }
   ],
   "features": [
@@ -2514,7 +2884,8 @@
         "core-malformed",
         "core-minimal",
         "core-release-smoke",
-        "core-reorder-rich"
+        "core-reorder-rich",
+        "core-scanned-turkish"
       ],
       "testIds": [
         "rust:b4_integration_gaps::b4_viewer_unicode_extraction_preserves_turkish_tokens",
@@ -2524,7 +2895,10 @@
         "rust:worker_pdfium_integration::large_page_dimensions_document_opens_with_bounded_geometry",
         "rust:worker_pdfium_integration::largest_practical_allowed_render_survives_worker_resource_envelope",
         "rust:worker_pdfium_integration::test_intrinsic_rotation_characterization_in_viewer_worker",
-        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts"
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+        "rust_unit:worker::pdfium::tests::full_page_text_keeps_text_on_rotated_and_cropped_pages",
+        "rust_unit:worker::pdfium::tests::sideways_text_on_a_rotated_page_still_splits_into_words",
+        "rust_unit:worker::pdfium::tests::text_layer_words_sit_on_the_image_words_on_rotated_and_cropped_pages"
       ],
       "dimensions": {
         "positive": "partial",
@@ -2548,12 +2922,14 @@
       "fixtureIds": [
         "core-encrypted",
         "core-release-smoke",
-        "core-reorder-rich"
+        "core-reorder-rich",
+        "core-scanned-turkish"
       ],
       "testIds": [
         "rust:b4_integration_gaps::b4_search_encrypted_typed_errors_and_no_partial_document",
         "rust:b4_integration_gaps::b4_search_unicode_normalized_query_finds_turkish_tokens",
-        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts"
+        "rust:worker_pdfium_integration::worker_preserves_render_thumbnail_text_and_search_contracts",
+        "rust_unit:worker::pdfium::tests::search_highlights_cover_the_word_on_rotated_and_cropped_pages"
       ],
       "dimensions": {
         "positive": "covered",
@@ -2695,11 +3071,13 @@
       "statusObservation": "experimental",
       "fixtureIds": [
         "core-encrypted",
-        "core-minimal"
+        "core-minimal",
+        "core-scanned-turkish"
       ],
       "testIds": [
         "rust_unit:document_session::ocr_command_helper_rejects_stale_generation",
-        "rust_unit:document_session::ocr_detection_uses_snapshot_credential_for_encrypted_pdf"
+        "rust_unit:document_session::ocr_detection_uses_snapshot_credential_for_encrypted_pdf",
+        "rust_unit:job_worker::tests::scanned_page_detection_sees_text_on_rotated_and_cropped_pages"
       ],
       "dimensions": {
         "positive": "partial",
@@ -3300,22 +3678,46 @@
     {
       "id": "searchable_pdf_export",
       "name": "Searchable Pdf Export",
-      "statusObservation": "disabled",
-      "fixtureIds": [],
-      "testIds": [],
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-encrypted",
+        "core-scanned-turkish"
+      ],
+      "testIds": [
+        "rust:job_worker_process::searchable_copy_worker_writes_an_invisible_turkish_text_layer",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::a_failing_page_is_skipped_and_reported",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::cancellation_kills_tesseract_and_writes_nothing",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::encrypted_snapshot_is_rejected_before_ocr",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::every_page_failing_writes_nothing",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::exhausted_total_time_fails_without_ocr",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::mismatched_tsv_image_size_skips_the_page",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::missing_tesseract_fails_the_job",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::page_range_limits_the_ocr_to_the_selected_pages",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::page_timeout_kills_tesseract_and_writes_nothing",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::pages_without_words_write_nothing",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::scanned_pages_become_searchable_and_the_rest_is_reported",
+        "rust_unit:ocr::tests::fake_tesseract::searchable_job::selection_without_scanned_pages_fails_before_ocr",
+        "rust_unit:searchable_pdf::tests::copy_has_invisible_turkish_text_where_the_scanned_words_are",
+        "rust_unit:searchable_pdf::tests::copy_keeps_the_original_content_stream_and_adds_its_own",
+        "rust_unit:searchable_pdf::tests::failed_write_leaves_no_output",
+        "rust_unit:searchable_pdf::tests::page_frame_matches_pdfium_on_every_fixture_page",
+        "rust_unit:searchable_pdf::tests::plan_and_write_reject_encrypted_documents",
+        "rust_unit:searchable_pdf::tests::plan_classifies_scanned_text_and_blank_pages",
+        "rust_unit:searchable_pdf::tests::unwritable_words_are_counted_not_written"
+      ],
       "dimensions": {
-        "positive": "planned",
-        "negative": "not_covered",
-        "malformed": "not_applicable",
-        "encrypted": "not_applicable",
-        "unicode": "not_applicable",
-        "persistence": "planned",
-        "worker": "planned"
+        "positive": "covered",
+        "negative": "covered",
+        "malformed": "not_covered",
+        "encrypted": "covered",
+        "unicode": "covered",
+        "persistence": "covered",
+        "worker": "covered"
       },
       "platformEvidence": {
-        "macos": "not_run",
-        "linux": "not_run",
-        "windows": "not_run"
+        "macos": "source_only",
+        "linux": "source_only",
+        "windows": "source_only"
       }
     },
     {
@@ -4560,6 +4962,156 @@
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/batch/tests.rs"
+    },
+    {
+      "id": "rust_unit:searchable_pdf::tests::copy_has_invisible_turkish_text_where_the_scanned_words_are",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/searchable_pdf.rs"
+    },
+    {
+      "id": "rust_unit:searchable_pdf::tests::copy_keeps_the_original_content_stream_and_adds_its_own",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/searchable_pdf.rs"
+    },
+    {
+      "id": "rust_unit:searchable_pdf::tests::plan_classifies_scanned_text_and_blank_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/searchable_pdf.rs"
+    },
+    {
+      "id": "rust_unit:searchable_pdf::tests::page_frame_matches_pdfium_on_every_fixture_page",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/searchable_pdf.rs"
+    },
+    {
+      "id": "rust_unit:searchable_pdf::tests::failed_write_leaves_no_output",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/searchable_pdf.rs"
+    },
+    {
+      "id": "rust_unit:searchable_pdf::tests::unwritable_words_are_counted_not_written",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/searchable_pdf.rs"
+    },
+    {
+      "id": "rust_unit:searchable_pdf::tests::plan_and_write_reject_encrypted_documents",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/searchable_pdf.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::scanned_pages_become_searchable_and_the_rest_is_reported",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::page_range_limits_the_ocr_to_the_selected_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::selection_without_scanned_pages_fails_before_ocr",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::encrypted_snapshot_is_rejected_before_ocr",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::a_failing_page_is_skipped_and_reported",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::every_page_failing_writes_nothing",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::pages_without_words_write_nothing",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::mismatched_tsv_image_size_skips_the_page",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::missing_tesseract_fails_the_job",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::exhausted_total_time_fails_without_ocr",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::page_timeout_kills_tesseract_and_writes_nothing",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust_unit:ocr::tests::fake_tesseract::searchable_job::cancellation_kills_tesseract_and_writes_nothing",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/ocr.rs"
+    },
+    {
+      "id": "rust:job_worker_process::searchable_copy_worker_writes_an_invisible_turkish_text_layer",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::search_highlights_cover_the_word_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::text_layer_words_sit_on_the_image_words_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::sideways_text_on_a_rotated_page_still_splits_into_words",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:worker::pdfium::tests::full_page_text_keeps_text_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/worker/pdfium.rs"
+    },
+    {
+      "id": "rust_unit:job_worker::tests::scanned_page_detection_sees_text_on_rotated_and_cropped_pages",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/job_worker.rs"
     }
   ],
   "gaps": [
@@ -4622,16 +5174,6 @@
       "plannedPrompt": "11I-B",
       "releaseBlocking": false,
       "description": "Implement AcroForm field editing and interactive filling"
-    },
-    {
-      "id": "gap-searchable-pdf-export",
-      "featureId": "searchable_pdf_export",
-      "dimension": "positive",
-      "severity": "medium",
-      "requiredLayer": "integration",
-      "plannedPrompt": "11I-B",
-      "releaseBlocking": false,
-      "description": "Implement searchable PDF export with invisible text layer"
     },
     {
       "id": "gap-macos-vision-ocr-runtime",

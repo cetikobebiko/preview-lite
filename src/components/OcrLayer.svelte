@@ -9,6 +9,7 @@
     pageIndex = 0,
     pageWidth = 0,
     pageHeight = 0,
+    onOpenSearchablePdf = null,
   } = $props();
   
   let isScanned = $state(false);
@@ -145,6 +146,9 @@
     <button class="tech-button primary" onclick={handleRunOcr} disabled={isProcessing}>
       {isProcessing ? 'Taranıyor...' : 'OCR Başlat'}
     </button>
+    {#if onOpenSearchablePdf}
+      <button class="tech-button" onclick={() => onOpenSearchablePdf()} disabled={isProcessing}>Aranabilir PDF olarak kaydet…</button>
+    {/if}
   </div>
 {/if}
 

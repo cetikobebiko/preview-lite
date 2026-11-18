@@ -254,7 +254,7 @@ has a bounded timeout and kills/reaps a timed-out child.
 |---|---|---|
 | `detect_scanned_pages` | `boundary-only` | before PDFium text extraction (one document-wide job) |
 | `run_ocr_on_page` | `boundary-only` | before PDFium render/Tesseract |
-| `export_as_searchable_pdf` | `boundary-only` | unsupported scaffold entry only |
+| `export_as_searchable_pdf` | `boundary-only` | before the plan worker, before each page's render/Tesseract, before the write worker and before publication; Tesseract is killed on cancel/timeout and nothing is published |
 | `apply_redactions` | `unavailable` | `FEATURE_UNAVAILABLE` before snapshot/parser |
 | `sanitize_pdf_document` | `unavailable` | `FEATURE_UNAVAILABLE` before snapshot/parser |
 | internal `execute_document_sanitization_core` | `cooperative → atomic disk truth` | inspection/transform/verifier and pre-publication checkpoints; no cancellation once shared verified-artifact replace begins |

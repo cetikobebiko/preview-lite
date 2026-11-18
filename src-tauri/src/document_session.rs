@@ -12897,7 +12897,7 @@ pub fn reject_private_target(path: &Path, private_root: &Path) -> Result<(), Doc
     }
 }
 
-fn accept_job_output_file(
+pub(crate) fn accept_job_output_file(
     context: &SessionJobContext,
     source: &Path,
     target: &Path,
