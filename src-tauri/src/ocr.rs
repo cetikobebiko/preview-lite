@@ -1677,8 +1677,16 @@ mod tests {
             }
         }
 
+        fn read_pid(pid_file: &Path) -> Option<String> {
+            std::fs::read_to_string(pid_file)
+                .ok()
+                .filter(|pid| pid.ends_with('\n'))
+                .map(|pid| pid.trim().to_string())
+        }
+
         fn wait_for_pid(pid_file: &Path) -> String {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            // Under heavy process-spawn load /bin/sh can take seconds to reach its first line.
+            let deadline = Instant::now() + Duration::from_secs(60);
             loop {
                 if let Ok(pid) = std::fs::read_to_string(pid_file) {
                     if pid.ends_with('\n') {
@@ -1700,7 +1708,67 @@ mod tests {
         }
 
         fn sleeping_script(pid_file: &Path) -> String {
-            format!("echo $$ > '{}'\nexec sleep 60", pid_file.display())
+            format!("echo $$ > '{}'\nexec sleep 300", pid_file.display())
+        }
+
+        /// Timeouts tried in turn by the timeout tests. A run that times out before `/bin/sh` has
+        /// written its PID (seen at 3 s on a machine busy spawning processes) still has to report
+        /// the timeout, but it leaves no process to check, so the next, longer timeout is tried.
+        const TIMEOUT_ATTEMPTS: [Duration; 3] = [
+            Duration::from_secs(3),
+            Duration::from_secs(10),
+            Duration::from_secs(30),
+        ];
+
+        struct TimedOutRun<R> {
+            fixture: Fixture,
+            result: R,
+            pid: String,
+            timeout: Duration,
+            elapsed: Duration,
+        }
+
+        /// Runs the sleeping fake tesseract through `run` with growing timeouts until one attempt
+        /// recorded its PID before it was stopped. `check` sees every attempt's result, so each
+        /// one must time out properly, whether or not the process got far enough to be observed.
+        fn time_out_a_running_tesseract<R: Send>(
+            run: impl Fn(&Fixture, Duration) -> R + Sync,
+            check: impl Fn(&R),
+        ) -> TimedOutRun<R> {
+            for timeout in TIMEOUT_ATTEMPTS {
+                let probe = tempfile::tempdir().unwrap();
+                let pid_file = probe.path().join("pid");
+                let fixture = Fixture::new(&sleeping_script(&pid_file));
+                let started = Instant::now();
+                let (result, pid) = std::thread::scope(|scope| {
+                    let running = scope.spawn(|| run(&fixture, timeout));
+                    // The PID is read while the process is still running; the run itself is bounded
+                    // by its timeout, so this loop ends with it.
+                    let pid = loop {
+                        if let Some(pid) = read_pid(&pid_file) {
+                            break Some(pid);
+                        }
+                        if running.is_finished() {
+                            break read_pid(&pid_file);
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    };
+                    (running.join().unwrap(), pid)
+                });
+                let elapsed = started.elapsed();
+                check(&result);
+                assert_eq!(fixture.context.child_processes.active_child_count(), 0);
+                if let Some(pid) = pid {
+                    return TimedOutRun {
+                        fixture,
+                        result,
+                        pid,
+                        timeout,
+                        elapsed,
+                    };
+                }
+            }
+            panic!("fake tesseract never wrote its PID before timing out, even at {TIMEOUT_ATTEMPTS:?}");
         }
 
         #[test]
@@ -1791,25 +1859,25 @@ mod tests {
 
         #[test]
         fn timeout_kills_the_tesseract_process() {
-            let probe = tempfile::tempdir().unwrap();
-            let pid_file = probe.path().join("pid");
-            let fixture = Fixture::new(&sleeping_script(&pid_file));
-            let started = Instant::now();
-            // Zaman aşımı, sahte süreç PID'ini yazmadan dolmasın diye geniş
-            // tutulur; PID, süreç hâlâ çalışırken ayrı thread'den okunur.
-            let (result, pid) = std::thread::scope(|scope| {
-                let running = scope.spawn(|| fixture.run(Duration::from_secs(3), LIMITS));
-                let pid = wait_for_pid(&pid_file);
-                (running.join().unwrap(), pid)
-            });
-            let (_, message) = failure_code(result.unwrap_err());
-            assert!(message.contains("zaman aşımı"), "{message}");
-            assert!(started.elapsed() < Duration::from_secs(30));
-            assert!(
-                !process_alive(&pid),
-                "tesseract {pid} still running after timeout"
+            let run = time_out_a_running_tesseract(
+                |fixture, timeout| fixture.run(timeout, LIMITS),
+                |result| {
+                    let message = match result {
+                        Err(SessionJobOperationError::Failed(failure)) => &failure.message,
+                        other => panic!("expected a timeout failure, got {other:?}"),
+                    };
+                    assert!(message.contains("zaman aşımı"), "{message}");
+                },
             );
-            assert_eq!(fixture.context.child_processes.active_child_count(), 0);
+            assert!(run.result.is_err());
+            // Ended by the timeout, not by the fake process's own 300 s sleep.
+            assert!(run.elapsed < run.timeout + Duration::from_secs(30));
+            assert!(
+                !process_alive(&run.pid),
+                "tesseract {} still running after timeout",
+                run.pid
+            );
+            assert_eq!(run.fixture.context.child_processes.active_child_count(), 0);
         }
 
         #[test]
@@ -1868,24 +1936,19 @@ mod tests {
 
         #[test]
         fn list_langs_probe_timeout_kills_the_tesseract_process() {
-            let probe = tempfile::tempdir().unwrap();
-            let pid_file = probe.path().join("pid");
-            let fixture = Fixture::new(&sleeping_script(&pid_file));
-            let started = Instant::now();
-            let (result, pid) = std::thread::scope(|scope| {
-                let running = scope.spawn(|| {
-                    probe_tesseract_languages(fixture.program.as_os_str(), Duration::from_secs(3))
-                });
-                let pid = wait_for_pid(&pid_file);
-                (running.join().unwrap(), pid)
-            });
-            let message = result.unwrap_err();
-            assert!(message.starts_with("Tesseract bulunamadı"), "{message}");
-            assert!(message.contains("zaman aşımı"), "{message}");
-            assert!(started.elapsed() < Duration::from_secs(30));
+            let run = time_out_a_running_tesseract(
+                |fixture, timeout| probe_tesseract_languages(fixture.program.as_os_str(), timeout),
+                |result| {
+                    let message = result.as_ref().unwrap_err();
+                    assert!(message.starts_with("Tesseract bulunamadı"), "{message}");
+                    assert!(message.contains("zaman aşımı"), "{message}");
+                },
+            );
+            assert!(run.elapsed < run.timeout + Duration::from_secs(30));
             assert!(
-                !process_alive(&pid),
-                "tesseract {pid} still running after language probe timeout"
+                !process_alive(&run.pid),
+                "tesseract {} still running after language probe timeout",
+                run.pid
             );
         }
 
