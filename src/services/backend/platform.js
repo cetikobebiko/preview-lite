@@ -16,6 +16,26 @@ export const shareFileMacos = (sessionId, expectedContentGeneration) =>
     callBackend("shareFileMacos", { jobId, sessionId, expectedContentGeneration }),
   ).promise;
 
+/**
+ * macOS Continuity Camera taraması; `{ jobId, promise, cancel }` döndürür. `promise`
+ * `{ snapshot, kind }` ile çözülür; iptalde `SESSION_JOB_CANCELLED` ile reddedilir.
+ */
+export const startContinuityCameraScan = (
+  sessionId,
+  expectedContentGeneration,
+  atIndex,
+  pageFit,
+) =>
+  runSessionJob(sessionId, (jobId) =>
+    callBackend("scanWithContinuityCamera", {
+      jobId,
+      sessionId,
+      expectedContentGeneration,
+      atIndex,
+      pageFit,
+    }),
+  );
+
 export const shareExternalFileMacos = (path) =>
   callBackend("shareExternalFileMacos", { path });
 

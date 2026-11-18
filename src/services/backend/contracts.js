@@ -1156,6 +1156,14 @@ export const CONTRACTS = Object.freeze({
     sessionId: renderIdentifierType,
     expectedContentGeneration: safeIntegerType,
   }),
+  // macOS Continuity Camera: tarar ve atIndex'e ekler; görseller pageFit kâğıdına sığar.
+  scanWithContinuityCamera: command("scan_with_continuity_camera_into_session", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+    atIndex: u32Type,
+    pageFit: objectOf({ width: numberType, height: numberType }),
+  }),
   shareExternalFileMacos: command("share_external_file_macos", {
     path: stringType,
   }),
@@ -1200,6 +1208,7 @@ export const PROTECTED_CONTRACT_IDS = Object.freeze([
   "stopSpeaking",
   "shareFileMacos",
   "shareExternalFileMacos",
+  "scanWithContinuityCamera",
   "performOcrOnPage",
   "mergeSessionPdfs",
   "splitSessionPdf",

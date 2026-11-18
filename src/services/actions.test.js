@@ -8,6 +8,7 @@ import {
   shareExternalFileMacosAction,
   shareFileMacosAction,
   speakTextAction,
+  startContinuityCameraScanAction,
   startSensitiveDataScanAction,
   stopSpeakingAction,
 } from "./actions.js";
@@ -16,6 +17,7 @@ const backend = vi.hoisted(() => ({
   applyRedactions: vi.fn(),
   scanSensitiveData: vi.fn(),
   startSensitiveDataScan: vi.fn(),
+  startContinuityCameraScan: vi.fn(),
   performOcrOnPage: vi.fn(),
   shareExternalFileMacos: vi.fn(),
   shareFileMacos: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock("./backend/platform.js", () => ({
   shareExternalFileMacos: backend.shareExternalFileMacos,
   shareFileMacos: backend.shareFileMacos,
   speakText: backend.speakText,
+  startContinuityCameraScan: backend.startContinuityCameraScan,
   stopSpeaking: backend.stopSpeaking,
 }));
 
@@ -79,6 +82,22 @@ describe("feature-aware backend actions", () => {
       4,
       ["secret"],
     );
+  });
+
+  it("starts a Continuity Camera scan only where the macOS feature is runnable", () => {
+    const handle = { jobId: "job-1", promise: Promise.resolve({}), cancel: vi.fn() };
+    backend.startContinuityCameraScan.mockReturnValueOnce(handle);
+    const fit = { width: 595, height: 842 };
+    expect(startContinuityCameraScanAction("sid", 4, 2, fit, productionMac)).toBe(handle);
+    expect(backend.startContinuityCameraScan).toHaveBeenCalledWith("sid", 4, 2, fit);
+
+    backend.startContinuityCameraScan.mockClear();
+    for (const platform of ["windows", "linux"]) {
+      expect(() =>
+        startContinuityCameraScanAction("sid", 4, 2, fit, { build: "production", platform }),
+      ).toThrow(FeatureUnavailableError);
+    }
+    expect(backend.startContinuityCameraScan).not.toHaveBeenCalled();
   });
 
   it("throws synchronous FeatureUnavailableError when startSensitiveDataScanAction runs on unavailable feature", () => {

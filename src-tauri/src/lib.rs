@@ -11,6 +11,7 @@ pub mod annotations;
 pub mod app_config;
 pub mod batch;
 pub mod compare;
+pub mod continuity_scan;
 pub(crate) mod copy_jobs;
 pub mod document_export;
 pub mod document_io;
@@ -141,18 +142,8 @@ pub struct TextLayoutCache(pub parking_lot::Mutex<lru::LruCache<String, Vec<Text
 // Cross-Platform Native API Adaptations (macOS vs Windows/Linux Fallbacks)
 // -----------------------------------------------------------------------------
 
-// 1. Süreklilik Kamerası (Continuity Camera / iPhone Camera Document Scan)
-#[cfg(target_os = "macos")]
-#[tauri::command]
-fn trigger_continuity_camera_scan(_source_pdf_path: String) -> Result<String, String> {
-    Err("FEATURE_UNAVAILABLE: Continuity Camera özelliği aktif açık belgeler için desteklenmemektedir".to_string())
-}
-
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-fn trigger_continuity_camera_scan(_source_pdf_path: String) -> Result<String, String> {
-    Err("FEATURE_UNAVAILABLE: iPhone Süreklilik Kamerası sadece macOS platformunda desteklenmektedir.".to_string())
-}
+// 1. Süreklilik Kamerası (Continuity Camera): bkz. `continuity_scan` modülü ve
+//    `scan_with_continuity_camera_into_session` (paylaşım menüsünden sonra).
 
 // 2. Yerel Metin Okuma (Text-to-Speech): bkz. `tts` modülü.
 
@@ -349,6 +340,67 @@ async fn share_file_macos(
     Err(document_session::DocumentSessionError::new(
         "FEATURE_UNAVAILABLE",
         "macOS Paylaşım Menüsü (Share Sheet) yalnızca macOS üzerinde desteklenmektedir.",
+    ))
+}
+
+/// iPhone/iPad Continuity Camera menüsünü uygulama penceresine bağlı açar, taramayı ya da
+/// fotoğrafı `at_index`'e tek, geri alınabilir bir mutasyon olarak ekler (bkz.
+/// `continuity_scan::scan_into_session`). Görseller `page_fit` kâğıdına sığdırılır.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn scan_with_continuity_camera_into_session(
+    job_id: String,
+    session_id: String,
+    expected_content_generation: u64,
+    at_index: u32,
+    page_fit: continuity_scan::ScanPageFit,
+    window: tauri::WebviewWindow,
+    store: tauri::State<'_, document_session::DocumentSessionStore>,
+    gate: tauri::State<'_, continuity_scan::ContinuityScanGate>,
+    vector_store: tauri::State<'_, ai::VectorStore>,
+) -> Result<
+    document_session::SessionJobOutcome<continuity_scan::ContinuityScanImport>,
+    document_session::DocumentSessionError,
+> {
+    let anchor = share_anchor_for_window(&window);
+    let helper = continuity_scan::ScanHelper {
+        command: std::sync::Arc::new(move |directory: &Path| {
+            macos_helper::helper_command(macos_helper::scan_command_args(directory, anchor)?)
+        }),
+        timeout: macos_helper::SCAN_PROCESS_TIMEOUT,
+    };
+    let outcome = continuity_scan::scan_into_session(
+        &store,
+        &gate,
+        helper,
+        continuity_scan::ContinuityScanRequest {
+            job_id,
+            session_id,
+            expected_content_generation,
+            at_index,
+            page_fit,
+        },
+    )
+    .await?;
+    if let document_session::SessionJobOutcome::Completed { value, .. } = &outcome {
+        vector_store.prune_generation(&value.snapshot.id, value.snapshot.content_generation);
+    }
+    Ok(outcome)
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn scan_with_continuity_camera_into_session(
+    _job_id: String,
+    _session_id: String,
+    _expected_content_generation: u64,
+    _at_index: u32,
+    _page_fit: continuity_scan::ScanPageFit,
+) -> Result<(), document_session::DocumentSessionError> {
+    Err(document_session::DocumentSessionError::new(
+        "FEATURE_UNAVAILABLE",
+        "iPhone Süreklilik Kamerası yalnızca macOS üzerinde desteklenmektedir.",
     ))
 }
 
@@ -1426,7 +1478,8 @@ pub fn run() {
             lru::LruCache::new(std::num::NonZeroUsize::new(50).unwrap()),
         )))
         .manage(RenderService::new())
-        .manage(batch::BatchRunner::default());
+        .manage(batch::BatchRunner::default())
+        .manage(continuity_scan::ContinuityScanGate::default());
     let builder = match document_sessions {
         Some(store) => builder.manage(store.worker_broker()).manage(store),
         None => builder,
@@ -1507,7 +1560,7 @@ pub fn run() {
             perform_ocr_on_page,
             share_file_macos,
             share_external_file_macos,
-            trigger_continuity_camera_scan,
+            scan_with_continuity_camera_into_session,
             read_image_file,
             convert_and_save_image,
             create_pdf_from_images,

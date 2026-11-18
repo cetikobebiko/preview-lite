@@ -527,6 +527,36 @@
       "notes": "#[cfg(all(target_os=\"macos\", target_arch=\"aarch64\"))] — default yields 0 tests"
     },
     {
+      "id": "rust:continuity_scan_session",
+      "target": "src-tauri/tests/continuity_scan_session.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": true,
+      "supportedPlatforms": [
+        "macos"
+      ],
+      "fixtureIds": [
+        "core-three-distinct-pages"
+      ],
+      "syntheticInputs": [
+        "synthetic_tempdir"
+      ],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib",
+        "pdfium_worker_executable",
+        "aarch64"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 8,
+      "expectedTestPresence": "conditional",
+      "expectedTestCountByProfile": {
+        "default": 0,
+        "on_macos_aarch64": 8
+      },
+      "notes": "#[cfg(all(target_os=\"macos\", target_arch=\"aarch64\"))] — default yields 0 tests. Continuity Camera scan into a session with a fake helper script (no device) and the real PDFium job/mutation workers."
+    },
+    {
       "id": "rust:signature_surface",
       "target": "src-tauri/tests/signature_surface.rs",
       "language": "rust",
@@ -800,14 +830,14 @@
     }
   ],
   "summary": {
-    "totalTargets": 28,
+    "totalTargets": 29,
     "byExecutionClass": {
       "FAST_LOCAL": 11,
-      "NATIVE_PLATFORM": 14,
+      "NATIVE_PLATFORM": 15,
       "EXACT_ARTIFACT": 3
     },
-    "pdfiumRuntimeRequired": 17,
-    "realWorkerRequired": 10,
+    "pdfiumRuntimeRequired": 18,
+    "realWorkerRequired": 11,
     "exactArtifactRequired": 3
   }
 }

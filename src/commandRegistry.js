@@ -15,7 +15,7 @@ export const COMMANDS = Object.freeze([
   { id: "open-bionic", title: "Biyonik Okuma Katmanı (Bionic Reading)", icon: "🧠", category: "Okuma Modları", featureId: null },
   { id: "toggle-ruler", title: "Odak Cetvelini Aç / Gizle (Line Focus)", icon: "📏", category: "Okuma Modları", featureId: null },
   { id: "open-analytics", title: "Oturum ve Okuma İstatistikleri", icon: "📊", category: "İstatistik", featureId: null },
-  { id: "camera-scan", title: "iPhone Süreklilik Kamerası ile Belge Tara & Ekle", icon: "📱", category: "Donanım", featureId: "macos_continuity_camera" },
+  { id: "camera-scan", title: "iPhone/iPad ile Tara ve Ekle (Continuity Camera)", icon: "📱", category: "Donanım", featureId: "macos_continuity_camera" },
   { id: "speak-page", title: "Sayfayı Sesli Oku", icon: "🔊", category: "Ses", featureId: "text_to_speech" },
   { id: "stop-speak", title: "Sesli Okumayı Durdur", icon: "⏹️", category: "Ses", featureId: "text_to_speech" },
   { id: "share-macos", title: "macOS Paylaşım Menüsü (Share Sheet)", icon: "📤", category: "Paylaşım", featureId: "macos_share" },
