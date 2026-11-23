@@ -560,13 +560,15 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    fn run_normalize(input: &Path, type_identifier: &str) -> (std::process::Output, PathBuf, tempfile::TempDir) {
+    fn run_normalize(
+        input: &Path,
+        type_identifier: &str,
+    ) -> (std::process::Output, PathBuf, tempfile::TempDir) {
         let root = tempfile::tempdir().unwrap();
         let output_dir = root.path().join("scan-out");
         std::fs::create_dir(&output_dir).unwrap();
-        let output = run_helper(
-            normalize_pasteboard_args(input, type_identifier, &output_dir).unwrap(),
-        );
+        let output =
+            run_helper(normalize_pasteboard_args(input, type_identifier, &output_dir).unwrap());
         (output, output_dir, root)
     }
 
@@ -592,11 +594,16 @@ mod tests {
             String::from_utf8_lossy(&output.stdout).trim(),
             r#"{"kind":"pdf","files":["scan.pdf"]}"#
         );
-        assert_eq!(std::fs::read(directory.join("scan.pdf")).unwrap(), std::fs::read(&pdf).unwrap());
+        assert_eq!(
+            std::fs::read(directory.join("scan.pdf")).unwrap(),
+            std::fs::read(&pdf).unwrap()
+        );
 
         // Opak görsel JPEG'e, saydam görsel PNG'ye yeniden kodlanır.
         let opaque = inputs.path().join("photo.png");
-        image::RgbImage::from_pixel(64, 48, image::Rgb([10, 200, 30])).save(&opaque).unwrap();
+        image::RgbImage::from_pixel(64, 48, image::Rgb([10, 200, 30]))
+            .save(&opaque)
+            .unwrap();
         let (output, directory, _root) = run_normalize(&opaque, "public.png");
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert_eq!(
@@ -607,7 +614,9 @@ mod tests {
         assert_eq!((decoded.width(), decoded.height()), (64, 48));
 
         let sketch = inputs.path().join("sketch.png");
-        image::RgbaImage::from_pixel(20, 30, image::Rgba([0, 0, 0, 0])).save(&sketch).unwrap();
+        image::RgbaImage::from_pixel(20, 30, image::Rgba([0, 0, 0, 0]))
+            .save(&sketch)
+            .unwrap();
         let (output, directory, _root) = run_normalize(&sketch, "public.png");
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert_eq!(directory_names(&directory), ["scan-001.png"]);
@@ -621,7 +630,10 @@ mod tests {
             String::from_utf8_lossy(&output.stdout).trim(),
             r#"{"kind":"images","files":["scan-001.jpg","scan-002.jpg"]}"#
         );
-        assert_eq!(directory_names(&directory), ["scan-001.jpg", "scan-002.jpg"]);
+        assert_eq!(
+            directory_names(&directory),
+            ["scan-001.jpg", "scan-002.jpg"]
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -656,9 +668,8 @@ mod tests {
         let file = root.path().join("file");
         std::fs::write(&file, b"x").unwrap();
         for directory in [&occupied, &link, &root.path().join("missing"), &file] {
-            let output = run_helper(
-                normalize_pasteboard_args(&pdf, "com.adobe.pdf", directory).unwrap(),
-            );
+            let output =
+                run_helper(normalize_pasteboard_args(&pdf, "com.adobe.pdf", directory).unwrap());
             assert_eq!(output.status.code(), Some(65), "{directory:?}: {output:?}");
         }
         assert_eq!(directory_names(&occupied), ["other.txt"]);

@@ -92,7 +92,11 @@ pub(crate) fn build_pdf(paths: &[String], options: &ImagesToPdfOptions) -> Resul
 /// Görselleri `width` x `height` pt kâğıda (yönü görsele göre çevrilerek) kenar boşluğu
 /// olmadan ortalayıp sığdırır. Continuity Camera taraması, eklendiği yerin komşu sayfa
 /// boyutunu kullanır. Yalnız yeni bir belge yazılır.
-pub(crate) fn build_pdf_fitted(paths: &[String], width: f32, height: f32) -> Result<Vec<u8>, String> {
+pub(crate) fn build_pdf_fitted(
+    paths: &[String],
+    width: f32,
+    height: f32,
+) -> Result<Vec<u8>, String> {
     if paths.is_empty() || paths.len() > MAX_IMAGES {
         return Err(format!("1 ile {MAX_IMAGES} arasında görsel gerekir"));
     }
@@ -100,7 +104,9 @@ pub(crate) fn build_pdf_fitted(paths: &[String], width: f32, height: f32) -> Res
         .iter()
         .all(|side| side.is_finite() && (1.0..=MAX_PAGE_POINTS).contains(side))
     {
-        return Err(format!("Sayfa kenarı 1 ile {MAX_PAGE_POINTS} pt arasında olmalı"));
+        return Err(format!(
+            "Sayfa kenarı 1 ile {MAX_PAGE_POINTS} pt arasında olmalı"
+        ));
     }
     build_pdf_on(paths, Paper::Fixed(width, height), 0.0)
 }
@@ -474,11 +480,21 @@ mod tests {
 
     #[test]
     fn fitted_requests_reject_bad_paper_and_counts() {
-        for (width, height) in [(0.0, 842.0), (f32::NAN, 842.0), (595.0, f32::INFINITY), (595.0, 20_000.0)] {
-            assert!(build_pdf_fitted(&["a.jpg".into()], width, height).is_err(), "{width}x{height}");
+        for (width, height) in [
+            (0.0, 842.0),
+            (f32::NAN, 842.0),
+            (595.0, f32::INFINITY),
+            (595.0, 20_000.0),
+        ] {
+            assert!(
+                build_pdf_fitted(&["a.jpg".into()], width, height).is_err(),
+                "{width}x{height}"
+            );
         }
         assert!(build_pdf_fitted(&[], 595.0, 842.0).is_err());
-        assert!(build_pdf_fitted(&vec!["a.jpg".to_string(); MAX_IMAGES + 1], 595.0, 842.0).is_err());
+        assert!(
+            build_pdf_fitted(&vec!["a.jpg".to_string(); MAX_IMAGES + 1], 595.0, 842.0).is_err()
+        );
     }
 
     #[test]

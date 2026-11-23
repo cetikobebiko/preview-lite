@@ -194,7 +194,8 @@ mod macos_arm64 {
         generation: u64,
         helper: ScanHelper,
         job_id: String,
-    ) -> Result<SessionJobOutcome<ContinuityScanImport>, document_session::DocumentSessionError> {
+    ) -> Result<SessionJobOutcome<ContinuityScanImport>, document_session::DocumentSessionError>
+    {
         scan_into_session(
             handle.state::<DocumentSessionStore>().inner(),
             handle.state::<ContinuityScanGate>().inner(),
@@ -286,8 +287,14 @@ mod macos_arm64 {
         // Yatay fotoğraf yatay A4'e, dikey fotoğraf dikey A4'e; sona eklendiler.
         let landscape = &sizes[3];
         let portrait = &sizes[4];
-        assert!((landscape.width_pt - 842.0).abs() < 0.5 && (landscape.height_pt - 595.0).abs() < 0.5, "{landscape:?}");
-        assert!((portrait.width_pt - 595.0).abs() < 0.5 && (portrait.height_pt - 842.0).abs() < 0.5, "{portrait:?}");
+        assert!(
+            (landscape.width_pt - 842.0).abs() < 0.5 && (landscape.height_pt - 595.0).abs() < 0.5,
+            "{landscape:?}"
+        );
+        assert!(
+            (portrait.width_pt - 595.0).abs() < 0.5 && (portrait.height_pt - 842.0).abs() < 0.5,
+            "{portrait:?}"
+        );
         harness.assert_no_scan_directories();
 
         harness.undo().await;
@@ -297,7 +304,11 @@ mod macos_arm64 {
     #[tokio::test]
     async fn closing_the_menu_without_a_choice_cancels_without_touching_the_document() {
         let harness = Harness::open().await;
-        let helper = harness.helper("cancel-helper", "echo 'seçim yok' >&2\nexit 2", Duration::from_secs(60));
+        let helper = harness.helper(
+            "cancel-helper",
+            "echo 'seçim yok' >&2\nexit 2",
+            Duration::from_secs(60),
+        );
         let outcome = harness.scan(helper, 0).await.unwrap();
         assert!(
             matches!(
@@ -397,7 +408,10 @@ mod macos_arm64 {
         let pid_file = harness.files.join("cancel.pid");
         let helper = harness.helper(
             "waiting-helper",
-            &format!("echo $$ > '{}.tmp'\nmv '{0}.tmp' '{0}'\nexec sleep 30", pid_file.display()),
+            &format!(
+                "echo $$ > '{}.tmp'\nmv '{0}.tmp' '{0}'\nexec sleep 30",
+                pid_file.display()
+            ),
             Duration::from_secs(120),
         );
         let job_id = uuid::Uuid::new_v4().to_string();
@@ -416,7 +430,10 @@ mod macos_arm64 {
         .unwrap();
         // İkinci tarama kapıda reddedilir.
         let second = harness
-            .scan(harness.helper("unused", "exit 0", Duration::from_secs(5)), 0)
+            .scan(
+                harness.helper("unused", "exit 0", Duration::from_secs(5)),
+                0,
+            )
             .await
             .unwrap_err();
         assert_eq!(second.code, "CONTINUITY_SCAN_BUSY");
@@ -433,7 +450,10 @@ mod macos_arm64 {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert!(matches!(outcome, SessionJobOutcome::Cancelled { .. }), "{outcome:?}");
+        assert!(
+            matches!(outcome, SessionJobOutcome::Cancelled { .. }),
+            "{outcome:?}"
+        );
         let pid = std::fs::read_to_string(&pid_file).unwrap();
         assert!(!process_alive(pid.trim()), "yardımcı iptalde öldürülmedi");
         assert_eq!(harness.page_count().await, 3);

@@ -311,9 +311,9 @@ fn prepare_import_source(
             let paths = files
                 .iter()
                 .map(|path| {
-                    path.to_str().map(str::to_string).ok_or_else(|| {
-                        output_invalid("Tarama dizini yolu UTF-8 değil")
-                    })
+                    path.to_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| output_invalid("Tarama dizini yolu UTF-8 değil"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let bytes = crate::images_to_pdf::build_pdf_fitted(&paths, fit.width, fit.height)
@@ -535,16 +535,22 @@ mod tests {
                 "{code:?}"
             );
         }
-        let SessionJobOperationError::Failed(failure) = helper_exit_error(Some(66), b"  tip yok \n")
+        let SessionJobOperationError::Failed(failure) =
+            helper_exit_error(Some(66), b"  tip yok \n")
         else {
             panic!("failure expected");
         };
-        assert!(failure.message.ends_with(": tip yok"), "{}", failure.message);
+        assert!(
+            failure.message.ends_with(": tip yok"),
+            "{}",
+            failure.message
+        );
     }
 
     #[test]
     fn helper_report_must_be_a_single_known_json_line() {
-        let parsed = parse_helper_report(b"{\"kind\":\"images\",\"files\":[\"scan-001.jpg\"]}\n").unwrap();
+        let parsed =
+            parse_helper_report(b"{\"kind\":\"images\",\"files\":[\"scan-001.jpg\"]}\n").unwrap();
         assert_eq!(parsed.kind, ScanContentKind::Images);
         assert_eq!(parsed.files, ["scan-001.jpg"]);
         for bad in [
@@ -584,7 +590,10 @@ mod tests {
         );
 
         for (kind, names) in [
-            (ScanContentKind::Images, vec!["scan-002.jpg", "scan-001.png"]),
+            (
+                ScanContentKind::Images,
+                vec!["scan-002.jpg", "scan-001.png"],
+            ),
             (ScanContentKind::Images, vec!["../scan-001.jpg"]),
             (ScanContentKind::Images, vec!["scan-001.heic"]),
             (ScanContentKind::Images, vec!["scan.pdf"]),
@@ -594,7 +603,9 @@ mod tests {
             (ScanContentKind::Pdf, vec!["/etc/passwd"]),
         ] {
             assert_eq!(
-                failure_code(validate_scan_output(directory.path(), &report(kind, &names)).unwrap_err()),
+                failure_code(
+                    validate_scan_output(directory.path(), &report(kind, &names)).unwrap_err()
+                ),
                 "CONTINUITY_SCAN_OUTPUT_INVALID",
                 "{kind:?} {names:?}"
             );
@@ -654,8 +665,11 @@ mod tests {
         std::os::unix::fs::symlink(&secret, directory.path().join("scan.pdf")).unwrap();
         assert_eq!(
             failure_code(
-                validate_scan_output(directory.path(), &report(ScanContentKind::Pdf, &["scan.pdf"]))
-                    .unwrap_err()
+                validate_scan_output(
+                    directory.path(),
+                    &report(ScanContentKind::Pdf, &["scan.pdf"])
+                )
+                .unwrap_err()
             ),
             "CONTINUITY_SCAN_OUTPUT_INVALID"
         );
@@ -674,10 +688,24 @@ mod tests {
 
     #[test]
     fn page_fit_must_be_a_finite_bounded_paper() {
-        assert!(ScanPageFit { width: 595.0, height: 842.0 }.validate().is_ok());
-        for (width, height) in [(0.0, 842.0), (595.0, -1.0), (f32::NAN, 842.0), (595.0, f32::INFINITY), (20_000.0, 842.0)] {
+        assert!(ScanPageFit {
+            width: 595.0,
+            height: 842.0
+        }
+        .validate()
+        .is_ok());
+        for (width, height) in [
+            (0.0, 842.0),
+            (595.0, -1.0),
+            (f32::NAN, 842.0),
+            (595.0, f32::INFINITY),
+            (20_000.0, 842.0),
+        ] {
             let error = ScanPageFit { width, height }.validate().unwrap_err();
-            assert_eq!(error.code, "CONTINUITY_SCAN_INVALID_REQUEST", "{width}x{height}");
+            assert_eq!(
+                error.code, "CONTINUITY_SCAN_INVALID_REQUEST",
+                "{width}x{height}"
+            );
         }
     }
 
@@ -685,7 +713,10 @@ mod tests {
     fn gate_allows_one_scan_at_a_time() {
         let gate = ContinuityScanGate::default();
         let guard = gate.try_acquire().unwrap();
-        assert_eq!(gate.try_acquire().err().unwrap().code, "CONTINUITY_SCAN_BUSY");
+        assert_eq!(
+            gate.try_acquire().err().unwrap().code,
+            "CONTINUITY_SCAN_BUSY"
+        );
         drop(guard);
         assert!(gate.try_acquire().is_ok());
     }
