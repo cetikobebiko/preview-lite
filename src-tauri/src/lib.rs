@@ -54,6 +54,7 @@ pub mod secure_redaction;
 pub mod secure_redaction_inspection;
 pub mod secure_redaction_raster;
 pub mod secure_redaction_verifier;
+pub mod signature_verification;
 pub mod tts;
 pub mod worker;
 pub mod xfdf;
@@ -1590,6 +1591,7 @@ pub fn run() {
             redaction::execute_secure_redaction,
             redaction::sanitize_pdf_document,
             sanitization::inspect_document_sanitization,
+            signature_verification::inspect_session_signatures,
             sanitization_publication::execute_document_sanitization,
             redaction::scan_sensitive_data,
             ocr::export_as_searchable_pdf,

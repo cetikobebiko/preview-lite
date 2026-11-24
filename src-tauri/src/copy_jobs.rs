@@ -32,13 +32,6 @@ pub struct CopySignatureReport {
     pub signatures_invalidated: bool,
 }
 
-/// Whether a PDFium `FPDF_GetSignatureCount` result means the copy loses
-/// signatures. `-1` (the count could not be read) counts as signed, so a read
-/// failure warns instead of staying silent.
-pub(crate) fn signature_count_invalidates(count: std::os::raw::c_int) -> bool {
-    count != 0
-}
-
 fn protocol_error(message: &str) -> SessionJobOperationError {
     SessionJobOperationError::failed_with_code("SESSION_JOB_WORKER_PROTOCOL_ERROR", message)
 }

@@ -2412,3 +2412,78 @@ fn searchable_copy_worker_writes_an_invisible_turkish_text_layer() {
     })
     .unwrap();
 }
+
+/// Prompt 11 G2: `InspectSignatures` runs in a fresh worker process (protocol 11), returns
+/// the typed JSON report and writes nothing but its response.
+#[test]
+fn signature_inspection_worker_returns_a_typed_read_only_report() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("signature")
+            .join("sig-16-two-signatures.pdf"),
+        &snapshot,
+    )
+    .unwrap();
+    let before = fs::read(&snapshot).unwrap();
+    let response = run_worker(
+        directory.path(),
+        41,
+        json!({
+            "protocol_version": JOB_WORKER_PROTOCOL_VERSION,
+            "snapshot_path": snapshot,
+            "credential": null,
+            "authoritative_session_id": "signature-session",
+            "command": { "InspectSignatures": { "schema_version": 1, "content_generation": 5 } }
+        }),
+    );
+    assert_eq!(JOB_WORKER_PROTOCOL_VERSION, 11);
+    assert_eq!(response["protocol_version"], 11);
+    let report = &response["result"]["Ok"]["SignatureInspection"];
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["session_id"], "signature-session");
+    assert_eq!(report["content_generation"], 5);
+    assert_eq!(report["total_signatures"], 2);
+    for signature in report["signatures"].as_array().unwrap() {
+        assert_eq!(signature["cryptographic_integrity"], "valid");
+        assert_eq!(signature["trust_status"], "not_checked");
+        assert_eq!(signature["revocation_status"], "not_checked");
+        assert_eq!(signature["pades_validated_level"], "none");
+        // Display fields only: no certificate or CMS bytes cross the boundary.
+        let text = signature.to_string();
+        assert!(!text.contains("MII"), "{text}");
+    }
+    assert_eq!(fs::read(&snapshot).unwrap(), before);
+    let mut names: Vec<String> = fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "snapshot.pdf",
+            "worker-request-41.json",
+            "worker-response-41.json"
+        ]
+    );
+
+    // A schema mismatch is a protocol error, not a report.
+    let response = run_worker(
+        directory.path(),
+        42,
+        json!({
+            "protocol_version": JOB_WORKER_PROTOCOL_VERSION,
+            "snapshot_path": snapshot,
+            "credential": null,
+            "command": { "InspectSignatures": { "schema_version": 99, "content_generation": 5 } }
+        }),
+    );
+    assert_eq!(
+        response["result"]["Err"]["code"],
+        "SESSION_JOB_WORKER_PROTOCOL_ERROR"
+    );
+}
