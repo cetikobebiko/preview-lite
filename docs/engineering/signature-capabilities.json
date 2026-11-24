@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "description": "PAdES/dijital imza yetenek modeli. Kaynak: docs/engineering/pades-architecture-design.md v1.3.0. Durumlar: NOT_IMPLEMENTED, PLANNED, IMPLEMENTED, OUT_OF_SCOPE. OUT_OF_SCOPE, seçilen hedef profilin dışında demektir; sahip G aşaması ayrı bir profil kararıyla açılır.",
   "designDoc": "docs/engineering/pades-architecture-design.md",
-  "designDocVersion": "1.3.0",
-  "reconciledAgainst": "origin/main 33b0771",
+  "designDocVersion": "1.3.1",
+  "reconciledAgainst": "origin/main ef9208a (1.3.0: 33b0771)",
   "targetProfile": {
     "id": "OPTION_1",
     "label": "Yalnız çevrimdışı doğrulama (P1+P2)",
@@ -49,17 +49,23 @@
     },
     {
       "id": "SIG-INVALIDATION-REPORTING",
-      "title": "İmzayı geçersiz kılan kopya yollarında tespit ve bildirim (kısmi: güvenlik kopyası, batch, split/merge eksik)",
-      "status": "NOT_IMPLEMENTED",
-      "ownerPhase": "follow-up",
+      "title": "İmzayı geçersiz kılan kopya yollarında tespit ve bildirim",
+      "status": "IMPLEMENTED",
+      "ownerPhase": "existing",
       "corpusGap": null,
-      "designSection": "§18.2, §18.4",
+      "designSection": "§18.2",
       "evidence": [
         "src-tauri/src/searchable_pdf.rs",
         "src-tauri/src/pdf_optimizer/mod.rs",
-        "src-tauri/src/sanitization_transform.rs"
+        "src-tauri/src/sanitization_transform.rs",
+        "src-tauri/src/document_security.rs",
+        "src-tauri/src/copy_jobs.rs CopySignatureReport",
+        "src-tauri/src/job_worker.rs split_pdf / merge_pdf",
+        "src-tauri/src/batch.rs",
+        "src/services/copySignatures.js",
+        "src-tauri/tests/job_worker_process.rs"
       ],
-      "rationale": "Güvenlik kopyası, batch ve split/merge eksikleri G hattı dışında ayrı işte; tek kanonik tespit fonksiyonuna bağlanma G2'de (CAP-01)."
+      "rationale": "PR #34 (e29a76c) güvenlik kopyası, bölme, birleştirme ve toplu işlemi ekledi; uygulama içi test NOT RUN. Optimizer, sanitization ve güvenli redaksiyon hâlâ lopdf tabanlı tespit kullanıyor; tek kanonik fonksiyon CAP-01 (G2)."
     },
     {
       "id": "CAP-01",

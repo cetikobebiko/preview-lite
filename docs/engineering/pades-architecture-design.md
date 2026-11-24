@@ -1,7 +1,7 @@
 # PAdES ve Dijital İmza Mimari Tasarım Belgesi
 
-**Belge Sürümü:** 1.3.0 (Prompt 11 G1 — tasarım ↔ kod uzlaştırması)  
-**Tarih:** 2026-11-24 (önceki sürüm 1.2.0: 2026-08-16)  
+**Belge Sürümü:** 1.3.1 (Prompt 11 G1 — tasarım ↔ kod uzlaştırması; #34 sonrası §18 güncellemesi)  
+**Tarih:** 2026-11-24 (1.3.0: 2026-11-24; 1.2.0: 2026-08-16)  
 **Durum:** Onaylanmış Tasarım Belgesi — Üretim İmplementasyonu Öncesi Kanonik Mimari Otorite  
 **Uzlaştırma tabanı:** `origin/main` 33b0771  
 **Hedef profil (kullanıcı kararı, 2026-11-24):** OPTION 1 — yalnız çevrimdışı doğrulama (P1+P2). Ayrıntı: §19.
@@ -1314,12 +1314,15 @@ Bu bölüm 2026-11-24'te `origin/main` 33b0771 üzerinde koddan doğrulanmışt�
 |---|---|---|---|
 | Aranabilir PDF | `searchable_pdf.rs`, `ocr.rs` | PDFium `FPDF_GetSignatureCount` | `signatures_invalidated` raporu (`services/searchablePdf.js`); `SearchablePdfModal` ön uyarısı (`signature_count`) |
 | PDF Optimizer | `pdf_optimizer/mod.rs` | lopdf `has_signatures`: `/Type /Sig` veya `/FT /Sig` + `/V` | `signatures_invalidated` raporu (`services/pdfOptimizer.js`); `OptimizeModal` sabit metni |
-| Güvenlik kopyası | `document_security.rs`, `copy_jobs::produce_security_copy` | **Yok** | Yalnız `SecurityModal` sabit metni — **BULGU** |
+| Güvenlik kopyası | `document_security.rs`, `copy_jobs::produce_security_copy` | PDFium `FPDF_GetSignatureCount` (worker; v1.3.1, PR #34) | `CopySignatureReport.signatures_invalidated` → `SecurityModal` ön notu + sonuç cümlesi (`src/services/copySignatures.js`) |
 | Sanitization | `sanitization_inspection.rs`, `sanitization_transform.rs`, `sanitization_verifier.rs` | lopdf: `/Type /Sig` veya `/FT /Sig` veya `/ByteRange` | `SANITIZATION_SIGNATURES_INVALIDATED` uyarısı + açık onay |
 | Güvenli redaksiyon | `secure_redaction_inspection.rs`, `secure_redaction_verifier.rs` | lopdf `/ByteRange` | Açık onay + rapor |
-| Toplu işlem | `batch.rs`, `batch/`, `copy_jobs.rs`, `batchController.js`, `BatchProcessingModal.svelte` | **Yok.** Optimize alt işleminin `OptimizeReport`'u `.0` ile düşürülüyor | **Yok** — **BULGU** |
-| Bölme / birleştirme | `job_worker.rs` `split_pdf`, `merge_pdf` (`create_new_pdf` + sayfa kopyası) | **Yok.** İmzalar çıktıdan sessizce düşer; kaynak etkilenmez | **Yok** — **BULGU** |
+| Toplu işlem | `batch.rs`, `batch/`, `copy_jobs.rs`, `batchController.js`, `BatchProcessingModal.svelte` | Alt işlemin raporu (v1.3.1, PR #34): güvenlik kopyası PDFium; optimize hâlâ lopdf `has_signatures`. Dışa aktarmalar imza taşımaz | Dosya başına `signatures_invalidated`, özet sayaç ve ön not (`BatchProcessingModal`) |
+| Bölme / birleştirme (palet birleştirme dahil) | `job_worker.rs` `split_pdf`, `merge_pdf` (`create_new_pdf` + sayfa kopyası) | PDFium `signatures()` (v1.3.1, PR #34); birleştirmede kaynak ve eklenen her dosya için | `JobResult::SplitCopies` / `MergedCopy` raporu → `MergeSplitModal` ön notu + sonuç cümlesi; palet birleştirme `documentTransformController.js` |
 | Office/HTML/RTF/Markdown, metin ve görsel dışa aktarma | `document_export*`, `export.rs` | Uygulanamaz | Çıktı PDF değildir |
+
+> [!NOTE]
+> **v1.3.1:** 1.3.0'da güvenlik kopyası, toplu işlem ve bölme/birleştirme için kaydedilen "tespit yok" bulguları PR #34 (`e29a76c`) ile kapandı. Bu satırlar artık kendi raporlarını taşıyor. Bunlar uygulamada imzalı bir PDF ile henüz denenmedi; kanıtları birim ve worker-süreç testleridir (`job_worker_process.rs`, `batch/tests.rs`, ilgili Vitest dosyaları). Kalan tutarsızlık şudur: optimizer (ve toplu optimize), sanitization ve güvenli redaksiyon hâlâ lopdf tabanlı tespit kullanıyor. §18.3'teki kanonik birleştirme G2'de kalır.
 
 ### §18.3 Kanonik tespit hedefi (G2)
 
@@ -1327,7 +1330,7 @@ Bütün yollar G2'de tek bir worker-içi tespit fonksiyonunu (CAP-01, §2.3 notu
 
 ### §18.4 Ayrı iş olarak önerilen düzeltmeler (G hattı dışında)
 
-1. Güvenlik kopyası, batch ve bölme/birleştirme için imza tespiti ve raporlama.
+1. ~~Güvenlik kopyası, batch ve bölme/birleştirme için imza tespiti ve raporlama.~~ PR #34 (`e29a76c`) ile birleştirildi; uygulama içi test NOT RUN.
 2. `undo-redo-and-incremental-save-design.md` §4.4 `allowRewrite` kaymasının düzeltilmesi.
 3. Job ve viewer worker'ları için OS düzeyinde sandbox (macOS `sandbox_init` / App Sandbox profili, Linux seccomp/namespaces) — ya da bunun bilinçli olarak kabul edildiğinin kaydı.
 4. `feature-matrix.md` "İlk Yüksek Riskli Bulgular (Tarihsel)" madde 2 ve 9'un güncel durumla işaretlenmesi.
@@ -1385,6 +1388,12 @@ G1 `Cargo.toml`'a hiçbir şey eklemez. **APPROVED**, G2'nin ilgili crate'i ekle
 ---
 
 ## 21. Değişiklik Günlüğü
+
+### 1.3.1 — 2026-11-24 (§18 güncellemesi; taban `origin/main` ef9208a)
+
+- **§18.2:** güvenlik kopyası, toplu işlem ve bölme/birleştirme satırları PR #34 (`e29a76c`) sonrasındaki tespit ve bildirim yollarıyla güncellendi. Kalan lopdf tabanlı tespitler not edildi.
+- **§18.4:** madde 1 kapandı.
+- **`signature-capabilities.json`:** `SIG-INVALIDATION-REPORTING` → `IMPLEMENTED`; kanıtlar eklendi.
 
 ### 1.3.0 — 2026-11-24 (Prompt 11 G1, tasarım ↔ kod uzlaştırması; taban `origin/main` 33b0771)
 
