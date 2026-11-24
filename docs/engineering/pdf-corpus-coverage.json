@@ -2995,6 +2995,623 @@
         "verificationType": "compiled_helper_output_assertion",
         "notes": "Unsupported UTI, header-less PDF and broken image exit 66; occupied, symlinked, missing or file output dirs exit 65 before writing"
       }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-09b-adbe-pkcs7-no-signed-attributes",
+      "testId": "rust:signature_verification_native::adbe_pkcs7_without_signed_attributes_verifies_but_is_not_pades",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "adbe_pkcs7_without_signed_attributes_verifies_but_is_not_pades on sig-09b-adbe-pkcs7-no-signed-attributes.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-signed-kid-field",
+      "testId": "rust:signature_verification_native::canonical_discovery_finds_what_pdfium_does_not_list",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "canonical_discovery_finds_what_pdfium_does_not_list on sig-signed-kid-field.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-unreferenced-signature-dictionary",
+      "testId": "rust:signature_verification_native::canonical_discovery_finds_what_pdfium_does_not_list",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "canonical_discovery_finds_what_pdfium_does_not_list on sig-unreferenced-signature-dictionary.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-39-docmdp-p1",
+      "testId": "rust:signature_verification_native::docmdp_is_reported_and_later_changes_are_not_classified",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "docmdp_is_reported_and_later_changes_are_not_classified on sig-39-docmdp-p1.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-39b-docmdp-p1-later-revision",
+      "testId": "rust:signature_verification_native::docmdp_is_reported_and_later_changes_are_not_classified",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "docmdp_is_reported_and_later_changes_are_not_classified on sig-39b-docmdp-p1-later-revision.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-49-byterange-overlapping",
+      "testId": "rust:signature_verification_native::hostile_byte_ranges_are_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "hostile_byte_ranges_are_invalid on sig-49-byterange-overlapping.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-50-byterange-out-of-bounds",
+      "testId": "rust:signature_verification_native::hostile_byte_ranges_are_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "hostile_byte_ranges_are_invalid on sig-50-byterange-out-of-bounds.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-51-byterange-negative",
+      "testId": "rust:signature_verification_native::hostile_byte_ranges_are_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "hostile_byte_ranges_are_invalid on sig-51-byterange-negative.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-52-byterange-uncovered-gap",
+      "testId": "rust:signature_verification_native::hostile_byte_ranges_are_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "hostile_byte_ranges_are_invalid on sig-52-byterange-uncovered-gap.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-53-byterange-two-exclusions",
+      "testId": "rust:signature_verification_native::hostile_byte_ranges_are_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "hostile_byte_ranges_are_invalid on sig-53-byterange-two-exclusions.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-54-empty-contents",
+      "testId": "rust:signature_verification_native::hostile_contents_are_malformed",
+      "relation": "direct",
+      "dimensions": [
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "hostile_contents_are_malformed on sig-54-empty-contents.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-55-malformed-der",
+      "testId": "rust:signature_verification_native::hostile_contents_are_malformed",
+      "relation": "direct",
+      "dimensions": [
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "hostile_contents_are_malformed on sig-55-malformed-der.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-trailing-bytes",
+      "testId": "rust:signature_verification_native::later_revisions_and_trailing_bytes_do_not_break_the_signature",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "later_revisions_and_trailing_bytes_do_not_break_the_signature on sig-trailing-bytes.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-unsigned-revision-after-signing",
+      "testId": "rust:signature_verification_native::later_revisions_and_trailing_bytes_do_not_break_the_signature",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "later_revisions_and_trailing_bytes_do_not_break_the_signature on sig-unsigned-revision-after-signing.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-16-two-signatures",
+      "testId": "rust:signature_verification_native::reports_are_deterministic",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "reports_are_deterministic on sig-16-two-signatures.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-signer-certificate-ambiguous",
+      "testId": "rust:signature_verification_native::signer_certificate_must_be_found_exactly_once",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "signer_certificate_must_be_found_exactly_once on sig-signer-certificate-ambiguous.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-signer-certificate-missing",
+      "testId": "rust:signature_verification_native::signer_certificate_must_be_found_exactly_once",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "signer_certificate_must_be_found_exactly_once on sig-signer-certificate-missing.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-19-modified-after-signing",
+      "testId": "rust:signature_verification_native::tampering_is_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "tampering_is_invalid on sig-19-modified-after-signing.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-21-bad-signature-value",
+      "testId": "rust:signature_verification_native::tampering_is_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "tampering_is_invalid on sig-21-bad-signature-value.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-22-message-digest-mismatch",
+      "testId": "rust:signature_verification_native::tampering_is_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "tampering_is_invalid on sig-22-message-digest-mismatch.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-24-content-type-missing",
+      "testId": "rust:signature_verification_native::tampering_is_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "tampering_is_invalid on sig-24-content-type-missing.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-wrong-key",
+      "testId": "rust:signature_verification_native::tampering_is_invalid",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "tampering_is_invalid on sig-wrong-key.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-doc-timestamp",
+      "testId": "rust:signature_verification_native::timestamps_are_detected_not_verified",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "timestamps_are_detected_not_verified on sig-doc-timestamp.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-signature-timestamp-attribute",
+      "testId": "rust:signature_verification_native::timestamps_are_detected_not_verified",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "timestamps_are_detected_not_verified on sig-signature-timestamp-attribute.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-16-two-signatures",
+      "testId": "rust:signature_verification_native::two_signatures_are_verified_independently",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "two_signatures_are_verified_independently on sig-16-two-signatures.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-01-unsigned",
+      "testId": "rust:signature_verification_native::unsigned_documents_have_no_signatures",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "unsigned_documents_have_no_signatures on sig-01-unsigned.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-03-empty-signature-field",
+      "testId": "rust:signature_verification_native::unsigned_documents_have_no_signatures",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "unsigned_documents_have_no_signatures on sig-03-empty-signature-field.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-09-rsa-pkcs1-sha256",
+      "testId": "rust:signature_verification_native::valid_signatures_of_every_supported_algorithm_verify",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "valid_signatures_of_every_supported_algorithm_verify on sig-09-rsa-pkcs1-sha256.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-10-rsa-pss-sha384",
+      "testId": "rust:signature_verification_native::valid_signatures_of_every_supported_algorithm_verify",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "valid_signatures_of_every_supported_algorithm_verify on sig-10-rsa-pss-sha384.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-11-ecdsa-p256-sha256",
+      "testId": "rust:signature_verification_native::valid_signatures_of_every_supported_algorithm_verify",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "valid_signatures_of_every_supported_algorithm_verify on sig-11-ecdsa-p256-sha256.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-12-ecdsa-p384-sha384",
+      "testId": "rust:signature_verification_native::valid_signatures_of_every_supported_algorithm_verify",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "valid_signatures_of_every_supported_algorithm_verify on sig-12-ecdsa-p384-sha384.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-27-sha1-digest",
+      "testId": "rust:signature_verification_native::weak_algorithms_are_reported_not_verified",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "weak_algorithms_are_reported_not_verified on sig-27-sha1-digest.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-rsa-1024-weak-key",
+      "testId": "rust:signature_verification_native::weak_algorithms_are_reported_not_verified",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "weak_algorithms_are_reported_not_verified on sig-rsa-1024-weak-key.pdf (real PDFium, real cryptography)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "sanitization-signature",
+      "testId": "rust:signature_verification_native::existing_signature_marked_fixtures_have_an_uncovered_gap",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "ByteRange [0 100 200 300] does not cover the file: SIGNATURE_BYTE_RANGE_GAP_DETECTED (design §7 note)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "redaction-signature-marked-byterange",
+      "testId": "rust:signature_verification_native::existing_signature_marked_fixtures_have_an_uncovered_gap",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "ByteRange [0 100 200 300] does not cover the file: SIGNATURE_BYTE_RANGE_GAP_DETECTED (design §7 note)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "core-encrypted",
+      "testId": "rust:signature_verification_native::encrypted_documents_need_the_session_credential",
+      "relation": "direct",
+      "dimensions": [
+        "encrypted"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/signature_verification_native.rs",
+        "verificationType": "offline_signature_verification",
+        "notes": "Without the session credential the report is Indeterminate; with it the document is inspected (unsigned encrypted input; signed encrypted class 45 is G6)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-16-two-signatures",
+      "testId": "rust:job_worker_process::signature_inspection_worker_returns_a_typed_read_only_report",
+      "relation": "direct",
+      "dimensions": [
+        "worker",
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/job_worker_process.rs",
+        "verificationType": "real_job_worker_process",
+        "notes": "JobCommand::InspectSignatures in a fresh --run-job-worker process, protocol 11"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-01-unsigned",
+      "testId": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/signature_verification/discovery.rs",
+        "verificationType": "canonical_signature_discovery",
+        "notes": "CAP-01 PDFium-first discovery with lopdf supplement (G2 spike regression)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-03-empty-signature-field",
+      "testId": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/signature_verification/discovery.rs",
+        "verificationType": "canonical_signature_discovery",
+        "notes": "CAP-01 PDFium-first discovery with lopdf supplement (G2 spike regression)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-09-rsa-pkcs1-sha256",
+      "testId": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/signature_verification/discovery.rs",
+        "verificationType": "canonical_signature_discovery",
+        "notes": "CAP-01 PDFium-first discovery with lopdf supplement (G2 spike regression)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-signed-kid-field",
+      "testId": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/signature_verification/discovery.rs",
+        "verificationType": "canonical_signature_discovery",
+        "notes": "CAP-01 PDFium-first discovery with lopdf supplement (G2 spike regression)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-unreferenced-signature-dictionary",
+      "testId": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "relation": "direct",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/signature_verification/discovery.rs",
+        "verificationType": "canonical_signature_discovery",
+        "notes": "CAP-01 PDFium-first discovery with lopdf supplement (G2 spike regression)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-doc-timestamp",
+      "testId": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/signature_verification/discovery.rs",
+        "verificationType": "canonical_signature_discovery",
+        "notes": "CAP-01 PDFium-first discovery with lopdf supplement (G2 spike regression)"
+      }
+    },
+    {
+      "featureId": "signature_verification",
+      "fixtureId": "signature-sig-16-two-signatures",
+      "testId": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/signature_verification/discovery.rs",
+        "verificationType": "canonical_signature_discovery",
+        "notes": "CAP-01 PDFium-first discovery with lopdf supplement (G2 spike regression)"
+      }
     }
   ],
   "features": [
@@ -3516,23 +4133,74 @@
     {
       "id": "signature_verification",
       "name": "Signature Verification",
-      "statusObservation": "disabled",
+      "statusObservation": "experimental",
       "fixtureIds": [
+        "core-encrypted",
         "redaction-signature-marked-byterange",
-        "sanitization-signature"
+        "sanitization-signature",
+        "signature-sig-01-unsigned",
+        "signature-sig-03-empty-signature-field",
+        "signature-sig-09-rsa-pkcs1-sha256",
+        "signature-sig-09b-adbe-pkcs7-no-signed-attributes",
+        "signature-sig-10-rsa-pss-sha384",
+        "signature-sig-11-ecdsa-p256-sha256",
+        "signature-sig-12-ecdsa-p384-sha384",
+        "signature-sig-16-two-signatures",
+        "signature-sig-19-modified-after-signing",
+        "signature-sig-21-bad-signature-value",
+        "signature-sig-22-message-digest-mismatch",
+        "signature-sig-24-content-type-missing",
+        "signature-sig-27-sha1-digest",
+        "signature-sig-39-docmdp-p1",
+        "signature-sig-39b-docmdp-p1-later-revision",
+        "signature-sig-49-byterange-overlapping",
+        "signature-sig-50-byterange-out-of-bounds",
+        "signature-sig-51-byterange-negative",
+        "signature-sig-52-byterange-uncovered-gap",
+        "signature-sig-53-byterange-two-exclusions",
+        "signature-sig-54-empty-contents",
+        "signature-sig-55-malformed-der",
+        "signature-sig-doc-timestamp",
+        "signature-sig-rsa-1024-weak-key",
+        "signature-sig-signature-timestamp-attribute",
+        "signature-sig-signed-kid-field",
+        "signature-sig-signer-certificate-ambiguous",
+        "signature-sig-signer-certificate-missing",
+        "signature-sig-trailing-bytes",
+        "signature-sig-unreferenced-signature-dictionary",
+        "signature-sig-unsigned-revision-after-signing",
+        "signature-sig-wrong-key"
       ],
       "testIds": [
+        "rust:job_worker_process::signature_inspection_worker_returns_a_typed_read_only_report",
         "rust:sanitization_capabilities::signature_byte_range_docmdp_and_fieldmdp_are_structurally_visible",
-        "rust:secure_redaction_raster_primitives::test_61_signed_fixture_raster_blocked"
+        "rust:secure_redaction_raster_primitives::test_61_signed_fixture_raster_blocked",
+        "rust:signature_verification_native::adbe_pkcs7_without_signed_attributes_verifies_but_is_not_pades",
+        "rust:signature_verification_native::canonical_discovery_finds_what_pdfium_does_not_list",
+        "rust:signature_verification_native::docmdp_is_reported_and_later_changes_are_not_classified",
+        "rust:signature_verification_native::encrypted_documents_need_the_session_credential",
+        "rust:signature_verification_native::existing_signature_marked_fixtures_have_an_uncovered_gap",
+        "rust:signature_verification_native::hostile_byte_ranges_are_invalid",
+        "rust:signature_verification_native::hostile_contents_are_malformed",
+        "rust:signature_verification_native::later_revisions_and_trailing_bytes_do_not_break_the_signature",
+        "rust:signature_verification_native::reports_are_deterministic",
+        "rust:signature_verification_native::signer_certificate_must_be_found_exactly_once",
+        "rust:signature_verification_native::tampering_is_invalid",
+        "rust:signature_verification_native::timestamps_are_detected_not_verified",
+        "rust:signature_verification_native::two_signatures_are_verified_independently",
+        "rust:signature_verification_native::unsigned_documents_have_no_signatures",
+        "rust:signature_verification_native::valid_signatures_of_every_supported_algorithm_verify",
+        "rust:signature_verification_native::weak_algorithms_are_reported_not_verified",
+        "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures"
       ],
       "dimensions": {
-        "positive": "planned",
+        "positive": "partial",
         "negative": "covered",
-        "malformed": "not_applicable",
-        "encrypted": "not_applicable",
+        "malformed": "covered",
+        "encrypted": "partial",
         "unicode": "not_applicable",
         "persistence": "not_applicable",
-        "worker": "not_covered"
+        "worker": "covered"
       },
       "platformEvidence": {
         "macos": "source_only",
@@ -5332,6 +6000,114 @@
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/macos_helper.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::adbe_pkcs7_without_signed_attributes_verifies_but_is_not_pades",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::canonical_discovery_finds_what_pdfium_does_not_list",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::docmdp_is_reported_and_later_changes_are_not_classified",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::hostile_byte_ranges_are_invalid",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::hostile_contents_are_malformed",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::later_revisions_and_trailing_bytes_do_not_break_the_signature",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::reports_are_deterministic",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::signer_certificate_must_be_found_exactly_once",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::tampering_is_invalid",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::timestamps_are_detected_not_verified",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::two_signatures_are_verified_independently",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::unsigned_documents_have_no_signatures",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::valid_signatures_of_every_supported_algorithm_verify",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::weak_algorithms_are_reported_not_verified",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::existing_signature_marked_fixtures_have_an_uncovered_gap",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:signature_verification_native::encrypted_documents_need_the_session_credential",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/signature_verification_native.rs"
+    },
+    {
+      "id": "rust:job_worker_process::signature_inspection_worker_returns_a_typed_read_only_report",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/job_worker_process.rs"
+    },
+    {
+      "id": "rust_unit:signature_verification::canonical_discovery_classifies_the_spike_structures",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/signature_verification/discovery.rs"
     }
   ],
   "gaps": [
@@ -5543,7 +6319,7 @@
       "requiredLayer": "integration",
       "plannedPrompt": "11I-G",
       "releaseBlocking": true,
-      "description": "[G2 · OPTION 1 PLANNED] Implement offline structural and cryptographic signature validation (trust NOT_EVALUATED; certificate trust checks tracked by gap-signature-settings-trust-store). See docs/engineering/signature-capabilities.json"
+      "description": "[G2 · OPTION 1 IMPLEMENTED 2026-11-24; open until G6 corpus and external oracle cross-tests (pdfsig/pyHanko NOT RUN)] Offline structural and cryptographic signature validation (trust NOT_EVALUATED; certificate trust checks tracked by gap-signature-settings-trust-store). See docs/engineering/signature-capabilities.json"
     },
     {
       "id": "gap-ltv-timestamp-dss",

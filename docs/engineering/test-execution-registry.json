@@ -133,7 +133,8 @@
         "redaction-negative-origin",
         "redaction-rotations",
         "redaction-simple-text",
-        "sanitization-unsupported-active-content"
+        "sanitization-unsupported-active-content",
+        "signature-sig-16-two-signatures"
       ],
       "syntheticInputs": [
         "synthetic_tempdir",
@@ -144,7 +145,7 @@
         "job_worker_executable"
       ],
       "artifactRequirement": null,
-      "expectedTestCount": 27,
+      "expectedTestCount": 28,
       "expectedTestPresence": "at_least_one"
     },
     {
@@ -570,7 +571,7 @@
       "syntheticInputs": [],
       "nativeRequirements": [],
       "artifactRequirement": null,
-      "expectedTestCount": 2,
+      "expectedTestCount": 3,
       "expectedTestPresence": "exact"
     },
     {
@@ -827,16 +828,125 @@
         "with_artifact_windows": 2
       },
       "notes": "Exact artifact smoke for Windows .msi/.nsis (2 tests: execution and evidence structure) — requires ARTIFACT_SMOKE_WINDOWS_PATH env var. Uses production worker (--run-worker) via packaged binary."
+    },
+    {
+      "id": "rust:signature_fixture_generator",
+      "target": "src-tauri/tests/signature_fixture_generator.rs",
+      "language": "rust",
+      "executionClass": "FAST_LOCAL",
+      "usesPdfium": false,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "any"
+      ],
+      "fixtureIds": [
+        "signature-sig-01-unsigned",
+        "signature-sig-03-empty-signature-field",
+        "signature-sig-09-rsa-pkcs1-sha256",
+        "signature-sig-09b-adbe-pkcs7-no-signed-attributes",
+        "signature-sig-10-rsa-pss-sha384",
+        "signature-sig-11-ecdsa-p256-sha256",
+        "signature-sig-12-ecdsa-p384-sha384",
+        "signature-sig-16-two-signatures",
+        "signature-sig-19-modified-after-signing",
+        "signature-sig-21-bad-signature-value",
+        "signature-sig-22-message-digest-mismatch",
+        "signature-sig-24-content-type-missing",
+        "signature-sig-27-sha1-digest",
+        "signature-sig-39-docmdp-p1",
+        "signature-sig-39b-docmdp-p1-later-revision",
+        "signature-sig-49-byterange-overlapping",
+        "signature-sig-50-byterange-out-of-bounds",
+        "signature-sig-51-byterange-negative",
+        "signature-sig-52-byterange-uncovered-gap",
+        "signature-sig-53-byterange-two-exclusions",
+        "signature-sig-54-empty-contents",
+        "signature-sig-55-malformed-der",
+        "signature-sig-doc-timestamp",
+        "signature-sig-rsa-1024-weak-key",
+        "signature-sig-signature-timestamp-attribute",
+        "signature-sig-signed-kid-field",
+        "signature-sig-signer-certificate-ambiguous",
+        "signature-sig-signer-certificate-missing",
+        "signature-sig-trailing-bytes",
+        "signature-sig-unreferenced-signature-dictionary",
+        "signature-sig-unsigned-revision-after-signing",
+        "signature-sig-wrong-key"
+      ],
+      "syntheticInputs": [],
+      "nativeRequirements": [],
+      "artifactRequirement": null,
+      "expectedTestCount": 2,
+      "expectedTestPresence": "exact",
+      "notes": "Prompt 11 G2: committed TEST ONLY signature fixtures equal the deterministic generator output (no PDFium, no network)."
+    },
+    {
+      "id": "rust:signature_verification_native",
+      "target": "src-tauri/tests/signature_verification_native.rs",
+      "language": "rust",
+      "executionClass": "NATIVE_PLATFORM",
+      "usesPdfium": true,
+      "realWorker": false,
+      "supportedPlatforms": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "fixtureIds": [
+        "core-encrypted",
+        "redaction-signature-marked-byterange",
+        "sanitization-signature",
+        "signature-sig-01-unsigned",
+        "signature-sig-03-empty-signature-field",
+        "signature-sig-09-rsa-pkcs1-sha256",
+        "signature-sig-09b-adbe-pkcs7-no-signed-attributes",
+        "signature-sig-10-rsa-pss-sha384",
+        "signature-sig-11-ecdsa-p256-sha256",
+        "signature-sig-12-ecdsa-p384-sha384",
+        "signature-sig-16-two-signatures",
+        "signature-sig-19-modified-after-signing",
+        "signature-sig-21-bad-signature-value",
+        "signature-sig-22-message-digest-mismatch",
+        "signature-sig-24-content-type-missing",
+        "signature-sig-27-sha1-digest",
+        "signature-sig-39-docmdp-p1",
+        "signature-sig-39b-docmdp-p1-later-revision",
+        "signature-sig-49-byterange-overlapping",
+        "signature-sig-50-byterange-out-of-bounds",
+        "signature-sig-51-byterange-negative",
+        "signature-sig-52-byterange-uncovered-gap",
+        "signature-sig-53-byterange-two-exclusions",
+        "signature-sig-54-empty-contents",
+        "signature-sig-55-malformed-der",
+        "signature-sig-doc-timestamp",
+        "signature-sig-rsa-1024-weak-key",
+        "signature-sig-signature-timestamp-attribute",
+        "signature-sig-signed-kid-field",
+        "signature-sig-signer-certificate-ambiguous",
+        "signature-sig-signer-certificate-missing",
+        "signature-sig-trailing-bytes",
+        "signature-sig-unreferenced-signature-dictionary",
+        "signature-sig-unsigned-revision-after-signing",
+        "signature-sig-wrong-key"
+      ],
+      "syntheticInputs": [],
+      "nativeRequirements": [
+        "pdfium_dynamic_lib"
+      ],
+      "artifactRequirement": null,
+      "expectedTestCount": 16,
+      "expectedTestPresence": "exact",
+      "notes": "Prompt 11 G2: offline signature verification with real PDFium and real cryptography; expected results known by construction."
     }
   ],
   "summary": {
-    "totalTargets": 29,
+    "totalTargets": 31,
     "byExecutionClass": {
-      "FAST_LOCAL": 11,
-      "NATIVE_PLATFORM": 15,
+      "FAST_LOCAL": 12,
+      "NATIVE_PLATFORM": 16,
       "EXACT_ARTIFACT": 3
     },
-    "pdfiumRuntimeRequired": 18,
+    "pdfiumRuntimeRequired": 19,
     "realWorkerRequired": 11,
     "exactArtifactRequired": 3
   }

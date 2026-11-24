@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "description": "PAdES/dijital imza yetenek modeli. Kaynak: docs/engineering/pades-architecture-design.md v1.3.0. Durumlar: NOT_IMPLEMENTED, PLANNED, IMPLEMENTED, OUT_OF_SCOPE. OUT_OF_SCOPE, seçilen hedef profilin dışında demektir; sahip G aşaması ayrı bir profil kararıyla açılır.",
   "designDoc": "docs/engineering/pades-architecture-design.md",
-  "designDocVersion": "1.3.1",
-  "reconciledAgainst": "origin/main ef9208a (1.3.0: 33b0771)",
+  "designDocVersion": "1.3.2",
+  "reconciledAgainst": "origin/main 7c1956d + feat/signature-verification (G2, 2026-11-24)",
   "targetProfile": {
     "id": "OPTION_1",
     "label": "Yalnız çevrimdışı doğrulama (P1+P2)",
@@ -63,73 +63,114 @@
         "src-tauri/src/job_worker.rs split_pdf / merge_pdf",
         "src-tauri/src/batch.rs",
         "src/services/copySignatures.js",
-        "src-tauri/tests/job_worker_process.rs"
+        "src-tauri/tests/job_worker_process.rs",
+        "G2: security copy, split, merge, searchable copy and optimizer use CAP-01 copy_loses_signatures (sanitization and secure redaction: G2b)"
       ],
       "rationale": "PR #34 (e29a76c) güvenlik kopyası, bölme, birleştirme ve toplu işlemi ekledi; uygulama içi test NOT RUN. Optimizer, sanitization ve güvenli redaksiyon hâlâ lopdf tabanlı tespit kullanıyor; tek kanonik fonksiyon CAP-01 (G2)."
     },
     {
       "id": "CAP-01",
       "title": "Signature discovery — kanonik worker-içi tespit (PDFium-first)",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§2.3, §18.3"
+      "designSection": "§2.3, §18.3",
+      "evidence": [
+        "src-tauri/src/signature_verification/discovery.rs (combine, discover_at_path, copy_loses_signatures)",
+        "src-tauri/src/signature_verification/structure.rs",
+        "rust_unit signature_verification::discovery::tests::canonical_discovery_classifies_the_spike_structures",
+        "src-tauri/tests/signature_verification_native.rs canonical_discovery_finds_what_pdfium_does_not_list",
+        "src-tauri/src/pdf_optimizer/tests.rs optimized_copies_report_signature_loss_from_the_canonical_discovery"
+      ]
     },
     {
       "id": "CAP-02",
       "title": "ByteRange validation",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§7"
+      "designSection": "§7",
+      "evidence": [
+        "src-tauri/src/signature_verification/byte_range.rs",
+        "src-tauri/tests/signature_verification_native.rs hostile_byte_ranges_are_invalid",
+        "src-tauri/tests/signature_verification_native.rs existing_signature_marked_fixtures_have_an_uncovered_gap"
+      ]
     },
     {
       "id": "CAP-03",
       "title": "Revision analysis & incremental walk",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§2.3, §3.1 notu"
+      "designSection": "§2.3, §3.1 notu",
+      "evidence": [
+        "src-tauri/src/signature_verification/revisions.rs",
+        "src-tauri/tests/signature_verification_native.rs later_revisions_and_trailing_bytes_do_not_break_the_signature",
+        "src-tauri/tests/signature_verification_native.rs two_signatures_are_verified_independently"
+      ]
     },
     {
       "id": "CAP-04",
       "title": "Digest calculation (SHA-256/384/512)",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§8"
+      "designSection": "§8",
+      "evidence": [
+        "src-tauri/src/signature_verification/digest.rs (streamed, bounded buffer)",
+        "src-tauri/tests/signature_verification_native.rs tampering_is_invalid"
+      ]
     },
     {
       "id": "CAP-05",
       "title": "CMS parsing (worker-only)",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§6.1, §8"
+      "designSection": "§6.1, §8",
+      "evidence": [
+        "src-tauri/src/signature_verification/cms_verify.rs (prescan, verify_cms; job worker only)",
+        "src-tauri/tests/signature_verification_native.rs hostile_contents_are_malformed",
+        "src-tauri/tests/job_worker_process.rs signature_inspection_worker_returns_a_typed_read_only_report"
+      ]
     },
     {
       "id": "CAP-06",
       "title": "Signed attribute verification",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§8"
+      "designSection": "§8",
+      "evidence": [
+        "src-tauri/src/signature_verification/cms_verify.rs signed_attributes (raw DER, canonical check, ESS v2)",
+        "src-tauri/tests/signature_verification_native.rs tampering_is_invalid"
+      ]
     },
     {
       "id": "CAP-07",
       "title": "Signature value verification (RSA PKCS#1 v1.5 / PSS, ECDSA P-256/P-384) + algorithm policy",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§8, §20"
+      "designSection": "§8, §20",
+      "evidence": [
+        "src-tauri/src/signature_verification/cms_verify.rs Scheme::verify (RSA PKCS#1 v1.5 / PSS, ECDSA P-256/P-384)",
+        "src-tauri/tests/signature_verification_native.rs valid_signatures_of_every_supported_algorithm_verify",
+        "src-tauri/tests/signature_verification_native.rs weak_algorithms_are_reported_not_verified",
+        "OpenSSL 4.1.0 cms -verify cross-check of sig-09/10/11/12/09b (valid) and sig-19/21/wrong-key (invalid), 2026-11-24 local"
+      ]
     },
     {
       "id": "CAP-08",
       "title": "Signer certificate extraction & matching",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§2.3"
+      "designSection": "§2.3",
+      "evidence": [
+        "src-tauri/src/signature_verification/cms_verify.rs matching_certificates, identity",
+        "src-tauri/tests/signature_verification_native.rs signer_certificate_must_be_found_exactly_once"
+      ]
     },
     {
       "id": "CAP-09",
@@ -161,19 +202,27 @@
     {
       "id": "CAP-12",
       "title": "DocMDP & certification permissions check",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
-      "designSection": "§2.3"
+      "designSection": "§2.3",
+      "evidence": [
+        "src-tauri/src/signature_verification/inspect.rs docmdp_report",
+        "src-tauri/tests/signature_verification_native.rs docmdp_is_reported_and_later_changes_are_not_classified"
+      ]
     },
     {
       "id": "CAP-13",
       "title": "PAdES level classification (G2: yalnız algılanan seviye)",
-      "status": "PLANNED",
+      "status": "IMPLEMENTED",
       "ownerPhase": "G2",
       "corpusGap": "gap-signature-verification-crypto",
       "designSection": "§19",
-      "rationale": "pades_validated_level G4/G5 olmadan None kalır."
+      "rationale": "pades_validated_level G4/G5 olmadan None kalır.",
+      "evidence": [
+        "src-tauri/src/signature_verification/inspect.rs pades_detected_level (structural markers only; validated level None)",
+        "src-tauri/tests/signature_verification_native.rs timestamps_are_detected_not_verified"
+      ]
     },
     {
       "id": "CAP-14",
@@ -252,8 +301,8 @@
     {
       "gapId": "gap-signature-verification-crypto",
       "signaturePhase": "G2",
-      "targetProfileStatus": "PLANNED",
-      "scopeRationale": "OPTION 1 hedef profili (2026-11-24): çevrimdışı yapı ve kripto doğrulama; trust = NotChecked. Sertifika güven kontrolleri gap-signature-settings-trust-store'a (G4) taşındı.",
+      "targetProfileStatus": "IMPLEMENTED",
+      "scopeRationale": "OPTION 1 hedef profili (2026-11-24): çevrimdışı yapı ve kripto doğrulama; trust = NotChecked. Sertifika güven kontrolleri gap-signature-settings-trust-store'a (G4) taşındı. G2 2026-11-24: uygulandi; gap G6 corpus ve harici oracle (pdfsig/pyHanko NOT RUN) capraz testlerine kadar acik.",
       "plannedPrompt": "11I-G"
     },
     {
