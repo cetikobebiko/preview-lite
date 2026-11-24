@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 1,
+  "description": "PAdES/dijital imza yetenek modeli. Kaynak: docs/engineering/pades-architecture-design.md v1.3.0. Durumlar: NOT_IMPLEMENTED, PLANNED, IMPLEMENTED, OUT_OF_SCOPE. OUT_OF_SCOPE, seçilen hedef profilin dışında demektir; sahip G aşaması ayrı bir profil kararıyla açılır.",
+  "designDoc": "docs/engineering/pades-architecture-design.md",
+  "designDocVersion": "1.3.0",
+  "reconciledAgainst": "origin/main 33b0771",
+  "targetProfile": {
+    "id": "OPTION_1",
+    "label": "Yalnız çevrimdışı doğrulama (P1+P2)",
+    "decidedBy": "user",
+    "decidedOn": "2026-11-24",
+    "firstDelivery": [
+      "G2",
+      "G6 (doğrulama)",
+      "G7"
+    ]
+  },
+  "statusValues": [
+    "NOT_IMPLEMENTED",
+    "PLANNED",
+    "IMPLEMENTED",
+    "OUT_OF_SCOPE"
+  ],
+  "capabilities": [
+    {
+      "id": "SIG-PRESENCE-COUNT",
+      "title": "İmza varlığı sayımı (PDFium)",
+      "status": "IMPLEMENTED",
+      "ownerPhase": "existing",
+      "corpusGap": null,
+      "designSection": "§18.1",
+      "evidence": [
+        "src-tauri/src/forms.rs read_form_info",
+        "src-tauri/src/incremental_save.rs save_mutation"
+      ]
+    },
+    {
+      "id": "SIG-INCREMENTAL-PRESERVATION",
+      "title": "İmzalı baytları koruyan artımlı yazım; başarısızlıkta yeniden yazım yok",
+      "status": "IMPLEMENTED",
+      "ownerPhase": "existing",
+      "corpusGap": null,
+      "designSection": "§18.1",
+      "evidence": [
+        "src-tauri/src/incremental_save.rs",
+        "src-tauri/src/manipulation.rs reorder_pdf_to_target_report",
+        "src/services/signatureLossGuard.js"
+      ]
+    },
+    {
+      "id": "SIG-INVALIDATION-REPORTING",
+      "title": "İmzayı geçersiz kılan kopya yollarında tespit ve bildirim (kısmi: güvenlik kopyası, batch, split/merge eksik)",
+      "status": "NOT_IMPLEMENTED",
+      "ownerPhase": "follow-up",
+      "corpusGap": null,
+      "designSection": "§18.2, §18.4",
+      "evidence": [
+        "src-tauri/src/searchable_pdf.rs",
+        "src-tauri/src/pdf_optimizer/mod.rs",
+        "src-tauri/src/sanitization_transform.rs"
+      ],
+      "rationale": "Güvenlik kopyası, batch ve split/merge eksikleri G hattı dışında ayrı işte; tek kanonik tespit fonksiyonuna bağlanma G2'de (CAP-01)."
+    },
+    {
+      "id": "CAP-01",
+      "title": "Signature discovery — kanonik worker-içi tespit (PDFium-first)",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§2.3, §18.3"
+    },
+    {
+      "id": "CAP-02",
+      "title": "ByteRange validation",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§7"
+    },
+    {
+      "id": "CAP-03",
+      "title": "Revision analysis & incremental walk",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§2.3, §3.1 notu"
+    },
+    {
+      "id": "CAP-04",
+      "title": "Digest calculation (SHA-256/384/512)",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§8"
+    },
+    {
+      "id": "CAP-05",
+      "title": "CMS parsing (worker-only)",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§6.1, §8"
+    },
+    {
+      "id": "CAP-06",
+      "title": "Signed attribute verification",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§8"
+    },
+    {
+      "id": "CAP-07",
+      "title": "Signature value verification (RSA PKCS#1 v1.5 / PSS, ECDSA P-256/P-384) + algorithm policy",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§8, §20"
+    },
+    {
+      "id": "CAP-08",
+      "title": "Signer certificate extraction & matching",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§2.3"
+    },
+    {
+      "id": "CAP-09",
+      "title": "Trust anchor & path validation (offline)",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G4",
+      "corpusGap": "gap-signature-settings-trust-store",
+      "designSection": "§17.1 (P6a)",
+      "rationale": "OPTION 1 güven değerlendirmesini kapsamıyor; trust = NotChecked raporlanır."
+    },
+    {
+      "id": "CAP-10",
+      "title": "Revocation checking (OCSP/CRL)",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G5",
+      "corpusGap": "gap-ltv-timestamp-dss",
+      "designSection": "§17.1 (P6b)",
+      "rationale": "OPTION 1 ağsızdır; TSA/OCSP/CRL ve LTV ağ gerektirir."
+    },
+    {
+      "id": "CAP-11",
+      "title": "Timestamp token verification (RFC 3161)",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G5",
+      "corpusGap": "gap-ltv-timestamp-dss",
+      "designSection": "§9",
+      "rationale": "OPTION 1 ağsızdır; TSA/OCSP/CRL ve LTV ağ gerektirir."
+    },
+    {
+      "id": "CAP-12",
+      "title": "DocMDP & certification permissions check",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§2.3"
+    },
+    {
+      "id": "CAP-13",
+      "title": "PAdES level classification (G2: yalnız algılanan seviye)",
+      "status": "PLANNED",
+      "ownerPhase": "G2",
+      "corpusGap": "gap-signature-verification-crypto",
+      "designSection": "§19",
+      "rationale": "pades_validated_level G4/G5 olmadan None kalır."
+    },
+    {
+      "id": "CAP-14",
+      "title": "Platform identity & key discovery (PKCS#12 / Keychain / CNG)",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G3",
+      "corpusGap": "gap-pades-cryptographic-signing",
+      "designSection": "§2.7, §2.8",
+      "rationale": "OPTION 1 (2026-11-24) imzalamayı kapsamıyor; ayrıca §5.1 Model C düzeltmesi kesinleşmeden başlamaz."
+    },
+    {
+      "id": "CAP-15",
+      "title": "Incremental update generator (signature placeholder)",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G3",
+      "corpusGap": "gap-pades-cryptographic-signing",
+      "designSection": "§7 notu",
+      "rationale": "OPTION 1 (2026-11-24) imzalamayı kapsamıyor; ayrıca §5.1 Model C düzeltmesi kesinleşmeden başlamaz."
+    },
+    {
+      "id": "CAP-16",
+      "title": "Detached CMS construction",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G3",
+      "corpusGap": "gap-pades-cryptographic-signing",
+      "designSection": "§5.1, §8",
+      "rationale": "OPTION 1 (2026-11-24) imzalamayı kapsamıyor; ayrıca §5.1 Model C düzeltmesi kesinleşmeden başlamaz."
+    },
+    {
+      "id": "CAP-17",
+      "title": "DSS / VRI injection, archive timestamp",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G5",
+      "corpusGap": "gap-ltv-timestamp-dss",
+      "designSection": "§9",
+      "rationale": "OPTION 1 ağsızdır; TSA/OCSP/CRL ve LTV ağ gerektirir."
+    },
+    {
+      "id": "CAP-18",
+      "title": "Independent output verifier (verification-after-signing)",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G3",
+      "corpusGap": "gap-pades-cryptographic-signing",
+      "designSection": "§12",
+      "rationale": "OPTION 1 (2026-11-24) imzalamayı kapsamıyor; ayrıca §5.1 Model C düzeltmesi kesinleşmeden başlamaz. Doğrulama çekirdeği G2'de üretilir; imza sonrası kapı G3'tedir."
+    },
+    {
+      "id": "SIG-VISIBLE-SIGNATURE",
+      "title": "Görünür imza (/AP)",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "P9",
+      "corpusGap": "gap-pades-cryptographic-signing",
+      "designSection": "§16",
+      "rationale": "P9'a ertelendi (görünür imza / PKCS#11 / platform adaptörleri)."
+    },
+    {
+      "id": "SIG-PKCS11",
+      "title": "PKCS#11 donanım jetonları",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "P9",
+      "corpusGap": "gap-pades-cryptographic-signing",
+      "designSection": "§2.8",
+      "rationale": "P9'a ertelendi (görünür imza / PKCS#11 / platform adaptörleri)."
+    },
+    {
+      "id": "SIG-TRUST-STORE-SETTINGS",
+      "title": "Güven deposu ve TSA ayarları kalıcılığı",
+      "status": "OUT_OF_SCOPE",
+      "ownerPhase": "G4",
+      "corpusGap": "gap-signature-settings-trust-store",
+      "designSection": "§19",
+      "rationale": "OPTION 1 güven değerlendirmesini kapsamıyor; trust = NotChecked raporlanır."
+    }
+  ],
+  "corpusGapBindings": [
+    {
+      "gapId": "gap-signature-verification-crypto",
+      "signaturePhase": "G2",
+      "targetProfileStatus": "PLANNED",
+      "scopeRationale": "OPTION 1 hedef profili (2026-11-24): çevrimdışı yapı ve kripto doğrulama; trust = NotChecked. Sertifika güven kontrolleri gap-signature-settings-trust-store'a (G4) taşındı.",
+      "plannedPrompt": "11I-G"
+    },
+    {
+      "gapId": "gap-pades-cryptographic-signing",
+      "signaturePhase": "G3",
+      "targetProfileStatus": "OUT_OF_SCOPE",
+      "scopeRationale": "OPTION 1 imzalamayı kapsamıyor; Model C signing-oracle düzeltmesi (pades-architecture-design.md §5.1) G3 öncesi karar ister.",
+      "plannedPrompt": "11I-G"
+    },
+    {
+      "gapId": "gap-signature-settings-trust-store",
+      "signaturePhase": "G4",
+      "targetProfileStatus": "OUT_OF_SCOPE",
+      "scopeRationale": "OPTION 1 güven değerlendirmesini kapsamıyor (trust = NotChecked); çevrimdışı güven deposu P6a/G4.",
+      "plannedPrompt": "11I-G"
+    },
+    {
+      "gapId": "gap-ltv-timestamp-dss",
+      "signaturePhase": "G5",
+      "targetProfileStatus": "OUT_OF_SCOPE",
+      "scopeRationale": "OPTION 1 ağsızdır; TSA, OCSP/CRL ve DSS/VRI/LTA ağ gerektirir (P5, P6b, P7, P8).",
+      "plannedPrompt": "11I-G"
+    }
+  ],
+  "corpusBindingNote": "pdf-corpus-coverage.json gap şeması katıdır (src-tauri/tests/pdf_corpus_coverage.rs deny_unknown_fields; plannedPrompt allowlist'i scripts/validate-pdf-corpus-coverage.mjs). Bu yüzden G sahipliği corpus'ta yalnız description önekiyle, ayrıntısıyla burada tutulur."
+}
