@@ -208,6 +208,16 @@ const FILE_STATE_LABELS = Object.freeze({
 
 export const fileStateLabel = (state) => FILE_STATE_LABELS[state] ?? state;
 
+// Optimize and security copies rewrite each PDF; a signed input's signatures are not
+// valid in its output. The backend reports this per completed file.
+export const BATCH_SIGNATURE_NOTE =
+  "İmzalı belgelerin kopyası baştan yazılır; dijital imzalar kopyada geçersiz olur. Girdi dosyaları değişmez.";
+export const BATCH_SIGNATURE_LOSS_TEXT = "Dijital imzalar çıktıda geçersiz.";
+
+/** Number of completed files whose signatures are not valid in the output. */
+export const signatureLossCount = (status) =>
+  (status?.files ?? []).filter((file) => file.signaturesInvalidated).length;
+
 /** The wire `operation` for the wizard's choices. */
 export function buildBatchOperation(kind, options) {
   switch (kind) {
@@ -233,11 +243,14 @@ export function batchReportText(status, operationLabel = status.operation) {
     `Toplu işlem: ${operationLabel}`,
     `Çıktı klasörü: ${status.outputDir}`,
     `Tamamlandı: ${counts.completed}, atlandı: ${counts.skipped}, hata: ${counts.failed}, iptal: ${counts.cancelled}`,
-    "",
   ];
+  const signed = signatureLossCount(status);
+  if (signed > 0) lines.push(`Dijital imzaları çıktıda geçersiz olan dosya: ${signed}`);
+  lines.push("");
   for (const file of status.files) {
     const reason = file.reason ? ` — ${file.reason.message} (${file.reason.code})` : "";
     lines.push(`${fileStateLabel(file.state)}: ${file.inputPath}${reason}`);
+    if (file.signaturesInvalidated) lines.push(`  ${BATCH_SIGNATURE_LOSS_TEXT}`);
     for (const output of file.outputs) lines.push(`  → ${output}`);
   }
   for (const warning of status.warnings ?? []) lines.push(`Uyarı: ${warning}`);

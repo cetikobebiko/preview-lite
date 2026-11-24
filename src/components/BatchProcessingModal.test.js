@@ -192,6 +192,38 @@ describe("BatchProcessingModal", () => {
     expect(tracker.dispose).toHaveBeenCalledOnce();
   });
 
+  // The flags mirror batch::tests::signature_loss_is_reported_per_file_for_pdf_copies_only
+  // (sanitization/signature.pdf → true, minimal.pdf → false).
+  it("marks completed files whose signatures are not valid in the output", async () => {
+    const { create } = fakeTracker({
+      existing: status({
+        state: "completed",
+        operation: "security",
+        counts: counts(2),
+        files: [
+          file(0, "completed", { inputPath: "/girdi/imzali.pdf", outputs: ["/çıktı/imzali_korumalı.pdf"], signaturesInvalidated: true }),
+          file(1, "completed", { inputPath: "/girdi/imzasiz.pdf", outputs: ["/çıktı/imzasiz_korumalı.pdf"], signaturesInvalidated: false }),
+        ],
+      }),
+    });
+    render(BatchProcessingModal, { props: { createTracker: create } });
+    expect(await screen.findByText("Dijital imzaları çıktıda geçersiz olan dosya: 1")).toBeTruthy();
+    const rows = [...screen.getByRole("list", { name: "Sonuç raporu" }).children];
+    expect(rows[0].textContent).toContain("Dijital imzalar çıktıda geçersiz.");
+    expect(rows[1].textContent).not.toContain("Dijital imzalar");
+  });
+
+  it("explains signature loss before optimize and security batches only", async () => {
+    render(BatchProcessingModal, { props: { createTracker: fakeTracker().create } });
+    await chooseFolder();
+    await fireEvent.click(screen.getByRole("button", { name: "İleri" }));
+    const note = /dijital imzalar kopyada geçersiz olur/;
+    for (const [operation, shown] of [["optimize", true], ["security", true], ["export_text", false], ["export_images", false]]) {
+      await fireEvent.change(document.getElementById("batch-operation"), { target: { value: operation } });
+      expect(Boolean(screen.queryByText(note)), operation).toBe(shown);
+    }
+  });
+
   it("starts a new batch from the report", async () => {
     const { create } = fakeTracker({ existing: status({ state: "completed", counts: counts(2), files: [file(0, "completed"), file(1, "completed")] }) });
     render(BatchProcessingModal, { props: { createTracker: create } });

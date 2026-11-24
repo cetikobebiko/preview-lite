@@ -6,8 +6,10 @@
 //! serialization/writing); kullanıcının PDF'ini kendisi ayrıştırmaz. Çıktı PDFium ile yeniden
 //! açılır: sayfa sayısı, parolalar ve izinler istenenle karşılaştırılır.
 //!
-//! Kopya tam yeniden yazımdır; varsa dijital imzalar kopyada geçersiz olur.
+//! Kopya tam yeniden yazımdır; varsa dijital imzalar kopyada geçersiz olur. Kaynaktaki imza
+//! sayısı PDFium ile okunur ve `CopySignatureReport` ile kullanıcıya bildirilir.
 
+use crate::copy_jobs::{signature_count_invalidates, CopySignatureReport};
 use crate::incremental_save::{save_copy, RawDocument};
 use lopdf::encryption::crypt_filters::{Aes128CryptFilter, Aes256CryptFilter, CryptFilter};
 use lopdf::{EncryptionState, EncryptionVersion, Object, Permissions, StringFormat};
@@ -192,14 +194,15 @@ pub fn validate_request(op: &SecurityOp) -> Result<(), String> {
 }
 
 /// `snapshot`'ın `op`'a göre korunmuş ya da şifresiz kopyasını `output`'a yazar.
-/// `credential` oturumun belgeyi açtığı paroladır.
+/// `credential` oturumun belgeyi açtığı paroladır. Rapor, kaynaktaki imzaların kopyada
+/// geçersiz olup olmadığını söyler.
 pub(crate) fn write_security_copy(
     bindings: &dyn PdfiumLibraryBindings,
     snapshot: &Path,
     credential: Option<&str>,
     op: &SecurityOp,
     output: &Path,
-) -> Result<(), String> {
+) -> Result<CopySignatureReport, String> {
     validate_request(op)?;
     let path = snapshot.to_str().ok_or("PDF yolu UTF-8 değil")?;
     let source = RawDocument::open(bindings, path, credential).ok_or_else(|| {
@@ -209,6 +212,11 @@ pub(crate) fn write_security_copy(
         )
     })?;
     let page_count = source.page_count().map_err(|failure| failure.detail)?;
+    let report = CopySignatureReport {
+        signatures_invalidated: signature_count_invalidates(
+            bindings.FPDF_GetSignatureCount(source.handle),
+        ),
+    };
     if bindings.FPDF_GetSecurityHandlerRevision(source.handle) != -1 {
         // Kısıtlı izinlerle (sahip parolası olmadan) açılan belgenin korumasını kaldırmak
         // izinleri atlatmak olur.
@@ -232,7 +240,8 @@ pub(crate) fn write_security_copy(
     let result = written.and_then(|()| write_output(&plain, op, output));
     let _ = std::fs::remove_file(&plain);
     result?;
-    verify_copy(bindings, output, op, page_count)
+    verify_copy(bindings, output, op, page_count)?;
+    Ok(report)
 }
 
 /// PDFium'un şifresiz kopyasını `op`'a göre (şifreleyerek ya da olduğu gibi) `output`'a yazar.
@@ -480,7 +489,7 @@ mod tests {
         credential: Option<&str>,
         op: &SecurityOp,
         output: &Path,
-    ) -> Result<(), String> {
+    ) -> Result<CopySignatureReport, String> {
         let pdfium = crate::pdf_engine::get_pdfium().unwrap();
         write_security_copy(pdfium.bindings(), snapshot, credential, op, output)
     }
@@ -726,5 +735,25 @@ mod tests {
             handlers, 1,
             "the old security handler dictionary must not be carried over"
         );
+    }
+
+    #[test]
+    fn the_report_says_whether_the_source_signatures_are_invalidated() {
+        let directory = tempfile::tempdir().unwrap();
+        let signed = fixture("../sanitization/signature.pdf");
+        let op = protect("acma", "", EncryptionMethod::Aes256, all_permissions());
+        for (source, expected) in [(&signed, true), (&fixture("minimal.pdf"), false)] {
+            let protected = directory.path().join("protected.pdf");
+            let report = run(source, None, &op, &protected).unwrap();
+            assert_eq!(
+                report.signatures_invalidated, expected,
+                "{source:?} protect"
+            );
+            let plain = directory.path().join("plain.pdf");
+            let report = run(source, None, &SecurityOp::Remove, &plain).unwrap();
+            assert_eq!(report.signatures_invalidated, expected, "{source:?} remove");
+            std::fs::remove_file(&protected).unwrap();
+            std::fs::remove_file(&plain).unwrap();
+        }
     }
 }

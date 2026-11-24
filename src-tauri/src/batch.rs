@@ -208,6 +208,9 @@ pub struct BatchFileStatus {
     pub state: BatchFileState,
     pub outputs: Vec<String>,
     pub reason: Option<BatchReason>,
+    /// Completed files only: the input had digital signatures and they are not
+    /// valid in the output (optimized or security copy; the input is unchanged).
+    pub signatures_invalidated: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
@@ -377,6 +380,7 @@ impl BatchRecord {
         state: BatchFileState,
         outputs: Vec<String>,
         reason: Option<BatchReason>,
+        signatures_invalidated: bool,
     ) {
         let kind = match state {
             BatchFileState::Running => BatchEventKind::FileStarted,
@@ -390,6 +394,7 @@ impl BatchRecord {
                 file.state = state;
                 file.outputs = outputs;
                 file.reason = reason;
+                file.signatures_invalidated = signatures_invalidated;
             }
         });
     }
@@ -537,7 +542,10 @@ fn prepare(
 }
 
 enum FileOutcome {
-    Completed(Vec<String>),
+    Completed {
+        outputs: Vec<String>,
+        signatures_invalidated: bool,
+    },
     Skipped(BatchReason),
     Failed(BatchReason),
     Cancelled,
@@ -637,13 +645,19 @@ fn try_process_file(
         return Ok(FileOutcome::Skipped(output_exists_reason()));
     }
 
+    // Only the PDF copies rewrite the document; exports carry no signatures.
+    let mut signatures_invalidated = false;
     let produced = match task.operation {
         BatchOperation::Optimize { settings } => {
-            Produced::Single(crate::copy_jobs::produce_optimized_copy(&context, *settings)?.0)
+            let (path, report) = crate::copy_jobs::produce_optimized_copy(&context, *settings)?;
+            signatures_invalidated = report.signatures_invalidated;
+            Produced::Single(path)
         }
-        BatchOperation::Security { op } => Produced::Single(
-            crate::copy_jobs::produce_security_copy(&context, op.clone())?,
-        ),
+        BatchOperation::Security { op } => {
+            let (path, report) = crate::copy_jobs::produce_security_copy(&context, op.clone())?;
+            signatures_invalidated = report.signatures_invalidated;
+            Produced::Single(path)
+        }
         BatchOperation::ExportDocument { format } => {
             Produced::Single(crate::copy_jobs::produce_document_export(
                 &context,
@@ -729,7 +743,10 @@ fn try_process_file(
         ) {
             Ok(published) => {
                 protected.record_published(published.iter().map(PathBuf::from));
-                return Ok(FileOutcome::Completed(published));
+                return Ok(FileOutcome::Completed {
+                    outputs: published,
+                    signatures_invalidated,
+                });
             }
             Err(SessionJobOperationError::Failed(failure))
                 if failure.code == crate::document_session::SESSION_JOB_OUTPUT_CONFLICT_CODE =>
@@ -783,11 +800,12 @@ fn run_batch(
                         BatchFileState::Skipped,
                         Vec::new(),
                         Some(reason.clone()),
+                        false,
                     );
                     continue;
                 }
             };
-            record.file_event(index, BatchFileState::Running, Vec::new(), None);
+            record.file_event(index, BatchFileState::Running, Vec::new(), None, false);
             let file_dir = batch_dir.join(format!("file-{index}"));
             let task = FileTask {
                 record: &record,
@@ -800,15 +818,30 @@ fn run_batch(
             let outcome = process_file(&task, &mut protected);
             remove_dir_if_present(&file_dir, &mut warnings);
             match outcome {
-                FileOutcome::Completed(outputs) => {
-                    record.file_event(index, BatchFileState::Completed, outputs, None)
-                }
-                FileOutcome::Skipped(reason) => {
-                    record.file_event(index, BatchFileState::Skipped, Vec::new(), Some(reason))
-                }
-                FileOutcome::Failed(reason) => {
-                    record.file_event(index, BatchFileState::Failed, Vec::new(), Some(reason))
-                }
+                FileOutcome::Completed {
+                    outputs,
+                    signatures_invalidated,
+                } => record.file_event(
+                    index,
+                    BatchFileState::Completed,
+                    outputs,
+                    None,
+                    signatures_invalidated,
+                ),
+                FileOutcome::Skipped(reason) => record.file_event(
+                    index,
+                    BatchFileState::Skipped,
+                    Vec::new(),
+                    Some(reason),
+                    false,
+                ),
+                FileOutcome::Failed(reason) => record.file_event(
+                    index,
+                    BatchFileState::Failed,
+                    Vec::new(),
+                    Some(reason),
+                    false,
+                ),
                 FileOutcome::Cancelled => break,
             }
         }
@@ -876,6 +909,7 @@ impl BatchRunner {
                 state: BatchFileState::Pending,
                 outputs: Vec::new(),
                 reason: None,
+                signatures_invalidated: false,
             })
             .collect::<Vec<_>>();
         let record = Arc::new(BatchRecord {

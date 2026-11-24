@@ -5,15 +5,31 @@
   import { save } from "@tauri-apps/plugin-dialog";
   import { saveSessionSecurityCopy } from "../services/backend/session.js";
   import { emptySecurityFields, securityFieldsError, securityOpFromFields } from "../services/documentSecurity.js";
+  import { copySignatureNote, readSignatureCount, withSignatureLoss } from "../services/copySignatures.js";
 
   let { sessionId = "", contentGeneration = 0, fileName = "", onsaved, onclose } = $props();
 
   let fields = $state(emptySecurityFields());
   let saving = $state(false);
   let error = $state("");
+  let signatureCount = $state(0);
 
   const validationError = $derived(securityFieldsError(fields));
   const canSave = $derived(Boolean(sessionId) && !saving && !validationError);
+
+  // Ön bilgi; okunamazsa not gösterilmez, backend raporu kayıttan sonra yine söyler.
+  $effect(() => {
+    const requestSession = sessionId;
+    const requestGeneration = contentGeneration;
+    signatureCount = 0;
+    let disposed = false;
+    readSignatureCount(requestSession, requestGeneration).then((count) => {
+      if (!disposed) signatureCount = count;
+    });
+    return () => {
+      disposed = true;
+    };
+  });
 
   function defaultName() {
     const stem = (fileName || "belge").replace(/\.pdf$/i, "");
@@ -31,8 +47,8 @@
     if (!target) return;
     saving = true;
     try {
-      await saveSessionSecurityCopy(sessionId, contentGeneration, securityOpFromFields($state.snapshot(fields)), target);
-      onsaved?.(protect ? "Parola ile korunan kopya kaydedildi." : "Korumasız kopya kaydedildi.");
+      const report = await saveSessionSecurityCopy(sessionId, contentGeneration, securityOpFromFields($state.snapshot(fields)), target);
+      onsaved?.(withSignatureLoss(protect ? "Parola ile korunan kopya kaydedildi." : "Korumasız kopya kaydedildi.", report, "security"));
       onclose?.();
     } catch (e) {
       error = e?.message ?? String(e);
@@ -53,8 +69,11 @@
       disabled={saving}
       removeNote="Belgenin şifresiz bir kopyası kaydedilir. Kısıtlı izinlerle açılmış bir belgenin güvenliği yalnız izin (sahip) parolasıyla açıldıysa kaldırılabilir."
     />
+    {#if signatureCount > 0}
+      <p class="rounded-md bg-amber-500/10 px-3 py-2 text-xs" role="note">{copySignatureNote("security")}</p>
+    {/if}
     {#if fields.mode === "protect"}
-      <p class="text-[11px] text-muted-foreground">Kopya yeniden yazılır; belgede dijital imza varsa kopyada geçersiz olur. Parolayı unutursanız kopya açılamaz.</p>
+      <p class="text-[11px] text-muted-foreground">Parolayı unutursanız kopya açılamaz.</p>
     {/if}
 
     {#if validationError && (fields.userPassword || fields.ownerPassword)}

@@ -31,6 +31,18 @@ describe("documentTransformController", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  // Mirrors job_worker::tests::merge_reports_signatures_of_the_snapshot_and_of_added_inputs.
+  it("says in the toast when the merged inputs had signatures", async () => {
+    const signed = setup({ merge: vi.fn(async () => ({ signaturesInvalidated: true })) });
+    await signed.controller.mergePdf();
+    expect(signed.onToast).toHaveBeenCalledWith(
+      "PDF belgeleri başarıyla birleştirildi! Kaynak belgelerdeki dijital imzalar birleştirilen dosyada geçerli değildir.",
+    );
+    const unsigned = setup({ merge: vi.fn(async () => ({ signaturesInvalidated: false })) });
+    await unsigned.controller.mergePdf();
+    expect(unsigned.onToast).toHaveBeenCalledWith("PDF belgeleri başarıyla birleştirildi!");
+  });
+
   it("accepts an object selection from the open dialog", async () => {
     const { controller, merge } = setup({ openFile: vi.fn(async () => ({ path: "/tmp/obj.pdf" })) });
     await controller.mergePdf();

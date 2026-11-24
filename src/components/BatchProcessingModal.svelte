@@ -13,11 +13,14 @@
     DOCUMENT_FORMATS,
     IMAGE_FORMATS,
     TEXT_FORMATS,
+    BATCH_SIGNATURE_LOSS_TEXT,
+    BATCH_SIGNATURE_NOTE,
     batchActions,
     batchReportText,
     buildBatchOperation,
     createBatchTracker,
     fileStateLabel,
+    signatureLossCount,
   } from "../services/app/batchController.js";
   import { optimizeSettingsError, presetSettings } from "../services/pdfOptimizer.js";
   import { emptySecurityFields, securityFieldsError, securityOpFromFields } from "../services/documentSecurity.js";
@@ -302,6 +305,7 @@
       {#if operation === "optimize"}
         <OptimizeSettingsFields bind:settings={optimizeSettings} bind:presetId={optimizePreset} idPrefix="batch-optimize" />
         <p class="text-[11px] text-muted-foreground">Yalnız sahip parolasıyla kısıtlanmış belgeler, kopya kısıtlamaları kaldıracağı için atlanır.</p>
+        <p class="text-[11px] text-muted-foreground">{BATCH_SIGNATURE_NOTE}</p>
       {:else if operation === "export_document"}
         <div class="grid gap-1">
           <Label for="batch-document-format" class="text-[11px] text-muted-foreground">Biçim</Label>
@@ -339,6 +343,7 @@
         {#if securityFields.mode === "protect"}
           <p class="text-[11px] text-muted-foreground">Aynı parolalar tüm kopyalara uygulanır. Parolalar rapora ya da günlüğe yazılmaz. Yalnız sahip parolasıyla kısıtlanmış dosyalar atlanır.</p>
         {/if}
+        <p class="text-[11px] text-muted-foreground">{BATCH_SIGNATURE_NOTE}</p>
       {/if}
       {#if operationError}<p class="text-xs text-destructive">{operationError}</p>{/if}
     {:else if step === 2}
@@ -382,6 +387,7 @@
           {status.state === "cancelled" ? "Toplu işlem iptal edildi" : status.state === "failed" ? "Toplu işlem durdu" : "Toplu işlem tamamlandı"}
         </p>
         <p>Tamamlanan: {status.counts.completed} · Atlanan: {status.counts.skipped} · Hatalı: {status.counts.failed} · İptal: {status.counts.cancelled}</p>
+        {#if signatureLossCount(status) > 0}<p>Dijital imzaları çıktıda geçersiz olan dosya: {signatureLossCount(status)}</p>{/if}
         {#if status.reason}<p class="text-destructive">{status.reason.message}</p>{/if}
         {#each status.warnings as warning, index (index)}<p class="text-muted-foreground">{warning}</p>{/each}
       </div>
@@ -395,6 +401,7 @@
           <li class="grid gap-0.5 border-b border-border px-2 py-1 last:border-0">
             <span class="flex justify-between gap-2"><span class="truncate" title={file.inputPath}>{baseName(file.inputPath)}</span><span class="shrink-0">{fileStateLabel(file.state)}</span></span>
             {#if file.reason}<span class="text-muted-foreground">{file.reason.message}</span>{/if}
+            {#if file.signaturesInvalidated}<span class="text-amber-700 dark:text-amber-400">{BATCH_SIGNATURE_LOSS_TEXT}</span>{/if}
             {#each file.outputs as output (output)}<span class="truncate text-muted-foreground" title={output}>→ {baseName(output)}</span>{/each}
           </li>
         {:else}

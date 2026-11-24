@@ -1,5 +1,6 @@
 import { exportErrorMessage } from "./exportErrorMessage.js";
 import { mergeTargetConflict } from "./mergeTargetGuard.js";
+import { withSignatureLoss } from "../copySignatures.js";
 
 /** Coordinates guarded document transformations that create an output and may reopen it. */
 export function createDocumentTransformController({
@@ -50,11 +51,11 @@ export function createDocumentTransformController({
         onError("Birleştirme başarısız: Aktif belge oturumu bulunamadı.");
         return;
       }
-      await merge(context.sessionId, context.contentGeneration, [secondPdfPath], targetPath);
+      const report = await merge(context.sessionId, context.contentGeneration, [secondPdfPath], targetPath);
       // page_count: pages of the open document in the output (the other file's count is not known here).
       if (Number.isInteger(context.pageCount)) onExportComplete("pdf", context.pageCount);
       if (!isCurrent(context)) return;
-      onToast("PDF belgeleri başarıyla birleştirildi!");
+      onToast(withSignatureLoss("PDF belgeleri başarıyla birleştirildi!", report, "merge"));
       await openDocument(targetPath);
     } catch (error) {
       console.error("PDF birleştirme hatası:", error);
