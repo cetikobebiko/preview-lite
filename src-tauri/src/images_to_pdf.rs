@@ -66,9 +66,52 @@ pub(crate) fn validate_request(
     Ok(())
 }
 
+/// Sayfa kâğıdı: görselin kendi boyutu ya da yönü görsele göre seçilen sabit kâğıt (pt).
+#[derive(Clone, Copy, Debug)]
+enum Paper {
+    Natural,
+    Fixed(f32, f32),
+}
+
+impl ImagesToPdfOptions {
+    fn paper(&self) -> Paper {
+        match self.page_size {
+            PageSizing::Image => Paper::Natural,
+            PageSizing::A4 => Paper::Fixed(595.276, 841.89),
+            PageSizing::Letter => Paper::Fixed(612.0, 792.0),
+        }
+    }
+}
+
 /// `paths`'teki görsellerden bir PDF'in baytlarını üretir.
 pub(crate) fn build_pdf(paths: &[String], options: &ImagesToPdfOptions) -> Result<Vec<u8>, String> {
     validate_request(paths, options)?;
+    build_pdf_on(paths, options.paper(), options.margin)
+}
+
+/// Görselleri `width` x `height` pt kâğıda (yönü görsele göre çevrilerek) kenar boşluğu
+/// olmadan ortalayıp sığdırır. Continuity Camera taraması, eklendiği yerin komşu sayfa
+/// boyutunu kullanır. Yalnız yeni bir belge yazılır.
+pub(crate) fn build_pdf_fitted(
+    paths: &[String],
+    width: f32,
+    height: f32,
+) -> Result<Vec<u8>, String> {
+    if paths.is_empty() || paths.len() > MAX_IMAGES {
+        return Err(format!("1 ile {MAX_IMAGES} arasında görsel gerekir"));
+    }
+    if ![width, height]
+        .iter()
+        .all(|side| side.is_finite() && (1.0..=MAX_PAGE_POINTS).contains(side))
+    {
+        return Err(format!(
+            "Sayfa kenarı 1 ile {MAX_PAGE_POINTS} pt arasında olmalı"
+        ));
+    }
+    build_pdf_on(paths, Paper::Fixed(width, height), 0.0)
+}
+
+fn build_pdf_on(paths: &[String], paper: Paper, margin: f32) -> Result<Vec<u8>, String> {
     let mut document = Document::with_version("1.5");
     let pages_id = document.new_object_id();
     let mut kids = Vec::with_capacity(paths.len());
@@ -89,7 +132,7 @@ pub(crate) fn build_pdf(paths: &[String], options: &ImagesToPdfOptions) -> Resul
         if total_bytes > MAX_TOTAL_IMAGE_BYTES {
             return Err("Görsellerin toplam boyutu 1 GiB sınırını aşıyor".into());
         }
-        kids.push(add_page(&mut document, pages_id, image, options)?.into());
+        kids.push(add_page(&mut document, pages_id, image, paper, margin)?.into());
     }
     let count = kids.len() as i64;
     document.objects.insert(
@@ -238,20 +281,19 @@ fn flate_image(image: &DynamicImage) -> EmbeddedImage {
 }
 
 /// Sayfa boyutu ve görselin sayfadaki dikdörtgeni (x, y, genişlik, yükseklik) pt olarak.
-fn layout(width: u32, height: u32, options: &ImagesToPdfOptions) -> ((f32, f32), [f32; 4]) {
+fn layout(width: u32, height: u32, paper: Paper, margin: f32) -> ((f32, f32), [f32; 4]) {
     let natural = (
         width as f32 * POINTS_PER_PIXEL,
         height as f32 * POINTS_PER_PIXEL,
     );
-    let paper = match options.page_size {
-        PageSizing::Image => {
+    let paper = match paper {
+        Paper::Natural => {
             // Çok büyük görseller sayfa sınırına sığdırılır.
             let scale = (MAX_PAGE_POINTS / natural.0.max(natural.1)).min(1.0);
             let page = (natural.0 * scale, natural.1 * scale);
             return (page, [0.0, 0.0, page.0, page.1]);
         }
-        PageSizing::A4 => (595.276, 841.89),
-        PageSizing::Letter => (612.0, 792.0),
+        Paper::Fixed(width, height) => (width.min(height), width.max(height)),
     };
     let page = if natural.0 > natural.1 {
         (paper.1, paper.0)
@@ -259,8 +301,8 @@ fn layout(width: u32, height: u32, options: &ImagesToPdfOptions) -> ((f32, f32),
         paper
     };
     let room = (
-        (page.0 - 2.0 * options.margin).max(1.0),
-        (page.1 - 2.0 * options.margin).max(1.0),
+        (page.0 - 2.0 * margin).max(1.0),
+        (page.1 - 2.0 * margin).max(1.0),
     );
     let scale = (room.0 / natural.0).min(room.1 / natural.1);
     let size = (natural.0 * scale, natural.1 * scale);
@@ -279,10 +321,11 @@ fn add_page(
     document: &mut Document,
     pages_id: ObjectId,
     image: EmbeddedImage,
-    options: &ImagesToPdfOptions,
+    paper: Paper,
+    margin: f32,
 ) -> Result<ObjectId, String> {
     let ((page_width, page_height), [x, y, width, height]) =
-        layout(image.width, image.height, options);
+        layout(image.width, image.height, paper, margin);
     let mut stream = image.stream;
     if let Some(mask) = image.soft_mask {
         let mask_id = document.add_object(mask);
@@ -392,13 +435,66 @@ mod tests {
 
     #[test]
     fn paper_sizes_turn_with_the_image_and_keep_the_margin() {
-        let ((width, height), [x, y, w, h]) = layout(4000, 3000, &options(PageSizing::A4));
+        let a4 = options(PageSizing::A4);
+        let ((width, height), [x, y, w, h]) = layout(4000, 3000, a4.paper(), a4.margin);
         assert!(width > height, "landscape image on landscape A4");
         assert!((x - 36.0).abs() < 0.01 || (y - 36.0).abs() < 0.01);
         assert!((w / h - 4.0 / 3.0).abs() < 0.001);
         assert!(x >= 36.0 - 0.01 && y >= 36.0 - 0.01);
-        let ((width, height), _) = layout(100, 200, &options(PageSizing::Letter));
+        let letter = options(PageSizing::Letter);
+        let ((width, height), _) = layout(100, 200, letter.paper(), letter.margin);
         assert_eq!((width, height), (612.0, 792.0));
+    }
+
+    #[test]
+    fn fitted_pages_take_the_given_paper_turned_with_the_image_without_margin() {
+        // Dikey komşu sayfa (Letter), yatay fotoğraf: kâğıt yatay döner, görsel tam sığar.
+        let ((width, height), [x, y, w, h]) = layout(4032, 3024, Paper::Fixed(612.0, 792.0), 0.0);
+        assert_eq!((width, height), (792.0, 612.0));
+        assert!((w / h - 4032.0 / 3024.0).abs() < 0.001);
+        assert!(x.abs() < 0.01 || y.abs() < 0.01, "touches an edge: {x} {y}");
+        assert!(w <= 792.01 && h <= 612.01);
+        // Yatay kâğıt verilse de dikey görsel dikey sayfa alır.
+        let ((width, height), _) = layout(1000, 2000, Paper::Fixed(842.0, 595.0), 0.0);
+        assert_eq!((width, height), (595.0, 842.0));
+
+        let directory = tempfile::tempdir().unwrap();
+        let photo = write_image(
+            directory.path(),
+            "scan-001.jpg",
+            &DynamicImage::ImageRgb8(image::RgbImage::from_pixel(400, 300, image::Rgb([9, 9, 9]))),
+            ImageFormat::Jpeg,
+        );
+        let bytes = build_pdf_fitted(&[photo], 595.276, 841.89).unwrap();
+        crate::pdf_engine::with_pdfium(|pdfium| -> Result<(), String> {
+            let pdf = pdfium
+                .load_pdf_from_byte_slice(&bytes, None)
+                .map_err(|e| e.to_string())?;
+            let size = pdf.pages().page_size(0).map_err(|e| e.to_string())?;
+            assert!((size.width().value - 841.89).abs() < 0.01);
+            assert!((size.height().value - 595.276).abs() < 0.01);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn fitted_requests_reject_bad_paper_and_counts() {
+        for (width, height) in [
+            (0.0, 842.0),
+            (f32::NAN, 842.0),
+            (595.0, f32::INFINITY),
+            (595.0, 20_000.0),
+        ] {
+            assert!(
+                build_pdf_fitted(&["a.jpg".into()], width, height).is_err(),
+                "{width}x{height}"
+            );
+        }
+        assert!(build_pdf_fitted(&[], 595.0, 842.0).is_err());
+        assert!(
+            build_pdf_fitted(&vec!["a.jpg".to_string(); MAX_IMAGES + 1], 595.0, 842.0).is_err()
+        );
     }
 
     #[test]

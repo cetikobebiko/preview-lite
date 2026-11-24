@@ -2849,6 +2849,152 @@
         "verificationType": "pdfium_assertion",
         "notes": "DetectScannedPages no longer reports a /Rotate 270 page with a text layer as scanned"
       }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::scanned_pdf_is_inserted_as_one_undoable_mutation",
+      "relation": "direct",
+      "dimensions": [
+        "positive",
+        "persistence",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "pdfium_worker_page_count_assertion",
+        "notes": "Fake helper returns a scanned PDF; one ImportPages mutation adds its 3 pages after page 1 via the real job/mutation workers, scan dir removed, one undo restores 3 pages"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::scanned_photos_become_pages_fitted_to_the_given_paper",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "positive",
+        "worker"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "pdfium_worker_page_size_assertion",
+        "notes": "Two JPEGs become pages fitted to A4 turned with each image (842x595 and 595x842) at the end; undo restores"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::closing_the_menu_without_a_choice_cancels_without_touching_the_document",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "session_job_outcome_assertion",
+        "notes": "Helper exit 2 maps to a UserRequested cancellation; page count unchanged, no scan dir left"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::helper_errors_leave_the_document_and_no_scan_directory",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "negative",
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "session_job_outcome_assertion",
+        "notes": "Exit codes 68/66/73/75/9, an unreported extra file, a symlink, a path-escaping name and non-PDF content are all rejected; document unchanged, no scan dir left"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::timeout_kills_the_helper_and_cleans_up",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "child_process_assertion",
+        "notes": "Hard timeout kills the helper process (kill -0 fails) and maps to CONTINUITY_SCAN_TIMEOUT"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::cancelling_the_job_kills_the_waiting_helper",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "child_process_assertion",
+        "notes": "cancel_session_job kills the waiting helper; a second scan is refused with CONTINUITY_SCAN_BUSY"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::a_document_change_during_the_scan_rejects_the_result",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "persistence"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "pdfium_worker_page_count_assertion",
+        "notes": "A rotation while the helper waits advances the generation; the scan result is rejected with STALE_GENERATION and not inserted"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-three-distinct-pages",
+      "testId": "rust:continuity_scan_session::a_stale_generation_is_rejected_before_the_helper_runs",
+      "relation": "helper_indirect",
+      "dimensions": [
+        "negative"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/tests/continuity_scan_session.rs",
+        "verificationType": "session_job_outcome_assertion",
+        "notes": "A stale expected generation fails job reservation before the helper starts"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:macos_helper::tests::compiled_helper_normalizes_scan_pasteboard_content_without_a_device",
+      "relation": "direct",
+      "dimensions": [
+        "positive"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/macos_helper.rs",
+        "verificationType": "compiled_helper_output_assertion",
+        "notes": "Compiled helper normalize-pasteboard: PDF kept byte-identical as scan.pdf, opaque image to JPEG, transparent to PNG, two-page TIFF to two files"
+      }
+    },
+    {
+      "featureId": "macos_continuity_camera",
+      "fixtureId": "core-minimal",
+      "testId": "rust_unit:macos_helper::tests::compiled_helper_rejects_unsupported_scan_content_and_unsafe_directories",
+      "relation": "direct",
+      "dimensions": [
+        "negative",
+        "malformed"
+      ],
+      "evidence": {
+        "sourcePath": "src-tauri/src/macos_helper.rs",
+        "verificationType": "compiled_helper_output_assertion",
+        "notes": "Unsupported UTI, header-less PDF and broken image exit 66; occupied, symlinked, missing or file output dirs exit 65 before writing"
+      }
     }
   ],
   "features": [
@@ -3723,20 +3869,34 @@
     {
       "id": "macos_continuity_camera",
       "name": "Macos Continuity Camera",
-      "statusObservation": "disabled",
-      "fixtureIds": [],
-      "testIds": [],
+      "statusObservation": "experimental",
+      "fixtureIds": [
+        "core-minimal",
+        "core-three-distinct-pages"
+      ],
+      "testIds": [
+        "rust:continuity_scan_session::a_document_change_during_the_scan_rejects_the_result",
+        "rust:continuity_scan_session::a_stale_generation_is_rejected_before_the_helper_runs",
+        "rust:continuity_scan_session::cancelling_the_job_kills_the_waiting_helper",
+        "rust:continuity_scan_session::closing_the_menu_without_a_choice_cancels_without_touching_the_document",
+        "rust:continuity_scan_session::helper_errors_leave_the_document_and_no_scan_directory",
+        "rust:continuity_scan_session::scanned_pdf_is_inserted_as_one_undoable_mutation",
+        "rust:continuity_scan_session::scanned_photos_become_pages_fitted_to_the_given_paper",
+        "rust:continuity_scan_session::timeout_kills_the_helper_and_cleans_up",
+        "rust_unit:macos_helper::tests::compiled_helper_normalizes_scan_pasteboard_content_without_a_device",
+        "rust_unit:macos_helper::tests::compiled_helper_rejects_unsupported_scan_content_and_unsafe_directories"
+      ],
       "dimensions": {
-        "positive": "planned",
-        "negative": "not_covered",
-        "malformed": "not_applicable",
-        "encrypted": "not_applicable",
+        "positive": "partial",
+        "negative": "covered",
+        "malformed": "covered",
+        "encrypted": "not_covered",
         "unicode": "not_applicable",
-        "persistence": "not_applicable",
-        "worker": "not_covered"
+        "persistence": "covered",
+        "worker": "covered"
       },
       "platformEvidence": {
-        "macos": "not_run",
+        "macos": "source_only",
         "linux": "not_run",
         "windows": "not_run"
       }
@@ -5112,6 +5272,66 @@
       "kind": "unit_test",
       "state": "current",
       "sourcePath": "src-tauri/src/job_worker.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::scanned_pdf_is_inserted_as_one_undoable_mutation",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::scanned_photos_become_pages_fitted_to_the_given_paper",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::closing_the_menu_without_a_choice_cancels_without_touching_the_document",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::helper_errors_leave_the_document_and_no_scan_directory",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::timeout_kills_the_helper_and_cleans_up",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::cancelling_the_job_kills_the_waiting_helper",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::a_document_change_during_the_scan_rejects_the_result",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust:continuity_scan_session::a_stale_generation_is_rejected_before_the_helper_runs",
+      "kind": "integration_test",
+      "state": "current",
+      "sourcePath": "src-tauri/tests/continuity_scan_session.rs"
+    },
+    {
+      "id": "rust_unit:macos_helper::tests::compiled_helper_normalizes_scan_pasteboard_content_without_a_device",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/macos_helper.rs"
+    },
+    {
+      "id": "rust_unit:macos_helper::tests::compiled_helper_rejects_unsupported_scan_content_and_unsafe_directories",
+      "kind": "unit_test",
+      "state": "current",
+      "sourcePath": "src-tauri/src/macos_helper.rs"
     }
   ],
   "gaps": [
@@ -5193,7 +5413,7 @@
       "requiredLayer": "native_runtime",
       "plannedPrompt": "11V-B",
       "releaseBlocking": false,
-      "description": "Verify Continuity Camera native integration on macOS"
+      "description": "Verify Continuity Camera with a real iPhone/iPad on macOS (menu anchored to the window, Scan Documents, Take Photo, Add Sketch, cancel on device); pasteboard types and selection detection are DEVICE: NOT RUN"
     },
     {
       "id": "gap-macos-share-runtime",

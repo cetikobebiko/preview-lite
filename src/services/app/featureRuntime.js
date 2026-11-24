@@ -9,12 +9,13 @@ import {
 } from "../../featureRegistry.js";
 import { stopSpeaking } from "../../ttsActions.js";
 import { insertBlankPage, mergeSessionPdfs } from "../../pdfState.js";
-import { isSignatureLossDeclined } from "../signatureLossGuard.js";
+import { ensureSignedIncrementalEditAccepted, isSignatureLossDeclined } from "../signatureLossGuard.js";
 import {
   performOcrOnPageAction,
   shareExternalFileMacosAction,
   shareFileMacosAction,
   speakTextAction,
+  startContinuityCameraScanAction,
   startSensitiveDataScanAction,
 } from "../actions.js";
 import {
@@ -22,6 +23,7 @@ import {
   exportSessionPageToImage,
   exportSessionTextContent,
   extractSessionPages,
+  getSessionPageCount,
   searchSessionPdfText,
 } from "../backend/session.js";
 import { convertAndSaveImage } from "../backend/document.js";
@@ -45,6 +47,7 @@ import { createSensitiveDataScanController } from "./sensitiveDataScanController
 import { createSecureRedactionController } from "./secureRedactionController.js";
 import { createSanitizationController } from "./sanitizationController.js";
 import { createShareActionController } from "./shareActionController.js";
+import { createContinuityScanController } from "./continuityScanController.js";
 import { createTtsActionController } from "./ttsActionController.js";
 
 const defaultExportActions = Object.freeze({
@@ -56,6 +59,14 @@ const defaultExportActions = Object.freeze({
 const defaultBlankPageActions = Object.freeze({
   resolveSize: resolveBlankPageSize,
   insert: insertBlankPage,
+});
+
+const defaultContinuityScanActions = Object.freeze({
+  confirmSignedEdit: ensureSignedIncrementalEditAccepted,
+  // Görsel taramalar, eklendikleri yerin komşu sayfası boyutundaki kâğıda sığdırılır.
+  resolvePageFit: resolveBlankPageSize,
+  start: startContinuityCameraScanAction,
+  getPageCount: getSessionPageCount,
 });
 
 /** Composes feature workflows and search without owning document lifecycle state. */
@@ -77,6 +88,7 @@ export function createFeatureRuntime({
   onError,
   exportActions = defaultExportActions,
   blankPageActions = defaultBlankPageActions,
+  continuityScanActions = defaultContinuityScanActions,
   exportNotes = exportSessionNotesMarkdown,
   createExportController = createDocumentExportController,
   createSearchController: createSearch = createSearchController,
@@ -184,6 +196,7 @@ export function createFeatureRuntime({
     sanitizationController.destroy();
     tts.destroy();
     notesExport.destroy();
+    continuityScan.cancel();
   }
 
   const featureRequestContext = () => ({
@@ -215,6 +228,23 @@ export function createFeatureRuntime({
     featureContext,
     reportUnavailable,
     onToast,
+  });
+  const continuityScan = createContinuityScanController({
+    getContext: () => ({
+      ...featureRequestContext(),
+      pageCount: viewer.pageOrder?.length ?? 0,
+    }),
+    guard: guardFeatureAction,
+    featureContext,
+    reportUnavailable,
+    confirmSignedEdit: continuityScanActions.confirmSignedEdit,
+    resolvePageFit: continuityScanActions.resolvePageFit,
+    startScan: continuityScanActions.start,
+    getPageCount: continuityScanActions.getPageCount,
+    applyMutationSnapshot: (snapshot, options) => documentRuntime.applyMutationSnapshot(snapshot, options),
+    ui,
+    onToast,
+    onError,
   });
   const tts = createTtsActionController({
     getContext: featureRequestContext,
@@ -323,15 +353,6 @@ export function createFeatureRuntime({
     callbacks.saveSettings();
   }
 
-  async function continuityCamera() {
-    try {
-      return await guardFeatureAction("macos_continuity_camera", featureContext, () => {
-        if (!documentRuntime.isPdf) onToast("Süreklilik kamerası taraması sadece PDF belgeleri için aktiftir.");
-        else onToast("Süreklilik kamerası session-safe sayfa ekleme tamamlanana kadar devre dışı.");
-      });
-    } catch (error) { if (!reportUnavailable(error)) throw error; }
-  }
-
   async function exportNotesMarkdown() {
     try {
       return await guardFeatureAction("markdown_notes_export", featureContext, notesExport.exportNotesMarkdown);
@@ -359,7 +380,7 @@ export function createFeatureRuntime({
       "open-bionic": reading.openBionicReading,
       "toggle-ruler": () => { ui.togglePanel("readingRuler"); onToast(ui.panels.readingRuler ? "Odak Cetveli (Line Focus) Açıldı" : "Odak Cetveli Kapatıldı"); },
       "open-analytics": () => ui.openModal("analytics"),
-      "camera-scan": continuityCamera,
+      "camera-scan": () => continuityScan.scan(),
       "speak-page": tts.speakCurrentPage,
       "stop-speak": tts.stopSpeaking,
       "share-macos": share.share,
@@ -460,6 +481,8 @@ export function createFeatureRuntime({
     speak: tts.speakCurrentPage,
     stopSpeaking: tts.stopSpeaking,
     share: share.share,
+    continuityScan,
+    reconcileContinuityScanContext: () => continuityScan.reconcileContext(),
     mergePdf: transform.mergePdf,
     exportCurrentPageImage: documentExportController.exportCurrentPageImage,
     exportPdfStructure: documentExportController.exportPdfStructure,

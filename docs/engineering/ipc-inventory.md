@@ -64,7 +64,8 @@ tanımlarını, `src-tauri/src/lib.rs:970-1037` içindeki
 
 Beş fiziksel çift tanım `cfg(target_os = "macos")` ve
 `cfg(not(target_os = "macos"))` dallarındaki
-`trigger_continuity_camera_scan`, `speak_text`, `stop_speaking`,
+`scan_with_continuity_camera_into_session` (2026-11-18'e kadar
+`trigger_continuity_camera_scan`), `speak_text`, `stop_speaking`,
 `share_file_macos` ve `perform_ocr_on_page` command'larıdır.
 
 Tauri'nin varsayılan frontend anahtar dönüşümünde Rust `snake_case`
@@ -102,7 +103,7 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `export_pdf_page_to_image` | `path: String; page_index: u32; target_path: String; format: String` | `src-tauri/src/lib.rs:139`, private async | evet | `src/App.svelte:1127` |
 | `get_pdf_metadata` | `path: String` | `src-tauri/src/lib.rs:189`, private sync | evet | `src/App.svelte:883`; `src/pdfState.js:154` |
 | `set_pdf_metadata` | `source_path: String; metadata: PdfMetadata; target_path: String` | `src-tauri/src/lib.rs:216`, private sync | evet | `src/App.svelte:1097` |
-| `trigger_continuity_camera_scan` | macOS `source_pdf_path: String`; diğer platform `_source_pdf_path: String` | `src-tauri/src/lib.rs:245/308`, private sync, platform `cfg` | evet | `src/App.svelte:1168` |
+| ~~`trigger_continuity_camera_scan`~~ | macOS `source_pdf_path: String`; diğer platform `_source_pdf_path: String` | ~~`src-tauri/src/lib.rs:245/308`, private sync, platform `cfg`~~ | ~~evet~~ hayır (2026-11-18: kaldırıldı; kullanıcı PDF yolu alan stub her zaman `FEATURE_UNAVAILABLE` döndürüyordu. Yerine oturum tabanlı `scan_with_continuity_camera_into_session`.) | ~~`src/App.svelte:1168`~~ yok |
 | `speak_text` | macOS `text: String; voice: Option<String>`; diğer platform `text: String; _voice: Option<String>` | `src-tauri/src/lib.rs:315/336`, private sync, platform `cfg` | evet | `src/App.svelte:1198` |
 | `stop_speaking` | — | `src-tauri/src/lib.rs:353/360`, private sync, platform `cfg` | evet | `src/App.svelte:1182,1468` |
 | `share_file_macos` | macOS `file_path: String`; diğer platform `_file_path: String` | `src-tauri/src/lib.rs:371/400`, private sync, platform `cfg` | evet | `src/App.svelte:1209` |
@@ -153,6 +154,7 @@ tarafından enjekte edildiği için istemci payload sütunundan çıkarılmışt
 | `inspect_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy_schema_version: String` | `src-tauri/src/sanitization.rs`, immutable session snapshot + ephemeral `InspectDocumentSanitization` worker | `sanitizationController` (feature `experimental`/enabled; Belge menüsü ve `open-sanitization` komutu) | Read-only typed `SessionJobOutcome<SanitizationInspectionReport>`; input digest + registry version bağlıdır; raw input/working/snapshot path, credential, output ve target kabul etmez. |
 | `execute_document_sanitization` | `job_id: String; session_id: String; expected_content_generation: u64; policy: SanitizationPolicy; target_path: String` | `src-tauri/src/sanitization_publication.rs` | `sanitizationController` (feature `experimental`/enabled) | Versioned supported-control policy ve explicit target alır; raw input/working/snapshot path veya legacy boolean option kabul etmez. Actual immutable snapshot üzerinde inspection/policy revalidation → private transform worker → independent verifier worker → mandatory digest gate → target TOCTOU preflight → atomic publication uygular. Typed commit/recovery metadata `SessionJobOutcome` failure surface'ında korunur. |
 | `scan_sensitive_data` | `job_id: String; session_id: String; expected_content_generation: u64; patterns: Vec<ScanPatternSpec>` (`{kind: "regex" \| "builtin", value}`; built-in ids: `phone`, `email`, `credit-card`, `ssn`, `date`) | `src-tauri/src/redaction.rs`, `src-tauri/src/redaction/patterns.rs`, session-job (Job-Worker Protocol v3) | evet | `src/services/backend/redaction.js` (`startSensitiveDataScanAction` → cancellable handle → job worker protocol v3) |
+| `scan_with_continuity_camera_into_session` | `job_id: String; session_id: String; expected_content_generation: u64; at_index: u32; page_fit: ScanPageFit` (`{ width, height }` pt, 1–14400, bilinmeyen alan reddedilir); pencere anchor'ı backend'de `WebviewWindow`'dan hesaplanır | `src-tauri/src/lib.rs` (macOS: `continuity_scan::scan_into_session`; diğer platformlar `FEATURE_UNAVAILABLE`), private async. Session-job: tek tarama kapısı (`CONTINUITY_SCAN_BUSY`) → `<instance>/scans/scan-*` (0700) → `antigravity-macos-helper scan` job çocuk süreci (iptal/kapanış/zaman aşımı öldürür) → çıktı doğrulama (yalnız `scan.pdf` / `scan-NNN.jpg\|png`, symlink yok, ≤ 100 sayfa, dosya ≤ 256 MiB, toplam ≤ 512 MiB) → görseller `images_to_pdf::build_pdf_fitted` ile yeni PDF → `ImportPages` mutasyonu (kaynak job dizinine kopyalanır; worker kullanıcı yolunu görmez). Tarama dizini her durumda silinir. Dönüş `SessionJobOutcome<ContinuityScanImport { snapshot, kind }>`; menü seçimsiz kapanırsa `cancelled`; hata kodları `CONTINUITY_SCAN_NO_DEVICE`, `_TIMEOUT`, `_UNSUPPORTED_CONTENT`, `_LIMIT_EXCEEDED`, `_OUTPUT_INVALID`, `_FAILED`; bekleme sırasında belge değiştiyse `STALE_GENERATION` | evet | `src/services/backend/platform.js` (`startContinuityCameraScan`, iptal edilebilir handle) ← `actions.js` `startContinuityCameraScanAction` ← `services/app/continuityScanController.js` |
 | `export_session_notes_markdown` | `job_id: String; session_id: String; expected_content_generation: u64; target_path: String; options: NotesExportOptions` (`{ utcOffsetMinutes?: -720…840 }`, bilinmeyen alan reddedilir) | `src-tauri/src/document_session.rs`, session-job: `reject_private_target` + `.md`/`.txt` hedef → job worker `ExportNotesMarkdown` (`notes_export.rs`, PDFium) → `validate_job_text_output` (UTF-8, ≤ 16 MiB) → `accept_job_output_file` (atomik). Not yoksa `NOTES_EXPORT_EMPTY`, dosya yazılmaz | evet | `src/services/app/notesExportController.js` through `session.js` (`exportSessionNotesMarkdown`, iptal edilebilir handle) |
 
 ## Eşleşme sınıfları
@@ -195,7 +197,7 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/App.svelte:1097` | `set_pdf_metadata` | `{ sourcePath, metadata, targetPath }` |
 | `src/App.svelte:1127` | `export_pdf_page_to_image` | `{ path, pageIndex, targetPath, format }` |
 | `src/App.svelte:1147` | `perform_ocr_on_page` | `{ path, pageIndex }` |
-| `src/App.svelte:1168` | `trigger_continuity_camera_scan` | `{ sourcePdfPath }` |
+| ~~`src/App.svelte:1168`~~ | ~~`trigger_continuity_camera_scan`~~ | `{ sourcePdfPath }` — tarihsel; 2026-11-18: komut kaldırıldı, yerine `scan_with_continuity_camera_into_session` (`src/services/backend/platform.js`). |
 | `src/App.svelte:1182` | `stop_speaking` | — |
 | `src/App.svelte:1193` | `perform_ocr_on_page` | `{ path, pageIndex }` |
 | `src/App.svelte:1198` | `speak_text` | `{ text, voice }` |
@@ -260,6 +262,7 @@ camelCase dönüşümü uygulanınca eşleşen anahtarlar ayrıca işaretlenmemi
 | `src/pluginStore.js` | `cancel_plugin_execution` | `{ executionId }` |
 | `src/pluginStore.js` | `get_plugin_execution_status` | `{ executionId }` |
 | `src/services/backend/batch.js` | `scan_batch_inputs`, `start_batch`, `cancel_batch`, `get_batch_status`, `reveal_batch_output_dir` | `{ paths, recursive }`, `{ request }`, `{ batchId }` |
+| `src/services/backend/platform.js` | `scan_with_continuity_camera_into_session` | `{ jobId, sessionId, expectedContentGeneration, atIndex, pageFit: { width, height } }` |
 
 `src/configManager.js` Tauri fs pluginini doğrudan kullanır, command invoke etmez.
 `src/ipc_profiler.js`

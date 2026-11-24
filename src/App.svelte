@@ -186,6 +186,7 @@
 
     untrack(() => {
       featureRuntime.reconcileSensitiveDataContext();
+      featureRuntime.reconcileContinuityScanContext?.(); // belge değişirse tarama iptal
     });
   });
 

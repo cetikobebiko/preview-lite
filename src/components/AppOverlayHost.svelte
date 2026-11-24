@@ -2,6 +2,7 @@
   import FileDownIcon from "@lucide/svelte/icons/file-down";
   import PasswordModal from "./PasswordModal.svelte";
   import AsyncPromptDialog from "./AsyncPromptDialog.svelte";
+  import ContinuityScanDialog from "./ContinuityScanDialog.svelte";
 
   let {
     ui,
@@ -13,6 +14,9 @@
 
   let passwordAttempt = $derived(
     ui.activeModal?.type === "password" ? ui.activeModal.props : null,
+  );
+  let continuityScan = $derived(
+    ui.activeModal?.type === "continuity_scan" ? ui.activeModal.props : null,
   );
 </script>
 
@@ -41,6 +45,10 @@
 />
 
 <AsyncPromptDialog coordinator={asyncPrompt} />
+
+{#if continuityScan}
+  <ContinuityScanDialog oncancel={() => continuityScan.oncancel?.()} />
+{/if}
 
 <style>
   .drag-overlay {

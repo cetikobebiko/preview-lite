@@ -25,7 +25,12 @@ describe("Command Palette policy", () => {
   });
 
   it("filters by query and hides production mock or disabled commands", () => {
-    expect(filterCommands("Süreklilik", productionMac)).toEqual([]);
+    // A disabled feature's command is hidden in production (probe: pades_signing is disabled).
+    const disabledProbe = [{ id: "probe-disabled", title: "Süreklilik probe", category: "x", featureId: "pades_signing" }];
+    expect(filterCommands("Süreklilik", productionMac, disabledProbe)).toEqual([]);
+    // Continuity Camera ships as experimental on macOS: listed in production.
+    expect(filterCommands("Continuity", productionMac).map((command) => command.id)).toEqual(["camera-scan"]);
+    expect(filterCommands("Continuity", { build: "production", platform: "windows" })).toEqual([]);
     // Notes export is a real backend job now (experimental), so production lists it.
     expect(filterCommands("markdown", productionMac).map((command) => command.id)).toEqual(["export-notes-md"]);
     const ocrCommands = filterCommands("OCR", productionMac);
@@ -61,8 +66,8 @@ describe("Command Palette policy", () => {
 
   it("does not emit select for a disabled developer command", async () => {
     const onSelect = vi.fn();
-    const command = getCommandById("camera-scan");
-    // Precondition: the mapped feature is still disabled; pick another command if it ships.
+    const command = { id: "probe-disabled", title: "probe", category: "x", featureId: "pades_signing" };
+    // Precondition: the probe's feature is still disabled; pick another one if it ships.
     expect(getFeature(command.featureId)).toMatchObject({ status: "disabled", enabled: false });
     expect(getCommandPresentation(command, developmentMac).visible).toBe(true);
     await expect(

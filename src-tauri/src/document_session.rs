@@ -4389,6 +4389,14 @@ impl DocumentSessionStore {
         self.instance_dir.join("batches")
     }
 
+    /// Private root of Continuity Camera scans (`continuity_scan::`). Like
+    /// `batches_root`, a scan left behind by a crash is removed with the
+    /// orphaned instance on the next start.
+    #[doc(hidden)]
+    pub fn scans_root(&self) -> PathBuf {
+        self.instance_dir.join("scans")
+    }
+
     fn insert_candidate(
         &self,
         original_path: PathBuf,

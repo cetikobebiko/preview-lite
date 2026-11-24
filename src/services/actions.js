@@ -10,6 +10,7 @@ import {
   shareExternalFileMacos,
   shareFileMacos,
   speakText,
+  startContinuityCameraScan,
   stopSpeaking,
 } from "./backend/platform.js";
 
@@ -55,6 +56,22 @@ export const scanSensitiveDataAction = (
     return Promise.reject(error);
   }
 };
+export const startContinuityCameraScanAction = (
+  sessionId,
+  expectedContentGeneration,
+  atIndex,
+  pageFit,
+  context,
+) => {
+  assertFeatureRunnable("macos_continuity_camera", runtimeContext(context));
+  return startContinuityCameraScan(
+    sessionId,
+    expectedContentGeneration,
+    atIndex,
+    pageFit,
+  );
+};
+
 export const speakTextAction = (text, voice, context) =>
   guardFeatureAction(
     "text_to_speech",
