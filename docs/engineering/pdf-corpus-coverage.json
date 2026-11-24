@@ -5533,7 +5533,7 @@
       "requiredLayer": "integration",
       "plannedPrompt": "11I-G",
       "releaseBlocking": true,
-      "description": "Implement PAdES cryptographic digital signature workflow"
+      "description": "[G3 · OUT_OF_SCOPE for OPTION 1] Implement PAdES cryptographic digital signature workflow. See docs/engineering/signature-capabilities.json"
     },
     {
       "id": "gap-signature-verification-crypto",
@@ -5543,7 +5543,7 @@
       "requiredLayer": "integration",
       "plannedPrompt": "11I-G",
       "releaseBlocking": true,
-      "description": "Implement cryptographic signature validation and certificate trust checks"
+      "description": "[G2 · OPTION 1 PLANNED] Implement offline structural and cryptographic signature validation (trust NOT_EVALUATED; certificate trust checks tracked by gap-signature-settings-trust-store). See docs/engineering/signature-capabilities.json"
     },
     {
       "id": "gap-ltv-timestamp-dss",
@@ -5553,7 +5553,7 @@
       "requiredLayer": "integration",
       "plannedPrompt": "11I-G",
       "releaseBlocking": false,
-      "description": "Implement LTV DSS/VRI timestamp embedding"
+      "description": "[G5 · OUT_OF_SCOPE for OPTION 1] Implement LTV DSS/VRI timestamp embedding. See docs/engineering/signature-capabilities.json"
     },
     {
       "id": "gap-signature-settings-trust-store",
@@ -5563,7 +5563,7 @@
       "requiredLayer": "integration",
       "plannedPrompt": "11I-G",
       "releaseBlocking": false,
-      "description": "Implement trust store and signature certificate management"
+      "description": "[G4 · OUT_OF_SCOPE for OPTION 1] Implement offline trust store, certificate path validation and signature certificate management. See docs/engineering/signature-capabilities.json"
     },
     {
       "id": "gap-redaction-release-certification",
