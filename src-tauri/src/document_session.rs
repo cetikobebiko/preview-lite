@@ -16141,7 +16141,8 @@ mod tests {
             },
         };
         let signed = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/sanitization/signature.pdf");
+            .join("tests/fixtures")
+            .join("sanitization/signature.pdf");
         for (source, expected) in [(signed, true), (fixture_path("minimal.pdf"), false)] {
             let documents = tempfile::tempdir().unwrap();
             let original = documents.path().join("belge.pdf");

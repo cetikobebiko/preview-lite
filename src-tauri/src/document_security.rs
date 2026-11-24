@@ -740,7 +740,9 @@ mod tests {
     #[test]
     fn the_report_says_whether_the_source_signatures_are_invalidated() {
         let directory = tempfile::tempdir().unwrap();
-        let signed = fixture("../sanitization/signature.pdf");
+        let signed = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join("sanitization/signature.pdf");
         let op = protect("acma", "", EncryptionMethod::Aes256, all_permissions());
         for (source, expected) in [(&signed, true), (&fixture("minimal.pdf"), false)] {
             let protected = directory.path().join("protected.pdf");

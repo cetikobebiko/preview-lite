@@ -690,7 +690,9 @@ async fn signature_loss_is_reported_per_file_for_pdf_copies_only() {
     let harness = Harness::new();
     let signed = harness.inputs.join("imzali.pdf");
     fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sanitization/signature.pdf"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join("sanitization/signature.pdf"),
         &signed,
     )
     .unwrap();
