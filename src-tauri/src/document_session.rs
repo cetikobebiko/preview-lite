@@ -8768,6 +8768,14 @@ pub async fn export_session_embedded_images(
         .await
 }
 
+/// Published split outputs and whether the snapshot's signatures were lost in them.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitOutcome {
+    pub outputs: Vec<String>,
+    pub signatures_invalidated: bool,
+}
+
 #[tauri::command]
 pub async fn split_session_pdf(
     job_id: String,
@@ -8777,7 +8785,7 @@ pub async fn split_session_pdf(
     output_dir: String,
     overwrite: bool,
     store: State<'_, DocumentSessionStore>,
-) -> Result<SessionJobOutcome<Vec<String>>, DocumentSessionError> {
+) -> Result<SessionJobOutcome<SplitOutcome>, DocumentSessionError> {
     reject_private_target(Path::new(&output_dir), &store.temp_root)?;
     let stem = session_output_name_stem(&store, &session_id).await;
     store
@@ -8795,17 +8803,22 @@ pub async fn split_session_pdf(
                     JobCommand::SplitPdf { ranges },
                     Duration::from_secs(300),
                 )?;
-                let JobResult::Files(files) = result else {
+                let JobResult::SplitCopies { paths, report } = result else {
                     return Err(SessionJobOperationError::failed_with_code(
                         "SESSION_JOB_WORKER_PROTOCOL_ERROR",
                         "Split worker beklenmeyen sonuç döndürdü",
                     ));
                 };
-                let sources = files
+                let sources = paths
                     .iter()
                     .map(|source| validate_job_pdf_output(&context, source))
                     .collect::<Result<Vec<_>, _>>()?;
-                accept_job_output_set(&context, sources, &planned, &output_dir, overwrite)
+                let outputs =
+                    accept_job_output_set(&context, sources, &planned, &output_dir, overwrite)?;
+                Ok(SplitOutcome {
+                    outputs,
+                    signatures_invalidated: report.signatures_invalidated,
+                })
             },
         )
         .await
@@ -8819,7 +8832,7 @@ pub async fn merge_session_pdfs(
     additional_paths: Vec<String>,
     target_path: String,
     store: State<'_, DocumentSessionStore>,
-) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+) -> Result<SessionJobOutcome<crate::copy_jobs::CopySignatureReport>, DocumentSessionError> {
     reject_private_target(Path::new(&target_path), &store.temp_root)?;
     store
         .run_snapshot_job(
@@ -8852,14 +8865,15 @@ pub async fn merge_session_pdfs(
                     },
                     Duration::from_secs(300),
                 )?;
-                let JobResult::File(source) = result else {
+                let JobResult::MergedCopy { path, report } = result else {
                     return Err(SessionJobOperationError::failed_with_code(
                         "SESSION_JOB_WORKER_PROTOCOL_ERROR",
                         "Merge worker beklenmeyen sonuç döndürdü",
                     ));
                 };
-                let source = validate_job_pdf_output(&context, &source)?;
-                accept_job_output_file(&context, &source, Path::new(&target_path))
+                let source = validate_job_pdf_output(&context, &path)?;
+                accept_job_output_file(&context, &source, Path::new(&target_path))?;
+                Ok(report)
             },
         )
         .await
@@ -8958,7 +8972,7 @@ pub async fn save_session_security_copy(
     op: crate::document_security::SecurityOp,
     target_path: String,
     store: State<'_, DocumentSessionStore>,
-) -> Result<SessionJobOutcome<()>, DocumentSessionError> {
+) -> Result<SessionJobOutcome<crate::copy_jobs::CopySignatureReport>, DocumentSessionError> {
     crate::document_security::validate_request(&op)
         .map_err(|message| DocumentSessionError::new("SESSION_SECURITY_INVALID", message))?;
     reject_private_target(Path::new(&target_path), &store.temp_root)?;
@@ -8968,8 +8982,9 @@ pub async fn save_session_security_copy(
             &session_id,
             expected_content_generation,
             move |context| {
-                let source = crate::copy_jobs::produce_security_copy(&context, op)?;
-                accept_job_output_file(&context, &source, Path::new(&target_path))
+                let (source, report) = crate::copy_jobs::produce_security_copy(&context, op)?;
+                accept_job_output_file(&context, &source, Path::new(&target_path))?;
+                Ok(report)
             },
         )
         .await
@@ -16104,6 +16119,96 @@ mod tests {
         assert!(matches!(outcome, SessionJobOutcome::Completed { .. }));
         assert!(output.is_file());
         assert!(store.job_registry.lock().active.is_empty());
+    }
+
+    /// Copy commands report, per output, whether the open document's signatures were lost.
+    #[tokio::test]
+    async fn copy_commands_report_signature_loss_only_for_signed_documents() {
+        let protect = crate::document_security::SecurityOp::Protect {
+            settings: crate::document_security::ProtectionSettings {
+                user_password: "acma".into(),
+                owner_password: String::new(),
+                method: crate::document_security::EncryptionMethod::Aes256,
+                permissions: crate::document_security::PermissionSet {
+                    print: crate::document_security::PrintPermission::HighResolution,
+                    modify: true,
+                    copy: true,
+                    annotate: true,
+                    fill_forms: true,
+                    assemble: true,
+                },
+                encrypt_metadata: true,
+            },
+        };
+        let signed = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join("sanitization/signature.pdf");
+        for (source, expected) in [(signed, true), (fixture_path("minimal.pdf"), false)] {
+            let documents = tempfile::tempdir().unwrap();
+            let original = documents.path().join("belge.pdf");
+            fs::copy(&source, &original).unwrap();
+            let additional = documents.path().join("ek.pdf");
+            fs::copy(fixture_path("minimal.pdf"), &additional).unwrap();
+            let app = test_command_app();
+            let store = app.state::<DocumentSessionStore>();
+            let session_id = open_test_session(&store, &original);
+
+            let SessionJobOutcome::Completed { value: split, .. } = split_session_pdf(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![(0, 0)],
+                documents.path().to_string_lossy().to_string(),
+                false,
+                app.state(),
+            )
+            .await
+            .unwrap() else {
+                panic!("split did not complete");
+            };
+            assert_eq!(split.outputs.len(), 1);
+            assert_eq!(split.signatures_invalidated, expected, "{source:?} split");
+
+            let SessionJobOutcome::Completed { value: merged, .. } = merge_session_pdfs(
+                Uuid::new_v4().to_string(),
+                session_id.clone(),
+                1,
+                vec![additional.to_string_lossy().to_string()],
+                documents
+                    .path()
+                    .join("merged.pdf")
+                    .to_string_lossy()
+                    .to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap() else {
+                panic!("merge did not complete");
+            };
+            assert_eq!(merged.signatures_invalidated, expected, "{source:?} merge");
+
+            let SessionJobOutcome::Completed { value: secured, .. } = save_session_security_copy(
+                Uuid::new_v4().to_string(),
+                session_id,
+                1,
+                protect.clone(),
+                documents
+                    .path()
+                    .join("korumali.pdf")
+                    .to_string_lossy()
+                    .to_string(),
+                app.state(),
+            )
+            .await
+            .unwrap() else {
+                panic!("security copy did not complete");
+            };
+            assert_eq!(
+                secured.signatures_invalidated, expected,
+                "{source:?} security"
+            );
+            assert!(store.job_registry.lock().active.is_empty());
+        }
     }
 
     #[tokio::test]

@@ -681,3 +681,73 @@ async fn a_protected_copy_reports_without_the_password() {
     let serialized = serde_json::to_string(&status).unwrap() + events.as_str();
     assert!(!serialized.contains("gizli-parola-123"));
 }
+
+#[tokio::test]
+async fn signature_loss_is_reported_per_file_for_pdf_copies_only() {
+    use crate::document_security::{
+        EncryptionMethod, PermissionSet, PrintPermission, ProtectionSettings, SecurityOp,
+    };
+    let harness = Harness::new();
+    let signed = harness.inputs.join("imzali.pdf");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join("sanitization/signature.pdf"),
+        &signed,
+    )
+    .unwrap();
+    let unsigned = copy_fixture("minimal.pdf", &harness.inputs, "imzasiz.pdf");
+    let security = BatchOperation::Security {
+        op: SecurityOp::Protect {
+            settings: ProtectionSettings {
+                user_password: "acma".into(),
+                owner_password: String::new(),
+                method: EncryptionMethod::Aes256,
+                permissions: PermissionSet {
+                    print: PrintPermission::HighResolution,
+                    modify: true,
+                    copy: true,
+                    annotate: true,
+                    fill_forms: true,
+                    assemble: true,
+                },
+                encrypt_metadata: true,
+            },
+        },
+    };
+    let text = BatchOperation::ExportText {
+        format: TextExportFormat::Txt,
+    };
+    for (operation, signed_expected) in [(optimize(), true), (security, true), (text, false)] {
+        let kind = operation.kind();
+        let sink = Arc::new(RecordingSink::default());
+        let status = harness
+            .run(
+                harness.request(&[&signed, &unsigned], operation, ConflictPolicy::Number),
+                sink.clone(),
+            )
+            .await;
+        assert_eq!(file_reason(&status, 0), (BatchFileState::Completed, None));
+        assert_eq!(file_reason(&status, 1), (BatchFileState::Completed, None));
+        assert_eq!(
+            status.files[0].signatures_invalidated, signed_expected,
+            "{kind}: signed input"
+        );
+        assert!(!status.files[1].signatures_invalidated, "{kind}: unsigned");
+        // The per-file event carries the flag too, not only the final status.
+        let completed = sink
+            .events
+            .lock()
+            .iter()
+            .filter(|event| event.kind == BatchEventKind::FileCompleted)
+            .filter_map(|event| event.file.clone())
+            .map(|file| (file.index, file.signatures_invalidated))
+            .collect::<Vec<_>>();
+        assert_eq!(completed, [(0, signed_expected), (1, false)], "{kind}");
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(
+            json["files"][0]["signaturesInvalidated"],
+            serde_json::json!(signed_expected)
+        );
+    }
+}

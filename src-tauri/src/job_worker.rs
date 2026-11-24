@@ -391,6 +391,21 @@ pub enum JobResult {
         path: PathBuf,
         report: crate::pdf_optimizer::OptimizeReport,
     },
+    SecurityCopy {
+        path: PathBuf,
+        report: crate::copy_jobs::CopySignatureReport,
+    },
+    /// Split outputs; the pages are copied into new documents, so the snapshot's
+    /// signatures are not valid in them.
+    SplitCopies {
+        paths: Vec<PathBuf>,
+        report: crate::copy_jobs::CopySignatureReport,
+    },
+    /// Merge output; `report` covers the snapshot and every added input.
+    MergedCopy {
+        path: PathBuf,
+        report: crate::copy_jobs::CopySignatureReport,
+    },
     SearchablePlan(crate::searchable_pdf::SearchablePlan),
     SearchableCopy {
         path: PathBuf,
@@ -781,22 +796,25 @@ fn execute_command(
             Ok(JobResult::MutationValidated)
         }
         JobCommand::SplitPdf { ranges } => {
-            let outputs = split_pdf(snapshot_path, credential, job_dir, &ranges)?;
-            Ok(JobResult::Files(outputs))
+            let (paths, report) = split_pdf(snapshot_path, credential, job_dir, &ranges)?;
+            Ok(JobResult::SplitCopies { paths, report })
         }
         JobCommand::MergePdf {
             additional_input_names,
             output_name,
         } => {
             let output_path = checked_output_path(job_dir, &output_name)?;
-            merge_pdf(
+            let report = merge_pdf(
                 snapshot_path,
                 credential,
                 job_dir,
                 &additional_input_names,
                 &output_path,
             )?;
-            Ok(JobResult::File(output_path))
+            Ok(JobResult::MergedCopy {
+                path: output_path,
+                report,
+            })
         }
         JobCommand::InspectPageLabels => {
             let ranges =
@@ -852,7 +870,7 @@ fn execute_command(
         JobCommand::SecurityCopy { op, output_name } => {
             let output_path = checked_output_path(job_dir, &output_name)?;
             let pdfium = crate::pdf_engine::get_pdfium().map_err(pdfium_unavailable)?;
-            crate::document_security::write_security_copy(
+            let report = crate::document_security::write_security_copy(
                 pdfium.bindings(),
                 snapshot_path,
                 credential,
@@ -860,7 +878,10 @@ fn execute_command(
                 &output_path,
             )
             .map_err(|message| job_failed("SESSION_SECURITY_COPY_FAILED", message))?;
-            Ok(JobResult::File(output_path))
+            Ok(JobResult::SecurityCopy {
+                path: output_path,
+                report,
+            })
         }
         JobCommand::OptimizedCopy {
             settings,
@@ -1943,7 +1964,7 @@ fn split_pdf(
     credential: Option<&str>,
     job_dir: &Path,
     ranges: &[(u32, u32)],
-) -> Result<Vec<PathBuf>, JobFailure> {
+) -> Result<(Vec<PathBuf>, crate::copy_jobs::CopySignatureReport), JobFailure> {
     if ranges.is_empty() || ranges.len() > MAX_JOB_PAGES {
         return Err(job_failed(
             "SESSION_JOB_INVALID_SPLIT_RANGES",
@@ -1955,6 +1976,11 @@ fn split_pdf(
         crate::pdf_engine::open_pdfium_doc(&pdfium, &snapshot_path.to_string_lossy(), credential)
             .map_err(pdf_open_failed)?;
     let page_count = u32::from(document.pages().len());
+    // Only pages are copied: the signature fields' AcroForm and the signed bytes
+    // stay behind, so no output carries a valid signature of the snapshot.
+    let report = crate::copy_jobs::CopySignatureReport {
+        signatures_invalidated: !document.signatures().is_empty(),
+    };
     let mut outputs = Vec::with_capacity(ranges.len());
     for (range_index, &(start, end)) in ranges.iter().enumerate() {
         if start > end || end >= page_count {
@@ -1991,7 +2017,7 @@ fn split_pdf(
         })?;
         outputs.push(output_path);
     }
-    Ok(outputs)
+    Ok((outputs, report))
 }
 
 fn merge_pdf(
@@ -2000,7 +2026,7 @@ fn merge_pdf(
     job_dir: &Path,
     additional_input_names: &[String],
     output_path: &Path,
-) -> Result<(), JobFailure> {
+) -> Result<crate::copy_jobs::CopySignatureReport, JobFailure> {
     if additional_input_names.len() >= MAX_JOB_PAGES {
         return Err(job_failed(
             "SESSION_JOB_INPUT_LIMIT_EXCEEDED",
@@ -2017,6 +2043,8 @@ fn merge_pdf(
     let source =
         crate::pdf_engine::open_pdfium_doc(&pdfium, &snapshot_path.to_string_lossy(), credential)
             .map_err(pdf_open_failed)?;
+    // Pages are copied into a new document: no input's signatures stay valid.
+    let mut signed = !source.signatures().is_empty();
     copy_all_pages(&source, &mut output, "Session snapshot")?;
     for name in additional_input_names {
         let path = checked_existing_output_path(job_dir, name)?;
@@ -2026,6 +2054,7 @@ fn merge_pdf(
                 format!("Ek merge girdisi açılamadı: {error}"),
             )
         })?;
+        signed |= !document.signatures().is_empty();
         copy_all_pages(&document, &mut output, "Ek PDF")?;
     }
     if output.pages().is_empty() {
@@ -2039,6 +2068,9 @@ fn merge_pdf(
             "SESSION_JOB_OUTPUT_WRITE_FAILED",
             format!("Merge çıktısı kaydedilemedi: {error}"),
         )
+    })?;
+    Ok(crate::copy_jobs::CopySignatureReport {
+        signatures_invalidated: signed,
     })
 }
 
@@ -3448,5 +3480,132 @@ mod tests {
             prepare(Some(vec![5]), Some(booklet)).unwrap_err().code,
             "SESSION_JOB_INVALID_PAGE_SELECTION"
         );
+    }
+
+    fn signature_fixture(directory: &Path, relative: &str, as_name: &str) -> PathBuf {
+        let target = directory.join(as_name);
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(relative),
+            &target,
+        )
+        .unwrap();
+        target
+    }
+
+    /// The worker answers over JSON IPC; the report must survive the round trip.
+    fn through_ipc(result: JobResult) -> JobResult {
+        serde_json::from_str(&serde_json::to_string(&result).unwrap()).unwrap()
+    }
+
+    fn pdfium_signature_count(path: &Path) -> usize {
+        let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+        let document =
+            crate::pdf_engine::open_pdfium_doc(&pdfium, &path.to_string_lossy(), None).unwrap();
+        usize::from(document.signatures().len())
+    }
+
+    const SIGNED: &str = "sanitization/signature.pdf";
+    const UNSIGNED: &str = "pdf/minimal.pdf";
+
+    #[test]
+    fn split_reports_that_the_snapshot_signatures_do_not_survive() {
+        for (source, expected) in [(SIGNED, true), (UNSIGNED, false)] {
+            let directory = tempfile::tempdir().unwrap();
+            let snapshot = signature_fixture(directory.path(), source, "snapshot.pdf");
+            let result = execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "split-signature-job",
+                "split-signature-session",
+                JobCommand::SplitPdf {
+                    ranges: vec![(0, 0)],
+                },
+            )
+            .unwrap();
+            let JobResult::SplitCopies { paths, report } = through_ipc(result) else {
+                panic!("expected split copies");
+            };
+            assert_eq!(report.signatures_invalidated, expected, "{source}");
+            assert_eq!(paths.len(), 1);
+            assert_eq!(pdfium_signature_count(&paths[0]), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn merge_reports_signatures_of_the_snapshot_and_of_added_inputs() {
+        for (snapshot_source, added_source, expected) in [
+            (SIGNED, UNSIGNED, true),
+            (UNSIGNED, SIGNED, true),
+            (UNSIGNED, UNSIGNED, false),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let snapshot = signature_fixture(directory.path(), snapshot_source, "snapshot.pdf");
+            signature_fixture(directory.path(), added_source, "merge-input-0.pdf");
+            let result = execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "merge-signature-job",
+                "merge-signature-session",
+                JobCommand::MergePdf {
+                    additional_input_names: vec!["merge-input-0.pdf".to_string()],
+                    output_name: "merge-output.pdf".to_string(),
+                },
+            )
+            .unwrap();
+            let JobResult::MergedCopy { path, report } = through_ipc(result) else {
+                panic!("expected a merged copy");
+            };
+            let case = format!("{snapshot_source} + {added_source}");
+            assert_eq!(report.signatures_invalidated, expected, "{case}");
+            assert_eq!(pdfium_signature_count(&path), 0, "{case}");
+        }
+    }
+
+    #[test]
+    fn security_copy_job_reports_invalidated_signatures() {
+        use crate::document_security::{
+            EncryptionMethod, PermissionSet, PrintPermission, ProtectionSettings, SecurityOp,
+        };
+        let protect = SecurityOp::Protect {
+            settings: ProtectionSettings {
+                user_password: "acma".into(),
+                owner_password: String::new(),
+                method: EncryptionMethod::Aes256,
+                permissions: PermissionSet {
+                    print: PrintPermission::HighResolution,
+                    modify: true,
+                    copy: true,
+                    annotate: true,
+                    fill_forms: true,
+                    assemble: true,
+                },
+                encrypt_metadata: true,
+            },
+        };
+        for (source, expected) in [(SIGNED, true), (UNSIGNED, false)] {
+            let directory = tempfile::tempdir().unwrap();
+            let snapshot = signature_fixture(directory.path(), source, "snapshot.pdf");
+            let result = execute_command(
+                directory.path(),
+                &snapshot,
+                None,
+                "security-signature-job",
+                "security-signature-session",
+                JobCommand::SecurityCopy {
+                    op: protect.clone(),
+                    output_name: "security-copy.pdf".to_string(),
+                },
+            )
+            .unwrap();
+            let JobResult::SecurityCopy { path, report } = through_ipc(result) else {
+                panic!("expected a security copy");
+            };
+            assert_eq!(path, directory.path().join("security-copy.pdf"));
+            assert_eq!(report.signatures_invalidated, expected, "{source}");
+        }
     }
 }

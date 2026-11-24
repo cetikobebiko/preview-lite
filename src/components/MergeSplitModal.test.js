@@ -11,8 +11,12 @@ const pdfStateMocks = vi.hoisted(() => ({
   splitSessionPdf: vi.fn(),
 }));
 
+const sessionMocks = vi.hoisted(() => ({
+  getSessionFormInfo: vi.fn(async () => ({ form_type: "None", signature_count: 0 })),
+}));
 vi.mock("@tauri-apps/plugin-dialog", () => dialogMocks);
 vi.mock("../pdfState.js", () => pdfStateMocks);
+vi.mock("../services/backend/session.js", () => sessionMocks);
 const pluginHookMocks = vi.hoisted(() => ({ notifyPluginExportCompleted: vi.fn() }));
 vi.mock("../services/app/pluginHookDispatcher.js", () => pluginHookMocks);
 vi.mock("../featureRegistry.js", async (importOriginal) => {
@@ -34,7 +38,7 @@ describe("MergeSplitModal split ranges", () => {
     Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
     window.alert = vi.fn();
     dialogMocks.open.mockResolvedValue("/out");
-    pdfStateMocks.splitSessionPdf.mockResolvedValue(["/out/a.pdf"]);
+    pdfStateMocks.splitSessionPdf.mockResolvedValue({ outputs: ["/out/a.pdf"], signaturesInvalidated: false });
   });
 
   afterEach(() => {
@@ -230,7 +234,7 @@ describe("MergeSplitModal plugin on_export_complete", () => {
 
   it("reports a split as pdf with the number of pages written, not on failure", async () => {
     dialogMocks.open.mockResolvedValue("/out");
-    pdfStateMocks.splitSessionPdf.mockRejectedValueOnce(new Error("disk dolu")).mockResolvedValueOnce(["/out/a.pdf"]);
+    pdfStateMocks.splitSessionPdf.mockRejectedValueOnce(new Error("disk dolu")).mockResolvedValueOnce({ outputs: ["/out/a.pdf"], signaturesInvalidated: false });
     const onsuccess = vi.fn();
     render(MergeSplitModal, { props: { currentFilePath: "/doc.pdf", maxPages: 10, sessionId: "session-1", contentGeneration: 4, onclose: vi.fn(), onsuccess } });
     await fireEvent.click(screen.getByText("Böl", { selector: "button" }));
@@ -241,5 +245,69 @@ describe("MergeSplitModal plugin on_export_complete", () => {
     await fireEvent.click(screen.getByText("Böl ve Kaydet", { selector: "button" }));
     await waitFor(() => expect(onsuccess).toHaveBeenCalled());
     expect(pluginHookMocks.notifyPluginExportCompleted).toHaveBeenCalledWith("pdf", 4);
+  });
+});
+
+// Backend values mirror job_worker::tests (split/merge) and the session command test:
+// sanitization/signature.pdf → signature_count 1 / signaturesInvalidated true, minimal.pdf → 0 / false.
+describe("MergeSplitModal signatures", () => {
+  const originalAnimate = Element.prototype.animate;
+  const NOTE = /Bu belge dijital imza içeriyor\./;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Element.prototype.animate = vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn(), onfinish: null }));
+  });
+
+  afterEach(() => {
+    Element.prototype.animate = originalAnimate;
+  });
+
+  function renderModal(signatureCount, initialMode = "merge") {
+    sessionMocks.getSessionFormInfo.mockResolvedValue({ form_type: "AcroForm", signature_count: signatureCount });
+    const onsuccess = vi.fn();
+    render(MergeSplitModal, { props: { currentFilePath: "/doc.pdf", maxPages: 10, sessionId: "session-1", contentGeneration: 4, initialMode, onclose: vi.fn(), onsuccess } });
+    return { onsuccess };
+  }
+
+  it.each([
+    ["merge", /Birleştirilen dosyaya yalnız sayfalar kopyalanır/],
+    ["split", /Bölünen dosyalara yalnız sayfalar kopyalanır/],
+  ])("warns in %s mode when the open document is signed", async (mode, text) => {
+    renderModal(1, mode);
+    expect(await screen.findByText(text)).toBeTruthy();
+    expect(sessionMocks.getSessionFormInfo).toHaveBeenCalledWith("session-1", 4);
+  });
+
+  it("shows no note for an unsigned document", async () => {
+    renderModal(0, "split");
+    await waitFor(() => expect(sessionMocks.getSessionFormInfo).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+
+  it.each([
+    [true, "Dosyalar başarıyla birleştirildi! Kaynak belgelerdeki dijital imzalar birleştirilen dosyada geçerli değildir."],
+    [false, "Dosyalar başarıyla birleştirildi!"],
+  ])("reports the merge result's signature loss (%s)", async (signaturesInvalidated, message) => {
+    dialogMocks.open.mockResolvedValue(["/other.pdf"]);
+    dialogMocks.save.mockResolvedValue("/merged.pdf");
+    pdfStateMocks.mergeSessionPdfs.mockResolvedValue({ signaturesInvalidated });
+    const { onsuccess } = renderModal(0);
+    await fireEvent.click(screen.getByText("+ Dosya Ekle", { selector: "button" }));
+    await waitFor(() => expect(screen.getByText("other.pdf")).toBeTruthy());
+    await fireEvent.click(screen.getByText("Birleştir ve Kaydet", { selector: "button" }));
+    await waitFor(() => expect(onsuccess).toHaveBeenCalledWith(message));
+  });
+
+  it.each([
+    [true, "PDF başarıyla bölündü ve klasöre kaydedildi! Belgedeki dijital imzalar bölünen dosyalarda geçerli değildir."],
+    [false, "PDF başarıyla bölündü ve klasöre kaydedildi!"],
+  ])("reports the split result's signature loss (%s)", async (signaturesInvalidated, message) => {
+    dialogMocks.open.mockResolvedValue("/out");
+    pdfStateMocks.splitSessionPdf.mockResolvedValue({ outputs: ["/out/doc_sayfa_1.pdf"], signaturesInvalidated });
+    const { onsuccess } = renderModal(signaturesInvalidated ? 1 : 0, "split");
+    await fireEvent.click(screen.getByText("Böl ve Kaydet", { selector: "button" }));
+    await waitFor(() => expect(onsuccess).toHaveBeenCalledWith(message));
   });
 });

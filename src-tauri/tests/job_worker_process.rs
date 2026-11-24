@@ -223,7 +223,13 @@ fn split_and_merge_outputs_are_worker_owned_and_reopen_validated() {
             }
         }),
     );
-    let split_path = split["result"]["Ok"]["Files"][0].as_str().unwrap();
+    let split_path = split["result"]["Ok"]["SplitCopies"]["paths"][0]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        split["result"]["Ok"]["SplitCopies"]["report"]["signaturesInvalidated"],
+        false
+    );
     assert!(std::path::Path::new(split_path).is_file());
     let split_validation = run_worker(
         directory.path(),
@@ -257,12 +263,16 @@ fn split_and_merge_outputs_are_worker_owned_and_reopen_validated() {
         }),
     );
     assert_eq!(
-        merged["result"]["Ok"]["File"],
+        merged["result"]["Ok"]["MergedCopy"]["path"],
         directory
             .path()
             .join("merge-output.pdf")
             .to_string_lossy()
             .as_ref()
+    );
+    assert_eq!(
+        merged["result"]["Ok"]["MergedCopy"]["report"]["signaturesInvalidated"],
+        false
     );
     let merge_validation = run_worker(
         directory.path(),
@@ -279,6 +289,61 @@ fn split_and_merge_outputs_are_worker_owned_and_reopen_validated() {
         }),
     );
     assert_eq!(merge_validation["result"]["Ok"], "MutationValidated");
+}
+
+/// Over the real worker IPC, split and merge of a signed snapshot say that its
+/// signatures are not valid in the outputs.
+#[test]
+fn split_and_merge_of_a_signed_snapshot_report_lost_signatures() {
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = directory.path().join("snapshot.pdf");
+    fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sanitization/signature.pdf"
+        ),
+        &snapshot,
+    )
+    .unwrap();
+    fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/pdf/minimal.pdf"
+        ),
+        directory.path().join("merge-input-0.pdf"),
+    )
+    .unwrap();
+    let request = |command: serde_json::Value| {
+        json!({
+            "protocol_version": JOB_WORKER_PROTOCOL_VERSION,
+            "snapshot_path": snapshot,
+            "credential": null,
+            "command": command,
+        })
+    };
+    let split = run_worker(
+        directory.path(),
+        30,
+        request(json!({ "SplitPdf": { "ranges": [[0, 0]] } })),
+    );
+    assert_eq!(
+        split["result"]["Ok"]["SplitCopies"]["report"]["signaturesInvalidated"], true,
+        "{split}"
+    );
+    let merged = run_worker(
+        directory.path(),
+        31,
+        request(json!({
+            "MergePdf": {
+                "additional_input_names": ["merge-input-0.pdf"],
+                "output_name": "merge-output.pdf"
+            }
+        })),
+    );
+    assert_eq!(
+        merged["result"]["Ok"]["MergedCopy"]["report"]["signaturesInvalidated"], true,
+        "{merged}"
+    );
 }
 
 #[test]

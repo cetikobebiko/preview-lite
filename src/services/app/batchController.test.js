@@ -5,11 +5,13 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 import {
   BATCH_PROGRESS_EVENT,
+  BATCH_SIGNATURE_LOSS_TEXT,
   batchReportText,
   buildBatchOperation,
   confirmRunningBatchStop,
   createBatchTracker,
   runningBatchId,
+  signatureLossCount,
 } from "./batchController.js";
 
 const file = (index, state = "pending", extra = {}) => ({
@@ -142,5 +144,26 @@ describe("batch requests and reports", () => {
     expect(text).toContain("Tamamlandı: 1, atlandı: 1, hata: 0, iptal: 0");
     expect(text).toContain("  → /çıktı/0_küçültülmüş.pdf");
     expect(text).toContain("Atlandı: /girdi/1.pdf — PDF parola korumalı (BATCH_INPUT_PASSWORD_REQUIRED)");
+    expect(text).not.toContain("Dijital imza");
+  });
+
+  // Mirrors batch::tests::signature_loss_is_reported_per_file_for_pdf_copies_only:
+  // sanitization/signature.pdf → signaturesInvalidated true, minimal.pdf → false.
+  it("names the files whose signatures are not valid in the output", () => {
+    const signedStatus = status({
+      state: "completed",
+      counts: counts(2),
+      files: [
+        file(0, "completed", { inputPath: "/girdi/imzali.pdf", outputs: ["/çıktı/imzali_korumalı.pdf"], signaturesInvalidated: true }),
+        file(1, "completed", { inputPath: "/girdi/imzasiz.pdf", outputs: ["/çıktı/imzasiz_korumalı.pdf"], signaturesInvalidated: false }),
+      ],
+    });
+    expect(signatureLossCount(signedStatus)).toBe(1);
+    const lines = batchReportText(signedStatus, "Parola ile koru").split("\n");
+    expect(lines).toContain("Dijital imzaları çıktıda geçersiz olan dosya: 1");
+    const signedLine = lines.indexOf("Tamamlandı: /girdi/imzali.pdf");
+    expect(lines[signedLine + 1]).toBe(`  ${BATCH_SIGNATURE_LOSS_TEXT}`);
+    const unsignedLine = lines.indexOf("Tamamlandı: /girdi/imzasiz.pdf");
+    expect(lines[unsignedLine + 1]).toBe("  → /çıktı/imzasiz_korumalı.pdf");
   });
 });

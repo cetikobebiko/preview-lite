@@ -65,7 +65,7 @@ describe("output conflict handling", () => {
   it("asks with the conflicting names and retries with overwrite after confirmation", async () => {
     invokeMock
       .mockResolvedValueOnce(conflictOutcome(["split_0_0.pdf"]))
-      .mockResolvedValueOnce(completedOutcome(["/out/split_0_0.pdf"]));
+      .mockResolvedValueOnce(completedOutcome({ outputs: ["/out/split_0_0.pdf"], signaturesInvalidated: false }));
     const confirmOverwrite = vi.fn().mockResolvedValue(true);
 
     const result = await publishWithOverwriteConfirmation(
@@ -74,7 +74,7 @@ describe("output conflict handling", () => {
     );
 
     expect(confirmOverwrite).toHaveBeenCalledWith(["split_0_0.pdf"]);
-    expect(result).toEqual({ status: "completed", value: ["/out/split_0_0.pdf"] });
+    expect(result).toEqual({ status: "completed", value: { outputs: ["/out/split_0_0.pdf"], signaturesInvalidated: false } });
     expect(invokeMock.mock.calls.map(([command, payload]) => [command, payload.overwrite])).toEqual([
       ["split_session_pdf", false],
       ["split_session_pdf", true],

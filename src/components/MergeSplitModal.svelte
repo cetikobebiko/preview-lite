@@ -21,6 +21,7 @@
   import { FeatureUnavailableError, guardFeatureAction } from "../featureActionGuard.js";
   import { getFeaturePresentation, getRuntimeFeatureContext } from "../featureRegistry.js";
   import { notifyPluginExportCompleted } from "../services/app/pluginHookDispatcher.js";
+  import { copySignatureNote, readSignatureCount, withSignatureLoss } from "../services/copySignatures.js";
 
   // pageOrder is the display order (viewer.pageOrder); typed numbers are display positions.
   // outline: top-level bookmarks (viewer.outlineList) for splitting at bookmarks.
@@ -47,6 +48,21 @@
   let imageMargin = $state(36);
 
   let errorMsg = $state("");
+
+  // Açık belgenin imza sayısı (ön bilgi). Eklenen dosyaların imzalarını backend raporu söyler.
+  let signatureCount = $state(0);
+  $effect(() => {
+    const requestSession = sessionId;
+    const requestGeneration = contentGeneration;
+    signatureCount = 0;
+    let disposed = false;
+    readSignatureCount(requestSession, requestGeneration).then((count) => {
+      if (!disposed) signatureCount = count;
+    });
+    return () => {
+      disposed = true;
+    };
+  });
 
   function selectMode(nextMode) {
     mode = nextMode;
@@ -149,10 +165,10 @@
       } else if (savePath) {
         if (!sessionId) throw new Error("Aktif document session bulunamadı.");
         const extraFiles = filesToMerge.filter(f => f !== currentFilePath);
-        await mergeSessionPdfs(sessionId, contentGeneration, extraFiles, savePath);
+        const report = await mergeSessionPdfs(sessionId, contentGeneration, extraFiles, savePath);
         // page_count: pages of the open document in the output (other files are not counted here).
         notifyPluginExportCompleted("pdf", maxPages);
-        onsuccess?.("Dosyalar başarıyla birleştirildi!");
+        onsuccess?.(withSignatureLoss("Dosyalar başarıyla birleştirildi!", report, "merge"));
         onclose?.();
       }
     } catch(e) {
@@ -200,7 +216,7 @@
           errorMsg = "Bölme iptal edildi; mevcut dosyalara dokunulmadı.";
         } else if (result.status === "completed") {
           notifyPluginExportCompleted("pdf", ranges.reduce((sum, [start, end]) => sum + Math.abs(end - start) + 1, 0));
-          onsuccess?.("PDF başarıyla bölündü ve klasöre kaydedildi!");
+          onsuccess?.(withSignatureLoss("PDF başarıyla bölündü ve klasöre kaydedildi!", result.value, "split"));
           onclose?.();
         }
       }
@@ -236,6 +252,9 @@
         {/each}
       </ol>
       <Button variant="outline" size="sm" class="justify-self-start" onclick={handleAddFiles} disabled={!featurePresentation.runnable}>+ Dosya Ekle</Button>
+      {#if signatureCount > 0}
+        <p class="rounded-md bg-amber-500/10 px-3 py-2 text-xs" role="note">{copySignatureNote("merge")}</p>
+      {/if}
     {:else if mode === 'images'}
       <p class="text-xs text-muted-foreground">Her görsel bir sayfa olur. JPEG'ler yeniden sıkıştırılmadan eklenir.</p>
       <ol class="grid max-h-56 gap-1 overflow-y-auto">
@@ -276,6 +295,9 @@
         <Button variant="outline" size="sm" onclick={() => (splitRangesText = bookmarkRanges)} disabled={!bookmarkRanges} title={bookmarkRanges ? "" : "Belgede sayfaya giden üst düzey yer imi yok"}>Üst düzey yer imlerine göre</Button>
       </div>
       <p class="text-xs text-muted-foreground">Yukarıdaki her bir aralık için seçtiğiniz klasörde belge adı ve sayfa aralığıyla adlandırılan ayrı bir PDF oluşturulacaktır (ör. rapor_sayfa_1-3.pdf).</p>
+      {#if signatureCount > 0}
+        <p class="rounded-md bg-amber-500/10 px-3 py-2 text-xs" role="note">{copySignatureNote("split")}</p>
+      {/if}
     {/if}
   </div>
 

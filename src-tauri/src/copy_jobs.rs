@@ -9,6 +9,7 @@
 
 use crate::document_session::{SessionJobContext, SessionJobOperationError};
 use crate::job_worker::{run_job, JobCommand, JobResult};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -20,6 +21,23 @@ const SECURITY_TIMEOUT: Duration = Duration::from_secs(300);
 const DOCUMENT_EXPORT_TIMEOUT: Duration = Duration::from_secs(300);
 const TEXT_EXPORT_TIMEOUT: Duration = Duration::from_secs(180);
 const IMAGE_EXPORT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// What a full-rewrite copy did to the source's digital signatures. The open
+/// document is never changed; only the copy loses them.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CopySignatureReport {
+    /// A source (the snapshot or, for merge, an added file) had signatures; the
+    /// copy does not keep them valid.
+    pub signatures_invalidated: bool,
+}
+
+/// Whether a PDFium `FPDF_GetSignatureCount` result means the copy loses
+/// signatures. `-1` (the count could not be read) counts as signed, so a read
+/// failure warns instead of staying silent.
+pub(crate) fn signature_count_invalidates(count: std::os::raw::c_int) -> bool {
+    count != 0
+}
 
 fn protocol_error(message: &str) -> SessionJobOperationError {
     SessionJobOperationError::failed_with_code("SESSION_JOB_WORKER_PROTOCOL_ERROR", message)
@@ -55,7 +73,7 @@ pub(crate) fn produce_optimized_copy(
 pub(crate) fn produce_security_copy(
     context: &SessionJobContext,
     op: crate::document_security::SecurityOp,
-) -> Result<PathBuf, SessionJobOperationError> {
+) -> Result<(PathBuf, CopySignatureReport), SessionJobOperationError> {
     context.cancellation.check_cancelled()?;
     let result = run_job(
         context,
@@ -65,12 +83,12 @@ pub(crate) fn produce_security_copy(
         },
         SECURITY_TIMEOUT,
     )?;
-    let JobResult::File(source) = result else {
+    let JobResult::SecurityCopy { path, report } = result else {
         return Err(protocol_error(
             "Güvenlik kopyası worker'ı beklenmeyen sonuç döndürdü",
         ));
     };
-    Ok(source)
+    Ok((path, report))
 }
 
 /// Word, PowerPoint, HTML, RTF or Markdown export of `pages`.
