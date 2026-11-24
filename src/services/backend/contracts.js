@@ -1096,6 +1096,11 @@ export const CONTRACTS = Object.freeze({
     outputPath: stringType,
     redactions: arrayOf(redactionArea),
   }),
+  inspectSessionSignatures: command("inspect_session_signatures", {
+    jobId: renderIdentifierType,
+    sessionId: renderIdentifierType,
+    expectedContentGeneration: safeIntegerType,
+  }),
   inspectDocumentSanitization: command("inspect_document_sanitization", {
     jobId: renderIdentifierType,
     sessionId: renderIdentifierType,
@@ -1189,6 +1194,7 @@ export const PROTECTED_CONTRACT_IDS = Object.freeze([
   "executeSecureRedaction",
   "inspectDocumentSanitization",
   "executeDocumentSanitization",
+  "inspectSessionSignatures",
   "scanSensitiveData",
   "inspectPluginPackage",
   "installPluginPackage",

@@ -98,9 +98,11 @@ describe("UI feature wiring source contracts", () => {
     for (const source of [appToolbarSource, toolbarMenuSource]) {
       expect(source).not.toContain("pdf_x_export");
       expect(source).not.toContain("pades_signing");
-      expect(source).not.toContain("signature_verification");
       expect(source).not.toContain("signature_settings");
     }
+    // Prompt 11 G2: the verification panel is reached only through its feature gate.
+    expect(toolbarMenuSource).toContain('feature("signature_verification", "İmzaları incele"');
+    expect(appToolbarSource).toContain('visible={featureUi("signature_verification").visible}');
 
     expect(appModalHostSource).not.toContain("SignaturePanel");
     expect(appModalHostSource).not.toContain("SignatureWizardModal");

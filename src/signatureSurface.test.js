@@ -59,10 +59,13 @@ describe("Signature Surface Invariants (Gate 1)", () => {
     }
   });
 
-  it("ensures backend signatures wrapper module does not exist", () => {
-    expect(
-      existsSync(resolve(sourceRoot, "services/backend/signatures.js")),
-    ).toBe(false);
+  it("allows only the read-only offline verification wrapper (Prompt 11 G2)", () => {
+    const wrapper = readFileSync(resolve(sourceRoot, "services/backend/signatures.js"), "utf8");
+    expect(wrapper).toContain('callBackend("inspectSessionSignatures"');
+    for (const forbidden of ["signPdfPades", "verifyPdfSignatures", "enableLtv", "listSystemCertificates"]) {
+      expect(wrapper).not.toContain(forbidden);
+    }
+    expect(CONTRACTS.inspectSessionSignatures.command).toBe("inspect_session_signatures");
   });
 
   it("ensures no signature actions are exported from actions.js", () => {
@@ -102,12 +105,13 @@ describe("Signature Surface Invariants (Gate 1)", () => {
     expect(appModalHost).not.toContain("signature_verification");
     expect(appModalHost).not.toContain("pades_signing");
 
+    // G2 adds only the verification panel entry; signing, LTV and settings stay absent.
     for (const file of ["components/AppToolbar.svelte", "services/app/toolbarMenu.js"]) {
       const toolbar = readFileSync(resolve(sourceRoot, file), "utf8");
       expect(toolbar, file).not.toContain("pades_signing");
-      expect(toolbar, file).not.toContain("signature_verification");
       expect(toolbar, file).not.toContain("signature_settings");
       expect(toolbar, file).not.toContain("signature_wizard");
+      expect(toolbar, file).toContain("signature_verification");
     }
   });
 
@@ -119,10 +123,12 @@ describe("Signature Surface Invariants (Gate 1)", () => {
     expect(ui).not.toHaveProperty("isSignatureSettingsOpen");
   });
 
-  it("ensures all four signature features are disabled and not runnable", () => {
+  it("keeps signing, LTV and signature settings disabled; verification is experimental (G2)", () => {
+    const verification = getFeature("signature_verification");
+    expect(verification.status).toBe("experimental");
+    expect(isFeatureRunnable("signature_verification", productionMac)).toBe(true);
     const signatureFeatureIds = [
       "pades_signing",
-      "signature_verification",
       "ltv",
       "signature_settings",
     ];

@@ -12,11 +12,13 @@
   import { cn } from "$lib/utils";
   import ToolbarButton from "./ToolbarButton.svelte";
   import ToolbarNavigation from "./ToolbarNavigation.svelte";
+  import SignaturePresenceChip from "./SignaturePresenceChip.svelte";
   import { buildToolbarMenu } from "../services/app/toolbarMenu.js";
   import { TRAFFIC_LIGHT_INSET_PX, usesOverlayTitleBar } from "../services/platform/titleBar.js";
 
   let {
     isPdf, viewer, ui, annotation, fileName, activePdfDisplayPath, featureUi, isDirty,
+    sessionId = "", contentGeneration = 0,
     onFeatureAction, onSelectFile, onGoBack, onGoForward, onPreviousPage, onNextPage, onPageInputChange,
     onRotateLeft, onRotateRight, onFlipH, onFlipV, onZoomOut, onResetZoom, onZoomIn,
     onToggleSinglePage, onToggleBookMode, onToggleDarkMode, onOpenBionic, onRunOcr,
@@ -80,6 +82,15 @@
         <span class="text-[11px] text-muted-foreground" data-tauri-drag-region>{viewer.fileExt?.toUpperCase()} görseli</span>
       {/if}
     </div>
+
+    {#if isPdf}
+      <SignaturePresenceChip
+        {sessionId}
+        {contentGeneration}
+        visible={featureUi("signature_verification").visible}
+        onOpen={() => ui.setPanel("signatureVerification", true)}
+      />
+    {/if}
 
     {#if hasDocument}
       <ToolbarNavigation {isPdf} {viewer} {onPreviousPage} {onNextPage} {onRotateLeft} {onRotateRight} {onFlipH} {onFlipV} {onZoomOut} {onResetZoom} {onZoomIn} />
