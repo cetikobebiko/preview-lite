@@ -342,8 +342,10 @@ fn text(document: &Document, object: &Object) -> Option<String> {
 pub fn decode_text_string(bytes: &[u8]) -> String {
     if let Some(utf16) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let units: Vec<u16> = utf16
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_be_bytes(pair))
             .collect();
         return String::from_utf16_lossy(&units);
     }

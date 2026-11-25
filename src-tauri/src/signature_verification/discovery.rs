@@ -209,8 +209,10 @@ fn utf16_getter(
         return None;
     }
     let units: Vec<u16> = buffer
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&pair| u16::from_le_bytes(pair))
         .take_while(|unit| *unit != 0)
         .collect();
     let text = String::from_utf16_lossy(&units);

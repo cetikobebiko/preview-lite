@@ -786,8 +786,10 @@ fn directory_string(value: &Any) -> Option<String> {
         Tag::TeletexString => Some(bytes.iter().map(|byte| char::from(*byte)).collect()),
         Tag::BmpString => {
             let units: Vec<u16> = bytes
-                .chunks_exact(2)
-                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| u16::from_be_bytes(pair))
                 .collect();
             Some(String::from_utf16_lossy(&units))
         }

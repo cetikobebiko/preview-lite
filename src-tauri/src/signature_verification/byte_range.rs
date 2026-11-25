@@ -142,8 +142,10 @@ pub fn decode_hex_gap(gap: &[u8]) -> Result<Vec<u8>, ByteRangeViolation> {
         return Err(ByteRangeViolation::GapNotHex);
     }
     inner
-        .chunks_exact(2)
-        .map(|pair| match (hex_value(pair[0]), hex_value(pair[1])) {
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[high, low]| match (hex_value(high), hex_value(low)) {
             (Some(high), Some(low)) => Ok(high << 4 | low),
             _ => Err(ByteRangeViolation::GapNotHex),
         })
