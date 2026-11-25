@@ -182,9 +182,10 @@ const RAW_FEATURES = [
   {
     id: "signature_verification",
     label: "Signature verification",
-    status: "disabled",
-    enabled: false,
-    warning: "PDF imzaları kriptografik olarak doğrulanmamaktadır.",
+    status: "experimental",
+    enabled: true,
+    warning:
+      "Çevrimdışı imza doğrulaması: ByteRange, revizyonlar ve CMS imzası kriptografik olarak denetlenir; imzalayanın güvenilirliği ve iptal durumu değerlendirilmez.",
     platform: ALL_DESKTOP_PLATFORMS,
     documentation: "docs/engineering/feature-matrix.md#signature--pades",
   },

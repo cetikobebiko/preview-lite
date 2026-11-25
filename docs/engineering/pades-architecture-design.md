@@ -1,13 +1,13 @@
 # PAdES ve Dijital İmza Mimari Tasarım Belgesi
 
-**Belge Sürümü:** 1.3.1 (Prompt 11 G1 — tasarım ↔ kod uzlaştırması; #34 sonrası §18 güncellemesi)  
-**Tarih:** 2026-11-24 (1.3.0: 2026-11-24; 1.2.0: 2026-08-16)  
+**Belge Sürümü:** 1.3.2 (Prompt 11 G2 — çevrimdışı doğrulama uygulandı; 1.3.1: G1 uzlaştırması + #34)  
+**Tarih:** 2026-11-24 (1.3.1/1.3.0: 2026-11-24; 1.2.0: 2026-08-16)  
 **Durum:** Onaylanmış Tasarım Belgesi — Üretim İmplementasyonu Öncesi Kanonik Mimari Otorite  
 **Uzlaştırma tabanı:** `origin/main` 33b0771  
 **Hedef profil (kullanıcı kararı, 2026-11-24):** OPTION 1 — yalnız çevrimdışı doğrulama (P1+P2). Ayrıntı: §19.
 
 > [!NOTE]
-> 1.3.0 değişiklikleri §21 değişiklik günlüğündedir. Bölüm içinde **"v1.3.0"** etiketiyle işaretlenen notlar 1.2.0 metnini düzeltir ve çelişki halinde önceliklidir.
+> 1.3.0 değişiklikleri §21 değişiklik günlüğündedir. Bölüm içinde **"v1.3.0"** etiketiyle işaretlenen notlar 1.2.0 metnini düzeltir ve çelişki halinde önceliklidir. **"v1.3.2"** notları G2 uygulamasını kaydeder ve öncekilere göre önceliklidir.
 
 ---
 
@@ -112,6 +112,18 @@ Tüm standart ve yazılım sürümleri aşağıdaki katı hiyerarşiye göre do�
 > Aynı belge bu yollarda farklı sonuç verebilir. Örneğin imzasız, boş bir imza alanı birinde "imzalı", PDFium'da 0 sayılır.
 >
 > CAP-01 G2'de tek bir kanonik tespit fonksiyonu olarak uygulanır. Bu fonksiyon worker'da çalışır ve PDFium-first'tür. lopdf yalnız PDFium'un görmediği yapılar için yardımcıdır: AcroForm dışında kalan `/Sig` sözlükleri, `/DocTimeStamp` ve revizyon zinciri. Kopya ve yeniden yazım yollarının hepsi bu fonksiyona taşınır.
+>
+> **v1.3.2 — G2 spike (2026-11-24, vendored PDFium) ve uygulama:**
+>
+> | Yapı | `FPDF_GetSignatureCount` |
+> |---|---|
+> | `/V`'siz boş `/FT /Sig` alanı | sayılır; nesnenin ByteRange'i ve `/Contents`'ı yoktur |
+> | `/FT /Sig` ebeveyn altında imzalı alt alan | ebeveyn olarak sayılır, ByteRange/`/Contents` boştur |
+> | `/FT`'siz ebeveyn altında imzalı alt alan | sayılmaz |
+> | `/DocTimeStamp` alan değeri | sayılır |
+> | AcroForm dışı `/Sig` sözlüğü | sayılmaz |
+>
+> Bu yüzden ByteRange'i ve `/Contents`'ı olmayan bir PDFium nesnesi imza sayılmaz; boş alan mı, imzalı alt alanların ebeveyni mi olduğunu lopdf söyler. PDFium'un listelemediği imzalı alanlar `SIGNATURE_NOT_VISIBLE_TO_PDFIUM` bulgusuyla eklenir; iki kaynak uyuşmazsa `DISCOVERY_SOURCE_MISMATCH`. Uygulama: `src-tauri/src/signature_verification/discovery.rs` (`combine`, `discover_at_path`, `copy_loses_signatures`), `structure.rs`. Kopya yolları G2'de taşındı (§18.2); bu, PR #34'ün PDFium sayısının alt alandaki imzayı kaçırdığı ve boş alanı "imzalı" saydığı iki hatayı da kapatır.
 
 ---
 
@@ -354,6 +366,13 @@ pub enum FindingSeverity {
 }
 ```
 
+> [!NOTE]
+> **v1.3.2 — Uygulanan alt küme ve bilinçli sapmalar (G2; `src-tauri/src/signature_verification/report.rs`):**
+> - Doldurulanlar: rapor kimliği (`session_id`, `content_generation`, `document_digest`), `byte_range(_status)`, `cryptographic_integrity`, `document_modification` (`ModificationScope`), `signer_identity`, `claimed_signing_time`, `pades_detected_level`, `algorithm_policy`, `docmdp`, bulgular.
+> - Sabitler (OPTION 1): `trust_status` = `not_checked`, `revocation_status` = `not_checked`, `pades_validated_level` = `none`. Ana süreç (`validate_report`) ve frontend (`signatureReport.js`) aksini taşıyan raporu reddeder.
+> - Sapmalar: `TimestampStatus::NotVerified` eklendi; `TimestampReport` yalnız tür ve durumu taşır. `verified_at_utc` raporda yoktur (aynı girdi aynı raporu üretir). `SignerIdentityReport.email` kaldırıldı (kişisel veri azaltımı); `common_name` opsiyonel, `CertificateMatch` (`found`/`missing`/`ambiguous`/`not_evaluated`) eklendi. Eklenen alanlar: `inspection_status`, `discovery`, `revisions`, `kind`, `revision_index`, `contents_digest`, `sub_filter`, `digest_algorithm`, `signature_algorithm`, `later_revisions`, `docmdp`, `reason`. `PdfSignatureReport.document_timestamps` yerine DocTimeStamp'lar `kind = document_timestamp` ile ayrı girdidir.
+> - İmza kimliği: sha256(alan adı ‖ revizyon ‖ ByteRange ‖ sha256(`/Contents`)) ilk 16 bayt; sıralama (revizyon, ByteRange, alan adı).
+
 ---
 
 ### §2.5 Validation-Time Modeli
@@ -517,11 +536,11 @@ Her gereksinim için mevcut dependency / altyapı kapsamı, eksikler ve riskler 
 | **Signature Dictionary Inspection** (CAP-01/02) | PDFium: `FPDFSignatureObj_GetContents`, `FPDFSignatureObj_GetByteRange`, `FPDFSignatureObj_GetSubFilter`, `FPDFSignatureObj_GetTime`; `lopdf`: `/ByteRange`, `/Contents`, `/SubFilter` doğrudan nesne erişimi | — | PDFium API'si karakterizasyon tablosundaki sınırlar dahilindedir |
 | **Incremental PDF Update** (CAP-03/15) | `lopdf` `0.46` (v1.3.0; 1.2.0'da `0.34` yazıyordu): `IncrementalDocument` desteği; PDFium `FPDF_SaveAsCopy(FPDF_INCREMENTAL)` + `incremental_save.rs` append-only denetimleri; `sha2` + `document_io.rs` atomik pipeline | Yeni imza alanı placeholder'ı ve ByteRange hesabı | PDFium'un artımlı kaydı `/Contents` placeholder'ı ve kesin offset üretemez. Placeholder yazımı lopdf ya da elle serialize edilen bir ek bölüm gerektirir (yeni lopdf kullanımı; §7 notu). lopdf 0.46'nın `IncrementalDocument` davranışı G3'te doğrudan test edilmelidir |
 | **ByteRange Parsing / Generation** (CAP-02/15) | PDFium: `FPDFSignatureObj_GetByteRange`; `lopdf`: array nesnesi parse; `sha2`: özet hesabı | ByteRange gap ve out-of-bounds doğrulama mantığı | CAP-02 doğrulama kuralları ayrı Rust mantığı gerektirir |
-| **CMS Parse** (CAP-05) | Aday: `der`, `spki`, `x509-cert`, `cms` (RustCrypto; G2 için onaylandı, sürüm `VERSION_TO_CONFIRM`; §20); PDFium `FPDFSignatureObj_GetContents`: ham DER baytları | `cms` crate'in Cargo.toml'a eklenmesi; `SignedData` tam ayrıştırma testi | Eklenmemiş aday; ekleme onayı gereklidir |
+| **CMS Parse** (CAP-05) | Aday: `der`, `spki`, `x509-cert`, `cms` (RustCrypto; G2'de eklendi: der =0.8.3, spki =0.8.1, x509-cert =0.3.1, cms =0.3.0-rc.2; §20); PDFium `FPDFSignatureObj_GetContents`: ham DER baytları | `cms` crate'in Cargo.toml'a eklenmesi; `SignedData` tam ayrıştırma testi | Eklenmemiş aday; ekleme onayı gereklidir |
 | **CMS Generation** (CAP-16) | Aday: `x509-cert / cms` `0.2+` | Crate eklenmesi; DER encoding testi | Aday crate |
 | **X.509 Parse** (CAP-08/09) | Aday: `x509-cert` `0.2+` (RustCrypto) | Crate eklenmesi | Aday crate |
 | **Certificate Path Validation** (CAP-09) | macOS: `Security.framework` (`SecTrustEvaluateWithError`); Win (planlanan): CNG; Linux: `cryptoki` / `p11-kit` (planlanan) | Windows/Linux implementasyonu gelecek fazda (P9) | macOS öncelikli platform; diğerleri P9'da |
-| **Algorithm Policy** (CAP-07) | `sha2 =0.11.1` (v1.3.0; 1.2.0'da `=0.10.9`); Aday: `rsa`, `p256`/`p384`/`ecdsa` (G2 için onaylandı, sürüm `VERSION_TO_CONFIRM`; §20) | SHA-1/MD5 engelleme mantığı; algorithm policy enforcement | Forbidden algorithm listesi Rust'ta ayrı kural olarak implemente edilmeli |
+| **Algorithm Policy** (CAP-07) | `sha2 =0.11.1` (v1.3.0; 1.2.0'da `=0.10.9`); G2'de eklendi: `rsa =0.10.0`, `p256`/`p384 =0.14.0`, `ecdsa =0.17.0` (§20) | SHA-1/MD5 engelleme mantığı; algorithm policy enforcement | Forbidden algorithm listesi Rust'ta ayrı kural olarak implemente edilmeli |
 | **OCSP / CRL** (CAP-10) | `reqwest` (ağ; mevcut); `RevocationAndTimestampWorker` (tasarımda) | OCSP/CRL response parser; network policy enforcement (SSRF koruması, redirect limiti, 100 KB body limit) | Mevcut `reqwest` yapılandırması; SSRF ve body limit Prompt 9 politikasına göre ayrıca implemente edilmeli |
 | **RFC 3161 Timestamp** (CAP-11) | Aday: `cms` crate `TimeStampToken` parsing | TSA HTTP request + response validation implementasyonu | Aday crate; ağ politikası gerekli |
 | **DSS / VRI Injection** (CAP-17) | `lopdf`: PDF nesne yazma; artımlı güncelleme | `/DSS`, `/Certs`, `/OCSPs`, `/CRLs`, `/VRI` sözlük oluşturma mantığı | `lopdf` structural write API kullanılabilir |
@@ -549,9 +568,9 @@ Her gereksinim için mevcut dependency / altyapı kapsamı, eksikler ve riskler 
 | **pdfium-render** | `0.8` / `0.8.37` | MIT / Apache-2.0 | Aktif | macOS, Win, Linux | Yüksek (Google PDFium C++ sarmalayıcı) | C++ Dinamik Kütüphane (`libpdfium`); FFI unsafe | Module FIPS: NOT CLAIMED | **Kanonik PDF render, text extraction ve geometri otoritesi.** CMS imza yazma desteği yoktur. | **Mevcut (Kanonik).** Render ve geometri için tek yetkili. |
 | **lopdf** | `0.46` / `0.46.0` | MIT | Aktif | Saf Rust (Tüm platformlar) | Orta (Bellek içi nesne ağacı) | Saf Rust; no native deps | Module FIPS: NOT CLAIMED | **Auxiliary PDF structure library; capability-specific use only.** Render motoru değildir. Sadece xref, imza sözlükleri, `/DSS` ve artımlı revizyon analizi için kullanılır. | **Mevcut (Auxiliary).** Sıkı izinli yapısal görevlerde sınırlı kullanım. |
 | **sha2** | `=0.11.1` / `0.11.1` (`0.10.9` lockfile'da yalnız `tauri-codegen`/`wry` üzerinden) | MIT / Apache-2.0 | Aktif | Saf Rust + ASM | Yüksek (RustCrypto) | Saf Rust; opsiyonel CPU feature intrinsics | Standart: FIPS PUB 180-4; Module FIPS: NOT CLAIMED; Independent Audit: NOT VERIFIED | ByteRange ve SignedAttributes özet hesaplamalarında kullanılır. | **Mevcut.** Hash hesaplamalarında standart kütüphane. |
-| **rsa** | `VERSION_TO_CONFIRM` (Aday; G2 onaylı) | MIT / Apache-2.0 | Aktif | Saf Rust | Yüksek (RustCrypto) | Saf Rust; `#![forbid(unsafe_code)]` | Standart: PKCS#1 v2.2; Module FIPS: NOT CLAIMED; Independent Audit: NOT VERIFIED | Çevrimdışı RSA-PKCS#1 v1.5 ve RSA-PSS imza doğrulaması. | **Aday (Doğrulama).** Ephemeral worker'da offline CMS doğrulaması için. |
-| **p256 / p384 / ecdsa** | `VERSION_TO_CONFIRM` (Aday; G2 onaylı) | MIT / Apache-2.0 | Aktif | Saf Rust | Yüksek (RustCrypto) | Saf Rust; constant-time aritmetik | Standart: FIPS 186-4; Module FIPS: NOT CLAIMED; Independent Audit: NOT VERIFIED | Çevrimdışı ECDSA P-256 imza doğrulaması. | **Aday (Doğrulama).** Ephemeral worker'da ECDSA doğrulaması için. |
-| **der / spki / x509-cert / cms** | `VERSION_TO_CONFIRM` (Aday; G2 onaylı) | MIT / Apache-2.0 | Aktif | Saf Rust | Yüksek (RustCrypto) | Saf Rust ASN.1 DER parser | Module FIPS: NOT CLAIMED; Independent Audit: NOT VERIFIED | CMS `SignedData` ayrıştırma ve RFC 5035 / RFC 5816 SignedAttributes inşası. | **Aday (CMS Motoru).** PAdES CMS ayrıştırma ve serileştirme için. |
+| **rsa** | `=0.10.0` / `0.10.0` (v1.3.2) | MIT OR Apache-2.0 | Aktif | Saf Rust | Yüksek (RustCrypto) | Saf Rust; kaynakta `unsafe` yok (lib düzeyinde `forbid` özniteliği yok; v1.3.2 taraması), dolaylı `crypto-bigint`/`cmov` sınırlı unsafe içerir | Standart: PKCS#1 v2.2; Module FIPS: NOT CLAIMED; Independent Audit: NOT VERIFIED | Çevrimdışı RSA-PKCS#1 v1.5 ve RSA-PSS imza doğrulaması. | **Aday (Doğrulama).** Ephemeral worker'da offline CMS doğrulaması için. |
+| **p256 / p384 / ecdsa** | `=0.14.0` / `=0.17.0` (v1.3.2) | Apache-2.0 OR MIT | Aktif | Saf Rust | Yüksek (RustCrypto) | Saf Rust; constant-time aritmetik | Standart: FIPS 186-4; Module FIPS: NOT CLAIMED; Independent Audit: NOT VERIFIED | Çevrimdışı ECDSA P-256 imza doğrulaması. | **Aday (Doğrulama).** Ephemeral worker'da ECDSA doğrulaması için. |
+| **der / spki / x509-cert / cms** | `=0.8.3` / `=0.8.1` / `=0.3.1` / `=0.3.0-rc.2` (v1.3.2) | Apache-2.0 OR MIT | Aktif | Saf Rust | Yüksek (RustCrypto) | Saf Rust ASN.1 DER parser | Module FIPS: NOT CLAIMED; Independent Audit: NOT VERIFIED | CMS `SignedData` ayrıştırma ve RFC 5035 / RFC 5816 SignedAttributes inşası. | **Aday (CMS Motoru).** PAdES CMS ayrıştırma ve serileştirme için. |
 | **Security.framework** | macOS Native (macOS 10.12+) | Apple Proprietary | Apple OS Core | macOS (x86_64, arm64) | Apple Donanım Güvencesi (Secure Enclave) | Objective-C / C Native Framework | Apple CoreCrypto FIPS 140-2/3 Validated | macOS Keychain kimlik listeleme ve donanım destekli özet imzalama (`SecKeyCreateSignature`). | **Kanonik macOS Sağlayıcı.** |
 | **cryptoki** | `VERSION_TO_CONFIRM` (Aday; P9'a ertelendi) | Apache-2.0 | Aktif | Linux, Win, macOS | Yüksek (PKCS#11 v2.40/v3.0 wrapper) | Harici PKCS#11 `.so`/`.dll` sürücüsü gerektirir | Module FIPS: Sürücüye bağlı | Linux ve donanım tokenları için anahtar sağlayıcı köprüsü. | **Gelecek Faz (P9).** |
 
@@ -1087,8 +1106,13 @@ pub enum SignatureErrorCode {
     SignatureJobExpired,       // broker isteğinin TTL'i doldu
     SignatureNonceReplay,      // nonce daha önce kullanıldı ya da jobId ile eşleşmiyor
     SignatureSourceChanged,    // yayından önce captured_content_generation değişti
+    // v1.3.2 (G2)
+    SignatureResourceLimitExceeded, // doğrulayıcı kaynak limiti; context aşılan limiti adlandırır
 }
 ```
+
+> [!NOTE]
+> **v1.3.2 — G2 limitleri** (`signature_verification/limits.rs`): belge düzeyinde iş hatası `SIGNATURE_RESOURCE_LIMIT_EXCEEDED` — revizyon > 1 000, imza > 256. İmza düzeyinde bulgu: `/Contents` > 1 MiB (`Malformed`), CMS sertifikası > 32, DER derinliği > 64 ya da öğe > 100 000 (`Malformed`), toplam özetlenen bayt > 4 GiB (kalanlar `Indeterminate`), RSA modülü > 8192 bit (`UnsupportedAlgorithm`). lopdf yapısal girdi > 256 MiB yapısal boyutları `Unavailable` yapar. Metinler kırpılır (alan adı 256, Reason 512, DN bileşeni 256, bağlam 512; imza başına 64 bulgu; rapor JSON ≤ 4 MiB). Release `panic = "abort"` olduğundan worker içinde panik yakalanamaz: worker çökerse ana süreç bunu `SIGNATURE_INPUT_UNSUPPORTED` yapar.
 
 ---
 
@@ -1107,6 +1131,8 @@ pub enum SignatureErrorCode {
 > - 49–56.
 >
 > Kapsam dışı kalanlar: B-T/B-LT/B-LTA (13–15, 18) ve güven/iptal (29–38). Bunlar G4 ve G5'e aittir. 47–48 (görünür imza ve şablon) P9'dadır.
+>
+> **v1.3.2 — G2'de üretilenler** (`src-tauri/tests/fixtures/signature/`, 32 PDF): 01, 03, 09 (+09b adbe.pkcs7), 10, 11, 12, 16, 19, 21, 22, 24, 27, 39 (+39b sonraki revizyon), 49–55 ve sınıfsız G2 vakaları (imza sonrası imzasız revizyon, dosya sonunda fazla bayt, DocTimeStamp, signatureTimeStampToken işareti, `/Kids` altında imzalı alan, AcroForm dışı `/Sig`, eksik/belirsiz sertifika, yanlış anahtar, RSA 1024). Üretici: `src-tauri/tests/signature_support/mod.rs` (TEST ONLY sabit anahtarlar, deterministik imzalar; `signature_fixture_generator.rs` baytları doğrular). G6'ya kalanlar: 02, 04, 05, 08, 17, 20, 23, 25, 26, 28, 40–45, 56.
 
 ### Kategori 1: İmzasız ve Temel Yapısal Belgeler (Fixtures 01–08)
 1. Standart tek sayfalı imzasız PDF 1.7.
@@ -1232,6 +1258,9 @@ pub struct FixtureCase {
 }
 ```
 
+> [!NOTE]
+> **v1.3.2:** Ana manifest şeması katıdır (`deny_unknown_fields`); bu yüzden `FixtureCase` alanları her fixture'ın mevcut `featureManifest` alanının gösterdiği `src-tauri/tests/fixtures/signature/manifest.json` dosyasında tutulur. Ana şemaya yalnız `signature` kategorisi eklendi.
+
 **Corpus Provenance ve Lisans Politikası:**
 
 > [!IMPORTANT]
@@ -1279,7 +1308,7 @@ pub struct FixtureCase {
 
 | G | Tasarım fazı | Kapsam | OPTION 1 hedef profilinde mi? |
 |---|---|---|---|
-| **G2** | P1, P2 | Kanonik imza tespiti (CAP-01); yapı ve ByteRange incelemesi; revizyon yürüyüşü; çevrimdışı CMS ayrıştırma; digest ve imza değeri doğrulaması; DocMDP inceleme; algoritma politikası; algılanan PAdES seviyesi; trust = `NotChecked` | **EVET** |
+| **G2** | P1, P2 | Kanonik imza tespiti (CAP-01); yapı ve ByteRange incelemesi; revizyon yürüyüşü; çevrimdışı CMS ayrıştırma; digest ve imza değeri doğrulaması; DocMDP inceleme; algoritma politikası; algılanan PAdES seviyesi; trust = `NotChecked`. **v1.3.2: uygulandı** (P1/P2'nin pdfsig/pyHanko kabul kriterleri NOT RUN; OpenSSL `cms -verify` ile yerel çapraz kontrol yapıldı) | **EVET** |
 | **G3** | P3, P4 | Anahtar kaynağı (PKCS#12 ve/veya Keychain); B-B görünmez imzalama (§5.1 düzeltmesiyle); imza sonrası doğrulama; atomik yayın | Hayır (`OUT_OF_SCOPE`) |
 | **G4** | P6a | Çevrimdışı güven deposu ve zincir doğrulama | Hayır (`OUT_OF_SCOPE`) |
 | **G5** | P5, P6b, P7, P8 | TSA, iptal, DSS/VRI, LTA (ağ gerekir) | Hayır (`OUT_OF_SCOPE`) |
@@ -1312,19 +1341,22 @@ Bu bölüm 2026-11-24'te `origin/main` 33b0771 üzerinde koddan doğrulanmışt�
 
 | Yol | Dosya | Tespit | Kullanıcıya bildirim |
 |---|---|---|---|
-| Aranabilir PDF | `searchable_pdf.rs`, `ocr.rs` | PDFium `FPDF_GetSignatureCount` | `signatures_invalidated` raporu (`services/searchablePdf.js`); `SearchablePdfModal` ön uyarısı (`signature_count`) |
-| PDF Optimizer | `pdf_optimizer/mod.rs` | lopdf `has_signatures`: `/Type /Sig` veya `/FT /Sig` + `/V` | `signatures_invalidated` raporu (`services/pdfOptimizer.js`); `OptimizeModal` sabit metni |
-| Güvenlik kopyası | `document_security.rs`, `copy_jobs::produce_security_copy` | PDFium `FPDF_GetSignatureCount` (worker; v1.3.1, PR #34) | `CopySignatureReport.signatures_invalidated` → `SecurityModal` ön notu + sonuç cümlesi (`src/services/copySignatures.js`) |
+| Aranabilir PDF | `searchable_pdf.rs`, `ocr.rs` | CAP-01 `copy_loses_signatures` / `discover_at_path` (v1.3.2) | `signatures_invalidated` raporu (`services/searchablePdf.js`); `SearchablePdfModal` ön uyarısı (`signature_count`) |
+| PDF Optimizer | `pdf_optimizer/mod.rs` | CAP-01 `copy_loses_signatures` (v1.3.2; lopdf `has_signatures` kaldırıldı) | `signatures_invalidated` raporu (`services/pdfOptimizer.js`); `OptimizeModal` sabit metni |
+| Güvenlik kopyası | `document_security.rs`, `copy_jobs::produce_security_copy` | CAP-01 `copy_loses_signatures` (worker; v1.3.2) | `CopySignatureReport.signatures_invalidated` → `SecurityModal` ön notu + sonuç cümlesi (`src/services/copySignatures.js`) |
 | Sanitization | `sanitization_inspection.rs`, `sanitization_transform.rs`, `sanitization_verifier.rs` | lopdf: `/Type /Sig` veya `/FT /Sig` veya `/ByteRange` | `SANITIZATION_SIGNATURES_INVALIDATED` uyarısı + açık onay |
 | Güvenli redaksiyon | `secure_redaction_inspection.rs`, `secure_redaction_verifier.rs` | lopdf `/ByteRange` | Açık onay + rapor |
 | Toplu işlem | `batch.rs`, `batch/`, `copy_jobs.rs`, `batchController.js`, `BatchProcessingModal.svelte` | Alt işlemin raporu (v1.3.1, PR #34): güvenlik kopyası PDFium; optimize hâlâ lopdf `has_signatures`. Dışa aktarmalar imza taşımaz | Dosya başına `signatures_invalidated`, özet sayaç ve ön not (`BatchProcessingModal`) |
-| Bölme / birleştirme (palet birleştirme dahil) | `job_worker.rs` `split_pdf`, `merge_pdf` (`create_new_pdf` + sayfa kopyası) | PDFium `signatures()` (v1.3.1, PR #34); birleştirmede kaynak ve eklenen her dosya için | `JobResult::SplitCopies` / `MergedCopy` raporu → `MergeSplitModal` ön notu + sonuç cümlesi; palet birleştirme `documentTransformController.js` |
+| Bölme / birleştirme (palet birleştirme dahil) | `job_worker.rs` `split_pdf`, `merge_pdf` (`create_new_pdf` + sayfa kopyası) | CAP-01 `copy_loses_signatures` (v1.3.2); birleştirmede kaynak ve eklenen her dosya için | `JobResult::SplitCopies` / `MergedCopy` raporu → `MergeSplitModal` ön notu + sonuç cümlesi; palet birleştirme `documentTransformController.js` |
 | Office/HTML/RTF/Markdown, metin ve görsel dışa aktarma | `document_export*`, `export.rs` | Uygulanamaz | Çıktı PDF değildir |
 
 > [!NOTE]
 > **v1.3.1:** 1.3.0'da güvenlik kopyası, toplu işlem ve bölme/birleştirme için kaydedilen "tespit yok" bulguları PR #34 (`e29a76c`) ile kapandı. Bu satırlar artık kendi raporlarını taşıyor. Bunlar uygulamada imzalı bir PDF ile henüz denenmedi; kanıtları birim ve worker-süreç testleridir (`job_worker_process.rs`, `batch/tests.rs`, ilgili Vitest dosyaları). Kalan tutarsızlık şudur: optimizer (ve toplu optimize), sanitization ve güvenli redaksiyon hâlâ lopdf tabanlı tespit kullanıyor. §18.3'teki kanonik birleştirme G2'de kalır.
 
 ### §18.3 Kanonik tespit hedefi (G2)
+
+> [!NOTE]
+> **v1.3.2 durumu:** Güvenlik kopyası, bölme/birleştirme, aranabilir PDF ve optimizer (toplu optimize dahil) `copy_loses_signatures` kullanıyor; rapor sözleşmeleri (`CopySignatureReport`, `signatures_invalidated`, `SearchablePlan.signature_count`) değişmedi. Karar kuralı: imzalı alan, DocTimeStamp ya da referanssız `/Sig` varsa, PDFium açamazsa veya yapı okunamadan PDFium nesne bildirirse "imzalar kaybolur". Boş imza alanı tek başına kayıp değildir. **Sanitization ve güvenli redaksiyon G2b'ye bırakıldı** (ayrı PR; üç platformda sertifikalı özellikler, kendi verifier/acceptance kanıtlarıyla taşınacak). `incremental_save::save_mutation` ve viewer `read_form_info` hâlâ PDFium sayısını kullanır: ilki artımlı yazım başarısız olursa `/Kids` altındaki imzayı görmeyebilir (ayrı iş), ikincisi yalnız UI göstergesidir.
 
 Bütün yollar G2'de tek bir worker-içi tespit fonksiyonunu (CAP-01, §2.3 notu) kullanmalıdır. Raporlarda ortak bir alan taşınmalıdır: `signature_count` ve `signatures_invalidated`. lopdf tabanlı üç ayrı tanım (optimizer, sanitization, secure redaction) bu fonksiyona bağlanır. Sanitization ve secure redaction'ın kendi lopdf yapısal envanterleri ek kanıt olarak kalabilir, ama "imzalı mı?" kararı kanonik fonksiyondan gelir.
 
@@ -1366,13 +1398,13 @@ G1 `Cargo.toml`'a hiçbir şey eklemez. **APPROVED**, G2'nin ilgili crate'i ekle
 
 | Crate / framework | Karar | Sürüm | Lockfile'da | Çalıştığı yer | Faz | Gerekçe |
 |---|---|---|---|---|---|---|
-| `der` | **APPROVED** | VERSION_TO_CONFIRM | hayır | worker (G3'te broker'da yalnız encode) | G2 | ASN.1 DER ayrıştırma |
-| `spki` | **APPROVED** | VERSION_TO_CONFIRM | hayır | worker | G2 | SubjectPublicKeyInfo |
-| `x509-cert` | **APPROVED** | VERSION_TO_CONFIRM | hayır | worker | G2 | İmzalayan sertifikasının ayrıştırılması |
-| `cms` | **APPROVED** | VERSION_TO_CONFIRM | hayır | worker (G3'te broker'da yalnız encode) | G2 | `SignedData` / `SignerInfo` |
-| `const-oid` | **APPROVED** (doğrudan kullanım) | 0.10.2 | evet (`digest 0.11` → `sha2`, `md-5`) | worker | G2 | OID sabitleri; Apache-2.0 OR MIT |
-| `rsa` | **APPROVED** | VERSION_TO_CONFIRM | hayır | worker | G2 | RSA PKCS#1 v1.5 / PSS doğrulama |
-| `p256`, `p384`, `ecdsa` | **APPROVED** | VERSION_TO_CONFIRM | hayır | worker | G2 | ECDSA P-256/P-384 doğrulama (`signature` ve `elliptic-curve` dolaylı gelir) |
+| `der` | **APPROVED** | =0.8.3 (`alloc`, `oid`, `derive`) | evet | worker (G3'te broker'da yalnız encode) | G2 | ASN.1 DER ayrıştırma |
+| `spki` | **APPROVED** | =0.8.1 (`alloc`) | evet | worker | G2 | SubjectPublicKeyInfo |
+| `x509-cert` | **APPROVED** | =0.3.1 (default kapalı) | evet | worker | G2 | İmzalayan sertifikasının ayrıştırılması |
+| `cms` | **APPROVED** | =0.3.0-rc.2 (pre-release, kullanıcı onayı 2026-11-24; default ve `builder` kapalı) | evet | worker (G3'te broker'da yalnız encode) | G2 | `SignedData` / `SignerInfo` |
+| `const-oid` | **APPROVED** (doğrudan kullanım) | =0.10.2 | evet (`digest 0.11` → `sha2`, `md-5`) | worker | G2 | OID sabitleri; Apache-2.0 OR MIT |
+| `rsa` | **APPROVED** | =0.10.0 (`encoding`, `pkcs1v15`) | evet | worker | G2 | RSA PKCS#1 v1.5 / PSS doğrulama |
+| `p256`, `p384`, `ecdsa` | **APPROVED** | p256/p384 =0.14.0 (`arithmetic`, `ecdsa-core`), ecdsa =0.17.0 (`algorithm`, `der`) | evet | worker | G2 | ECDSA P-256/P-384 doğrulama (`signature` ve `elliptic-curve` dolaylı gelir) |
 | `openssl` | **REJECTED** | 0.10.81 (yalnız Linux, `native-tls`) | evet | — | — | Tek platform; native OpenSSL bağımlılığı. Saf Rust adaylar üç platformda aynı davranır |
 | `ring`, `rustls-webpki` | **REJECTED** | 0.17.14 / 0.103.16 | lockfile'da var, aktif build grafında yok (`cargo tree --offline --target all -e all -i ring` boş) | — | — | Doğrudan kullanmak fiilen yeni bağımlılık olur. webpki TLS içindir, PDF/CMS imza zinciri için tasarlanmamıştır |
 | `aws-lc-rs` | **REJECTED** | yalnız cache'te 1.16.3 | hayır | — | — | Native C/asm; gereksiz |
@@ -1387,7 +1419,22 @@ G1 `Cargo.toml`'a hiçbir şey eklemez. **APPROVED**, G2'nin ilgili crate'i ekle
 
 ---
 
+> [!NOTE]
+> **v1.3.2 — Gate 1.5 kaydı (2026-11-24):** 31 yeni lock girdisi, çıkarılan yok, yeni çift sürüm yok. Lisanslar Apache-2.0 OR MIT (flagset Apache-2.0; fiat-crypto MIT OR Apache-2.0 OR BSD-1-Clause). build.rs/native bağımlılık yok; unsafe yoğunluğu `cmov` ve `crypto-bigint`'te. İmzalama feature'ları feature düzeyinde ayrılamıyor: `ecdsa 0.17` `algorithm` feature'ı imzalamayı da açar, `rsa 0.10` `pkcs1v15` modülü imzalama ve şifre çözmeyi içerir. Sınır, production kodunda özel anahtar/imzalama API'si kullanılmadığını tarayan `signature_surface.rs` testidir. Dev-dependency olarak yalnız `p256`/`p384` `sha256`/`sha384` feature'ları (TEST ONLY fixture imzalama) açıldı. `cargo audit --no-fetch --stale` (yerel DB 2026-11-23): 0 açık; RUSTSEC-2023-0071 `rsa >= 0.10.0` için yamalı, `audit.toml` değişmedi. CI audit: NOT RUN (PR'da çalışır). G3'te imzalama başlarken yeniden değerlendirilmelidir.
+
 ## 21. Değişiklik Günlüğü
+
+### 1.3.2 — 2026-11-24 (Prompt 11 G2, çevrimdışı doğrulama; taban `origin/main` 7c1956d)
+
+- **§2.3 notu:** PDFium imza keşfi spike sonuçları ve kanonik tespit kuralı.
+- **§2.4 notu:** uygulanan alt küme, OPTION 1 sabitleri ve bilinçli sapmalar.
+- **§14:** `SignatureResourceLimitExceeded`; G2 limitleri ve panik davranışı.
+- **§15 / §15.7:** G2 fixture'ları, G6'ya kalan sınıflar, `featureManifest` ile FixtureCase.
+- **§17.1:** G2 uygulandı; oracle kriterleri NOT RUN.
+- **§18.2 / §18.3:** kopya yolları ve optimizer CAP-01'e taşındı; sanitization ve güvenli redaksiyon G2b.
+- **§20:** kesin sürümler, lock/lisans/audit kaydı.
+- **Yetenek modeli:** CAP-01…08, 12, 13 → `IMPLEMENTED` (kanıtlarıyla); `gap-signature-verification-crypto` G6 ve harici oracle'lara kadar açık.
+- **Registry:** `signature_verification` → `experimental`; `pades_signing`, `ltv`, `signature_settings` `disabled` kalır.
 
 ### 1.3.1 — 2026-11-24 (§18 güncellemesi; taban `origin/main` ef9208a)
 

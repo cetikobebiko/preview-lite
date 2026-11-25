@@ -189,8 +189,10 @@ pub(crate) fn plan(
         };
         plans.push(PagePlan { page_index, skip });
     }
+    // CAP-01 canonical discovery (Prompt 11 G2); too many signatures still warns.
     let signature_count =
-        u32::try_from(bindings.FPDF_GetSignatureCount(document.handle)).unwrap_or(0);
+        crate::signature_verification::discovery::discover_at_path(bindings, snapshot, credential)
+            .map_or(u32::MAX, |discovery| discovery.signature_count());
     Ok(SearchablePlan {
         page_count,
         pages: plans,
@@ -566,7 +568,9 @@ fn write_unverified(
     let document = open_unprotected(bindings, snapshot, credential)?;
     let font = LoadedFont::load(&document)?;
     let mut report = SearchableCopyReport {
-        signatures_invalidated: bindings.FPDF_GetSignatureCount(document.handle) > 0,
+        signatures_invalidated: crate::signature_verification::discovery::copy_loses_signatures(
+            bindings, snapshot, credential,
+        ),
         ..SearchableCopyReport::default()
     };
     let mut expected = Vec::with_capacity(pages.len());

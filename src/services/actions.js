@@ -5,6 +5,7 @@ import {
 } from "../featureActionGuard.js";
 import { getRuntimeFeatureContext } from "../featureRegistry.js";
 import { startSensitiveDataScan } from "./backend/redaction.js";
+import { startSignatureInspection } from "./backend/signatures.js";
 import {
   performOcrOnPage,
   shareExternalFileMacos,
@@ -37,6 +38,16 @@ export const startSensitiveDataScanAction = (
     expectedContentGeneration,
     patterns,
   );
+};
+
+// Offline signature verification (Prompt 11 G2): trust is never evaluated (OPTION 1).
+export const startSignatureInspectionAction = (
+  sessionId,
+  expectedContentGeneration,
+  context,
+) => {
+  assertFeatureRunnable("signature_verification", runtimeContext(context));
+  return startSignatureInspection(sessionId, expectedContentGeneration);
 };
 
 export const scanSensitiveDataAction = (

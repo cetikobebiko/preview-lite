@@ -9,7 +9,7 @@
 //! Kopya tam yeniden yazımdır; varsa dijital imzalar kopyada geçersiz olur. Kaynaktaki imza
 //! sayısı PDFium ile okunur ve `CopySignatureReport` ile kullanıcıya bildirilir.
 
-use crate::copy_jobs::{signature_count_invalidates, CopySignatureReport};
+use crate::copy_jobs::CopySignatureReport;
 use crate::incremental_save::{save_copy, RawDocument};
 use lopdf::encryption::crypt_filters::{Aes128CryptFilter, Aes256CryptFilter, CryptFilter};
 use lopdf::{EncryptionState, EncryptionVersion, Object, Permissions, StringFormat};
@@ -213,8 +213,9 @@ pub(crate) fn write_security_copy(
     })?;
     let page_count = source.page_count().map_err(|failure| failure.detail)?;
     let report = CopySignatureReport {
-        signatures_invalidated: signature_count_invalidates(
-            bindings.FPDF_GetSignatureCount(source.handle),
+        // CAP-01 canonical discovery (Prompt 11 G2).
+        signatures_invalidated: crate::signature_verification::discovery::copy_loses_signatures(
+            bindings, snapshot, credential,
         ),
     };
     if bindings.FPDF_GetSecurityHandlerRevision(source.handle) != -1 {

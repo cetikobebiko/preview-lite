@@ -221,6 +221,7 @@
     isPdf={documentRuntime.isPdf} {viewer} {ui} {annotation}
     fileName={documentRuntime.fileName} activePdfDisplayPath={documentRuntime.activeDisplayPath}
     featureUi={featureRuntime.featureUi} isDirty={documentRuntime.isDirty}
+    sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration}
     onFeatureAction={featureRuntime.runUiAction} onSelectFile={documentRuntime.selectFile}
     onGoBack={viewerRuntime.navigation.goBack} onGoForward={viewerRuntime.navigation.goForward}
     onPreviousPage={viewerRuntime.navigation.goToPrevPage} onNextPage={viewerRuntime.navigation.goToNextPage} onPageInputChange={viewerRuntime.navigation.handlePageInputChange}

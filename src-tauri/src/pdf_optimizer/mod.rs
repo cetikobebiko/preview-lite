@@ -28,7 +28,6 @@ mod images;
 mod walk;
 
 use crate::incremental_save::{save_copy, RawDocument, RawPage};
-use lopdf::Object;
 use pdfium_render::prelude::{PdfiumLibraryBindings, FPDF_DWORD};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -143,19 +142,6 @@ fn optimize(document: &mut lopdf::Document, settings: &OptimizeSettings) -> Opti
     report
 }
 
-/// Whether the document holds a signature dictionary (a signed signature field's value).
-fn has_signatures(document: &lopdf::Document) -> bool {
-    document.objects.values().any(|object| {
-        let dict = match object {
-            Object::Dictionary(dict) => dict,
-            _ => return false,
-        };
-        matches!(dict.get(b"Type"), Ok(Object::Name(name)) if name == b"Sig")
-            || (matches!(dict.get(b"FT"), Ok(Object::Name(name)) if name == b"Sig")
-                && dict.has(b"V"))
-    })
-}
-
 /// Each page's size (pt) and number of page objects, as PDFium reads them.
 fn page_signatures(document: &RawDocument) -> Result<Vec<(i64, i64, i32)>, String> {
     let bindings = document.bindings;
@@ -193,6 +179,10 @@ pub(crate) fn write_optimized_copy(
         return Err("Parola korumalı belgeler optimize edilemez; önce Güvenlik ile korumasız bir kopya kaydedip onu optimize edin".into());
     }
     let expected = page_signatures(&source)?;
+    // CAP-01 canonical discovery (Prompt 11 G2): the copy is a full rewrite.
+    let signatures_invalidated = crate::signature_verification::discovery::copy_loses_signatures(
+        bindings, snapshot, credential,
+    );
     let plain = output.with_file_name(format!(
         "{}.plain",
         output
@@ -206,6 +196,7 @@ pub(crate) fn write_optimized_copy(
     let result = written.and_then(|()| write_output(&plain, settings, output));
     let _ = std::fs::remove_file(&plain);
     let mut report = result?;
+    report.signatures_invalidated = signatures_invalidated;
     verify_copy(bindings, output, &expected)?;
     report.input_bytes = std::fs::metadata(snapshot)
         .map_err(|error| format!("Belge boyutu okunamadı: {error}"))?
@@ -233,8 +224,7 @@ fn write_output(
     if crate::lopdf_compat::was_encrypted(&document) {
         return Err("PDFium şifresiz kopya yazamadı".into());
     }
-    let mut report = optimize(&mut document, settings);
-    report.signatures_invalidated = has_signatures(&document);
+    let report = optimize(&mut document, settings);
     document.prune_objects();
     let mut file = std::io::BufWriter::new(
         std::fs::File::create(output).map_err(|error| format!("Kopya açılamadı: {error}"))?,

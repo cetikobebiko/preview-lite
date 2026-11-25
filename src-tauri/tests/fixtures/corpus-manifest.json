@@ -72,6 +72,26 @@
       "networkRequirement": "none",
       "reproducibilityStatus": "toolchain_unpinned",
       "notes": "Turkish text is rasterized with Pillow and the system Arial TrueType font at 150 dpi; the PDF itself is written by hand with zlib (no font embedded). Same Pillow/FreeType/Arial versions give identical bytes; versions are not pinned by a repo lockfile."
+    },
+    "rust-signature-generator": {
+      "kind": "committed_script",
+      "path": "src-tauri/tests/signature_support/mod.rs",
+      "language": "rust",
+      "dependencies": [
+        "der",
+        "spki",
+        "x509-cert",
+        "cms",
+        "const-oid",
+        "rsa",
+        "ecdsa",
+        "p256",
+        "p384",
+        "sha2"
+      ],
+      "networkRequirement": "none",
+      "reproducibilityStatus": "deterministic_by_construction",
+      "notes": "TEST ONLY. Sabit anahtarlar (fixtures/signature/keys, OpenSSL 4.1.0 ile bir kez uretildi; EC skalerleri sabit etiketlerden), deterministik RSA PKCS#1 v1.5 / PSS (sabit tuz) / ECDSA RFC 6979; rand yok. src-tauri/tests/signature_fixture_generator.rs commit edilen baytlarin uretici ciktisiyla ayni oldugunu dogrular."
     }
   },
   "fixtures": [
@@ -1835,6 +1855,1020 @@
       ],
       "featureManifest": null,
       "notes": "Seven pages: 0-4 image-only scans of the same Turkish text (/Rotate 0, 90, 180, 270, and a CropBox offset); 5 has a Helvetica text layer (skipped as has_text); 6 is blank (skipped as no_image). has_text/has_unicode_text refer to page 5 and the raster text. Word boxes in display points are in scanned-turkish.words.json.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-01-unsigned",
+      "path": "src-tauri/tests/fixtures/signature/sig-01-unsigned.pdf",
+      "sha256": "a56f9016b5364541dba17c9dc57e7ab450f78e0cf51ab13b091deeb62d3ed7a2",
+      "byteLength": 518,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Imzasiz tek sayfa.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-03-empty-signature-field",
+      "path": "src-tauri/tests/fixtures/signature/sig-03-empty-signature-field.pdf",
+      "sha256": "63a10acae9b28c287b9947015ce1874a2b09f2282012f3f1197c203e1e0c1656",
+      "byteLength": 656,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "empty_signature_field"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Bos /FT /Sig alani; PDFium sayar, imza degildir.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-09-rsa-pkcs1-sha256",
+      "path": "src-tauri/tests/fixtures/signature/sig-09-rsa-pkcs1-sha256.pdf",
+      "sha256": "55886339f695592a3412e29d439225490da1c528e5c808a08579662e3680e1df",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "RSA PKCS#1 v1.5 + SHA-256, ETSI.CAdES.detached.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-09b-adbe-pkcs7-no-signed-attributes",
+      "path": "src-tauri/tests/fixtures/signature/sig-09b-adbe-pkcs7-no-signed-attributes.pdf",
+      "sha256": "f5e9b9c9b73cb81fe31d05cfa8841a920a6ba6934e2991565065ed369161b721",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "adbe.pkcs7.detached, imzali nitelik yok.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-10-rsa-pss-sha384",
+      "path": "src-tauri/tests/fixtures/signature/sig-10-rsa-pss-sha384.pdf",
+      "sha256": "51bdc8a2219e7219593e2ff1ca957d0a1349ad6d6ce0128fcc12e7424497585f",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "RSA-PSS SHA-384, sabit tuz kaynagi.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-11-ecdsa-p256-sha256",
+      "path": "src-tauri/tests/fixtures/signature/sig-11-ecdsa-p256-sha256.pdf",
+      "sha256": "5e69f44a496692c9c24d616c2cec5d68f575485ed6b822bad5726941ddb3a2f1",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "ECDSA P-256 RFC 6979.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-12-ecdsa-p384-sha384",
+      "path": "src-tauri/tests/fixtures/signature/sig-12-ecdsa-p384-sha384.pdf",
+      "sha256": "ee5d908cfdcd3a4d34fa3c80bd4c61a974a3243404f6492f9dfb15535a74d7cb",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "ECDSA P-384 RFC 6979.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-16-two-signatures",
+      "path": "src-tauri/tests/fixtures/signature/sig-16-two-signatures.pdf",
+      "sha256": "03b9106ee8b438e4e527f9cde130d8d49ec50ae09610fa0641560e2f1a5b4fa3",
+      "byteLength": 17932,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Iki imza revizyonu (RSA + P-256).",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-19-modified-after-signing",
+      "path": "src-tauri/tests/fixtures/signature/sig-19-modified-after-signing.pdf",
+      "sha256": "9f18e867ceaa4bc6eeb6a06ff13d6fc7c4b2d19ad07fe607231be757d1d35501",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_digest_mismatch"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Kapsanan bir bayt degistirildi.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-21-bad-signature-value",
+      "path": "src-tauri/tests/fixtures/signature/sig-21-bad-signature-value.pdf",
+      "sha256": "cc08a9d07d774fc2c9f4f55bc5015f44460e09efd5ce4522fd8c0af50bec09a3",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_value_invalid"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "signatureValue bozuldu.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-22-message-digest-mismatch",
+      "path": "src-tauri/tests/fixtures/signature/sig-22-message-digest-mismatch.pdf",
+      "sha256": "1c9dd3e2a9ef4cf29fdec544e3bb47b5d98b320fb5f3bd3d8cba927caad7ed6b",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_digest_mismatch"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "messageDigest yanlis ama imzali.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-24-content-type-missing",
+      "path": "src-tauri/tests/fixtures/signature/sig-24-content-type-missing.pdf",
+      "sha256": "1bc77f29614cc8eb57e85b2a590c78d1e904726b7524356536eefd6cb779b36e",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "cms_content_type_attribute_invalid"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "content-type niteligi yok.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-27-sha1-digest",
+      "path": "src-tauri/tests/fixtures/signature/sig-27-sha1-digest.pdf",
+      "sha256": "a7ee1f23ff3d4d405e86f25901bcdec240da8992703742b6c4ac22f02e25701e",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_algorithm_forbidden"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "SHA-1 ozet OID; hesaplanmaz.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-39-docmdp-p1",
+      "path": "src-tauri/tests/fixtures/signature/sig-39-docmdp-p1.pdf",
+      "sha256": "5ace95773645a7d290c3d5f74763658484a0a52674c7341e15ba663261733966",
+      "byteLength": 9210,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Sertifika imzasi DocMDP P=1.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-39b-docmdp-p1-later-revision",
+      "path": "src-tauri/tests/fixtures/signature/sig-39b-docmdp-p1-later-revision.pdf",
+      "sha256": "d4ca5b46236f271de4b086e917d11b9e59bfd4d223889d01ae5f889f3cbfc796",
+      "byteLength": 9370,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "docmdp_p1_later_revision",
+        "unsigned_later_revision"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "P=1 + imzasiz sonraki revizyon.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-49-byterange-overlapping",
+      "path": "src-tauri/tests/fixtures/signature/sig-49-byterange-overlapping.pdf",
+      "sha256": "0a2a10619f2f37de941894e513029679bc8971f70dcd15cce495ab57062ac2fd",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_byte_range_invalid"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Cakisan araliklar.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-50-byterange-out-of-bounds",
+      "path": "src-tauri/tests/fixtures/signature/sig-50-byterange-out-of-bounds.pdf",
+      "sha256": "3372b9be3afff2083e75e08505873c5b22850267a512c96ca53d69eb307039b6",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_byte_range_invalid"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Dosya sonunu asan aralik.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-51-byterange-negative",
+      "path": "src-tauri/tests/fixtures/signature/sig-51-byterange-negative.pdf",
+      "sha256": "68329af7e321a8512f3644cd86c9562c92c038423f1fff1c8cc1bbea662779ad",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_byte_range_invalid"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Negatif ofset.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-52-byterange-uncovered-gap",
+      "path": "src-tauri/tests/fixtures/signature/sig-52-byterange-uncovered-gap.pdf",
+      "sha256": "82e815be9ddc8149055a9616ebb215e027267549e0b5f69d8a9f1c90717c873f",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_byte_range_gap_detected"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Contents disinda kapsanmayan bosluk.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-53-byterange-two-exclusions",
+      "path": "src-tauri/tests/fixtures/signature/sig-53-byterange-two-exclusions.pdf",
+      "sha256": "c3937ae3c6a914aa0fa94dcd672b7fe93cc7d4b00c0f9666b51e31863301f448",
+      "byteLength": 9088,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_byte_range_invalid"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Iki dislama araligi (6 sayi).",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-54-empty-contents",
+      "path": "src-tauri/tests/fixtures/signature/sig-54-empty-contents.pdf",
+      "sha256": "e8dfc7326d3faf14d53b946c11ad0b9b1273d1a29a6dca1cbc3fe71b240fa5e9",
+      "byteLength": 873,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_cms_parse_failed"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Bos /Contents <>.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-55-malformed-der",
+      "path": "src-tauri/tests/fixtures/signature/sig-55-malformed-der.pdf",
+      "sha256": "c3ab320750ba276a00c844c148a9a1545d90b89529ddd4901cbad67795e2bf7a",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security",
+        "malformed"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_cms_parse_failed"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Bozuk ASN.1 DER.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-doc-timestamp",
+      "path": "src-tauri/tests/fixtures/signature/sig-doc-timestamp.pdf",
+      "sha256": "4306889feacc3f80be7e67b59c0410906ebe0b6730d3b7891c529b2dec8790c8",
+      "byteLength": 9068,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "document_timestamp_not_verified"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "DocTimeStamp (ETSI.RFC3161); RFC 3161 dogrulamasi G5.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-rsa-1024-weak-key",
+      "path": "src-tauri/tests/fixtures/signature/sig-rsa-1024-weak-key.pdf",
+      "sha256": "37a9875e9f84916d3f3064c0549fb000f30dfa8aa85033c86726bbe857a896e2",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_algorithm_forbidden"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "RSA 1024 bit: politika yasakli.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-signature-timestamp-attribute",
+      "path": "src-tauri/tests/fixtures/signature/sig-signature-timestamp-attribute.pdf",
+      "sha256": "6b7de1c7b835ae11c2096fd2890848463c6f9b05fc87d66d8dc545e3b71f1a1c",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "signatureTimeStampToken isareti (dogrulanmaz).",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-signed-kid-field",
+      "path": "src-tauri/tests/fixtures/signature/sig-signed-kid-field.pdf",
+      "sha256": "0085ce843b1822ba8e2b15ccfbdb6ecb83cda12ce80f3c122192ba6759ca2eac",
+      "byteLength": 9144,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_not_visible_to_pdfium"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "/Kids altinda imzali alan; PDFium listelemez.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-signer-certificate-ambiguous",
+      "path": "src-tauri/tests/fixtures/signature/sig-signer-certificate-ambiguous.pdf",
+      "sha256": "018f35f08571f48624939d3b2053f76a22418ed142f6b9473508c3e763811756",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_signer_not_found"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Ayni issuer/serial ile iki aday.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-signer-certificate-missing",
+      "path": "src-tauri/tests/fixtures/signature/sig-signer-certificate-missing.pdf",
+      "sha256": "6ec452ed78bb5bc643fc890855d4ed1f2e1b82c93ef93ec7b6e32e0a0577ae60",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_signer_not_found"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "CMS sertifika tasimiyor.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-trailing-bytes",
+      "path": "src-tauri/tests/fixtures/signature/sig-trailing-bytes.pdf",
+      "sha256": "53f18a67ce1d703a2ac044137e67c4ae1ad93a10ae7a3dfaebaa711450e240cc",
+      "byteLength": 9091,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "trailing_bytes_after_last_revision"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Son %%EOF sonrasi fazla bayt.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-unreferenced-signature-dictionary",
+      "path": "src-tauri/tests/fixtures/signature/sig-unreferenced-signature-dictionary.pdf",
+      "sha256": "fe9850b8c8e82b65ecee97be17bac657071a7b71ba0322d70d1123e5da990219",
+      "byteLength": 8937,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_dictionary_unreferenced"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "AcroForm disi /Sig sozlugu.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-unsigned-revision-after-signing",
+      "path": "src-tauri/tests/fixtures/signature/sig-unsigned-revision-after-signing.pdf",
+      "sha256": "d505b9f3ab59cc978a5e268c6db714b7e64a328040315f76a55dd6dec3d4e905",
+      "byteLength": 9226,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "unsigned_later_revision"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Imza sonrasi imzasiz revizyon.",
+      "allowEmpty": false
+    },
+    {
+      "id": "signature-sig-wrong-key",
+      "path": "src-tauri/tests/fixtures/signature/sig-wrong-key.pdf",
+      "sha256": "cb39b41f5d0b44d805e63946aa99b77a5143278f218f245e7611ff94f1cc7e60",
+      "byteLength": 9066,
+      "pdfVersion": "1.7",
+      "license": null,
+      "licenseStatus": "repository_license_reference",
+      "copyright": null,
+      "sourceType": "deterministically_generated",
+      "source": "Generated deterministically via src-tauri/tests/signature_support/mod.rs (TEST ONLY keys)",
+      "provenanceStatus": "complete",
+      "generatorId": "rust-signature-generator",
+      "generatedFrom": null,
+      "encrypted": false,
+      "passwordReference": null,
+      "categories": [
+        "signature",
+        "security"
+      ],
+      "expectedCapabilities": [],
+      "expectedFindings": [
+        "signature_value_invalid"
+      ],
+      "allowedTests": [
+        "unit",
+        "integration"
+      ],
+      "featureManifest": "src-tauri/tests/fixtures/signature/manifest.json",
+      "notes": "Baska anahtarla imzalandi.",
       "allowEmpty": false
     }
   ]

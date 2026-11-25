@@ -7,6 +7,7 @@
   import SecureRedactionPanel from "./SecureRedactionPanel.svelte";
   import A11yPanel from "./A11yPanel.svelte";
   import PrepressPanel from "./PrepressPanel.svelte";
+  import SignatureVerificationPanel from "./SignatureVerificationPanel.svelte";
   import AiSidebar from "./AiSidebar.svelte";
 
   let {
@@ -19,6 +20,8 @@
       && { id: "secureRedaction", title: "Güvenli redaksiyon" },
     ui.panels.sensitiveDataScan && isPdf && featureUi("sensitive_data_scan").visible
       && { id: "sensitiveDataScan", title: "Hassas veri tespiti" },
+    ui.panels.signatureVerification && isPdf && featureUi("signature_verification").visible
+      && { id: "signatureVerification", title: "İmzalar" },
     ui.panels.documentCompare && isPdf && documentCompareState && featureUi("document_compare").visible
       && { id: "documentCompare", title: "Belge karşılaştırma" },
     ui.panels.a11y && isPdf && featureUi("basic_accessibility_audit").visible
@@ -89,6 +92,8 @@
         if (displayIndex >= 0) onJump(displayIndex, true);
       }}
     />
+  {:else if id === "signatureVerification"}
+    <SignatureVerificationPanel {isPdf} sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} />
   {:else if id === "a11y"}
     <A11yPanel sessionId={documentSession.activeSessionId ?? ""} contentGeneration={documentSession.contentGeneration} />
   {:else if id === "prepress"}

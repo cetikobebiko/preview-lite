@@ -132,6 +132,8 @@ pub enum FixtureCategory {
     Minimal,
     Reorder,
     Annotations,
+    /// Prompt 11 G2: TEST ONLY signed fixtures (§15.7 cases in fixtures/signature/manifest.json).
+    Signature,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Hash)]
@@ -773,8 +775,10 @@ fn test_canonical_corpus_manifest_parses_and_validates() {
 
     // Prompt 11I-A3 baseline: 5 canonical generators, plus the heavy-page
     // generator added for the worker page-quarantine policy and the scanned
-    // Turkish generator for the searchable-PDF export.
-    assert_eq!(manifest.generators.len(), 7);
+    // Turkish generator for the searchable-PDF export, and the TEST ONLY Rust signature
+    // generator (Prompt 11 G2).
+    assert_eq!(manifest.generators.len(), 8);
+    assert!(manifest.generators.contains_key("rust-signature-generator"));
     assert!(manifest.generators.contains_key("py-heavy-page-generator"));
     assert!(manifest
         .generators
@@ -789,12 +793,12 @@ fn test_canonical_corpus_manifest_parses_and_validates() {
         .contains_key("py-release-smoke-generator"));
     assert!(manifest.generators.contains_key("pypdf-historical-method"));
 
-    // Prompt 11I-A3: 56 fixtures, plus core-heavy-page (page quarantine) and
-    // core-scanned-turkish (searchable-PDF export).
+    // Prompt 11I-A3: 56 fixtures, plus core-heavy-page (page quarantine),
+    // core-scanned-turkish (searchable-PDF export) and 32 G2 signature fixtures.
     assert_eq!(
         manifest.fixtures.len(),
-        58,
-        "Canonical corpus-manifest.json must contain exactly 58 fixtures"
+        90,
+        "Canonical corpus-manifest.json must contain exactly 90 fixtures"
     );
 
     // Exactly one fixture carrying release_smoke category
@@ -2254,8 +2258,8 @@ fn test_corpus_roots_enumeration_and_no_unmanifested_pdf() {
 
     assert_eq!(
         declared_paths.len(),
-        58,
-        "Expected 58 unique declared fixture paths in canonical manifest"
+        90,
+        "Expected 90 unique declared fixture paths in canonical manifest"
     );
 
     let corpus_roots = [
@@ -2308,8 +2312,8 @@ fn test_corpus_roots_enumeration_and_no_unmanifested_pdf() {
 
     assert_eq!(
         disk_paths.len(),
-        58,
-        "Found {} PDF files on disk across corpus roots, expected 58",
+        90,
+        "Found {} PDF files on disk across corpus roots, expected 90",
         disk_paths.len()
     );
 

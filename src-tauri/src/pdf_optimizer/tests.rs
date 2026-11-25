@@ -641,3 +641,31 @@ fn password_protected_documents_are_refused() {
     assert!(error.contains("Parola korumalı"), "{error}");
     assert!(!output.exists());
 }
+
+/// CAP-01 (Prompt 11 G2): the optimizer reports signature loss from the canonical discovery.
+#[test]
+fn optimized_copies_report_signature_loss_from_the_canonical_discovery() {
+    let pdfium = crate::pdf_engine::get_pdfium().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("signature");
+    for (name, invalidated) in [
+        ("sig-09-rsa-pkcs1-sha256.pdf", true),
+        ("sig-signed-kid-field.pdf", true),
+        ("sig-03-empty-signature-field.pdf", false),
+        ("sig-01-unsigned.pdf", false),
+    ] {
+        let output = dir.path().join(format!("optimized-{name}"));
+        let report = write_optimized_copy(
+            pdfium.bindings(),
+            &fixtures.join(name),
+            None,
+            &settings(),
+            &output,
+        )
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(report.signatures_invalidated, invalidated, "{name}");
+    }
+}

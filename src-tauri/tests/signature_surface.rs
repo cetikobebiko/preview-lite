@@ -92,3 +92,34 @@ fn test_no_mock_signature_dtos_or_synthetic_validity_in_production_rust() {
         }
     }
 }
+
+/// Prompt 11 G2 (OPTION 1): production code verifies with public keys only. `rsa` compiles its
+/// private-key and signing types unconditionally and `ecdsa`'s `algorithm` feature enables
+/// signing together with verification, so this scan is the boundary that keeps them unused
+/// (and the RUSTSEC-2023-0071 private-key timing class out of reach). Re-evaluate in G3.
+#[test]
+fn production_signature_code_uses_no_private_key_or_signing_api() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut rs_files = Vec::new();
+    collect_rs_files(&manifest_dir.join("src"), &mut rs_files);
+    let forbidden = [
+        "SigningKey",
+        "PrivateKey",
+        "DecodeRsaPrivateKey",
+        "sign_prehash",
+        "sign_with_rng",
+        "RandomizedSigner",
+        "rand_core",
+        "Pkcs1v15Sign",
+        "cms::builder",
+    ];
+    for path in rs_files {
+        let content = fs::read_to_string(&path).unwrap();
+        for identifier in forbidden {
+            assert!(
+                !content.contains(identifier),
+                "{path:?} uses the signing/private-key identifier {identifier}"
+            );
+        }
+    }
+}

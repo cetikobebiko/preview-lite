@@ -138,3 +138,13 @@ describe("feature-aware backend actions", () => {
     expect(backend.shareFileMacos).not.toHaveBeenCalled();
   });
 });
+
+describe("startSignatureInspectionAction (Prompt 11 G2)", () => {
+  it("is guarded by the signature_verification feature", async () => {
+    const { startSignatureInspectionAction } = await import("./actions.js");
+    const { FeatureUnavailableError } = await import("../featureActionGuard.js");
+    expect(() =>
+      startSignatureInspectionAction("s1", 1, { build: "production", platform: "unknown" }),
+    ).toThrow(FeatureUnavailableError);
+  });
+});

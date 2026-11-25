@@ -125,10 +125,9 @@ describe("feature policy", () => {
     expect(isFeatureRunnable("page_merge_direct", developmentMac)).toBe(true);
   });
 
-  it("keeps all four signature features disabled and not runnable", () => {
+  it("keeps signing, LTV and signature settings disabled and not runnable", () => {
     for (const id of [
       "pades_signing",
-      "signature_verification",
       "ltv",
       "signature_settings",
     ]) {
@@ -138,6 +137,16 @@ describe("feature policy", () => {
       expect(isFeatureRunnable(id, productionMac)).toBe(false);
       expect(isFeatureRunnable(id, developmentMac)).toBe(false);
     }
+  });
+
+  it("runs offline signature verification as experimental without a trust claim (Prompt 11 G2)", () => {
+    const feature = getFeature("signature_verification");
+    expect(feature.status).toBe("experimental");
+    expect(feature.enabled).toBe(true);
+    expect(feature.warning).toContain("güvenilirliği");
+    expect(feature.warning).toContain("değerlendirilmez");
+    expect(isFeatureRunnable("signature_verification", productionMac)).toBe(true);
+    expect(isFeatureRunnable("signature_verification", developmentMac)).toBe(true);
   });
 
   it("evaluates enabled separately from runtime platform for disabled features", () => {

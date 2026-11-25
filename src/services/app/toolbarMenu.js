@@ -74,6 +74,7 @@ export function buildToolbarMenu({ isPdf, hasDocument, viewer, ui, featureUi, on
           featureUi("print_resource_inspection").visible || featureUi("rgb_derived_print_preview").visible),
         feature("sensitive_data_scan", "Hassas veri taraması", () => ui.togglePanel("sensitiveDataScan"), panel("sensitiveDataScan")),
         feature("redaction", "Güvenli redaksiyon", () => ui.togglePanel("secureRedaction"), panel("secureRedaction")),
+        feature("signature_verification", "İmzaları incele", () => ui.togglePanel("signatureVerification"), panel("signatureVerification")),
         feature("document_compare", "Belgeyi karşılaştır…", () => ui.togglePanel("documentCompare"), panel("documentCompare")),
       ],
     });

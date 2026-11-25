@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
-pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 10;
+pub const JOB_WORKER_PROTOCOL_VERSION: u16 = 11;
 pub const SECURE_REDACTION_TRANSFORM_OUTPUT_NAME: &str = "secure-redaction-transform.pdf";
 const PREPRESS_CANCELLATION_MARKER: &str = "prepress-cancel.requested";
 const MAX_JOB_REQUEST_BYTES: u64 = 1024 * 1024;
@@ -333,6 +333,12 @@ pub enum JobCommand {
         #[serde(default)]
         test_behavior: crate::sanitization_verifier::SanitizationVerificationTestBehavior,
     },
+    /// Read-only offline signature verification of the immutable snapshot (Prompt 11 G2).
+    /// CMS/DER is parsed only here, never in the main process or the viewer worker.
+    InspectSignatures {
+        schema_version: u32,
+        content_generation: u64,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -411,6 +417,7 @@ pub enum JobResult {
         path: PathBuf,
         report: crate::searchable_pdf::SearchableCopyReport,
     },
+    SignatureInspection(crate::signature_verification::PdfSignatureVerificationReport),
 }
 
 /// One OCR'd page of a `SearchableCopy` request: the OCR bitmap size and the job-directory
@@ -752,6 +759,25 @@ fn execute_command(
             Ok(JobResult::SnapshotValid)
         }
         JobCommand::InspectBatchInput => inspect_batch_input(snapshot_path, credential),
+        JobCommand::InspectSignatures {
+            schema_version,
+            content_generation,
+        } => {
+            if schema_version != crate::signature_verification::SIGNATURE_REPORT_SCHEMA_VERSION {
+                return Err(job_failed(
+                    "SESSION_JOB_WORKER_PROTOCOL_ERROR",
+                    "İmza raporu şema sürümü eşleşmedi",
+                ));
+            }
+            crate::signature_verification::inspect::inspect_signatures(
+                snapshot_path,
+                credential,
+                authoritative_session_id,
+                content_generation,
+            )
+            .map(JobResult::SignatureInspection)
+            .map_err(|(code, message)| JobFailure::new(code, message))
+        }
         JobCommand::MutatePdf {
             recipe,
             output_name,
@@ -1979,7 +2005,11 @@ fn split_pdf(
     // Only pages are copied: the signature fields' AcroForm and the signed bytes
     // stay behind, so no output carries a valid signature of the snapshot.
     let report = crate::copy_jobs::CopySignatureReport {
-        signatures_invalidated: !document.signatures().is_empty(),
+        signatures_invalidated: crate::signature_verification::discovery::copy_loses_signatures(
+            pdfium.bindings(),
+            snapshot_path,
+            credential,
+        ),
     };
     let mut outputs = Vec::with_capacity(ranges.len());
     for (range_index, &(start, end)) in ranges.iter().enumerate() {
@@ -2044,7 +2074,12 @@ fn merge_pdf(
         crate::pdf_engine::open_pdfium_doc(&pdfium, &snapshot_path.to_string_lossy(), credential)
             .map_err(pdf_open_failed)?;
     // Pages are copied into a new document: no input's signatures stay valid.
-    let mut signed = !source.signatures().is_empty();
+    // CAP-01 canonical discovery (Prompt 11 G2), for the snapshot and every added input.
+    let mut signed = crate::signature_verification::discovery::copy_loses_signatures(
+        pdfium.bindings(),
+        snapshot_path,
+        credential,
+    );
     copy_all_pages(&source, &mut output, "Session snapshot")?;
     for name in additional_input_names {
         let path = checked_existing_output_path(job_dir, name)?;
@@ -2054,7 +2089,11 @@ fn merge_pdf(
                 format!("Ek merge girdisi açılamadı: {error}"),
             )
         })?;
-        signed |= !document.signatures().is_empty();
+        signed |= crate::signature_verification::discovery::copy_loses_signatures(
+            pdfium.bindings(),
+            &path,
+            None,
+        );
         copy_all_pages(&document, &mut output, "Ek PDF")?;
     }
     if output.pages().is_empty() {
@@ -2701,7 +2740,7 @@ mod tests {
             scale: 1.25,
         } if request_id == "preview-request")
         );
-        assert_eq!(JOB_WORKER_PROTOCOL_VERSION, 10);
+        assert_eq!(JOB_WORKER_PROTOCOL_VERSION, 11);
     }
 
     #[test]
