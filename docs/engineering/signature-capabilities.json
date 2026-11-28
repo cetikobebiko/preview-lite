@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "description": "PAdES/dijital imza yetenek modeli. Kaynak: docs/engineering/pades-architecture-design.md v1.3.0. Durumlar: NOT_IMPLEMENTED, PLANNED, IMPLEMENTED, OUT_OF_SCOPE. OUT_OF_SCOPE, seçilen hedef profilin dışında demektir; sahip G aşaması ayrı bir profil kararıyla açılır.",
   "designDoc": "docs/engineering/pades-architecture-design.md",
-  "designDocVersion": "1.3.2",
-  "reconciledAgainst": "origin/main 7c1956d + feat/signature-verification (G2, 2026-11-24)",
+  "designDocVersion": "1.3.3",
+  "reconciledAgainst": "origin/main 337bf18 + feat/signature-detection-g2b (G2b, 2026-11-28)",
   "targetProfile": {
     "id": "OPTION_1",
     "label": "Yalnız çevrimdışı doğrulama (P1+P2)",
@@ -64,7 +64,7 @@
         "src-tauri/src/batch.rs",
         "src/services/copySignatures.js",
         "src-tauri/tests/job_worker_process.rs",
-        "G2: security copy, split, merge, searchable copy and optimizer use CAP-01 copy_loses_signatures (sanitization and secure redaction: G2b)"
+        "G2: security copy, split, merge, searchable copy and optimizer use CAP-01 copy_loses_signatures; G2b: sanitization and secure redaction decide from CAP-01 (conservative union)"
       ],
       "rationale": "PR #34 (e29a76c) güvenlik kopyası, bölme, birleştirme ve toplu işlemi ekledi; uygulama içi test NOT RUN. Optimizer, sanitization ve güvenli redaksiyon hâlâ lopdf tabanlı tespit kullanıyor; tek kanonik fonksiyon CAP-01 (G2)."
     },
@@ -80,7 +80,10 @@
         "src-tauri/src/signature_verification/structure.rs",
         "rust_unit signature_verification::discovery::tests::canonical_discovery_classifies_the_spike_structures",
         "src-tauri/tests/signature_verification_native.rs canonical_discovery_finds_what_pdfium_does_not_list",
-        "src-tauri/src/pdf_optimizer/tests.rs optimized_copies_report_signature_loss_from_the_canonical_discovery"
+        "src-tauri/src/pdf_optimizer/tests.rs optimized_copies_report_signature_loss_from_the_canonical_discovery",
+        "src-tauri/src/signature_verification/discovery.rs SignatureMaterial, signature_material_at (G2b)",
+        "rust_unit sanitization_inspection::tests::canonical_signature_structures_require_the_signature_acknowledgement",
+        "rust_unit secure_redaction_inspection::tests::canonical_signature_discovery_raises_the_signature_facts"
       ]
     },
     {

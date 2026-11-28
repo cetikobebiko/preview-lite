@@ -1,6 +1,6 @@
 # PAdES ve Dijital İmza Mimari Tasarım Belgesi
 
-**Belge Sürümü:** 1.3.2 (Prompt 11 G2 — çevrimdışı doğrulama uygulandı; 1.3.1: G1 uzlaştırması + #34)  
+**Belge Sürümü:** 1.3.3 (Prompt 11 G2b — sanitization ve güvenli redaksiyon kanonik tespitte; 1.3.2: G2 çevrimdışı doğrulama)  
 **Tarih:** 2026-11-24 (1.3.1/1.3.0: 2026-11-24; 1.2.0: 2026-08-16)  
 **Durum:** Onaylanmış Tasarım Belgesi — Üretim İmplementasyonu Öncesi Kanonik Mimari Otorite  
 **Uzlaştırma tabanı:** `origin/main` 33b0771  
@@ -1344,8 +1344,8 @@ Bu bölüm 2026-11-24'te `origin/main` 33b0771 üzerinde koddan doğrulanmışt�
 | Aranabilir PDF | `searchable_pdf.rs`, `ocr.rs` | CAP-01 `copy_loses_signatures` / `discover_at_path` (v1.3.2) | `signatures_invalidated` raporu (`services/searchablePdf.js`); `SearchablePdfModal` ön uyarısı (`signature_count`) |
 | PDF Optimizer | `pdf_optimizer/mod.rs` | CAP-01 `copy_loses_signatures` (v1.3.2; lopdf `has_signatures` kaldırıldı) | `signatures_invalidated` raporu (`services/pdfOptimizer.js`); `OptimizeModal` sabit metni |
 | Güvenlik kopyası | `document_security.rs`, `copy_jobs::produce_security_copy` | CAP-01 `copy_loses_signatures` (worker; v1.3.2) | `CopySignatureReport.signatures_invalidated` → `SecurityModal` ön notu + sonuç cümlesi (`src/services/copySignatures.js`) |
-| Sanitization | `sanitization_inspection.rs`, `sanitization_transform.rs`, `sanitization_verifier.rs` | lopdf: `/Type /Sig` veya `/FT /Sig` veya `/ByteRange` | `SANITIZATION_SIGNATURES_INVALIDATED` uyarısı + açık onay |
-| Güvenli redaksiyon | `secure_redaction_inspection.rs`, `secure_redaction_verifier.rs` | lopdf `/ByteRange` | Açık onay + rapor |
+| Sanitization | `sanitization_inspection.rs`, `sanitization_transform.rs`, `sanitization_verifier.rs` | CAP-01 `signature_material_at` ∪ lopdf envanteri (`/Type /Sig` veya `/FT /Sig` veya `/ByteRange`) (v1.3.3) | `SANITIZATION_SIGNATURES_INVALIDATED` uyarısı + açık onay |
+| Güvenli redaksiyon | `secure_redaction_inspection.rs`, `secure_redaction_verifier.rs` | CAP-01 `discover_at_path` ∪ lopdf envanteri (`apply_canonical_signature_discovery`, v1.3.3) | Açık onay + rapor |
 | Toplu işlem | `batch.rs`, `batch/`, `copy_jobs.rs`, `batchController.js`, `BatchProcessingModal.svelte` | Alt işlemin raporu (v1.3.1, PR #34): güvenlik kopyası PDFium; optimize hâlâ lopdf `has_signatures`. Dışa aktarmalar imza taşımaz | Dosya başına `signatures_invalidated`, özet sayaç ve ön not (`BatchProcessingModal`) |
 | Bölme / birleştirme (palet birleştirme dahil) | `job_worker.rs` `split_pdf`, `merge_pdf` (`create_new_pdf` + sayfa kopyası) | CAP-01 `copy_loses_signatures` (v1.3.2); birleştirmede kaynak ve eklenen her dosya için | `JobResult::SplitCopies` / `MergedCopy` raporu → `MergeSplitModal` ön notu + sonuç cümlesi; palet birleştirme `documentTransformController.js` |
 | Office/HTML/RTF/Markdown, metin ve görsel dışa aktarma | `document_export*`, `export.rs` | Uygulanamaz | Çıktı PDF değildir |
@@ -1356,7 +1356,15 @@ Bu bölüm 2026-11-24'te `origin/main` 33b0771 üzerinde koddan doğrulanmışt�
 ### §18.3 Kanonik tespit hedefi (G2)
 
 > [!NOTE]
-> **v1.3.2 durumu:** Güvenlik kopyası, bölme/birleştirme, aranabilir PDF ve optimizer (toplu optimize dahil) `copy_loses_signatures` kullanıyor; rapor sözleşmeleri (`CopySignatureReport`, `signatures_invalidated`, `SearchablePlan.signature_count`) değişmedi. Karar kuralı: imzalı alan, DocTimeStamp ya da referanssız `/Sig` varsa, PDFium açamazsa veya yapı okunamadan PDFium nesne bildirirse "imzalar kaybolur". Boş imza alanı tek başına kayıp değildir. **Sanitization ve güvenli redaksiyon G2b'ye bırakıldı** (ayrı PR; üç platformda sertifikalı özellikler, kendi verifier/acceptance kanıtlarıyla taşınacak). `incremental_save::save_mutation` ve viewer `read_form_info` hâlâ PDFium sayısını kullanır: ilki artımlı yazım başarısız olursa `/Kids` altındaki imzayı görmeyebilir (ayrı iş), ikincisi yalnız UI göstergesidir.
+> **v1.3.2 durumu:** Güvenlik kopyası, bölme/birleştirme, aranabilir PDF ve optimizer (toplu optimize dahil) `copy_loses_signatures` kullanıyor; rapor sözleşmeleri (`CopySignatureReport`, `signatures_invalidated`, `SearchablePlan.signature_count`) değişmedi. Karar kuralı: imzalı alan, DocTimeStamp ya da referanssız `/Sig` varsa, PDFium açamazsa veya yapı okunamadan PDFium nesne bildirirse "imzalar kaybolur". Boş imza alanı tek başına kayıp değildir. Sanitization ve güvenli redaksiyon G2b'de (v1.3.3) taşındı; aşağıdaki nota bakın. `incremental_save::save_mutation` ve viewer `read_form_info` hâlâ PDFium sayısını kullanır: ilki artımlı yazım başarısız olursa `/Kids` altındaki imzayı görmeyebilir (ayrı iş), ikincisi yalnız UI göstergesidir.
+
+> [!NOTE]
+> **v1.3.3 — G2b (sanitization, güvenli redaksiyon):** İki özellik "imzalı mı?" kararını kanonik tespitten alır; kendi lopdf envanterleri ek kanıt olarak kalır. Karar bir birleşimdir ve yalnız daha temkinli olabilir:
+> - Ortak kural `discovery::SignatureMaterial`: imzalı alan, DocTimeStamp, referanssız `/Sig`, boş imza alanı ya da herhangi bir PDFium imza nesnesi `Present`; PDFium açamadıysa ya da yapı tam okunamadıysa `Unknown`; ancak ikisi de tam görüp hiçbir şey bulmadıysa `Absent`.
+> - Sanitization (`sanitization_inspection.rs` `apply_canonical_signature_discovery`): `Absent` dışındaki her sonuç `document_facts.signed = true` yapar; envanter imza bulmadıysa `digital_signatures` kontrolüne `canonical_signature_discovery` kanıtı eklenir, böylece `SANITIZATION_SIGNED_INPUT_REQUIRES_ACKNOWLEDGEMENT` engeli ve onay akışı değişmeden çalışır. PDF motoru açılamazsa sonuç `Unknown`, yani imzalı sayılır.
+> - Güvenli redaksiyon (`secure_redaction_inspection.rs` `apply_canonical_signature_discovery`): `signature_dictionary` ve `signature_field` olguları yalnız yükseltilir (Absent → Unknown → Present). Tespit hatası `signature_dictionary = Present`; eksik görüş `Unknown`. `REDACTION_SIGNED_INPUT_UNSUPPORTED` ve `signature_invalidation_required` mevcut kurallarıyla çalışır.
+> - Kanıt: `sanitization_inspection::tests::{canonical_signature_structures_require_the_signature_acknowledgement, canonical_discovery_adds_the_signature_control_the_inventory_missed}`, `secure_redaction_inspection::tests::{canonical_signature_discovery_raises_the_signature_facts, canonical_signature_discovery_only_raises_facts}`; acceptance paketleri değişmeden geçer (`secure_redaction_execution_acceptance` 13, `sanitization_inspection_acceptance` 10, `sanitization_publication_acceptance` 11).
+> - Kalan PDFium-sayısı kullanıcıları: `incremental_save::save_mutation` (artımlı yazım başarısızsa) ve viewer `read_form_info` (UI göstergesi).
 
 Bütün yollar G2'de tek bir worker-içi tespit fonksiyonunu (CAP-01, §2.3 notu) kullanmalıdır. Raporlarda ortak bir alan taşınmalıdır: `signature_count` ve `signatures_invalidated`. lopdf tabanlı üç ayrı tanım (optimizer, sanitization, secure redaction) bu fonksiyona bağlanır. Sanitization ve secure redaction'ın kendi lopdf yapısal envanterleri ek kanıt olarak kalabilir, ama "imzalı mı?" kararı kanonik fonksiyondan gelir.
 
@@ -1423,6 +1431,11 @@ G1 `Cargo.toml`'a hiçbir şey eklemez. **APPROVED**, G2'nin ilgili crate'i ekle
 > **v1.3.2 — Gate 1.5 kaydı (2026-11-24):** 31 yeni lock girdisi, çıkarılan yok, yeni çift sürüm yok. Lisanslar Apache-2.0 OR MIT (flagset Apache-2.0; fiat-crypto MIT OR Apache-2.0 OR BSD-1-Clause). build.rs/native bağımlılık yok; unsafe yoğunluğu `cmov` ve `crypto-bigint`'te. İmzalama feature'ları feature düzeyinde ayrılamıyor: `ecdsa 0.17` `algorithm` feature'ı imzalamayı da açar, `rsa 0.10` `pkcs1v15` modülü imzalama ve şifre çözmeyi içerir. Sınır, production kodunda özel anahtar/imzalama API'si kullanılmadığını tarayan `signature_surface.rs` testidir. Dev-dependency olarak yalnız `p256`/`p384` `sha256`/`sha384` feature'ları (TEST ONLY fixture imzalama) açıldı. `cargo audit --no-fetch --stale` (yerel DB 2026-11-23): 0 açık; RUSTSEC-2023-0071 `rsa >= 0.10.0` için yamalı, `audit.toml` değişmedi. CI audit: NOT RUN (PR'da çalışır). G3'te imzalama başlarken yeniden değerlendirilmelidir.
 
 ## 21. Değişiklik Günlüğü
+
+### 1.3.3 — 2026-11-28 (Prompt 11 G2b; taban `origin/main` 337bf18)
+
+- **§18.2 / §18.3:** sanitization ve güvenli redaksiyon "imzalı mı?" kararını CAP-01'den alıyor (muhafazakâr birleşim, `SignatureMaterial`); lopdf envanterleri ek kanıt.
+- **Yetenek modeli:** CAP-01 ve `SIG-INVALIDATION-REPORTING` kanıtlarına G2b testleri eklendi.
 
 ### 1.3.2 — 2026-11-24 (Prompt 11 G2, çevrimdışı doğrulama; taban `origin/main` 7c1956d)
 

@@ -12,6 +12,7 @@ use crate::sanitization::{
     SANITIZATION_INSPECTION_VERSION, SANITIZATION_POLICY_SCHEMA_VERSION,
     SANITIZATION_REPORT_SCHEMA_VERSION,
 };
+use crate::signature_verification::discovery::SignatureMaterial;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
@@ -139,6 +140,8 @@ struct ObjectGraphScanner<'a> {
     accumulator: InspectionAccumulator,
     facts: SanitizationDocumentFacts,
     previous_revision: bool,
+    /// CAP-01 canonical discovery of the same snapshot (Prompt 11 G2b).
+    canonical_signature_material: SignatureMaterial,
 }
 
 struct ScannerStreamFlags {
@@ -147,6 +150,7 @@ struct ScannerStreamFlags {
     previous_revision: bool,
     object_streams_detected: bool,
     xref_streams_detected: bool,
+    canonical_signature_material: SignatureMaterial,
 }
 
 impl<'a> ObjectGraphScanner<'a> {
@@ -169,6 +173,7 @@ impl<'a> ObjectGraphScanner<'a> {
             previous_revision,
             object_streams_detected,
             xref_streams_detected,
+            canonical_signature_material,
         } = stream_flags;
         Ok(Self {
             document,
@@ -194,7 +199,28 @@ impl<'a> ObjectGraphScanner<'a> {
                 ..SanitizationDocumentFacts::default()
             },
             previous_revision,
+            canonical_signature_material,
         })
+    }
+
+    /// The "signed?" decision comes from the canonical discovery (design §18.3); the lopdf
+    /// inventory above stays as evidence. Only a union: the canonical result can add the
+    /// signature control, never remove what the inventory found. `Unknown` counts as signed.
+    fn apply_canonical_signature_discovery(&mut self) -> Result<(), SessionJobOperationError> {
+        if self.canonical_signature_material == SignatureMaterial::Absent {
+            return Ok(());
+        }
+        self.facts.signed = true;
+        if !self.accumulator.findings.contains_key("digital_signatures") {
+            self.accumulator.add(
+                "digital_signatures",
+                "canonical-signature-discovery".to_string(),
+                None,
+                "canonical_signature_discovery",
+                None,
+            )?;
+        }
+        Ok(())
     }
 
     fn scan(mut self) -> Result<SanitizationInspectionReport, SessionJobOperationError> {
@@ -203,6 +229,7 @@ impl<'a> ObjectGraphScanner<'a> {
         self.scan_catalog_roots()?;
         let trailer = Object::Dictionary(self.document.trailer.clone());
         self.walk_object(&trailer, "trailer", 0)?;
+        self.apply_canonical_signature_discovery()?;
 
         let descriptors = control_descriptors()?;
         let mut controls = Vec::with_capacity(descriptors.len());
@@ -1199,6 +1226,8 @@ fn inspect_snapshot_with_configuration(
     // Files lopdf decrypted on load (empty user password) are still encrypted input.
     let encrypted = crate::lopdf_compat::was_encrypted(&document);
     checkpoint()?;
+    let canonical_signature_material = canonical_signature_material(snapshot_path, credential);
+    checkpoint()?;
     ObjectGraphScanner::new(
         &document,
         input_digest,
@@ -1208,12 +1237,29 @@ fn inspect_snapshot_with_configuration(
             previous_revision,
             object_streams_detected,
             xref_streams_detected,
+            canonical_signature_material,
         },
         configuration,
         #[cfg(feature = "sanitization-test-support")]
         snapshot_path.with_file_name("sanitization-test-phase"),
     )?
     .scan()
+}
+
+/// CAP-01 for the sanitization worker. Without the PDF engine the answer is `Unknown`, which
+/// the scanner treats as signed (fail safe).
+fn canonical_signature_material(
+    snapshot_path: &Path,
+    credential: Option<&str>,
+) -> SignatureMaterial {
+    match crate::pdf_engine::get_pdfium() {
+        Ok(pdfium) => crate::signature_verification::discovery::signature_material_at(
+            pdfium.bindings(),
+            snapshot_path,
+            credential,
+        ),
+        Err(_) => SignatureMaterial::Unknown,
+    }
 }
 
 fn scan_raw_structural_markers(
@@ -1811,5 +1857,83 @@ mod tests {
         let encoded = serde_json::to_string(&encrypted).unwrap();
         assert!(!encoded.contains("fixture-password"));
         assert!(!encoded.contains("SANITIZATION_ENCRYPTED_PAYLOAD_001"));
+    }
+
+    fn signature_fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("signature")
+            .join(name)
+    }
+
+    fn signature_blocker(report: &SanitizationInspectionReport) -> bool {
+        report
+            .blocking_findings
+            .iter()
+            .any(|finding| finding.control_id == "digital_signatures")
+    }
+
+    /// Prompt 11 G2b: the G2 spike structures (signed kid field, unreferenced /Sig, empty
+    /// field, DocTimeStamp) are signed input for sanitization; an unsigned file is not.
+    #[test]
+    fn canonical_signature_structures_require_the_signature_acknowledgement() {
+        for (name, signed) in [
+            ("sig-01-unsigned.pdf", false),
+            ("sig-03-empty-signature-field.pdf", true),
+            ("sig-09-rsa-pkcs1-sha256.pdf", true),
+            ("sig-signed-kid-field.pdf", true),
+            ("sig-unreferenced-signature-dictionary.pdf", true),
+            ("sig-doc-timestamp.pdf", true),
+        ] {
+            let report = inspect_snapshot(
+                &signature_fixture(name),
+                None,
+                SANITIZATION_REPORT_SCHEMA_VERSION,
+                SANITIZATION_POLICY_SCHEMA_VERSION,
+                SANITIZATION_INSPECTION_PROFILE,
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            assert_eq!(report.document_facts.signed, signed, "{name}");
+            assert_eq!(signature_blocker(&report), signed, "{name}");
+            crate::sanitization::validate_inspection_report(&report).unwrap();
+        }
+    }
+
+    /// The canonical result alone adds the signature control (union, fail safe): here the
+    /// lopdf inventory of an unsigned file finds nothing but the discovery says `Unknown`.
+    #[test]
+    fn canonical_discovery_adds_the_signature_control_the_inventory_missed() {
+        let path = signature_fixture("sig-01-unsigned.pdf");
+        let bytes = std::fs::read(&path).unwrap();
+        let document = lopdf::Document::load_mem(&bytes).unwrap();
+        let digest = crate::document_io::sha256_file(&path).unwrap();
+        for (material, signed) in [
+            (SignatureMaterial::Absent, false),
+            (SignatureMaterial::Unknown, true),
+            (SignatureMaterial::Present, true),
+        ] {
+            let report = ObjectGraphScanner::new(
+                &document,
+                digest.clone(),
+                &production_parent_enforced_cancellation,
+                ScannerStreamFlags {
+                    encrypted: false,
+                    previous_revision: false,
+                    object_streams_detected: false,
+                    xref_streams_detected: false,
+                    canonical_signature_material: material,
+                },
+                production_configuration(),
+                #[cfg(feature = "sanitization-test-support")]
+                path.with_file_name("sanitization-test-phase"),
+            )
+            .unwrap()
+            .scan()
+            .unwrap();
+            assert_eq!(report.document_facts.signed, signed, "{material:?}");
+            assert_eq!(signature_blocker(&report), signed, "{material:?}");
+            crate::sanitization::validate_inspection_report(&report).unwrap();
+        }
     }
 }

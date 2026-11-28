@@ -441,6 +441,47 @@ pub fn copy_loses_signatures(
         .map_or(true, |discovery| discovery.signatures_invalidated())
 }
 
+/// Signature evidence for features that refuse signed input or need an acknowledgement before
+/// a full rewrite (sanitization, secure redaction; Prompt 11 G2b). Broader than
+/// [`SignatureDiscovery::signatures_invalidated`]: an empty signature field counts, and a
+/// discovery that could not see the whole document is `Unknown`, never `Absent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SignatureMaterial {
+    Absent,
+    Unknown,
+    Present,
+}
+
+impl SignatureDiscovery {
+    pub fn signature_material(&self) -> SignatureMaterial {
+        if !self.signatures.is_empty()
+            || self.unreferenced_signature_dictionaries > 0
+            || self.empty_signature_fields > 0
+            || self.pdfium_object_count.is_some_and(|count| count > 0)
+        {
+            SignatureMaterial::Present
+        } else if self.pdfium_object_count.is_none()
+            || self.structural_status != StructuralStatus::Complete
+        {
+            SignatureMaterial::Unknown
+        } else {
+            SignatureMaterial::Absent
+        }
+    }
+}
+
+/// [`SignatureDiscovery::signature_material`] of the document at `path`; a discovery error
+/// (too many signatures) is `Present`.
+pub fn signature_material_at(
+    bindings: &dyn PdfiumLibraryBindings,
+    path: &Path,
+    credential: Option<&str>,
+) -> SignatureMaterial {
+    discover_at_path(bindings, path, credential).map_or(SignatureMaterial::Present, |discovery| {
+        discovery.signature_material()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

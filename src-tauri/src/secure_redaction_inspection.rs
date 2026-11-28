@@ -57,7 +57,16 @@ pub fn inspect_and_plan_secure_redaction(
 
     let total_pages = doc.pages().len() as u32;
 
-    let document_facts = inspect_document_facts(&doc, lopdf_doc.as_ref(), raw_bytes.as_deref())?;
+    let mut document_facts =
+        inspect_document_facts(&doc, lopdf_doc.as_ref(), raw_bytes.as_deref())?;
+    apply_canonical_signature_discovery(
+        &mut document_facts,
+        &crate::signature_verification::discovery::discover_at_path(
+            pdfium.bindings(),
+            snapshot_path,
+            credential,
+        ),
+    );
 
     let mut page_geometries = Vec::with_capacity(total_pages as usize);
     let mut page_facts = Vec::with_capacity(total_pages as usize);
@@ -92,6 +101,55 @@ pub fn inspect_and_plan_secure_redaction(
     validate_secure_redaction_plan(&plan)?;
 
     Ok(plan)
+}
+
+/// The "signed?" decision comes from the CAP-01 canonical discovery (design §18.3, Prompt 11
+/// G2b); the lopdf inventory stays as evidence. A union that can only raise a fact
+/// (Absent → Unknown → Present), so the planner's blockers and acknowledgements can only
+/// become stricter. A discovery error (too many signatures) is `Present`.
+pub(crate) fn apply_canonical_signature_discovery(
+    facts: &mut DocumentRedactionFacts,
+    discovery: &Result<
+        crate::signature_verification::discovery::SignatureDiscovery,
+        crate::signature_verification::discovery::DiscoveryError,
+    >,
+) {
+    use crate::signature_verification::report::StructuralStatus;
+    let (dictionary, field) = match discovery {
+        Err(_) => (InspectionFactState::Present, InspectionFactState::Unknown),
+        Ok(discovery) => {
+            let dictionary = if !discovery.signatures.is_empty()
+                || discovery.unreferenced_signature_dictionaries > 0
+            {
+                InspectionFactState::Present
+            } else if discovery.pdfium_object_count.is_none()
+                || discovery.structural_status != StructuralStatus::Complete
+            {
+                // The discovery did not see the whole document.
+                InspectionFactState::Unknown
+            } else {
+                InspectionFactState::Absent
+            };
+            let field = if !discovery.signatures.is_empty() || discovery.empty_signature_fields > 0
+            {
+                InspectionFactState::Present
+            } else {
+                InspectionFactState::Absent
+            };
+            (dictionary, field)
+        }
+    };
+    facts.signature_dictionary = raise_fact(facts.signature_dictionary, dictionary);
+    facts.signature_field = raise_fact(facts.signature_field, field);
+}
+
+fn raise_fact(current: InspectionFactState, canonical: InspectionFactState) -> InspectionFactState {
+    use InspectionFactState::{Absent, Present, Unknown};
+    match (current, canonical) {
+        (Present, _) | (_, Present) => Present,
+        (Unknown, _) | (_, Unknown) => Unknown,
+        (Absent, Absent) => Absent,
+    }
 }
 
 fn get_dict<'a>(
@@ -2010,5 +2068,101 @@ mod tests {
         }
 
         (sig_dict, sig_field, br)
+    }
+
+    fn signature_fixture(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("signature")
+            .join(name)
+    }
+
+    /// Prompt 11 G2b: the canonical discovery raises the signature facts of the G2 spike
+    /// structures; an unsigned file keeps them `Absent`.
+    #[test]
+    fn canonical_signature_discovery_raises_the_signature_facts() {
+        use InspectionFactState::{Absent, Present};
+        let pdfium = get_pdfium().unwrap();
+        // (fixture, signature_dictionary, signature_field)
+        for (name, dictionary, field) in [
+            ("sig-01-unsigned.pdf", Absent, Absent),
+            ("sig-03-empty-signature-field.pdf", Absent, Present),
+            ("sig-09-rsa-pkcs1-sha256.pdf", Present, Present),
+            ("sig-signed-kid-field.pdf", Present, Present),
+            ("sig-unreferenced-signature-dictionary.pdf", Present, Absent),
+            ("sig-doc-timestamp.pdf", Present, Present),
+        ] {
+            let path = signature_fixture(name);
+            let doc = open_pdfium_doc(&pdfium, &path.to_string_lossy(), None).unwrap();
+            let lopdf_doc = lopdf::Document::load(&path).ok();
+            let raw = std::fs::read(&path).ok();
+            let mut facts =
+                inspect_document_facts(&doc, lopdf_doc.as_ref(), raw.as_deref()).unwrap();
+            apply_canonical_signature_discovery(
+                &mut facts,
+                &crate::signature_verification::discovery::discover_at_path(
+                    pdfium.bindings(),
+                    &path,
+                    None,
+                ),
+            );
+            assert_eq!(facts.signature_dictionary, dictionary, "{name}");
+            assert_eq!(facts.signature_field, field, "{name}");
+        }
+    }
+
+    #[test]
+    fn canonical_signature_discovery_only_raises_facts() {
+        use crate::signature_verification::discovery::{DiscoveryError, SignatureDiscovery};
+        use crate::signature_verification::report::StructuralStatus;
+        use InspectionFactState::{Absent, Present, Unknown};
+        for current in [Absent, Unknown, Present] {
+            for canonical in [Absent, Unknown, Present] {
+                let raised = raise_fact(current, canonical);
+                let rank = |state| match state {
+                    Absent => 0,
+                    Unknown => 1,
+                    Present => 2,
+                };
+                assert_eq!(
+                    rank(raised),
+                    rank(current).max(rank(canonical)),
+                    "{current:?} {canonical:?}"
+                );
+            }
+        }
+        let clean = || SignatureDiscovery {
+            signatures: Vec::new(),
+            pdfium_object_count: Some(0),
+            empty_signature_fields: 0,
+            unreferenced_signature_dictionaries: 0,
+            structural_status: StructuralStatus::Complete,
+            dss_present: false,
+            findings: Vec::new(),
+        };
+        let facts_after = |discovery: Result<SignatureDiscovery, DiscoveryError>,
+                           start: InspectionFactState| {
+            let path = signature_fixture("sig-01-unsigned.pdf");
+            let pdfium = get_pdfium().unwrap();
+            let doc = open_pdfium_doc(&pdfium, &path.to_string_lossy(), None).unwrap();
+            let lopdf_doc = lopdf::Document::load(&path).ok();
+            let mut facts = inspect_document_facts(&doc, lopdf_doc.as_ref(), None).unwrap();
+            facts.signature_dictionary = start;
+            apply_canonical_signature_discovery(&mut facts, &discovery);
+            facts.signature_dictionary
+        };
+        assert_eq!(facts_after(Ok(clean()), Absent), Absent);
+        assert_eq!(facts_after(Ok(clean()), Present), Present);
+        let mut unreadable = clean();
+        unreadable.pdfium_object_count = None;
+        assert_eq!(facts_after(Ok(unreadable), Absent), Unknown);
+        let mut partial = clean();
+        partial.structural_status = StructuralStatus::Unavailable;
+        assert_eq!(facts_after(Ok(partial), Absent), Unknown);
+        assert_eq!(
+            facts_after(Err(DiscoveryError::TooManySignatures), Absent),
+            Present
+        );
     }
 }
